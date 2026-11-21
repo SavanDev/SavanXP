@@ -29,6 +29,7 @@ sxn/sxn.h
 sxn/sxnaudio.h
 sxn/sxncapture.h
 sxn/sxncursor.h
+sxn/sxndns.h
 sxn/sxneffects.h
 sxn/sxnelevate.h
 sxn/sxnfiledlg.h

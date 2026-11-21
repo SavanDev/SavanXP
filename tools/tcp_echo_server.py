@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Small deterministic TCP echo server used by the Linux tcp smoke."""
+"""Small deterministic TCP echo server used by the tcp and native-network smokes.
+
+It also starts the DNS fixture of tools/dns_fixture.py; the DNS and DNSCOUNT
+commands report its port and how often a name was asked."""
 
 from __future__ import annotations
 
@@ -12,6 +15,11 @@ import time
 import threading
 from pathlib import Path
 
+from dns_fixture import DnsFixture
+
+# The resolver's fixture (tools/dns_fixture.py), started with the server: the
+# guest asks DNS for its port and DNSCOUNT <name> for the queries it received.
+DNS: DnsFixture
 
 SAVED: dict[str, bytes] = {}
 SAVED_LOCK = threading.Lock()
@@ -60,6 +68,10 @@ def handle_client_commands(sock: socket.socket, refused_port: int) -> None:
                 sock.sendall(b"READY\n")
                 time.sleep(delay_ms / 1000.0)
                 return
+            elif command == "DNS" and len(parts) == 1:
+                sock.sendall(f"{DNS.port}\n".encode("ascii"))
+            elif command == "DNSCOUNT" and len(parts) == 2:
+                sock.sendall(f"{DNS.zone.count(parts[1])}\n".encode("ascii"))
             elif command == "REFUSE" and len(parts) == 1:
                 sock.sendall(f"{refused_port}\n".encode("ascii"))
             elif command == "BULK" and len(parts) == 2:
@@ -127,6 +139,9 @@ def main() -> int:
     parser.add_argument("--port-file", type=Path)
     parser.add_argument("--idle-timeout", type=float, default=0.0)
     args = parser.parse_args()
+
+    global DNS
+    DNS = DnsFixture().start()
 
     stop = False
 

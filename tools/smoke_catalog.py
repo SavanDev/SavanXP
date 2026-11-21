@@ -922,7 +922,7 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "native-network": _qemu_scenario(
         "nativenetwork {port}", "NATIVE NETWORK PASS", "NATIVE NETWORK FAIL",
-        "SUN IPv4 routes/errors, independent retries, concurrent streams and close cancellation",
+        "SUN IPv4 routes/errors, independent retries, concurrent streams, close cancellation and the sxndns resolver",
         host_server="tcp",
         prepare=("./tools/build-user.sh --source sdk/nativetest --name nativetest --native",),
     ),

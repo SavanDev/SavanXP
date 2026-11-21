@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SUN DNS resolver, `sxn/sxndns.h` (`sxndns_resolve`), and Web Viewer resolves through it** (N3, first half): TTL
+  cache, replies believed only from the server's address and port, TCP retry for truncated replies, CNAME chains and a
+  cancel event. New host test `sxndns-message-test`; `native-network` checks it against `tools/dns_fixture.py`
+  ([NETWORKING.md](docs/net/NETWORKING.md#name-resolution-sxndns)).
 - **Linux programs get a penguin icon:** a Linux ELF under `/system/linux/` (Xeyes, `jq`) shows it on the desktop,
   in Files and in the Start menu, and its window carries it in the title bar and the taskbar. A program's own
   icon still wins ([LINUX.md](docs/userland/LINUX.md#the-linux-program-icon)).

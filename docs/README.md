@@ -288,7 +288,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 ## Networking — `net/`
 
 - [`NETWORKING.md`](net/NETWORKING.md) — TCP guarantees, independent bounded servicing,
-  asynchronous close/TIME_WAIT, windows, fault injection and the minimal DNS client.
+  asynchronous close/TIME_WAIT, windows, fault injection and SUN's shared DNS
+  resolver (`sxndns`).
 
 ## Roadmaps — `roadmaps/`
 

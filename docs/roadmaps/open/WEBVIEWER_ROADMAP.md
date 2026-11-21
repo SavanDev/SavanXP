@@ -1,9 +1,10 @@
 # Web Viewer with Ladybird
 
-> **Status as of 2026-11-16: N1–N2 complete — SUN frontend and independent transport.**
-> Web Viewer runs as `/system/webview.sxe`; remote loads still block the UI.
-> N3 (shared DNS and cancelable loading worker) is next. N3–N5 and all Ladybird
-> stages remain pending; no Ladybird code has been imported or built.
+> **Status as of 2026-11-21: N1–N2 complete; N3 in progress — the shared resolver landed.**
+> Web Viewer runs as `/system/webview.sxe` and resolves through SUN's `sxndns`;
+> remote loads still block the UI. The loading worker, Stop and stale-result
+> handling complete N3. N4–N5 and all Ladybird stages remain pending; no
+> Ladybird code has been imported or built.
 
 ## Direction
 
@@ -104,6 +105,40 @@ Renderer replacement and its sandbox remain separate later milestones.
 The network delivery is complete only when the SUN Web Viewer retains its
 existing workflows and browses HTTP/validated HTTPS with cancellation and a
 responsive UI.
+
+## N3 checkpoint — 2026-11-21: the shared resolver
+
+**N3 is in progress.** Its first half, the shared SUN resolver, has landed;
+the worker that takes loading off the UI thread has not, so the N3 gate is
+not met yet.
+
+- `include/sxn/sxndns.h` (`system/runtime/sxndns.c`, in every native
+  program's runtime): numeric IPv4, A/CNAME with chains in one reply and
+  across up to four further questions, a 16-entry cache bounded by TTL and
+  five minutes, replies believed only from the server's address and port for
+  the TXID and question asked, a TCP retry for truncated replies assembled
+  from any number of reads, and a manual-reset cancel event checked first in
+  every wait. Budgets: six seconds for the route, two attempts of two seconds.
+- A resolver is caller-owned and single-threaded; changing its server empties
+  its cache. Web Viewer keeps one per window and keeps `--dns` and `dns://`.
+- The wire format is a pure module with its own host test
+  (`sxndns-message-test`); `native-network` checks the resolver against
+  `tools/dns_fixture.py`, which the echo server starts on one port number for
+  UDP and TCP.
+
+Contracts and limits are in
+[NETWORKING.md](../../net/NETWORKING.md#name-resolution-sxndns). POSIX has no
+resolver yet; that gap is recorded there as pending.
+
+### Next implementation step — the N3 worker
+
+One network worker per window owns remote loading and the window's resolver.
+Requests and results cross through a synchronized queue and wake the UI thread
+through the application frame; navigation IDs discard obsolete results. Stop,
+a new navigation, Back/Forward, Reload and window close cancel through the
+worker's event, and a failed or cancelled load keeps the displayed document.
+The gate needs a visual scenario where a slow name and a stalled download
+leave the window repainting, moving and accepting Stop.
 
 ## N2 implementation checkpoint — 2026-11-16
 

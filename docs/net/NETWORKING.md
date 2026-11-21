@@ -297,26 +297,82 @@ live stream during a retained readiness wait.
 `./build.sh smoke net-smoke` is the other half and covers the layer below — the NIC
 driver, ARP and ICMP against the slirp gateway.
 
-## Name resolution: the minimal DNS client
+## Name resolution: `sxndns`
 
-Numeric IPv4 never touches the network. Anything else goes out as one A/IN
-question over UDP to the network's DNS (`10.0.2.3` under QEMU slirp), with
-CNAME chasing (up to 4 hops), NXDOMAIN told apart from other failures, and
-every overrun a rejection: the bytes are untrusted. Transaction IDs mix
-`uptime_ms` with a counter (the tree has no kernel RNG yet), and answers are
-trusted past TXID plus the echoed question — fine on a host bridge, not
-against an adversary. No cache, no search domains, no AAAA, no TCP fallback
-on truncation, 512-byte cap, 2 s timeout with 2 attempts: each gap says so in
-the caller's status line.
+Name resolution lives in userland, in one shared SUN library:
+`include/sxn/sxndns.h`, built from `system/runtime/sxndns.c` into every native
+program's runtime. The stack itself takes no names. A **resolver** is a plain
+struct its caller owns, cache included, and one thread uses it at a time: a
+browser window's network worker, a tool's main thread. There is no system-wide
+resolver service and no shared cache across processes; that waits for a second
+consumer that needs one.
 
-The only consumer today is the Web Viewer (`system/webview/webview.c`,
-see [`WEBVIEWER.md`](../desktop/WEBVIEWER.md#names)): numeric addresses stay a
-local fast path, everything else resolves through this client. Two overrides
-exist for tests: `webview --dns 10.0.2.2:5353` at launch, and `dns://10.0.2.2:5353`
-typed in the address bar (config, never history). The stack itself takes no
-names — `ntpsync` and every other tool still want numeric IPv4 — so "No DNS"
-below means the syscall surface, not the machine: resolution lives in
-userland, one client at a time, until a shared resolver earns its place.
+What `sxndns_resolve` does with a name:
+
+- **Numeric IPv4 never touches the network**, and neither does a name that is
+  not a host name (`SXNDNS_ERROR_BAD_NAME`): over 253 characters, an empty or
+  64-character label, a character other than a letter, digit, `-` or `_`.
+- **A cached answer is returned at once.** Names are cached lowercased without
+  a trailing dot, 16 entries, for the smallest TTL along the records used and at
+  most five minutes; a TTL of zero is not cached. Failures are not cached. A
+  resolver given a different server (`sxndns_set_server`) empties its cache:
+  those answers were the old server's.
+- **Otherwise one A/IN question over UDP** to the resolver's server
+  (`10.0.2.3:53` by default, QEMU slirp's DNS), from a fresh ephemeral port.
+  Budgets are monotonic: up to six seconds for the route to the server (NIC
+  setup, ARP), then two attempts of two seconds each, each with a new TXID.
+- **A reply is believed only from the server's own address and port, for this
+  TXID and this exact question.** Anything else is someone else's datagram and
+  is ignored while the wait goes on: a forged reply from another port loses to
+  the real one. A reply that passes those checks but whose bytes overrun or
+  contradict themselves is remembered and waited past; if nothing better
+  arrives the result is `SXNDNS_ERROR_BAD_REPLY` rather than a timeout.
+- **A truncated reply (TC) asks again over TCP** to the same server and port,
+  within what is left of that attempt's two seconds. The reply is assembled
+  from however many reads it arrives in, the two-byte length prefix included,
+  and refused past 4 KiB.
+- **CNAME chains are followed** inside one reply (up to 8 aliases), and records
+  about names that are not on the chain are not believed. An alias the server
+  did not resolve is asked about again, up to four more questions; a chain that
+  loops is `SXNDNS_ERROR_BAD_REPLY`.
+- **Every failure says what it was:** `NO_SUCH_NAME` (NXDOMAIN), `NO_ADDRESS`
+  (the name has no A record), `SERVER_FAILURE` (SERVFAIL, REFUSED and every
+  other error code), `TIMEOUT`, `NETWORK`, `BAD_REPLY`, `CANCELLED`.
+  `sxndns_error_text` turns each into a sentence for a status line.
+
+**Cancellation** is a manual-reset event passed with the call. The event comes
+first in every wait, so it wins over a ready socket; the call closes what it
+opened and returns `SXNDNS_ERROR_CANCELLED`. A set event still lets a numeric
+address or a cached answer through, since neither waits.
+
+Two honesty notes. Transaction IDs mix the monotonic clock, a counter and the
+resolver's address, because the tree has no kernel RNG yet; the source check
+and the echoed question carry the rest. That is enough against accidents and
+stale replies on a host bridge, not against an adversary who can see the
+query. And there is no DNSSEC, no AAAA, no search domains and no negative
+cache.
+
+The wire format is a separate pure module, `system/runtime/sxndns_message.c`,
+so `sxndns-message-test` checks it on the host: replies that belong to someone
+else, replies whose bytes lie, every cut of a good reply, every single flipped
+bit, and TCP framing fed one byte at a time. In the guest, `nativetest network`
+runs the resolver against `tools/dns_fixture.py`, which the echo server of
+`native-network` starts on one port number for both UDP and TCP. One name per
+path: aliases in one reply and across questions, a loop, a truncated reply
+sent back over TCP in pieces, a forged reply from another port, NXDOMAIN,
+SERVFAIL, an empty answer, a malformed reply, silence, a one-second TTL, and
+cancellation from another thread. The fixture counts the questions it
+receives, which is how the test tells a cached answer apart.
+
+The consumer today is the Web Viewer (`system/webview/webview.c`, see
+[`WEBVIEWER.md`](../desktop/WEBVIEWER.md#names)), with two overrides for tests:
+`webview --dns 10.0.2.2:5353` at launch and `dns://10.0.2.2:5353` typed in the
+address bar (config, never history). `ntpsync` and the other tools still want
+numeric IPv4.
+
+**Pending, POSIX parity:** the POSIX subsystem has no resolver at all, no
+`getaddrinfo` and no `gethostbyname`. It is to gain one over the same wire
+module when a port or tool needs it ([AGENTS.md](../../AGENTS.md#feature-parity-between-subsystems)).
 
 ## What this does not do
 
@@ -325,8 +381,8 @@ Not defects — scope. In rough order of when each would start to hurt:
 - **No `listen`/`accept`.** Client sockets only. Nothing in the guest can be a
   server.
 - **No DNS in the syscall surface.** Addresses are numeric; `ntpsync` and every
-  other tool still want numeric IPv4. Resolution lives in userland — today one
-  minimal client inside the Web Viewer (see [above](#name-resolution-the-minimal-dns-client)).
+  other tool still want numeric IPv4. Resolution lives in userland, in SUN's
+  `sxndns` (see [above](#name-resolution-sxndns)); POSIX has none yet.
 - **`setsockopt` understands only the two timeouts.** `SO_REUSEADDR` and
   `SO_BROADCAST` are accepted and ignored in userland; everything else is
   `ENOSYS`. `getsockopt` reads back a userland copy, not the kernel's.

@@ -14,6 +14,7 @@
 #include "sxgfx/gfx2d.h"
 #include "sxgfx/sxgui.h"
 #include "sxn/sxn.h"
+#include "sxn/sxndns.h"
 #include "sxn/sxngui.h"
 #include "webview.sunres.h"
 
@@ -2075,305 +2076,15 @@ static void webview_render_current(void)
     webview_invalidate_layout();
 }
 
-/* ---- name resolution --------------------------------------------------------
+/* ---- name resolution and sockets -------------------------------------------
  *
- * Minimal DNS over UDP, A records only. Numeric IPv4 stays a fast path that
- * never touches the network; anything else goes out as one A/IN question to
- * the network's DNS (10.0.2.3 under QEMU slirp, overridable with --dns for
- * tests). No search domains, no AAAA, no TCP fallback on truncation: each gap
- * has its own honest failure below.
- *
- * Two honesty notes. Transaction IDs mix uptime with a counter because the
- * tree has no kernel RNG yet (docs mention arc4random as still missing): fine
- * against accidents on a host bridge, not against an adversary. And answers
- * are trusted past TXID plus the echoed question: no DNSSEC on this road.
+ * Names resolve through SUN's shared resolver (include/sxn/sxndns.h): numeric
+ * IPv4 never touches the network, anything else is asked of the window's
+ * DNS server, 10.0.2.3 under QEMU slirp unless --dns or dns:// says otherwise.
+ * Changing the server empties the resolver's cache.
  */
 
-#define WEBVIEW_DNS_PORT_DEFAULT 53
-#define WEBVIEW_DNS_SERVER_DEFAULT "10.0.2.3"
-#define WEBVIEW_DNS_TIMEOUT_MS 2000
-#define WEBVIEW_DNS_ATTEMPTS 2
-#define WEBVIEW_DNS_MSG_CAP 512
-#define WEBVIEW_DNS_CNAME_HOPS 4
-#define WEBVIEW_DNS_NAME_CAP 256
-
-static uint32_t g_dns_ipv4 = 0;
-static unsigned g_dns_port = WEBVIEW_DNS_PORT_DEFAULT;
-static unsigned g_dns_seq = 0;
-
-static int webview_parse_uint(const char *text, unsigned *value);
-static int webview_parse_ipv4(const char *text, uint32_t *address);
-
-/* Parses a resolver override, host or host:port. Returns 1 and stores it. */
-static int webview_parse_dns_server(const char *text)
-{
-    char host[WEBVIEW_DNS_NAME_CAP];
-    const char *colon;
-    size_t host_length;
-    unsigned port = WEBVIEW_DNS_PORT_DEFAULT;
-    uint32_t ipv4 = 0;
-
-    if (text == 0 || text[0] == '\0')
-    {
-        return 0;
-    }
-    colon = strchr(text, ':');
-    if (colon != 0 && strchr(colon + 1, ':') != 0)
-    {
-        return 0; /* IPv6 is not on this road */
-    }
-    if (colon != 0)
-    {
-        char port_text[8];
-        size_t port_length = strlen(colon + 1);
-
-        if (port_length == 0 || port_length >= sizeof(port_text))
-        {
-            return 0;
-        }
-        memcpy(port_text, colon + 1, port_length);
-        port_text[port_length] = '\0';
-        if (!webview_parse_uint(port_text, &port) || port == 0 || port > 65535u)
-        {
-            return 0;
-        }
-    }
-    host_length = colon != 0 ? (size_t)(colon - text) : strlen(text);
-    if (host_length == 0 || host_length + 1 > sizeof(host))
-    {
-        return 0;
-    }
-    memcpy(host, text, host_length);
-    host[host_length] = '\0';
-    if (!webview_parse_ipv4(host, &ipv4))
-    {
-        return 0;
-    }
-    g_dns_ipv4 = ipv4;
-    g_dns_port = port;
-    return 1;
-}
-
-static uint16_t webview_read_u16(const unsigned char *at)
-{
-    return (uint16_t)(((uint16_t)at[0] << 8) | at[1]);
-}
-
-/* Encodes a dotted host into wire labels. Returns 0 with the byte count. */
-static int webview_dns_encode_name(const char *host, unsigned char *out, size_t cap,
-    size_t *out_length)
-{
-    size_t pos = 0;
-    const char *label = host;
-
-    if (host == 0 || host[0] == '\0')
-    {
-        return -1;
-    }
-    for (;;)
-    {
-        const char *dot = strchr(label, '.');
-        size_t length = dot != 0 ? (size_t)(dot - label) : strlen(label);
-
-        if (length == 0 || length > 63 || pos + 1 + length + 1 > cap)
-        {
-            return -1;
-        }
-        out[pos++] = (unsigned char)length;
-        memcpy(out + pos, label, length);
-        pos += length;
-        if (dot == 0)
-        {
-            break;
-        }
-        label = dot + 1;
-        if (*label == '\0')
-        {
-            break; /* trailing dot is the root, already implied */
-        }
-    }
-    if (pos + 1 > cap)
-    {
-        return -1;
-    }
-    out[pos++] = 0;
-    *out_length = pos;
-    return 0;
-}
-
-/* Reads a possibly-compressed name at `off`: dotted text into `out` (or skips
- * it when `out` is 0), and the offset past it into `consumed`. Jump loops and
- * every overrun return -1: these bytes come from the network. */
-static int webview_dns_read_name(const unsigned char *msg, size_t msg_length, size_t off,
-    char *out, size_t out_cap, size_t *consumed)
-{
-    size_t out_length = 0;
-    size_t jumps = 0;
-    size_t jump_end = 0;
-    int jumped = 0;
-    int first = 1;
-
-    for (;;)
-    {
-        unsigned char length;
-
-        if (off >= msg_length)
-        {
-            return -1;
-        }
-        length = msg[off];
-        if ((length & 0xC0) == 0xC0)
-        {
-            if (off + 1 >= msg_length)
-            {
-                return -1;
-            }
-            if (!jumped)
-            {
-                jump_end = off + 2;
-                jumped = 1;
-            }
-            off = ((size_t)(length & 0x3F) << 8) | msg[off + 1];
-            jumps += 1;
-            if (jumps > 8 || off >= msg_length)
-            {
-                return -1;
-            }
-            continue;
-        }
-        if (length > 63)
-        {
-            return -1;
-        }
-        if (length == 0)
-        {
-            if (out != 0 && out_cap > 0)
-            {
-                out[out_length < out_cap ? out_length : out_cap - 1] = '\0';
-            }
-            *consumed = jumped ? jump_end : off + 1;
-            return 0;
-        }
-        if (off + 1 + length > msg_length)
-        {
-            return -1;
-        }
-        if (out != 0)
-        {
-            if (!first)
-            {
-                if (out_length + 1 >= out_cap)
-                {
-                    return -1;
-                }
-                out[out_length++] = '.';
-            }
-            if (out_length + length >= out_cap)
-            {
-                return -1;
-            }
-            memcpy(out + out_length, msg + off + 1, length);
-            out_length += length;
-        }
-        first = 0;
-        off += 1 + length;
-    }
-}
-
-/* Inspects one response: 0 with the first A record, 1 on NXDOMAIN, 2 with a
- * CNAME target to chase, -1 when the bytes say nothing usable (wrong TXID,
- * truncation, overruns included). */
-static int webview_dns_parse(const unsigned char *msg, size_t length, uint16_t txid,
-    const unsigned char *question, size_t question_length, uint32_t *ipv4,
-    char *cname, size_t cname_cap)
-{
-    uint16_t qdcount = 0;
-    uint16_t ancount = 0;
-    size_t off = 0;
-    size_t i;
-    int have_cname = 0;
-
-    if (length < 12 || webview_read_u16(msg) != txid)
-    {
-        return -1;
-    }
-    if ((msg[2] & 0x80) == 0 || ((msg[2] >> 3) & 0x0F) != 0)
-    {
-        return -1;
-    }
-    if ((msg[3] & 0x0F) == 3)
-    {
-        return 1;
-    }
-    if ((msg[2] & 0x02) != 0)
-    {
-        return -1; /* truncated: no TCP road yet */
-    }
-    qdcount = webview_read_u16(msg + 4);
-    ancount = webview_read_u16(msg + 6);
-    off = 12;
-    for (i = 0; i < qdcount && i < 4; ++i)
-    {
-        size_t consumed = 0;
-
-        if (webview_dns_read_name(msg, length, off, 0, 0, &consumed) != 0 ||
-            consumed + 4 > length)
-        {
-            return -1;
-        }
-        if (i == 0)
-        {
-            /* The echoed question must be ours: TXID alone is thin. `have`
-             * covers the name; the 4 type/class bytes ride along, in bounds
-             * per the check above. */
-            size_t have = consumed - off;
-
-            if (have + 4 != question_length || memcmp(msg + off, question, have + 4) != 0)
-            {
-                return -1;
-            }
-        }
-        off = consumed + 4;
-    }
-    for (i = 0; i < ancount && i < 16; ++i)
-    {
-        size_t consumed = 0;
-        uint16_t type = 0;
-        uint16_t class = 0;
-        uint16_t rdlength = 0;
-
-        if (webview_dns_read_name(msg, length, off, 0, 0, &consumed) != 0 ||
-            consumed + 10 > length)
-        {
-            return -1;
-        }
-        type = webview_read_u16(msg + consumed);
-        class = webview_read_u16(msg + consumed + 2);
-        rdlength = webview_read_u16(msg + consumed + 8);
-        off = consumed + 10;
-        if (off + rdlength > length)
-        {
-            return -1;
-        }
-        if (type == 1 && class == 1 && rdlength == 4)
-        {
-            *ipv4 = ((uint32_t)msg[off] << 24) | ((uint32_t)msg[off + 1] << 16) |
-                    ((uint32_t)msg[off + 2] << 8) | msg[off + 3];
-            return 0;
-        }
-        if (type == 5 && class == 1 && !have_cname)
-        {
-            size_t ignored = 0;
-
-            if (webview_dns_read_name(msg, length, off, cname, cname_cap, &ignored) == 0)
-            {
-                have_cname = 1;
-            }
-        }
-        off += rdlength;
-    }
-    return have_cname ? 2 : -1;
-}
+static struct sxndns_resolver g_resolver;
 
 /* Retry native operations through readiness, with a monotonic deadline.
  * Loading remains synchronous until the shared DNS/worker milestone N3. */
@@ -2404,119 +2115,6 @@ static int webview_connect_socket(long socket, const struct sxn_ipv4_endpoint *p
         result = sxn_socket_status(socket);
     }
     return result < 0 ? -1 : 0;
-}
-
-/* One A/IN question, one transaction. Returns 0 with the address, 1 on
- * NXDOMAIN, 2 with a CNAME to chase, -2 on a malformed name, -1 otherwise. */
-static int webview_dns_query(const char *host, uint32_t *ipv4, char *cname, size_t cname_cap)
-{
-    unsigned char query[WEBVIEW_DNS_MSG_CAP];
-    unsigned char response[WEBVIEW_DNS_MSG_CAP];
-    size_t qname_length = 0;
-    size_t question_length = 0;
-    struct sxn_ipv4_endpoint server;
-    struct sxn_ipv4_endpoint local;
-    long fd = -1;
-    int attempt = 0;
-    int result = -1;
-
-    if (webview_dns_encode_name(host, query + 12, sizeof(query) - 12 - 4, &qname_length) != 0)
-    {
-        return -2;
-    }
-    question_length = qname_length + 4;
-    fd = sxn_socket_create(SXN_SOCKET_UDP);
-    if (fd < 0)
-    {
-        return -1;
-    }
-    memset(&local, 0, sizeof(local));
-    if (sxn_socket_bind((int)fd, &local) < 0)
-    {
-        sxn_close((int)fd);
-        return -1;
-    }
-    memset(&server, 0, sizeof(server));
-    server.ipv4 = g_dns_ipv4;
-    server.port = (uint16_t)g_dns_port;
-    for (attempt = 0; attempt < WEBVIEW_DNS_ATTEMPTS; ++attempt)
-    {
-        uint16_t txid = (uint16_t)(sxngui_uptime_ms() + (unsigned long)g_dns_seq * 0x9E37ul);
-        long sent;
-        long got;
-
-        g_dns_seq += 1;
-        query[0] = (unsigned char)(txid >> 8);
-        query[1] = (unsigned char)(txid & 0xFF);
-        query[2] = 0x01;
-        query[3] = 0x00;
-        query[4] = 0x00;
-        query[5] = 0x01;
-        query[6] = query[7] = query[8] = query[9] = query[10] = query[11] = 0;
-        query[12 + qname_length] = 0x00;
-        query[12 + qname_length + 1] = 0x01;
-        query[12 + qname_length + 2] = 0x00;
-        query[12 + qname_length + 3] = 0x01;
-        uint64_t deadline = sxn_clock_ns() + 6000000000ull;
-        while ((sent = sxn_socket_sendto(fd, query, 12 + question_length, &server)) == -SAVANXP_EAGAIN)
-            if (webview_wait_socket(fd, SXN_IO_WRITE, deadline) < 0) break;
-        if (sent < 0)
-        {
-            continue;
-        }
-        deadline = sxn_clock_ns() + WEBVIEW_DNS_TIMEOUT_MS * 1000000ull;
-        while ((got = sxn_socket_recvfrom(fd, response, sizeof(response), 0)) == -SAVANXP_EAGAIN)
-            if (webview_wait_socket(fd, SXN_IO_READ, deadline) < 0) break;
-        if (got <= 0)
-        {
-            continue;
-        }
-        result = webview_dns_parse(response, (size_t)got, txid, query + 12, question_length,
-            ipv4, cname, cname_cap);
-
-        if (result == 0 || result == 1 || result == 2)
-        {
-            break;
-        }
-    }
-    sxn_close((int)fd);
-    return result;
-}
-
-/* Full resolution with CNAME chasing. 0 ok, 1 NXDOMAIN, -2 malformed, -1 fail. */
-static int webview_resolve_host(const char *host, uint32_t *ipv4)
-{
-    char current[WEBVIEW_DNS_NAME_CAP];
-    int hops = 0;
-
-    if (host == 0 || host[0] == '\0' || strlen(host) > 253)
-    {
-        return -2;
-    }
-    if (webview_parse_ipv4(host, ipv4))
-    {
-        return 0;
-    }
-    snprintf(current, sizeof(current), "%s", host);
-    for (hops = 0; hops <= WEBVIEW_DNS_CNAME_HOPS; ++hops)
-    {
-        char cname[WEBVIEW_DNS_NAME_CAP];
-        int result;
-
-        cname[0] = '\0';
-        result = webview_dns_query(current, ipv4, cname, sizeof(cname));
-        if (result == 0 || result == 1 || result == -2)
-        {
-            return result;
-        }
-        if (result == 2 && cname[0] != '\0')
-        {
-            snprintf(current, sizeof(current), "%s", cname);
-            continue;
-        }
-        return -1;
-    }
-    return -1;
 }
 
 /* ---- fetching ---------------------------------------------------------------
@@ -2556,50 +2154,6 @@ static int webview_parse_uint(const char *text, unsigned *value)
         index += 1;
     }
     *value = result;
-    return 1;
-}
-
-static int webview_parse_ipv4(const char *text, uint32_t *address)
-{
-    unsigned parts[4];
-    unsigned part = 0;
-    unsigned count = 0;
-    const char *cursor = text;
-
-    while (*cursor != '\0' && count < 4)
-    {
-        const char *start = cursor;
-
-        while (*cursor != '\0' && *cursor != '.')
-        {
-            cursor += 1;
-        }
-        {
-            char chunk[4];
-            size_t length = (size_t)(cursor - start);
-
-            if (length == 0 || length >= sizeof(chunk))
-            {
-                return 0;
-            }
-            memcpy(chunk, start, length);
-            chunk[length] = '\0';
-            if (!webview_parse_uint(chunk, &part) || part > 255u)
-            {
-                return 0;
-            }
-            parts[count++] = part;
-        }
-        if (*cursor == '.')
-        {
-            cursor += 1;
-        }
-    }
-    if (*cursor != '\0' || count != 4)
-    {
-        return 0;
-    }
-    *address = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
     return 1;
 }
 
@@ -2827,23 +2381,18 @@ static int webview_fetch_http(const char *url)
             snprintf(g_status, sizeof(g_status), "That URL is malformed.");
             return -1;
         }
-        if (!webview_parse_ipv4(host, &ipv4))
         {
-            int resolved = webview_resolve_host(host, &ipv4);
+            long resolved = sxndns_resolve(&g_resolver, host, -1, &ipv4);
 
-            if (resolved == 1)
+            if (resolved == SXNDNS_ERROR_NO_SUCH_NAME)
             {
                 snprintf(g_status, sizeof(g_status), "No such host: %s.", host);
                 return -1;
             }
-            if (resolved == -2)
-            {
-                snprintf(g_status, sizeof(g_status), "That name is malformed.");
-                return -1;
-            }
             if (resolved != 0)
             {
-                snprintf(g_status, sizeof(g_status), "Cannot resolve %s.", host);
+                snprintf(g_status, sizeof(g_status), "Cannot resolve %s: %s", host,
+                    sxndns_error_text(resolved));
                 return -1;
             }
         }
@@ -3039,8 +2588,11 @@ static int webview_open_location(const char *location, int push)
         /* Resolver override, typed not launched: `dns://10.0.2.2:5353`.
          * Config, not a page: it sets the resolver, reports it, reverts the
          * bar and stays out of history. Same parser as --dns. */
-        if (webview_parse_dns_server(location + 6))
+        struct sxn_ipv4_endpoint server;
+
+        if (sxndns_parse_server(location + 6, &server) == 0)
         {
+            sxndns_set_server(&g_resolver, &server);
             snprintf(g_status, sizeof(g_status), "Resolver: %s.", location + 6);
         }
         else
@@ -4122,8 +3674,7 @@ int main(int argc, char **argv)
         int bad_dns = 0;
         int i;
 
-        (void)webview_parse_ipv4(WEBVIEW_DNS_SERVER_DEFAULT, &g_dns_ipv4);
-        g_dns_port = WEBVIEW_DNS_PORT_DEFAULT;
+        sxndns_init(&g_resolver);
         if (argv != 0)
         {
             for (i = 1; i < argc; ++i)
@@ -4131,7 +3682,13 @@ int main(int argc, char **argv)
                 if (argv[i] != 0 && strcmp(argv[i], "--dns") == 0 && i + 1 < argc &&
                     argv[i + 1] != 0)
                 {
-                    if (!webview_parse_dns_server(argv[i + 1]))
+                    struct sxn_ipv4_endpoint server;
+
+                    if (sxndns_parse_server(argv[i + 1], &server) == 0)
+                    {
+                        sxndns_set_server(&g_resolver, &server);
+                    }
+                    else
                     {
                         bad_dns = 1;
                     }

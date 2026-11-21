@@ -59,17 +59,18 @@ parsed past and ignored.
 
 ## Names
 
-Numeric IPv4 never touches the network. Anything else resolves through the
-minimal DNS client documented in [`NETWORKING.md`](../net/NETWORKING.md#name-resolution-the-minimal-dns-client):
-one A/IN question over UDP to the network's DNS (10.0.2.3 under QEMU slirp),
-with CNAME chasing, NXDOMAIN told apart from other failures, and every
-overrun a rejection. Transaction IDs mix uptime with a counter (the tree has
-no kernel RNG yet), and answers are trusted past TXID plus the echoed
-question — fine on a host bridge, not against an adversary. No cache, no
-AAAA, no TCP fallback: each gap says so in the status line.
+Names resolve through SUN's shared resolver, `sxndns`, documented in
+[`NETWORKING.md`](../net/NETWORKING.md#name-resolution-sxndns): numeric IPv4
+never touches the network; anything else is one A/IN question to the window's
+DNS server (10.0.2.3 under QEMU slirp), with CNAME chains, a TCP retry for a
+truncated reply, replies believed only from the server's address and port, and
+answers cached for their TTL. NXDOMAIN reads `No such host: <name>.`; every
+other failure reads `Cannot resolve <name>:` and the resolver's own sentence
+for it.
 
 Two overrides exist for tests: `webview --dns 10.0.2.2:5353` at launch, and
-`dns://10.0.2.2:5353` typed in the address bar (config, never history).
+`dns://10.0.2.2:5353` typed in the address bar (config, never history). A new
+server empties the window's DNS cache.
 
 ## What it is not (yet)
 

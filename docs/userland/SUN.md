@@ -59,6 +59,7 @@ the name of the layer, not a rename of its symbols.
 | Sound | `include/sxn/sxnaudio.h` | PCM streams, master gain/mute, and native `audiod` control snapshots with per-stream gain, mute and levels | `waveOut`, XAudio2's source voice |
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
 | Toolkit frame | `include/sxn/sxngui.h`, `system/runtime/sxngui.c` | SXGUI-C on a SUN window: the toolkit's host, the loop, dialogs in owned windows | `comctl32` + the message loop |
+| Name resolution | `include/sxn/sxndns.h`, `system/runtime/sxndns.c` | host names to IPv4: a resolver with its own cache, UDP with a TCP retry, cancellable ([NETWORKING.md](../net/NETWORKING.md#name-resolution-sxndns)) | `getaddrinfo`, `DnsQuery` |
 | Runtime | `system/runtime/sxn_runtime.c` | start-up, `malloc` over SXN sections, `exit` and returning from `main` ([NATIVE_HEAP.md](NATIVE_HEAP.md)) | the CRT |
 | Resources | `<program>.sunres.h`, generated | the program's `.sxres` compiled in: title, accent, window style, 16x16 icon | `.rsrc`, `LoadIcon` |
 | Shared rendering | SXGFX, SXCHROME, SXGUI-C (`system/gfx`, `include/sxgfx`) | 2D painting, system bevels, the Win9x toolkit; call-free code, usable from SUN | GDI, `DrawEdge`, `comctl32` |
@@ -376,7 +377,11 @@ acknowledged before queuing FIN. Active close retains `TIME_WAIT` for 60 seconds
 unfinished orphan closes expire within 60 seconds. The 32-slot socket budget
 includes detached close state, so rapid closes can temporarily return `ENOMEM`.
 See [NETWORKING.md](../net/NETWORKING.md#closing-keeps-protocol-state-alive).
-Shared DNS and TLS remain later browser milestones.
+Names resolve through `sxn/sxndns.h`: a caller-owned resolver with a TTL
+cache, source-checked UDP, a TCP retry for truncated replies and a cancel
+event ([NETWORKING.md](../net/NETWORKING.md#name-resolution-sxndns)); the
+`native-network` scenario asserts it against `tools/dns_fixture.py`. TLS
+remains a later browser milestone.
 
 `./build.sh smoke native-network` exercises native UDP loopback, source
 addresses, handle lifetime, cancellation, pending ARP, route timeout, TCP

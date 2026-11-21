@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -13,6 +14,59 @@ from pathlib import Path
 
 def pattern(count: int) -> bytes:
     return bytes((index * 31 + 7) & 0xFF for index in range(count))
+
+
+def read_line(client: socket.socket) -> str:
+    line = bytearray()
+    while not line.endswith(b"\n"):
+        chunk = client.recv(1)
+        if not chunk or len(line) > 16:
+            raise AssertionError("Invalid line from the echo server")
+        line.extend(chunk)
+    return line.decode("ascii").strip()
+
+
+def dns_query(name: str, txid: int) -> bytes:
+    qname = b"".join(bytes([len(label)]) + label.encode("ascii") for label in name.split("."))
+    return struct.pack(">HHHHHH", txid, 0x0100, 1, 0, 0, 0) + qname + b"\x00\x00\x01\x00\x01"
+
+
+def check_dns_fixture(port: int) -> None:
+    """The resolver's fixture: its port, UDP answers, truncation, TCP in pieces."""
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as control:
+        control.settimeout(5.0)
+        control.sendall(b"DNS\n")
+        dns_port = int(read_line(control))
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            udp.settimeout(5.0)
+            udp.sendto(dns_query("test.savanxp", 0x1234), ("127.0.0.1", dns_port))
+            reply, source = udp.recvfrom(512)
+            if source[1] != dns_port or reply[:2] != b"\x12\x34" or reply[-4:] != socket.inet_aton("10.0.2.2"):
+                raise AssertionError("test.savanxp did not answer 10.0.2.2 from the server port")
+            udp.sendto(dns_query("big.savanxp", 0x4321), ("127.0.0.1", dns_port))
+            reply, _ = udp.recvfrom(512)
+            if not reply[2] & 0x02 or struct.unpack(">H", reply[6:8])[0] != 0:
+                raise AssertionError("big.savanxp was not truncated over UDP")
+            udp.sendto(dns_query("nosuch.savanxp", 0x5555), ("127.0.0.1", dns_port))
+            reply, _ = udp.recvfrom(512)
+            if reply[3] & 0x0F != 3:
+                raise AssertionError("an unknown name was not NXDOMAIN")
+        with socket.create_connection(("127.0.0.1", dns_port), timeout=5.0) as tcp:
+            query = dns_query("big.savanxp", 0x7777)
+            tcp.sendall(struct.pack(">H", len(query)) + query)
+            framed = b""
+            pieces = 0
+            while len(framed) < 2 or len(framed) < struct.unpack(">H", framed[:2])[0] + 2:
+                chunk = tcp.recv(4096)
+                if not chunk:
+                    raise AssertionError("the TCP reply ended early")
+                framed += chunk
+                pieces += 1
+            if framed[-4:] != socket.inet_aton("10.0.2.10") or pieces < 2:
+                raise AssertionError("big.savanxp over TCP was not 10.0.2.10 in pieces")
+        control.sendall(b"DNSCOUNT big.savanxp\n")
+        if read_line(control) != "2":
+            raise AssertionError("DNSCOUNT did not count both questions about big.savanxp")
 
 
 def main() -> int:
@@ -83,6 +137,7 @@ def main() -> int:
                         pass
                     else:
                         raise AssertionError("RESET did not reset the established connection")
+                check_dns_fixture(port)
                 # One idle client must not prevent another connection's work.
                 with socket.create_connection(("127.0.0.1", port), timeout=5.0) as idle:
                     with socket.create_connection(("127.0.0.1", port), timeout=5.0) as writer:

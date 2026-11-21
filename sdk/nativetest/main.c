@@ -54,6 +54,7 @@
 #include "abi/savanxp_native_abi.h"
 #include "savanxp/syscall.h"
 #include "sxn/sxn.h"
+#include "sxn/sxndns.h"
 #include "sxn/sxnwm.h"
 #include "sxn/sxnaudio.h"
 #include "sxn/sxncapture.h"
@@ -3228,6 +3229,172 @@ static void test_native_tcp(unsigned port) {
     check(sxn_close(socket) == 0);
 }
 
+/* sxndns (include/sxn/sxndns.h) against tools/dns_fixture.py, which the echo
+ * server starts: its DNS command gives the port, DNSCOUNT <name> how many
+ * questions about a name reached it, which tells a cached answer apart. */
+static unsigned dns_control_number(long control, const char* command) {
+    struct sxn_io_interest interest = {(int32_t)control, SXN_IO_WRITE | SXN_IO_ERROR};
+    unsigned long length = 0;
+    unsigned value = 0, digits = 0;
+    char byte = 0;
+    while (command[length] != '\0') length += 1;
+    if (sxn_wait_io(&interest, 1, 5000) != 0 || sxn_write(control, command, length) != (long)length) return 0xFFFFFFFFu;
+    interest.interests = SXN_IO_READ | SXN_IO_ERROR;
+    while (digits < 8) {
+        if (sxn_wait_io(&interest, 1, 5000) != 0 || sxn_read(control, &byte, 1) != 1) return 0xFFFFFFFFu;
+        if (byte == '\n') break;
+        if (byte < '0' || byte > '9') return 0xFFFFFFFFu;
+        value = value * 10u + (unsigned)(byte - '0');
+        ++digits;
+    }
+    return byte == '\n' && digits > 0 ? value : 0xFFFFFFFFu;
+}
+
+struct dns_cancel_test { long cancel, delay; };
+static unsigned char g_dns_cancel_stack[16384] __attribute__((aligned(16)));
+static void dns_cancel_worker(void* argument) {
+    struct dns_cancel_test* test = (struct dns_cancel_test*)argument;
+    (void)sxn_wait_one(test->delay, 300);
+    sxn_thread_exit(sxn_event_set(test->cancel) == 0 ? 0 : 1);
+}
+
+static struct sxndns_resolver g_dns_resolver;
+
+static void test_native_dns(unsigned port) {
+    struct sxn_ipv4_endpoint peer = {0x0a000202u, (uint16_t)port, 0};
+    struct sxn_ipv4_endpoint server, other;
+    struct sxndns_resolver* resolver = &g_dns_resolver;
+    long control = sxn_socket_create(SXN_SOCKET_TCP);
+    long cancel = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    long delay = sxn_event_create(0);
+    struct sxn_io_interest interest = {(int32_t)control, SXN_IO_WRITE | SXN_IO_ERROR};
+    unsigned dns_port;
+    uint32_t ipv4 = 0;
+    uint64_t started;
+    long result;
+
+    /* Parsing, no network. */
+    check(sxndns_parse_ipv4("10.0.2.15", &ipv4) == 0 && ipv4 == 0x0a00020fu);
+    check(sxndns_parse_ipv4("10.0.2.256", &ipv4) == -SAVANXP_EINVAL);
+    check(sxndns_parse_ipv4("10.0.2", &ipv4) == -SAVANXP_EINVAL);
+    check(sxndns_parse_ipv4("10.0.2.1.", &ipv4) == -SAVANXP_EINVAL);
+    check(sxndns_parse_server("10.0.2.3", &server) == 0 && server.ipv4 == 0x0a000203u && server.port == 53);
+    check(sxndns_parse_server("10.0.2.2:5353", &server) == 0 && server.port == 5353);
+    check(sxndns_parse_server("10.0.2.2:0", &server) == -SAVANXP_EINVAL);
+    check(sxndns_parse_server("10.0.2.2:65536", &server) == -SAVANXP_EINVAL);
+    check(sxndns_parse_server(":53", &server) == -SAVANXP_EINVAL);
+    check(sxndns_parse_server("name:53", &server) == -SAVANXP_EINVAL);
+
+    check(control >= 0 && cancel >= 0 && delay >= 0);
+    if (control < 0 || cancel < 0 || delay < 0) goto cleanup;
+    result = sxn_socket_connect(control, &peer);
+    check(result == 0 || result == -SAVANXP_EAGAIN);
+    check(sxn_wait_io(&interest, 1, 5000) == 0 && sxn_socket_status(control) == 0);
+    dns_port = dns_control_number(control, "DNS\n");
+    check(dns_port > 0 && dns_port <= 65535);
+    if (dns_port == 0 || dns_port > 65535) goto cleanup;
+
+    sxndns_init(resolver);
+    check(resolver->server.ipv4 == SXNDNS_DEFAULT_SERVER && resolver->server.port == 53);
+    server.ipv4 = 0x0a000202u;
+    server.port = (uint16_t)dns_port;
+    server.reserved = 0;
+    sxndns_set_server(resolver, &server);
+
+    /* Numeric addresses and bad names never reach the server. */
+    check(sxndns_resolve(resolver, "10.1.2.3", -1, &ipv4) == 0 && ipv4 == 0x0a010203u);
+    check(sxndns_resolve(resolver, "a..savanxp", -1, &ipv4) == SXNDNS_ERROR_BAD_NAME);
+    check(sxndns_resolve(resolver, "a b.savanxp", -1, &ipv4) == SXNDNS_ERROR_BAD_NAME);
+
+    /* An answer, then the same name from the cache in another spelling. */
+    ipv4 = 0;
+    check(sxndns_resolve(resolver, "test.savanxp", -1, &ipv4) == 0 && ipv4 == 0x0a000202u);
+    check(dns_control_number(control, "DNSCOUNT test.savanxp\n") == 1);
+    ipv4 = 0;
+    check(sxndns_resolve(resolver, "TEST.SavanXP.", -1, &ipv4) == 0 && ipv4 == 0x0a000202u);
+    check(dns_control_number(control, "DNSCOUNT test.savanxp\n") == 1);
+    sxn_log("nativetest: sxndns answers and caches by normalized name");
+
+    /* Aliases: in one reply, across two questions, and a loop. */
+    ipv4 = 0;
+    check(sxndns_resolve(resolver, "alias.savanxp", -1, &ipv4) == 0 && ipv4 == 0x0a000202u);
+    ipv4 = 0;
+    check(sxndns_resolve(resolver, "chain.savanxp", -1, &ipv4) == 0 && ipv4 == 0x0a000202u);
+    check(dns_control_number(control, "DNSCOUNT chain.savanxp\n") == 1);
+    check(sxndns_resolve(resolver, "loop1.savanxp", -1, &ipv4) == SXNDNS_ERROR_BAD_REPLY);
+    sxn_log("nativetest: sxndns follows CNAME chains and refuses loops");
+
+    /* Truncated over UDP, assembled over TCP from pieces. */
+    ipv4 = 0;
+    check(sxndns_resolve(resolver, "big.savanxp", -1, &ipv4) == 0 && ipv4 == 0x0a00020au);
+    check(dns_control_number(control, "DNSCOUNT big.savanxp\n") == 2);
+    sxn_log("nativetest: sxndns falls back to TCP for a truncated reply");
+
+    /* A forged reply from another port loses to the server's own. */
+    ipv4 = 0;
+    check(sxndns_resolve(resolver, "spoof.savanxp", -1, &ipv4) == 0 && ipv4 == 0x0a00020bu);
+    sxn_log("nativetest: sxndns believes only the server's address and port");
+
+    /* Each failure says what it is. */
+    check(sxndns_resolve(resolver, "nosuch.savanxp", -1, &ipv4) == SXNDNS_ERROR_NO_SUCH_NAME);
+    check(sxndns_resolve(resolver, "servfail.savanxp", -1, &ipv4) == SXNDNS_ERROR_SERVER_FAILURE);
+    check(sxndns_resolve(resolver, "empty.savanxp", -1, &ipv4) == SXNDNS_ERROR_NO_ADDRESS);
+    check(sxndns_resolve(resolver, "garbage.savanxp", -1, &ipv4) == SXNDNS_ERROR_BAD_REPLY);
+    started = sxn_clock_ns();
+    check(sxndns_resolve(resolver, "silent.savanxp", -1, &ipv4) == SXNDNS_ERROR_TIMEOUT);
+    check(sxn_clock_ns() - started >= 3500000000ull && sxn_clock_ns() - started < 6000000000ull);
+    check(dns_control_number(control, "DNSCOUNT silent.savanxp\n") == 2);
+    sxn_log("nativetest: sxndns reports NXDOMAIN, SERVFAIL, no address, bad replies and timeouts");
+
+    /* A one-second TTL expires; an answer kept until then is not asked again. */
+    check(sxndns_resolve(resolver, "short.savanxp", -1, &ipv4) == 0 && ipv4 == 0x0a000209u);
+    check(sxndns_resolve(resolver, "short.savanxp", -1, &ipv4) == 0);
+    check(dns_control_number(control, "DNSCOUNT short.savanxp\n") == 1);
+    check(sxn_wait_one(delay, 1500) == -SAVANXP_ETIMEDOUT);
+    check(sxndns_resolve(resolver, "short.savanxp", -1, &ipv4) == 0 && ipv4 == 0x0a000209u);
+    check(dns_control_number(control, "DNSCOUNT short.savanxp\n") == 2);
+
+    /* The same server keeps the cache; another one empties it. */
+    sxndns_set_server(resolver, &server);
+    check(sxndns_resolve(resolver, "test.savanxp", -1, &ipv4) == 0);
+    check(dns_control_number(control, "DNSCOUNT test.savanxp\n") == 1);
+    other = server;
+    other.port = (uint16_t)(dns_port == 65535 ? 65534 : dns_port + 1);
+    sxndns_set_server(resolver, &other);
+    sxndns_set_server(resolver, &server);
+    check(sxndns_resolve(resolver, "test.savanxp", -1, &ipv4) == 0 && ipv4 == 0x0a000202u);
+    check(dns_control_number(control, "DNSCOUNT test.savanxp\n") == 2);
+    sxn_log("nativetest: sxndns honours TTLs and empties its cache for a new server");
+
+    /* Cancellation: a set event stops a question before it is sent, still
+     * lets a cached answer through, and interrupts one already waiting. */
+    check(sxn_event_set(cancel) == 0);
+    check(sxndns_resolve(resolver, "test.savanxp", cancel, &ipv4) == 0);
+    check(sxndns_resolve(resolver, "nosuch2.savanxp", cancel, &ipv4) == SXNDNS_ERROR_CANCELLED);
+    check(dns_control_number(control, "DNSCOUNT nosuch2.savanxp\n") == 0);
+    check(sxn_event_reset(cancel) == 0);
+    {
+        struct dns_cancel_test test = {cancel, delay};
+        long worker = sxn_thread_create(dns_cancel_worker, &test,
+                g_dns_cancel_stack + sizeof(g_dns_cancel_stack), 0);
+        int32_t status = -1;
+        check(worker >= 0);
+        if (worker >= 0) {
+            started = sxn_clock_ns();
+            check(sxndns_resolve(resolver, "silent.savanxp", cancel, &ipv4) == SXNDNS_ERROR_CANCELLED);
+            check(sxn_clock_ns() - started < 1500000000ull);
+            check(sxn_wait_one(worker, 5000) == 0);
+            check(sxn_thread_exit_code(worker, &status) == 0 && status == 0);
+            check(sxn_close(worker) == 0);
+        }
+    }
+    sxn_log("nativetest: sxndns cancels through a manual-reset event");
+cleanup:
+    if (control >= 0) check(sxn_close(control) == 0);
+    if (cancel >= 0) check(sxn_close(cancel) == 0);
+    if (delay >= 0) check(sxn_close(delay) == 0);
+}
+
 /* LOG_READ: walks the whole system log this process may read. Finds the
  * record whose text contains `marker`, checks the sequences only grow and
  * says whether a kernel line was seen. */
@@ -3584,6 +3751,7 @@ int main(int argc, char** argv) {
             check(port > 0 && port <= 65535 && *digit == 0);
             if (port && port <= 65535 && *digit == 0) {
                 test_native_tcp(port);
+                test_native_dns(port);
                 test_native_tcp_progress(port);
                 test_native_connect_failures(port);
             }

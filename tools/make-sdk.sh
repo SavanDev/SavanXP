@@ -195,6 +195,7 @@ done
 #   libm.a         math alone, for builds that add -lm (empty without SSE)
 #   libsxgui.a     gui, libsxaudio.a audio, libsxmidi.a midi, libsxgl.a gl
 #   libsxn.a       sun-core: SUN's profile and settings path (sxnprofile.h)
+#                  and DNS resolver (sxndns.h)
 #   libsxngui.a    sun-gui: SUN's application frame and file dialog
 #   libdl.a        dlfcn, in the PIE variant
 make_archive() {
