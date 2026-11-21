@@ -1,10 +1,10 @@
 # Web Viewer with Ladybird
 
-> **Status as of 2026-11-21: N1–N2 complete; N3 in progress — the shared resolver landed.**
-> Web Viewer runs as `/system/webview.sxe` and resolves through SUN's `sxndns`;
-> remote loads still block the UI. The loading worker, Stop and stale-result
-> handling complete N3. N4–N5 and all Ladybird stages remain pending; no
-> Ladybird code has been imported or built.
+> **Status as of 2026-11-21: N1–N3 complete — shared DNS and a loading worker.**
+> Web Viewer runs as `/system/webview.sxe`, resolves through SUN's `sxndns` and
+> loads remote pages on a per-window network worker with Stop. N4 (shared HTTP)
+> is next. N4–N5 and all Ladybird stages remain pending; no Ladybird code has
+> been imported or built.
 
 ## Direction
 
@@ -106,11 +106,38 @@ The network delivery is complete only when the SUN Web Viewer retains its
 existing workflows and browses HTTP/validated HTTPS with cancellation and a
 responsive UI.
 
-## N3 checkpoint — 2026-11-21: the shared resolver
+## N3 implementation checkpoint — 2026-11-21
 
-**N3 is in progress.** Its first half, the shared SUN resolver, has landed;
-the worker that takes loading off the UI thread has not, so the N3 gate is
-not met yet.
+**N3 is complete.** Slow DNS and stalled downloads no longer hold the window:
+remote loading runs on one network worker per window, with Stop, cancellation
+and stale results discarded, over the shared SUN resolver. The next stage is
+N4; the TIME_WAIT reclamation planned before it is still open
+([below](#next-implementation-step--n3)).
+
+### The worker
+
+- `sxngui_app_wake` and the `on_wake` hook (`include/sxn/sxngui.h`) let any
+  thread wake the SUN frame; the hook runs on the UI thread. POSIX's
+  `sxgui_app.c` has no counterpart yet, recorded as pending in
+  [PLATFORM_GRAPHICS.md](../../desktop/PLATFORM_GRAPHICS.md).
+- Web Viewer's worker owns the resolver, the sockets and its own body buffer.
+  Request, progress and result cross in single-slot mailboxes under a futex
+  lock; navigation IDs drop anything obsolete. A new navigation, Back/Forward,
+  Reload, Stop (the Go button, Esc, Go > Stop) and window close set the
+  worker's cancel event, checked first in every wait. Failed and stopped loads
+  keep the displayed document; history moves apply only when a page arrives.
+- Contracts are in [WEBVIEWER.md](../../desktop/WEBVIEWER.md#loading-in-the-background-n3).
+
+### N3 acceptance evidence
+
+| Gate | Evidence |
+|---|---|
+| Slow DNS and stalled downloads leave the window responsive | `./tools/shoot.sh --scenario webview`: during `/stall` (a download that never ends) the status follows the worker, Go reads `Stop`, and Ctrl+U toggles the source of the page on screen; Esc stops and keeps the page. |
+| Cancellation | Stop during resolution of a name the fixture never answers returns `Stopped.` at once; closing the window mid-load ends the process. |
+| Stale results discarded | A typed navigation replaces a stalled one and only the newer page appears. |
+| Resolver | `sxndns-message-test` on the host; `native-network` against `tools/dns_fixture.py`. |
+
+### The shared resolver
 
 - `include/sxn/sxndns.h` (`system/runtime/sxndns.c`, in every native
   program's runtime): numeric IPv4, A/CNAME with chains in one reply and
@@ -130,15 +157,13 @@ Contracts and limits are in
 [NETWORKING.md](../../net/NETWORKING.md#name-resolution-sxndns). POSIX has no
 resolver yet; that gap is recorded there as pending.
 
-### Next implementation step — the N3 worker
+### Next implementation step — N4
 
-One network worker per window owns remote loading and the window's resolver.
-Requests and results cross through a synchronized queue and wake the UI thread
-through the application frame; navigation IDs discard obsolete results. Stop,
-a new navigation, Back/Forward, Reload and window close cancel through the
-worker's event, and a failed or cancelled load keeps the displayed document.
-The gate needs a visual scenario where a slow name and a stalled download
-leave the window repainting, moving and accepting Stop.
+Extract URL and HTTP/1.1 loading from Web Viewer into a reusable SUN library
+that the worker calls, with the framing, redirect, limit and budget rules of
+step 4 above, including the 30-second total navigation budget. Reclaim a
+`TIME_WAIT` slot when the socket table is full first, as planned in the N2
+checkpoint, since N4 opens many short connections.
 
 ## N2 implementation checkpoint — 2026-11-16
 

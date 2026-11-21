@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **Web Viewer loads pages in the background, with Stop** (N3 complete): a network worker per window, so slow names
+  and stalled downloads leave the window responsive; Stop (the Go button, Esc, Go > Stop), a newer navigation or
+  closing the window cancels the load and keeps the page on screen. New SUN frame call `sxngui_app_wake` with the
+  `on_wake` hook ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#loading-in-the-background-n3)).
 - **SUN DNS resolver, `sxn/sxndns.h` (`sxndns_resolve`), and Web Viewer resolves through it** (N3, first half): TTL
   cache, replies believed only from the server's address and port, TCP retry for truncated replies, CNAME chains and a
   cancel event. New host test `sxndns-message-test`; `native-network` checks it against `tools/dns_fixture.py`

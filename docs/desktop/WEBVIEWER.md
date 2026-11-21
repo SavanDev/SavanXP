@@ -1,9 +1,9 @@
 # Web Viewer: the rendering contract
 
-> Web Viewer runs on SUN as `/system/webview.sxe` (N1). Remote loads still
-> block the UI: the worker and shared DNS/HTTP/validated HTTPS are later network
-> stages, before replacing this renderer with the pinned Ladybird engine.
-> See the [roadmap checkpoint](../roadmaps/open/WEBVIEWER_ROADMAP.md#implementation-checkpoint--2026-11-15).
+> Web Viewer runs on SUN as `/system/webview.sxe` (N1) and loads remote pages
+> on a network worker with Stop (N3). Shared HTTP and validated HTTPS are the
+> later network stages, before replacing this renderer with the pinned Ladybird
+> engine. See the [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 
 `/system/webview.sxe` ("Web Viewer", also launched as `webview`) is the in-tree
 browser prototype, in the spirit of IE 1.1: chrome (address bar, Back/Forward
@@ -24,11 +24,35 @@ make no POSIX calls.
 
 The migration retains the optional initial path/URL, `--dns HOST:PORT`, the
 `dns://` override, `file://`, history, links, redirects, Reload and View Source.
-Socket retries use monotonic budgets (route setup six seconds, DNS replies two
-seconds per attempt, TCP connect and writes five seconds, reads ten seconds idle). This is still synchronous
-loading on the UI thread; cancellation/Stop and worker ownership belong to N3.
 The build installs only `/system/webview.sxe` and retires its old `/bin` copies,
 while preserving external applications and game assets.
+
+### Loading in the background (N3)
+
+Local files load on the UI thread; they are on the disk. An `http://` load runs
+on the window's **network worker**, one thread that owns the window's DNS
+resolver, its sockets and a body buffer of its own:
+
+- The UI thread and the worker meet in single-slot mailboxes under one lock:
+  the request, the latest progress line and the result. The worker wakes the
+  window with `sxngui_app_wake`; `on_wake` takes the result on the UI thread,
+  which alone touches widgets, the document and the history.
+- Every navigation has an ID. A result or progress line for any other ID is
+  dropped, so an obsolete page can never replace a newer one.
+- A new navigation (typed, a link, Back/Forward, Reload), **Stop** and closing
+  the window set the worker's cancel event, which every wait of the worker
+  checks first: DNS, connect, write and read. Stop is the Go button (it reads
+  `Stop` during a load), Esc, and Go > Stop.
+- A failed or stopped load keeps the page on screen: the body lands in the
+  worker's buffer and is copied into the document only on success. The address
+  bar goes back to that page, unless the person is typing in it.
+- The status line follows the worker: `Resolving <host>...`, `Connecting to
+  <host>...`, `Waiting for <host>...`. History moves (a push, or Back/Forward's
+  target) are applied only when the page arrives.
+
+Budgets are monotonic: route setup six seconds, DNS replies two seconds per
+attempt, connect and writes five seconds, reads ten seconds idle. A total
+navigation budget arrives with shared HTTP (N4).
 
 ## Selectors and origins
 
@@ -75,8 +99,7 @@ server empties the window's DNS cache.
 ## What it is not (yet)
 
 No TLS, no images (an `[image]` marker), tables
-degrade to stacked lines, fragments reload the page top, fetches block the UI,
-documents cap at 32 KiB / 256 paragraphs / 64 links / 256 runs / 32 rules /
+degrade to stacked lines, fragments reload the page top, documents cap at 32 KiB / 256 paragraphs / 64 links / 256 runs / 32 rules /
 4 KiB of CSS. Errors say which of these bit.
 
 ## Verification
@@ -87,6 +110,12 @@ source, follows a 302, and asserts glyphs of `tools/webview-test-www/` against
 the platform font tables. Glyph asserts use `solid_only` where anti-aliased edges
 of neighbouring glyphs overlap: the harness blends against the background
 while the painter blends in sequence (see the scenario comments).
+
+The N3 steps load `/stall`, a download that never finishes, and check that the
+window repaints the worker's progress and shows `Stop`, takes Ctrl+U during the
+load, and keeps its page when Esc stops it; Stop during the resolution of a
+name the DNS fixture never answers; a newer navigation replacing a stalled
+one; and closing the window in the middle of a load.
 
 The visual scenario also launches `webview --dns HOST:PORT URL`, checks F5,
 launches `/system/webview.sxe /system/samples/welcome.html`, and opens a

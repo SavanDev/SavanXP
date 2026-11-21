@@ -3213,6 +3213,68 @@ def scenario_webview_http(s):
         width, height = nxdomain.size
         expect_text(nxdomain, (0, 0, width, height), "No such host", TEXT, FACE,
                     "el aviso de NXDOMAIN", solid_only=True)
+        # A failed load keeps the page that was on screen.
+        expect_text(nxdomain, (0, 0, *nxdomain.size), "It works over HTTP", TEXT, FIELD,
+                    "the page kept after NXDOMAIN", which="title", solid_only=True)
+        # N3: loads run on the window's network worker. A request the server
+        # never answers leaves the window repainting (the status follows the
+        # worker, Go reads Stop) and taking input (Ctrl+U shows the source of
+        # the page still on screen); Stop drops it and keeps that page.
+        s.qmp.chord("ctrl", "u")
+        time.sleep(2.0)
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/stall")
+        s.qmp.tap("ret", pause=4.0)
+        stalled = s.shot("webview-n3-stalled")
+        expect_text(stalled, (0, 0, *stalled.size), "Waiting for", TEXT, FACE,
+                    "the worker's progress while the server stalls", solid_only=True)
+        expect_text(stalled, (0, 0, *stalled.size), "Stop", TEXT, FACE,
+                    "Go reads Stop during a load", solid_only=True)
+        expect_text(stalled, (0, 0, *stalled.size), "<p>This page arrived", TEXT, FIELD,
+                    "the source of the page on screen, during the load", solid_only=True)
+        s.qmp.chord("ctrl", "u")
+        time.sleep(2.0)
+        responsive = s.shot("webview-n3-input")
+        expect_text(responsive, (0, 0, *responsive.size), "It works over HTTP", TEXT, FIELD,
+                    "Ctrl+U back to the page while the load waits", which="title", solid_only=True)
+        s.qmp.tap("esc", pause=2.0)
+        stopped = s.shot("webview-n3-stopped")
+        expect_text(stopped, (0, 0, *stopped.size), "Stopped.", TEXT, FACE,
+                    "Esc stops the load", solid_only=True)
+        expect_text(stopped, (0, 0, *stopped.size), "It works over HTTP", TEXT, FIELD,
+                    "the page kept after Stop", which="title", solid_only=True)
+        # A name the server never answers: Stop cancels the resolver itself,
+        # well before its four seconds of budget run out.
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, "silent.savanxp:" + ready[1], "/index.html")
+        s.qmp.tap("ret", pause=1.0)
+        resolving = s.shot("webview-n3-resolving")
+        expect_text(resolving, (0, 0, *resolving.size), "Resolving silent", TEXT, FACE,
+                    "the worker resolving a silent name", solid_only=True)
+        s.qmp.tap("esc", pause=1.0)
+        dns_stopped = s.shot("webview-n3-dns-stopped")
+        expect_text(dns_stopped, (0, 0, *dns_stopped.size), "Stopped.", TEXT, FACE,
+                    "Stop during name resolution", solid_only=True)
+        # A newer navigation replaces one in flight: the stalled request is
+        # dropped, and only the page asked for last appears.
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/stall")
+        s.qmp.tap("ret", pause=2.0)
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/second.html")
+        s.qmp.tap("ret", pause=6.0)
+        replaced = s.shot("webview-n3-replaced")
+        expect_text(replaced, (0, 0, *replaced.size), "Second page", TEXT, FIELD,
+                    "the newer navigation wins over the stalled one", which="title", solid_only=True)
+        # Closing the window in the middle of a load (the next step's Alt+F4).
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/stall")
+        s.qmp.tap("ret", pause=2.0)
         # N1 also preserves launch arguments, DNS overrides and reload on SUN.
         s.qmp.chord("alt", "f4")
         time.sleep(2.0)

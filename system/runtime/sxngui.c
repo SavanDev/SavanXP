@@ -278,9 +278,16 @@ int sxngui_app_init(struct sxngui_app *app, const struct sxnwm_presentation_sour
     memset(app, 0, sizeof(*app));
     sxgui_set_host(&k_sun_host);
     sxgui_set_host_clipboard(&k_sun_host_clipboard);
+    app->wake_event = sxn_event_create(0);
+    if (app->wake_event < 0)
+    {
+        return (int)app->wake_event;
+    }
     result = sxnwm_connect(&app->wm);
     if (result < 0)
     {
+        (void)sxn_close(app->wake_event);
+        app->wake_event = -1;
         return (int)result;
     }
     if (presentation != 0)
@@ -329,6 +336,19 @@ void sxngui_app_request_repaint(struct sxngui_app *app)
     {
         app->needs_repaint = 1;
     }
+}
+
+long sxngui_app_wake(struct sxngui_app *app)
+{
+    if (app == 0 || app->wake_event <= 0)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    /* The flag first, then the event: the loop clears the flag before it
+     * looks at the queue, so a wake that lands after the look sets both
+     * again and the next wait returns at once. */
+    __atomic_store_n(&app->wake_pending, 1, __ATOMIC_RELEASE);
+    return sxn_event_set(app->wake_event) < 0 ? -SAVANXP_EINVAL : 0;
 }
 
 void sxngui_app_quit(struct sxngui_app *app, int exit_code)
@@ -593,10 +613,11 @@ static void sxngui_paint(struct sxngui_app *app)
 }
 
 /* Sleep until the window has something (input, a resize, a close), a
- * dialog or the popup has input, or the next tick is due. */
+ * dialog or the popup has input, another thread woke the app, or the next
+ * tick is due. */
 static void sxngui_wait(struct sxngui_app *app, unsigned long next_tick_ms)
 {
-    int32_t handles[2];
+    int32_t handles[3];
     unsigned long count = 0;
     long timeout_ms = -1;
 
@@ -606,6 +627,7 @@ static void sxngui_wait(struct sxngui_app *app, unsigned long next_tick_ms)
         timeout_ms = next_tick_ms > now ? (long)(next_tick_ms - now) : 0;
     }
     handles[count++] = (int32_t)app->wm.wake_fd;
+    handles[count++] = (int32_t)app->wake_event;
     if (app->dialog_window_open || app->popup_window_open)
     {
         handles[count++] = (int32_t)app->wm.events_fd;
@@ -693,6 +715,16 @@ int sxngui_app_run(struct sxngui_app *app)
         else
         {
             app->close_pending = 0;
+        }
+        /* A worker woke the window: its results are the app's to take, on
+         * this thread. */
+        if (__atomic_exchange_n(&app->wake_pending, 0, __ATOMIC_ACQ_REL))
+        {
+            if (app->on_wake != 0)
+            {
+                app->on_wake(app);
+            }
+            app->needs_repaint = 1;
         }
         /* The interval is read on every pass: an app that offers a refresh
          * speed only has to write the field. */

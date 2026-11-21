@@ -2,7 +2,10 @@
 """Tiny HTTP fixture for the Web Viewer visual scenario.
 
 Serves a directory of static pages plus one redirect (/old.html -> 302 to
-/index.html). Binds an ephemeral port on loopback and prints READY <port>: the
+/index.html) and /stall, a download that never finishes: headers, then one
+byte every two seconds for a minute, so the viewer's idle budget never runs
+out. It is the page Stop and background loading are tried on.
+Each request has its own thread, so a stalled one does not hold the others. Binds an ephemeral port on loopback and prints READY <port>: the
 guest reaches the host at 10.0.2.2 through QEMU slirp, so the scenario types
 http://10.0.2.2:<port>/... into the address bar.
 
@@ -13,8 +16,9 @@ with the READY line the parent parses.
 import argparse
 import os
 import sys
+import time
 from functools import partial
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -46,6 +50,19 @@ class Handler(BaseHTTPRequestHandler):
         # The viewer under test asks HTTP/1.0; answer 1.0 with close so no
         # chunked body is ever needed.
         target = self.path.split("?", 1)[0]
+        if target == "/stall":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            try:
+                for _ in range(30):
+                    self.wfile.write(b" ")
+                    self.wfile.flush()
+                    time.sleep(2)
+            except OSError:
+                pass
+            return
         if target == "/old.html":
             self.send_response(302)
             self.send_header("Location", "/index.html")
@@ -65,7 +82,8 @@ def main():
     args = parser.parse_args()
     handler = partial(Handler)
     Handler.directory = args.dir
-    server = HTTPServer((args.bind, 0), handler)
+    server = ThreadingHTTPServer((args.bind, 0), handler)
+    server.daemon_threads = True
     port = server.server_address[1]
     print("READY %d" % port, flush=True)
     try:

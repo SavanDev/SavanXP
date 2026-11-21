@@ -83,6 +83,16 @@ POSIX loop sleeps 16 ms between passes, this one waits on the window's wake
 event and the dialogs' pipe with a timeout until the next tick, so an idle
 window does not wake up.
 
+A worker thread hands results back with `sxngui_app_wake`, callable from any
+thread: it sets a flag and an event of the frame's own, and the loop calls the
+app's `on_wake` hook on the UI thread and repaints. Wakes coalesce, so the hook
+drains whatever the worker queued; the hook, not the worker, touches widgets.
+The event lives until the process ends, so a worker that wakes a window
+already closed does no harm. Web Viewer's network worker is the consumer
+([WEBVIEWER.md](WEBVIEWER.md#native-frontend-and-io)). **Pending, POSIX
+parity:** `sxgui_app.c` has no `on_wake` yet; it is to gain one (a flag its
+16 ms poll reads) with the first POSIX program that loads in the background.
+
 Dialogs work the same way: `struct sxgui_dialog_host` gives them a window of
 their own, and each frame is the host that provides it.
 

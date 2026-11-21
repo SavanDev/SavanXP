@@ -41,6 +41,7 @@
 #define WEBVIEW_MENU_ABOUT 20
 #define WEBVIEW_MENU_BACK 30
 #define WEBVIEW_MENU_FORWARD 31
+#define WEBVIEW_MENU_STOP 32
 
 #define WEBVIEW_CONTENT_WIDTH 560
 #define WEBVIEW_CONTENT_HEIGHT 420
@@ -1936,8 +1937,7 @@ static void webview_invalidate_layout(void)
 }
 
 static int webview_load_file(const char *path);
-static int webview_fetch_http(const char *url);
-static int webview_open_location(const char *location, int push);
+static int webview_open_location(const char *location, int push, int hist_target);
 static void webview_navigate(const char *address, int push);
 
 static void webview_show_welcome(void)
@@ -1960,8 +1960,8 @@ static void webview_show_welcome(void)
         0, 0, 1, 2);
     webview_push_para("Double-clicking an .html file in Files opens it here.", 0, 0, 1, 1);
     webview_push_para(
-        "Not in this version: images and background loading. "
-        "Names resolve through the network's DNS.",
+        "Pages load in the background: Stop (Esc) drops a slow one. "
+        "Not in this version: images.",
         0, 0, 0, 2);
     webview_refresh_status();
     webview_invalidate_layout();
@@ -2076,54 +2076,179 @@ static void webview_render_current(void)
     webview_invalidate_layout();
 }
 
-/* ---- name resolution and sockets -------------------------------------------
+/* ---- name resolution, sockets and the network worker ---------------------------
  *
- * Names resolve through SUN's shared resolver (include/sxn/sxndns.h): numeric
- * IPv4 never touches the network, anything else is asked of the window's
- * DNS server, 10.0.2.3 under QEMU slirp unless --dns or dns:// says otherwise.
- * Changing the server empties the resolver's cache.
+ * Remote loading runs on one network worker thread per window (N3 in
+ * docs/roadmaps/open/WEBVIEWER_ROADMAP.md). The UI thread owns every widget,
+ * the document and the history; the worker owns the window's resolver
+ * (include/sxn/sxndns.h), its sockets and a body buffer of its own, so a load
+ * that fails or is stopped never touches the page on screen.
+ *
+ * They meet in single-slot mailboxes under one lock: the request, the latest
+ * progress line and the result. Each navigation has an ID, and whatever
+ * carries an ID the UI is no longer waiting for is dropped. A new navigation,
+ * Stop and closing the window set the cancel event, which every wait of the
+ * worker checks first; the worker hands results back through sxngui_app_wake,
+ * and on_wake takes them on the UI thread.
  */
 
-static struct sxndns_resolver g_resolver;
+#define WEBVIEW_WORKER_STACK (64 * 1024)
 
-/* Retry native operations through readiness, with a monotonic deadline.
- * Loading remains synchronous until the shared DNS/worker milestone N3. */
-static int webview_wait_socket(long socket, unsigned interests, uint64_t deadline)
+enum webview_load_outcome
 {
-    struct sxn_io_interest wait = {(int32_t)socket, interests | SXN_IO_ERROR};
-    uint64_t now = sxn_clock_ns();
-    if (now >= deadline) return -1;
-    return sxn_wait_io(&wait, 1, (long)((deadline - now + 999999u) / 1000000u)) < 0 ? -1 : 0;
+    WEBVIEW_LOAD_PAGE,      /* the body is in the result */
+    WEBVIEW_LOAD_FILE,      /* a redirect named a local file: the UI opens it */
+    WEBVIEW_LOAD_FAILED,    /* `message` says why */
+    WEBVIEW_LOAD_CANCELLED, /* the cancel event was set */
+};
+
+struct webview_request
+{
+    uint32_t id;
+    char url[WEBVIEW_PATH_CAPACITY];
+    struct sxn_ipv4_endpoint dns;
+};
+
+struct webview_result
+{
+    uint32_t id;
+    enum webview_load_outcome outcome;
+    char location[WEBVIEW_PATH_CAPACITY]; /* the final URL, or the file a redirect named */
+    char message[WEBVIEW_STATUS_CAPACITY];
+    char note[32];
+    int truncated;
+    size_t length;
+};
+
+/* The lock: 0 free, 1 held, 2 held with waiters, a futex mutex over
+ * sxn_wait_address. Held only to copy a slot, never across a wait. */
+static uint32_t g_mailbox_lock;
+/* Under the lock. */
+static struct webview_request g_request;
+static int g_request_ready;
+static int g_worker_quit;
+static struct webview_result g_result;
+static int g_result_ready;
+static char g_result_body[WEBVIEW_RAW_CAPACITY];
+static uint32_t g_progress_id;
+static char g_progress[WEBVIEW_STATUS_CAPACITY];
+
+static long g_work_event = -1;   /* auto-reset: a request, or quitting, is waiting */
+static long g_cancel_event = -1; /* manual-reset: drop what is being loaded */
+static long g_worker = -1;
+static unsigned char g_worker_stack[WEBVIEW_WORKER_STACK] __attribute__((aligned(16)));
+
+/* The worker's own. */
+static struct sxndns_resolver g_resolver;
+static char g_load_raw[WEBVIEW_RAW_CAPACITY];
+
+/* The UI's own: the DNS server the next request carries (--dns, dns://). The
+ * worker hands it to its resolver, which empties its cache when it changes. */
+static struct sxn_ipv4_endpoint g_dns_server;
+
+static void webview_lock(void)
+{
+    uint32_t state = 0;
+
+    if (__atomic_compare_exchange_n(&g_mailbox_lock, &state, 1, 0, __ATOMIC_ACQUIRE,
+            __ATOMIC_RELAXED))
+    {
+        return;
+    }
+    if (state != 2)
+    {
+        state = __atomic_exchange_n(&g_mailbox_lock, 2, __ATOMIC_ACQUIRE);
+    }
+    while (state != 0)
+    {
+        (void)sxn_wait_address(&g_mailbox_lock, 2, sizeof(g_mailbox_lock), -1);
+        state = __atomic_exchange_n(&g_mailbox_lock, 2, __ATOMIC_ACQUIRE);
+    }
 }
 
+static void webview_unlock(void)
+{
+    if (__atomic_exchange_n(&g_mailbox_lock, 0, __ATOMIC_RELEASE) == 2)
+    {
+        (void)sxn_wake_address(&g_mailbox_lock, 1);
+    }
+}
+
+/* The worker tells the UI what it is doing, for the status line. */
+static void webview_progress(uint32_t id, const char *text)
+{
+    webview_lock();
+    g_progress_id = id;
+    snprintf(g_progress, sizeof(g_progress), "%s", text);
+    webview_unlock();
+    (void)sxngui_app_wake(&g_app);
+}
+
+/* Waits for the socket through readiness, the cancel event first, until a
+ * monotonic deadline. 0, -ETIMEDOUT or -ECANCELED. */
+static long webview_wait_socket(long socket, unsigned interests, uint64_t deadline)
+{
+    struct sxn_io_interest waits[2] = {
+        {(int32_t)g_cancel_event, 0},
+        {(int32_t)socket, interests | SXN_IO_ERROR},
+    };
+    uint64_t now = sxn_clock_ns();
+    long result;
+
+    if (now >= deadline)
+    {
+        return -SAVANXP_ETIMEDOUT;
+    }
+    result = sxn_wait_io(waits, 2, (long)((deadline - now + 999999u) / 1000000u));
+    if (result == 0)
+    {
+        return -SAVANXP_ECANCELED;
+    }
+    return result < 0 ? -SAVANXP_ETIMEDOUT : 0;
+}
+
+/* A read with ten seconds of idle budget. Bytes, 0 at the end, or negative. */
 static long webview_read_socket(long socket, void *buffer, size_t count)
 {
     uint64_t deadline = sxn_clock_ns() + 10000000000ull;
     long result;
+
     while ((result = sxn_read(socket, buffer, count)) == -SAVANXP_EAGAIN)
-        if (webview_wait_socket(socket, SXN_IO_READ, deadline) < 0) return -SAVANXP_ETIMEDOUT;
+    {
+        long waited = webview_wait_socket(socket, SXN_IO_READ, deadline);
+
+        if (waited < 0)
+        {
+            return waited;
+        }
+    }
     return result;
 }
 
-static int webview_connect_socket(long socket, const struct sxn_ipv4_endpoint *peer)
+/* Connects within five seconds. 0, -ECANCELED, or another negative error. */
+static long webview_connect_socket(long socket, const struct sxn_ipv4_endpoint *peer)
 {
     uint64_t deadline = sxn_clock_ns() + 5000000000ull;
     long result = sxn_socket_connect(socket, peer);
+
     while (result == -SAVANXP_EAGAIN)
     {
-        if (webview_wait_socket(socket, SXN_IO_WRITE, deadline) < 0) return -1;
+        long waited = webview_wait_socket(socket, SXN_IO_WRITE, deadline);
+
+        if (waited < 0)
+        {
+            return waited;
+        }
         result = sxn_socket_status(socket);
     }
-    return result < 0 ? -1 : 0;
+    return result < 0 ? result : 0;
 }
 
 /* ---- fetching ---------------------------------------------------------------
  *
- * Plain HTTP/1.0 over a blocking TCP client, the tcpget recipe moved indoors:
- * connect, GET, read to EOF. Hosts resolve through DNS (numeric IPv4 stays a
- * fast path); no TLS, no chunked
- * body (a 1.0 request avoids it), no background loading: the window stands
- * still while the bytes arrive, which on a LAN is milliseconds.
+ * Plain HTTP/1.0 on the worker, the tcpget recipe moved indoors: connect,
+ * GET, read to EOF. Hosts resolve through sxndns (numeric IPv4 stays a fast
+ * path); no TLS and no chunked body (a 1.0 request avoids it).
  */
 
 static void webview_refresh_nav(void);
@@ -2327,7 +2452,8 @@ static int webview_resolve_against(const char *base, const char *ref, char *out,
     }
 }
 
-static int webview_fetch_write_all(int fd, const char *buffer, size_t length)
+/* Writes all of `buffer`. 0, -ECANCELED, or another negative error. */
+static long webview_fetch_write_all(long fd, const char *buffer, size_t length)
 {
     size_t sent = 0;
     uint64_t deadline = sxn_clock_ns() + 5000000000ull;
@@ -2335,29 +2461,51 @@ static int webview_fetch_write_all(int fd, const char *buffer, size_t length)
     while (sent < length)
     {
         long written = sxn_write(fd, buffer + sent, length - sent);
+
         if (written == -SAVANXP_EAGAIN)
         {
-            if (webview_wait_socket(fd, SXN_IO_WRITE, deadline) < 0) return -1;
+            long waited = webview_wait_socket(fd, SXN_IO_WRITE, deadline);
+
+            if (waited < 0)
+            {
+                return waited;
+            }
             continue;
         }
-
         if (written <= 0)
         {
-            return -1;
+            return written < 0 ? written : -SAVANXP_EIO;
         }
         sent += (size_t)written;
     }
     return 0;
 }
 
-/* Fetches an http:// URL into g_raw, following redirects. Sets g_path to the
- * final URL. Returns 0 with the body ready, -1 with the reason in g_status. */
-static int webview_fetch_http(const char *url)
+#define WEBVIEW_FETCH_FAIL(...)                                                  \
+    do                                                                           \
+    {                                                                            \
+        result->outcome = WEBVIEW_LOAD_FAILED;                                   \
+        snprintf(result->message, sizeof(result->message), __VA_ARGS__);       \
+        return;                                                                  \
+    } while (0)
+
+#define WEBVIEW_FETCH_CANCELLED()                                                \
+    do                                                                           \
+    {                                                                            \
+        result->outcome = WEBVIEW_LOAD_CANCELLED;                                \
+        return;                                                                  \
+    } while (0)
+
+/* On the worker: fetches the request's http:// URL into g_load_raw,
+ * following redirects, and says how it went in `result`. Touches nothing the
+ * UI owns. */
+static void webview_fetch_http(const struct webview_request *request, struct webview_result *result)
 {
     char current[WEBVIEW_PATH_CAPACITY];
+    char progress[WEBVIEW_STATUS_CAPACITY];
     int hop;
 
-    snprintf(current, sizeof(current), "%s", url);
+    snprintf(current, sizeof(current), "%s", request->url);
     for (hop = 0; hop <= WEBVIEW_FETCH_REDIRECTS; hop += 1)
     {
         char host[WEBVIEW_URL_HOST_CAP];
@@ -2366,7 +2514,8 @@ static int webview_fetch_http(const char *url)
         uint32_t ipv4 = 0;
         struct sxn_ipv4_endpoint address;
         long fd;
-        char request[1024];
+        long io;
+        char request_text[1024];
         size_t total = 0;
         int read_failed = 0;
         const char *headers_end = 0;
@@ -2378,57 +2527,75 @@ static int webview_fetch_http(const char *url)
         if (webview_split_http_url(current, host, sizeof(host), &port, path,
                 sizeof(path)) != 0)
         {
-            snprintf(g_status, sizeof(g_status), "That URL is malformed.");
-            return -1;
+            WEBVIEW_FETCH_FAIL("That URL is malformed.");
         }
+        snprintf(progress, sizeof(progress), "Resolving %s...", host);
+        webview_progress(request->id, progress);
         {
-            long resolved = sxndns_resolve(&g_resolver, host, -1, &ipv4);
+            long resolved = sxndns_resolve(&g_resolver, host, g_cancel_event, &ipv4);
 
+            if (resolved == SXNDNS_ERROR_CANCELLED)
+            {
+                WEBVIEW_FETCH_CANCELLED();
+            }
             if (resolved == SXNDNS_ERROR_NO_SUCH_NAME)
             {
-                snprintf(g_status, sizeof(g_status), "No such host: %s.", host);
-                return -1;
+                WEBVIEW_FETCH_FAIL("No such host: %s.", host);
             }
             if (resolved != 0)
             {
-                snprintf(g_status, sizeof(g_status), "Cannot resolve %s: %s", host,
-                    sxndns_error_text(resolved));
-                return -1;
+                WEBVIEW_FETCH_FAIL("Cannot resolve %s: %s", host, sxndns_error_text(resolved));
             }
         }
         fd = sxn_socket_create(SXN_SOCKET_TCP);
         if (fd < 0)
         {
-            snprintf(g_status, sizeof(g_status), "No network.");
-            return -1;
+            WEBVIEW_FETCH_FAIL("No network.");
         }
+        snprintf(progress, sizeof(progress), "Connecting to %s...", host);
+        webview_progress(request->id, progress);
         memset(&address, 0, sizeof(address));
         address.ipv4 = ipv4;
         address.port = (uint16_t)port;
-        if (webview_connect_socket(fd, &address) < 0)
+        io = webview_connect_socket(fd, &address);
+        if (io < 0)
         {
-            snprintf(g_status, sizeof(g_status), "Cannot connect to %s.", host);
-            sxn_close((int)fd);
-            return -1;
+            sxn_close(fd);
+            if (io == -SAVANXP_ECANCELED)
+            {
+                WEBVIEW_FETCH_CANCELLED();
+            }
+            WEBVIEW_FETCH_FAIL("Cannot connect to %s.", host);
         }
-        snprintf(request, sizeof(request), "GET %s HTTP/1.0\r\nHost: %s\r\n"
-                                           "Connection: close\r\n\r\n",
+        snprintf(request_text, sizeof(request_text), "GET %s HTTP/1.0\r\nHost: %s\r\n"
+                                                     "Connection: close\r\n\r\n",
             path, host);
-        if (webview_fetch_write_all((int)fd, request, strlen(request)) != 0)
+        io = webview_fetch_write_all(fd, request_text, strlen(request_text));
+        if (io < 0)
         {
-            snprintf(g_status, sizeof(g_status), "The request failed.");
-            sxn_close((int)fd);
-            return -1;
+            sxn_close(fd);
+            if (io == -SAVANXP_ECANCELED)
+            {
+                WEBVIEW_FETCH_CANCELLED();
+            }
+            WEBVIEW_FETCH_FAIL("The request failed.");
         }
+        snprintf(progress, sizeof(progress), "Waiting for %s...", host);
+        webview_progress(request->id, progress);
         for (;;)
         {
             long got;
 
-            if (total >= sizeof(g_raw) - 1)
+            if (total >= sizeof(g_load_raw) - 1)
             {
                 break;
             }
-            got = webview_read_socket(fd, g_raw + total, sizeof(g_raw) - 1 - total);
+            got = webview_read_socket(fd, g_load_raw + total, sizeof(g_load_raw) - 1 - total);
+            if (got == -SAVANXP_ECANCELED)
+            {
+                sxn_close(fd);
+                WEBVIEW_FETCH_CANCELLED();
+            }
             if (got == 0)
             {
                 break;
@@ -2440,17 +2607,17 @@ static int webview_fetch_http(const char *url)
             }
             total += (size_t)got;
         }
-        sxn_close((int)fd);
-        g_raw[total] = '\0';
+        sxn_close(fd);
+        g_load_raw[total] = '\0';
 
-        headers_end = strstr(g_raw, "\r\n\r\n");
+        headers_end = strstr(g_load_raw, "\r\n\r\n");
         if (headers_end != 0)
         {
             headers_end += 4;
         }
         else
         {
-            headers_end = strstr(g_raw, "\n\n");
+            headers_end = strstr(g_load_raw, "\n\n");
             if (headers_end != 0)
             {
                 headers_end += 2;
@@ -2460,26 +2627,21 @@ static int webview_fetch_http(const char *url)
         {
             if (read_failed || total == 0)
             {
-                snprintf(g_status, sizeof(g_status), "The connection dropped.");
+                WEBVIEW_FETCH_FAIL("The connection dropped.");
             }
-            else
-            {
-                snprintf(g_status, sizeof(g_status), "Not an HTTP response.");
-            }
-            return -1;
+            WEBVIEW_FETCH_FAIL("Not an HTTP response.");
         }
-        header_length = (size_t)(headers_end - g_raw);
+        header_length = (size_t)(headers_end - g_load_raw);
         body = headers_end;
         body_length = total - header_length;
         {
-            const char *space = strchr(g_raw, ' ');
+            const char *space = strchr(g_load_raw, ' ');
 
-            if (strncmp(g_raw, "HTTP/", 5) != 0 || space == 0 || space[1] < '0' ||
+            if (strncmp(g_load_raw, "HTTP/", 5) != 0 || space == 0 || space[1] < '0' ||
                 space[1] > '9' || space[2] < '0' || space[2] > '9' || space[3] < '0' ||
                 space[3] > '9')
             {
-                snprintf(g_status, sizeof(g_status), "Not an HTTP response.");
-                return -1;
+                WEBVIEW_FETCH_FAIL("Not an HTTP response.");
             }
             code = (space[1] - '0') * 100 + (space[2] - '0') * 10 + (space[3] - '0');
         }
@@ -2488,7 +2650,7 @@ static int webview_fetch_http(const char *url)
             /* Redirect: find the Location header, resolve it against this URL
              * (absolute, root-absolute or relative all work) and refetch. The
              * half-read body is discarded; the connection is already closed. */
-            const char *line = strchr(g_raw, '\n');
+            const char *line = strchr(g_load_raw, '\n');
             char location[WEBVIEW_PATH_CAPACITY];
             char next[WEBVIEW_PATH_CAPACITY];
             int resolved = -2;
@@ -2523,58 +2685,293 @@ static int webview_fetch_http(const char *url)
             }
             if (location[0] == '\0')
             {
-                snprintf(g_status, sizeof(g_status),
-                    "The server redirected without saying where.");
-                return -1;
+                WEBVIEW_FETCH_FAIL("The server redirected without saying where.");
             }
             resolved = webview_resolve_against(current, location, next, sizeof(next));
             if (resolved == -1 || strstr(next, "://") == 0 ||
                 (strncmp(next, "http://", 7) != 0 && strncmp(next, "file://", 7) != 0))
             {
-                snprintf(g_status, sizeof(g_status),
-                    "Cannot follow that redirect.");
-                return -1;
+                WEBVIEW_FETCH_FAIL("Cannot follow that redirect.");
             }
             if (resolved == -2)
             {
-                snprintf(g_status, sizeof(g_status), "That address is too long.");
-                return -1;
+                WEBVIEW_FETCH_FAIL("That address is too long.");
             }
             if (strncmp(next, "file://", 7) == 0)
             {
-                /* An http URL redirecting to a file: resolve, then fall into
-                 * the file loader below through the shared tail. */
-                snprintf(current, sizeof(current), "%s", next + 7);
-                if (webview_load_file(current) == 0)
-                {
-                    return 0;
-                }
-                return -1;
+                /* An http URL redirecting to a file: the UI thread opens it. */
+                result->outcome = WEBVIEW_LOAD_FILE;
+                snprintf(result->location, sizeof(result->location), "%s", next + 7);
+                return;
             }
             snprintf(current, sizeof(current), "%s", next);
             continue;
         }
         /* Any other status keeps its body: error pages are pages too. */
-        memmove(g_raw, body, body_length);
-        g_raw[body_length] = '\0';
-        g_truncated = total >= sizeof(g_raw) - 1;
-        g_fetch_note[0] = '\0';
+        memmove(g_load_raw, body, body_length);
+        g_load_raw[body_length] = '\0';
+        result->outcome = WEBVIEW_LOAD_PAGE;
+        result->length = body_length;
+        result->truncated = total >= sizeof(g_load_raw) - 1;
+        result->note[0] = '\0';
         if (read_failed)
         {
-            snprintf(g_fetch_note, sizeof(g_fetch_note), " (connection dropped)");
+            snprintf(result->note, sizeof(result->note), " (connection dropped)");
         }
-        snprintf(g_path, sizeof(g_path), "%s", current);
-        g_has_file = 1;
-        return 0;
+        snprintf(result->location, sizeof(result->location), "%s", current);
+        return;
     }
-    snprintf(g_status, sizeof(g_status), "Too many redirects.");
-    return -1;
+    WEBVIEW_FETCH_FAIL("Too many redirects.");
 }
 
+/* The worker thread: one request at a time, each with the cancel event
+ * cleared as it is taken, so a cancel set after that point is for it. */
+static void webview_worker_main(void *argument)
+{
+    static struct webview_result result;
+    struct webview_request request;
+
+    (void)argument;
+    for (;;)
+    {
+        int have = 0;
+
+        (void)sxn_wait_one(g_work_event, -1);
+        webview_lock();
+        if (g_worker_quit)
+        {
+            webview_unlock();
+            sxn_thread_exit(0);
+        }
+        if (g_request_ready)
+        {
+            request = g_request;
+            g_request_ready = 0;
+            (void)sxn_event_reset(g_cancel_event);
+            have = 1;
+        }
+        webview_unlock();
+        if (!have)
+        {
+            continue;
+        }
+        memset(&result, 0, sizeof(result));
+        result.id = request.id;
+        sxndns_set_server(&g_resolver, &request.dns);
+        webview_fetch_http(&request, &result);
+        webview_lock();
+        g_result = result;
+        if (result.outcome == WEBVIEW_LOAD_PAGE)
+        {
+            memcpy(g_result_body, g_load_raw, result.length + 1);
+        }
+        g_result_ready = 1;
+        webview_unlock();
+        (void)sxngui_app_wake(&g_app);
+    }
+}
+
+/* ---- navigation ----------------------------------------------------------------
+ *
+ * The UI side of a remote load. g_nav is the navigation the window waits for
+ * (ID 0: none); what it pushes into the history, or which history entry it
+ * moves to, is applied only when its page arrives.
+ */
+
+struct webview_navigation
+{
+    uint32_t id;
+    int push;
+    int hist_target;
+};
+
+static struct webview_navigation g_nav;
+static uint32_t g_nav_counter = 0;
+
+static void webview_set_loading(int loading)
+{
+    WEBVIEW_GO->text = loading ? "Stop" : "Go";
+    sxngui_app_request_repaint(&g_app);
+}
+
+/* Drops the navigation in flight, if there is one: an unstarted request is
+ * withdrawn and the cancel event set. Its result, when it comes, carries an
+ * ID nobody waits for. 1 if something was loading. */
+static int webview_cancel_navigation(void)
+{
+    if (g_nav.id == 0)
+    {
+        return 0;
+    }
+    webview_lock();
+    g_request_ready = 0;
+    (void)sxn_event_set(g_cancel_event);
+    webview_unlock();
+    g_nav.id = 0;
+    webview_set_loading(0);
+    return 1;
+}
+
+/* Stop (the Stop button, Esc, Go > Stop): the page on screen stays. */
+static void webview_stop(void)
+{
+    if (webview_cancel_navigation())
+    {
+        snprintf(g_status, sizeof(g_status), "Stopped.");
+        webview_sync_address();
+        webview_refresh_nav();
+    }
+}
+
+/* Hands `url` to the worker. Whatever was loading is dropped first. */
+static void webview_start_remote(const char *url, int push, int hist_target)
+{
+    (void)webview_cancel_navigation();
+    if (g_worker < 0)
+    {
+        snprintf(g_status, sizeof(g_status), "The network worker did not start.");
+        webview_sync_address();
+        return;
+    }
+    g_nav_counter += 1;
+    if (g_nav_counter == 0)
+    {
+        g_nav_counter = 1;
+    }
+    g_nav.id = g_nav_counter;
+    g_nav.push = push;
+    g_nav.hist_target = hist_target;
+    webview_lock();
+    g_request.id = g_nav.id;
+    snprintf(g_request.url, sizeof(g_request.url), "%s", url);
+    g_request.dns = g_dns_server;
+    g_request_ready = 1;
+    (void)sxn_event_set(g_cancel_event); /* whatever runs now is stale */
+    webview_unlock();
+    (void)sxn_event_set(g_work_event);
+    snprintf(g_status, sizeof(g_status), "Opening %s...", url);
+    snprintf(g_address, sizeof(g_address), "%s", url);
+    WEBVIEW_ADDR->caret = (int)strlen(g_address);
+    WEBVIEW_ADDR->scroll = 0;
+    webview_set_loading(1);
+}
+
+/* A page is in g_raw and g_path names it: record it and show it. */
+static void webview_finish_load(int push, int hist_target)
+{
+    if (push)
+    {
+        webview_history_push(g_path);
+    }
+    if (hist_target >= 0)
+    {
+        g_hist_index = hist_target;
+    }
+    webview_render_current();
+    webview_sync_address();
+    webview_refresh_nav();
+}
+
+/* On the UI thread, after the worker woke the window: the latest progress
+ * line and the result, if they belong to the navigation still awaited. */
+static void on_wake(struct sxngui_app *app)
+{
+    static struct webview_result result;
+    struct webview_navigation nav = g_nav;
+    char progress[WEBVIEW_STATUS_CAPACITY];
+    int have_progress = 0;
+    int have_result = 0;
+
+    (void)app;
+    webview_lock();
+    if (g_progress_id != 0 && g_progress_id == nav.id)
+    {
+        memcpy(progress, g_progress, sizeof(progress));
+        have_progress = 1;
+    }
+    g_progress_id = 0;
+    if (g_result_ready)
+    {
+        g_result_ready = 0;
+        if (nav.id != 0 && g_result.id == nav.id)
+        {
+            result = g_result;
+            have_result = 1;
+            if (result.outcome == WEBVIEW_LOAD_PAGE)
+            {
+                memcpy(g_raw, g_result_body, result.length + 1);
+            }
+        }
+    }
+    webview_unlock();
+
+    if (!have_result)
+    {
+        if (have_progress)
+        {
+            memcpy(g_status, progress, sizeof(g_status));
+        }
+        return;
+    }
+    g_nav.id = 0;
+    webview_set_loading(0);
+    switch (result.outcome)
+    {
+    case WEBVIEW_LOAD_PAGE:
+        g_truncated = result.truncated;
+        memcpy(g_fetch_note, result.note, sizeof(g_fetch_note));
+        memcpy(g_path, result.location, sizeof(g_path));
+        g_has_file = 1;
+        webview_finish_load(nav.push, nav.hist_target);
+        return;
+    case WEBVIEW_LOAD_FILE:
+        if (webview_load_file(result.location) == 0)
+        {
+            webview_finish_load(nav.push, nav.hist_target);
+            return;
+        }
+        break;
+    case WEBVIEW_LOAD_FAILED:
+        memcpy(g_status, result.message, sizeof(g_status));
+        break;
+    case WEBVIEW_LOAD_CANCELLED:
+    default:
+        snprintf(g_status, sizeof(g_status), "Stopped.");
+        break;
+    }
+    /* The bar goes back to the page on screen, unless the person is typing
+     * in it: a failure arriving in the background must not eat their text. */
+    if (g_app.ui.focus_index != WEBVIEW_ADDR_INDEX)
+    {
+        webview_sync_address();
+    }
+    webview_refresh_nav();
+}
+
+/* Closing the window: the worker drops its load and ends. */
+static void webview_stop_worker(void)
+{
+    if (g_worker < 0)
+    {
+        return;
+    }
+    webview_lock();
+    g_worker_quit = 1;
+    g_request_ready = 0;
+    (void)sxn_event_set(g_cancel_event);
+    webview_unlock();
+    (void)sxn_event_set(g_work_event);
+    (void)sxn_wait_one(g_worker, 2000);
+}
+
+
 /* The single front door for every navigation: address bar, links, history,
- * dialogs, argv. Resolves `location` against the current page, loads it, and
- * on success records history, re-renders and syncs the chrome. */
-static int webview_open_location(const char *location, int push)
+ * dialogs, argv. Resolves `location` against the current page. A local file
+ * loads here and is shown at once; an http:// URL goes to the network worker
+ * and is shown when it arrives (on_wake). Either way, on success the page is
+ * recorded in the history (`push`), or the history moves to `hist_target`
+ * (>= 0), and any load still in flight is dropped. */
+static int webview_open_location(const char *location, int push, int hist_target)
 {
     char target[WEBVIEW_PATH_CAPACITY];
     int resolved;
@@ -2586,13 +2983,13 @@ static int webview_open_location(const char *location, int push)
     if (strncmp(location, "dns://", 6) == 0)
     {
         /* Resolver override, typed not launched: `dns://10.0.2.2:5353`.
-         * Config, not a page: it sets the resolver, reports it, reverts the
-         * bar and stays out of history. Same parser as --dns. */
+         * Config, not a page: it sets the server the next load asks, reports
+         * it, reverts the bar and stays out of history. Same parser as --dns. */
         struct sxn_ipv4_endpoint server;
 
         if (sxndns_parse_server(location + 6, &server) == 0)
         {
-            sxndns_set_server(&g_resolver, &server);
+            g_dns_server = server;
             snprintf(g_status, sizeof(g_status), "Resolver: %s.", location + 6);
         }
         else
@@ -2603,6 +3000,7 @@ static int webview_open_location(const char *location, int push)
         webview_refresh_nav();
         return 0;
     }
+    (void)webview_cancel_navigation();
     if (strstr(location, "://") != 0)
     {
         snprintf(target, sizeof(target), "%s", location);
@@ -2626,47 +3024,26 @@ static int webview_open_location(const char *location, int push)
     }
     if (webview_location_is_http(target))
     {
-        if (webview_fetch_http(target) != 0)
-        {
-            webview_sync_address();
-            webview_refresh_nav();
-            return -1;
-        }
+        webview_start_remote(target, push, hist_target);
+        return 0;
     }
-    else if (strncmp(target, "file://", 7) == 0)
-    {
-        if (webview_load_file(target + 7) != 0)
-        {
-            webview_sync_address();
-            webview_refresh_nav();
-            return -1;
-        }
-    }
-    else if (strstr(target, "://") != 0)
+    if (strncmp(target, "file://", 7) != 0 && strstr(target, "://") != 0)
     {
         snprintf(g_status, sizeof(g_status), "Only http and file work so far.");
         webview_sync_address();
         webview_refresh_nav();
         return -1;
     }
-    else
+    if (webview_load_file(strncmp(target, "file://", 7) == 0 ? target + 7 : target) != 0)
     {
-        if (webview_load_file(target) != 0)
-        {
-            webview_sync_address();
-            webview_refresh_nav();
-            return -1;
-        }
+        webview_sync_address();
+        webview_refresh_nav();
+        return -1;
     }
-    if (push)
-    {
-        webview_history_push(g_path);
-    }
-    webview_render_current();
-    webview_sync_address();
-    webview_refresh_nav();
+    webview_finish_load(push, hist_target);
     return 0;
 }
+
 
 static void webview_toggle_source(void)
 {
@@ -2750,10 +3127,8 @@ static void webview_history_go(int delta)
     {
         return;
     }
-    if (webview_open_location(g_history[target], 0) == 0)
-    {
-        g_hist_index = target;
-    }
+    /* The history moves to `target` only once that page is on screen. */
+    (void)webview_open_location(g_history[target], 0, target);
     webview_refresh_nav();
 }
 
@@ -2790,7 +3165,7 @@ static void webview_navigate(const char *address, int push)
         webview_sync_address();
         return;
     }
-    (void)webview_open_location(trimmed, push);
+    (void)webview_open_location(trimmed, push, -1);
 }
 
 /* ---- layout and painting ----------------------------------------------------
@@ -3333,6 +3708,11 @@ static void on_go(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
+    if (g_nav.id != 0)
+    {
+        webview_stop(); /* the button reads Stop while a page loads */
+        return;
+    }
     webview_navigate(g_address, 1);
     sxgui_focus(&g_app.ui, -1);
 }
@@ -3381,7 +3761,7 @@ static void on_menu_command(int id, void *user)
     case WEBVIEW_MENU_RELOAD:
         if (g_has_file)
         {
-            (void)webview_open_location(g_path, 0);
+            (void)webview_open_location(g_path, 0, -1);
         }
         break;
     case WEBVIEW_MENU_BACK:
@@ -3389,6 +3769,9 @@ static void on_menu_command(int id, void *user)
         break;
     case WEBVIEW_MENU_FORWARD:
         webview_history_go(1);
+        break;
+    case WEBVIEW_MENU_STOP:
+        webview_stop();
         break;
     case WEBVIEW_MENU_EXIT:
         sxngui_app_quit(&g_app, 0);
@@ -3456,7 +3839,7 @@ static int on_pointer(struct sxngui_app *app, const struct savanxp_gui_pointer_e
 
             if (webview_link_at(event->x, event->y, target, sizeof(target)))
             {
-                webview_open_location(target, 1);
+                webview_open_location(target, 1, -1);
                 return 1;
             }
         }
@@ -3475,6 +3858,11 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
     if (sxgui_dialog_active(&app->ui))
     {
         return 0;
+    }
+    if (event->key == SAVANXP_KEY_ESC && g_nav.id != 0)
+    {
+        webview_stop(); /* Esc stops a load; otherwise it closes, as ever */
+        return 1;
     }
     if ((event->modifiers & SAVANXP_KEY_MOD_ALT) != 0)
     {
@@ -3525,7 +3913,7 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
     case SAVANXP_KEY_F5:
         if (g_has_file)
         {
-            (void)webview_open_location(g_path, 0);
+            (void)webview_open_location(g_path, 0, -1);
         }
         return 1;
     case SAVANXP_KEY_UP:
@@ -3570,6 +3958,8 @@ static const struct sxgui_menu_item k_view_items[] = {
 static const struct sxgui_menu_item k_go_items[] = {
     {"Back", WEBVIEW_MENU_BACK, 0},
     {"Forward", WEBVIEW_MENU_FORWARD, 0},
+    {0, 0, 0},
+    {"Stop", WEBVIEW_MENU_STOP, 0},
 };
 
 static const struct sxgui_menu_item k_help_items[] = {
@@ -3661,9 +4051,20 @@ int main(int argc, char **argv)
     g_app.on_pointer = on_pointer;
     g_app.on_paint = on_paint;
     g_app.on_resize = on_resize;
+    g_app.on_wake = on_wake;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
     (void)sxngui_app_set_content_size(&g_app, WEBVIEW_CONTENT_WIDTH, WEBVIEW_CONTENT_HEIGHT);
     webview_layout(&g_app);
+
+    /* The network worker: remote loads run on it from the first one. Without
+     * it the window still opens local files and says why http:// fails. */
+    g_work_event = sxn_event_create(0);
+    g_cancel_event = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    if (g_work_event >= 0 && g_cancel_event >= 0)
+    {
+        g_worker = sxn_thread_create(webview_worker_main, 0,
+            g_worker_stack + sizeof(g_worker_stack), 0);
+    }
 
     webview_show_welcome();
     /* argv carries an optional resolver override plus the location to open:
@@ -3675,6 +4076,7 @@ int main(int argc, char **argv)
         int i;
 
         sxndns_init(&g_resolver);
+        g_dns_server = g_resolver.server;
         if (argv != 0)
         {
             for (i = 1; i < argc; ++i)
@@ -3686,7 +4088,7 @@ int main(int argc, char **argv)
 
                     if (sxndns_parse_server(argv[i + 1], &server) == 0)
                     {
-                        sxndns_set_server(&g_resolver, &server);
+                        g_dns_server = server;
                     }
                     else
                     {
@@ -3712,5 +4114,10 @@ int main(int argc, char **argv)
     }
     webview_refresh_nav();
     sxgui_focus(&g_app.ui, WEBVIEW_ADDR_INDEX);
-    return sxngui_app_run(&g_app);
+    {
+        int exit_code = sxngui_app_run(&g_app);
+
+        webview_stop_worker();
+        return exit_code;
+    }
 }

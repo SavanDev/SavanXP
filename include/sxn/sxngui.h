@@ -55,6 +55,12 @@ struct sxngui_app {
     unsigned long tick_interval_ms;
     void (*on_tick)(struct sxngui_app *app);
 
+    /* Called on the UI thread after sxngui_app_wake, which any thread may
+     * call: how a worker hands its results to the window, PostMessage's
+     * role. Wakes coalesce: several before the loop looks are one call, so
+     * the hook drains whatever the worker queued. NULL: wakes only repaint. */
+    void (*on_wake)(struct sxngui_app *app);
+
     void *user;
 
     /* Owned by the frame: the window of the active dialog. */
@@ -78,6 +84,12 @@ struct sxngui_app {
 
     /* Owned by the frame: on_close was called for the request now standing. */
     int close_pending;
+
+    /* Owned by the frame: what sxngui_app_wake sets. The event lives until
+     * the process ends, so a worker that wakes a window already gone does
+     * no harm. */
+    long wake_event;
+    int wake_pending;
 };
 
 /* The toolkit's host for SUN. sxngui_app_init installs it; a SUN program
@@ -98,6 +110,9 @@ int sxngui_app_init(struct sxngui_app *app, const struct sxnwm_presentation_sour
 int sxngui_app_set_content_size(struct sxngui_app *app, int width, int height);
 
 void sxngui_app_request_repaint(struct sxngui_app *app);
+/* From any thread: makes the loop call on_wake on the UI thread and repaint.
+ * 0, or -EINVAL for an app sxngui_app_init did not set up. */
+long sxngui_app_wake(struct sxngui_app *app);
 void sxngui_app_quit(struct sxngui_app *app, int exit_code);
 /* Turns down the close on_close was called for (sxnwm_decline_close). */
 long sxngui_app_decline_close(struct sxngui_app *app);

@@ -58,7 +58,7 @@ the name of the layer, not a rename of its symbols.
 | Pointer speed | `include/sxn/sxnpointer.h` | read and set the speed the kernel applies to relative mice ([INPUT.md](../kernel/INPUT.md#pointer-speed)) | `SPI_GETMOUSESPEED` / `SPI_SETMOUSESPEED` |
 | Sound | `include/sxn/sxnaudio.h` | PCM streams, master gain/mute, and native `audiod` control snapshots with per-stream gain, mute and levels | `waveOut`, XAudio2's source voice |
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
-| Toolkit frame | `include/sxn/sxngui.h`, `system/runtime/sxngui.c` | SXGUI-C on a SUN window: the toolkit's host, the loop, dialogs in owned windows | `comctl32` + the message loop |
+| Toolkit frame | `include/sxn/sxngui.h`, `system/runtime/sxngui.c` | SXGUI-C on a SUN window: the toolkit's host, the loop, dialogs in owned windows, `sxngui_app_wake` from worker threads | `comctl32` + the message loop |
 | Name resolution | `include/sxn/sxndns.h`, `system/runtime/sxndns.c` | host names to IPv4: a resolver with its own cache, UDP with a TCP retry, cancellable ([NETWORKING.md](../net/NETWORKING.md#name-resolution-sxndns)) | `getaddrinfo`, `DnsQuery` |
 | Runtime | `system/runtime/sxn_runtime.c` | start-up, `malloc` over SXN sections, `exit` and returning from `main` ([NATIVE_HEAP.md](NATIVE_HEAP.md)) | the CRT |
 | Resources | `<program>.sunres.h`, generated | the program's `.sxres` compiled in: title, accent, window style, 16x16 icon | `.rsrc`, `LoadIcon` |
