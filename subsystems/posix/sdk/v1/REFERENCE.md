@@ -250,6 +250,14 @@ reached through the standard headers. Its practical limits:
   error.
 - `select` and `poll` aim for consistent use rather than exhaustive POSIX
   compatibility; not every descriptor type has full Unix semantics.
+- `fcntl` takes `F_DUPFD`, `F_GETFD`/`F_SETFD` and `F_GETFL`/`F_SETFL`.
+  **Pending: record locks.** There is no `struct flock` and no
+  `F_GETLK`, `F_SETLK` or `F_SETLKW`, because the kernel keeps no byte-range
+  locks on files. SUN has no file locks either, so this is a gap of the
+  platform, not of one subsystem: the kernel needs the locks first, and then
+  both subsystems get them (`fcntl` here, a `LockFileEx` counterpart in SUN).
+  The first consumer it holds back is TinyCC's `-ftest-coverage` runtime
+  (`tcov.o`), left out of the port's `libtcc1.a`.
 - Threads (`pthread.h`): create, join, detach, exit, mutexes (normal,
   recursive, error-checking), condition variables, once and keys, plus
   `__thread` variables in the executable. No cancellation, read-write locks,
@@ -269,4 +277,5 @@ reached through the standard headers. Its practical limits:
 - a resolver API (`getaddrinfo`, `gethostbyname`)
 - job control and a configurable line discipline
 - `link`, `symlink`, `readlink`, `utime*`
+- file record locks (`fcntl` `F_GETLK`/`F_SETLK`/`F_SETLKW`), pending above
 - audio capture and `mmap`/shared buffers for audio
