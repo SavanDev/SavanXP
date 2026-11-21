@@ -3,7 +3,8 @@
 > **Status: L0, E1 and L1-L6 closed, with S1, S2a, S2b and P1 (2026-11-15):
 > static and dynamic musl programs run unchanged, including the pinned Alpine
 > `jq`, the Xlib fixture and the original Xeyes opened from Start and Files.**
-> The first application profile is closed; L7 lists separate future profiles. What is
+> The first application profile is closed; L7 lists separate future profiles,
+> and the next target is **xterm** ([L7](#l7--later-profiles)). What is
 > built is described in
 > [LINUX.md](../../userland/LINUX.md). The subsystem is
 > named **SSL (Savan Subsystem for Linux)**, as the Win32 one is SSW. Its
@@ -610,7 +611,41 @@ results and the first profile's bounds are recorded in
 ### L7 — later profiles
 
 Not planned in detail. Each names its consumer and records its inventory
-first:
+first.
+
+**Next target: xterm** (chosen 2026-11-21). An unmodified Linux x86-64
+`xterm` from the pinned Alpine release, running a shell in its window on the
+SavanXP desktop. It is the consumer that pulls several of the profiles below
+together, which is why it goes first: a terminal emulator forks and execs a
+shell, talks to it through a pseudo-terminal, and lives on signals
+(`SIGCHLD` when the shell ends, `SIGWINCH` when the window is resized). On
+the X side it draws text, so `x11d` meets core fonts or Xft/RENDER, where
+Xeyes drew only shapes. None of that is measured yet. The work starts the way
+L0 did for Xeyes:
+
+1. **Inventory.** Pin the package and its runtime closure, record its system
+   calls, ioctls and X requests and extensions with the L0 tooling
+   (`subsystems/linux/profile/`: `profile.sh` under `strace -f`, `x11rec.py`
+   against Xvfb), and write the profile document beside
+   [LINUX_XEYES_PROFILE.md](../../userland/LINUX_XEYES_PROFILE.md).
+2. **A plan from the inventory.** Which of the profiles below it needs
+   (signals, process creation with a shell, pseudo-terminals, font
+   requests), in what order, and its smoke scenario's done-when, written
+   before any kernel change.
+
+The profiles it is expected to pull, to be confirmed or struck by the
+inventory:
+
+- Pseudo-terminals: a master and slave pair, `/dev/ptmx` and `/dev/pts`,
+  the termios and window-size ioctls, and a controlling terminal for the
+  shell's session. SavanXP has no pty today; SUN and POSIX get the same
+  objects underneath, per the parity rule.
+- The shell profile and S3 signals below.
+- Text in `x11d`: the font path xterm takes (core `OpenFont`/`ImageText8`
+  with a bundled bitmap font, or Xft over RENDER), whichever the inventory
+  shows its default start-up uses.
+
+The other profiles, each still waiting for a consumer of its own:
 
 - S3 and Linux signals: masks, pending state, frames, `rt_sigreturn`,
   interruption and restart.
