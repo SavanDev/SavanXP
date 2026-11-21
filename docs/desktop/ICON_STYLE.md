@@ -18,6 +18,9 @@ joins the set instead of standing out from it.
 - Files' 20x20 toolbar glyphs (`system/gfx/toolbar_glyphs/`, shared by Files and the file dialog),
   which must also read by their silhouette alone, since a disabled button
   draws only that (see [`FILES.md`](FILES.md#toolbar-widgets)).
+- Web Viewer's 20x20 toolbar glyphs (`system/webview/gen_icons.py`: Stop,
+  Refresh, Home, Open, Source), under the same silhouette rule; its Back and
+  Forward are the shared ones.
 
 Not covered: `assets/desktop/icons/mime/`, the file-type catalog, which is
 Tango art (see

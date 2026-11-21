@@ -3172,6 +3172,26 @@ def scenario_webview_http(s):
                     "el color de font", solid_only=True)
         expect_text(styled, (0, 0, width, height), "underline", (51, 51, 51), CREAM,
                     "el subrayado propio", solid_only=True)
+        # The toolbar: glyphs over captions, Stop greyed while nothing loads.
+        for caption in ("Back", "Refresh", "Home", "Source"):
+            expect_text(styled, (0, 0, width, height), caption, TEXT, FACE,
+                        "the toolbar's %s caption" % caption, solid_only=True)
+        # A link under the pointer shows in the status bar, absolute.
+        linked = expect_text(styled, (0, 0, width, height), "linked", LINK, CREAM,
+                             "the link to hover", solid_only=True)
+        s.qmp.move_to(linked[0] + 10, linked[1] + 6)
+        time.sleep(1.5)
+        hovered = s.shot("webview-ui-hover")
+        expect_text(hovered, (0, 0, *hovered.size), "%s/second.html" % hostport, TEXT, FACE,
+                    "the hovered link's absolute URL in the status bar", solid_only=True)
+        # A right click on the page opens its context menu; Esc closes it.
+        s.qmp.move_to(linked[0] + 200, linked[1] + 120)
+        s.qmp.click("right")
+        time.sleep(1.0)
+        menu = s.shot("webview-ui-context-menu")
+        expect_text(menu, (0, 0, *menu.size), "View Source", TEXT, FACE,
+                    "the page's context menu", solid_only=True)
+        s.qmp.tap("esc", pause=1.0)
         # Change the resolver in the open window, then load by name. Enter
         # leaves address focus, so Tab returns to it before each new location.
         def type_dns_url(url):
@@ -3270,6 +3290,15 @@ def scenario_webview_http(s):
         replaced = s.shot("webview-n3-replaced")
         expect_text(replaced, (0, 0, *replaced.size), "Second page", TEXT, FIELD,
                     "the newer navigation wins over the stalled one", which="title", solid_only=True)
+        # Home, clicked on the toolbar, opens the home page.
+        home_at = expect_text(replaced, (0, 0, *replaced.size), "Home", TEXT, FACE,
+                              "the Home button", solid_only=True)
+        s.qmp.move_to(home_at[0] + 8, home_at[1] - 12)
+        s.qmp.click()
+        time.sleep(4.0)
+        home = s.shot("webview-ui-home")
+        expect_text(home, (0, 0, *home.size), "Welcome to SavanXP", TEXT, FIELD,
+                    "Home opens the home page", which="title")
         # Closing the window in the middle of a load (the next step's Alt+F4).
         s.qmp.tap("tab", pause=1.0)
         s.qmp.chord("ctrl", "a")

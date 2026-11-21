@@ -13,10 +13,38 @@ pipeline `parse → cascade → wrap → paint` in `system/webview/webview.c`.
 This document pins what it renders and what it openly ignores, so later
 milestones extend a contract instead of rediscovering it.
 
+## The window
+
+Laid out after Internet Explorer 5 on Windows 2000, in bands ruled off by
+etched lines as in Files:
+
+- **Toolbar**: Back, Forward | Stop, Refresh, Home | Open, Source, each a
+  20x20 glyph over its caption. Back and Forward are the shared glyphs of
+  `system/gfx/toolbar_glyphs/`; the rest are Web Viewer's own, drawn by
+  `system/webview/gen_icons.py` ([ICON_STYLE.md](ICON_STYLE.md)). Buttons that
+  do not fit a narrow window are hidden, not squeezed.
+- **Address bar**: the `Address` label, the field and Go.
+- **The page**, and under it the **status bar**: the status line and a
+  progress pane the worker fills (resolving, connecting, waiting, then the
+  bytes received against the 32 KiB a page may take).
+
+One function (`webview_refresh_commands`) enables the toolbar and the menus,
+so a grey button and a grey menu item never disagree: Stop only while a page
+loads, Refresh and Source once there is a page, Back and Forward with the
+history. Menus: File (Open, Exit), Go (Back, Forward, Home Page), View (Stop,
+Refresh, Top and End of page, View Source), Help. A right click on the page
+opens its context menu (Back, Forward, Refresh, View Source). Home opens
+`file:///system/samples/welcome.html`.
+
+The window title names the page (`<title> - Web Viewer`), and so does its
+taskbar button. With the pointer on a link the status bar shows where it
+leads, as an absolute URL; the next status message takes the bar back, and
+the link shows again when the pointer moves.
+
 ## Native frontend and I/O
 
 The frontend uses SUN's `sxngui_app` frame and compiled presentation resources;
-its title, icon, menus and renderer stay the same. Local files use
+its icon and renderer stay the same. Local files use
 `sxn_query_path`, `sxn_open_file` and partial `sxn_read` operations. TCP/UDP
 handles use `sxn_socket_*`, `sxn_read`/`sxn_write` and `sxn_wait_io`; a pending
 connection is checked with `sxn_socket_status` after readiness. These paths
@@ -41,8 +69,8 @@ resolver, its sockets and a body buffer of its own:
   dropped, so an obsolete page can never replace a newer one.
 - A new navigation (typed, a link, Back/Forward, Reload), **Stop** and closing
   the window set the worker's cancel event, which every wait of the worker
-  checks first: DNS, connect, write and read. Stop is the Go button (it reads
-  `Stop` during a load), Esc, and Go > Stop.
+  checks first: DNS, connect, write and read. Stop is the toolbar's Stop,
+  Esc, and View > Stop.
 - A failed or stopped load keeps the page on screen: the body lands in the
   worker's buffer and is copied into the document only on success. The address
   bar goes back to that page, unless the person is typing in it.
@@ -111,8 +139,11 @@ the platform font tables. Glyph asserts use `solid_only` where anti-aliased edge
 of neighbouring glyphs overlap: the harness blends against the background
 while the painter blends in sequence (see the scenario comments).
 
-The N3 steps load `/stall`, a download that never finishes, and check that the
-window repaints the worker's progress and shows `Stop`, takes Ctrl+U during the
+The window's own steps check the toolbar captions, the absolute URL of a
+hovered link in the status bar, the page's context menu, and the Home button
+clicked on the toolbar. The N3 steps load `/stall`, a download that never
+finishes, and check that the window repaints the worker's progress and enables
+`Stop`, takes Ctrl+U during the
 load, and keeps its page when Esc stops it; Stop during the resolution of a
 name the DNS fixture never answers; a newer navigation replacing a stalled
 one; and closing the window in the middle of a load.

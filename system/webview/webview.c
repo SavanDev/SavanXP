@@ -17,6 +17,8 @@
 #include "sxn/sxndns.h"
 #include "sxn/sxngui.h"
 #include "webview.sunres.h"
+#include "icons.inc"
+#include "../gfx/toolbar_glyphs/icons.inc"
 
 #include <stdio.h>
 #include <string.h>
@@ -34,6 +36,7 @@
 
 #define WEBVIEW_MENU_OPEN 1
 #define WEBVIEW_MENU_RELOAD 2
+#define WEBVIEW_MENU_HOME 33
 #define WEBVIEW_MENU_EXIT 3
 #define WEBVIEW_MENU_TOP 10
 #define WEBVIEW_MENU_BOTTOM 11
@@ -43,8 +46,8 @@
 #define WEBVIEW_MENU_FORWARD 31
 #define WEBVIEW_MENU_STOP 32
 
-#define WEBVIEW_CONTENT_WIDTH 560
-#define WEBVIEW_CONTENT_HEIGHT 420
+#define WEBVIEW_CONTENT_WIDTH 600
+#define WEBVIEW_CONTENT_HEIGHT 470
 
 /* Tab order: address first, like a browser. The viewport itself is not a
  * widget, so arrows scroll it whenever the focus is not in the address field
@@ -56,10 +59,29 @@
 #define WEBVIEW_FWD (&g_widgets[3])
 #define WEBVIEW_SCROLL (&g_widgets[4])
 #define WEBVIEW_STATUS (&g_widgets[5])
-#define WEBVIEW_WIDGET_COUNT 6
+#define WEBVIEW_STOP (&g_widgets[6])
+#define WEBVIEW_REFRESH (&g_widgets[7])
+#define WEBVIEW_HOME (&g_widgets[8])
+#define WEBVIEW_OPEN (&g_widgets[9])
+#define WEBVIEW_SOURCE (&g_widgets[10])
+#define WEBVIEW_SEP_NAV (&g_widgets[11])
+#define WEBVIEW_SEP_PAGE (&g_widgets[12])
+#define WEBVIEW_RULE_MENU (&g_widgets[13])
+#define WEBVIEW_RULE_TOOLBAR (&g_widgets[14])
+#define WEBVIEW_ADDR_LABEL (&g_widgets[15])
+#define WEBVIEW_PROGRESS (&g_widgets[16])
+#define WEBVIEW_WIDGET_COUNT 17
 
-#define WEBVIEW_NAV_WIDTH 34
+/* The toolbar, left to right, as Internet Explorer 5 laid it out: history,
+ * then the page, then the document. Its glyphs are the shared Back and
+ * Forward and Web Viewer's own (system/webview/gen_icons.py). */
+#define WEBVIEW_TOOLBAR_BUTTONS 7
 #define WEBVIEW_GO_WIDTH 64
+#define WEBVIEW_RULE_HEIGHT 4
+#define WEBVIEW_SEPARATOR_WIDTH 8
+#define WEBVIEW_PROGRESS_WIDTH 120
+/* Home, the toolbar button and Go > Home Page. */
+#define WEBVIEW_HOME_PAGE "file:///system/samples/welcome.html"
 
 #define WEBVIEW_HISTORY_MAX 32
 
@@ -1910,6 +1932,19 @@ static void webview_parse(void)
 
 /* ---- document loading ------------------------------------------------------ */
 
+static int g_hovering;
+
+/* A new message takes the status bar back from the link under the pointer;
+ * the link shows again when the pointer moves. */
+static void webview_status_takes_over(void)
+{
+    if (g_hovering)
+    {
+        g_hovering = 0;
+        WEBVIEW_STATUS->text = g_status;
+    }
+}
+
 static void webview_refresh_status(void)
 {
     char suffix[96];
@@ -2056,6 +2091,22 @@ static void webview_build_source(void)
     }
 }
 
+/* The window title names the page, as "<title> - Web Viewer". */
+static void webview_update_title(void)
+{
+    char title[WEBVIEW_TITLE_CAPACITY + 16];
+
+    if (g_has_file && g_title[0] != '\0')
+    {
+        snprintf(title, sizeof(title), "%s - Web Viewer", g_title);
+    }
+    else
+    {
+        snprintf(title, sizeof(title), "Web Viewer");
+    }
+    (void)sxnwm_set_title(&g_app.wm, title);
+}
+
 /* Renders g_raw in the current mode. Both loaders funnel here so source and
  * page views never diverge. */
 static void webview_render_current(void)
@@ -2073,6 +2124,7 @@ static void webview_render_current(void)
         webview_push_para("(Empty document)", 0, 0, 0, 0);
     }
     webview_refresh_status();
+    webview_update_title();
     webview_invalidate_layout();
 }
 
@@ -2132,6 +2184,7 @@ static int g_result_ready;
 static char g_result_body[WEBVIEW_RAW_CAPACITY];
 static uint32_t g_progress_id;
 static char g_progress[WEBVIEW_STATUS_CAPACITY];
+static int g_progress_percent;
 
 static long g_work_event = -1;   /* auto-reset: a request, or quitting, is waiting */
 static long g_cancel_event = -1; /* manual-reset: drop what is being loaded */
@@ -2174,12 +2227,14 @@ static void webview_unlock(void)
     }
 }
 
-/* The worker tells the UI what it is doing, for the status line. */
-static void webview_progress(uint32_t id, const char *text)
+/* The worker tells the UI what it is doing, for the status line, and how far
+ * along it thinks it is, for the progress pane. */
+static void webview_progress(uint32_t id, const char *text, int percent)
 {
     webview_lock();
     g_progress_id = id;
     snprintf(g_progress, sizeof(g_progress), "%s", text);
+    g_progress_percent = percent;
     webview_unlock();
     (void)sxngui_app_wake(&g_app);
 }
@@ -2530,7 +2585,7 @@ static void webview_fetch_http(const struct webview_request *request, struct web
             WEBVIEW_FETCH_FAIL("That URL is malformed.");
         }
         snprintf(progress, sizeof(progress), "Resolving %s...", host);
-        webview_progress(request->id, progress);
+        webview_progress(request->id, progress, 10);
         {
             long resolved = sxndns_resolve(&g_resolver, host, g_cancel_event, &ipv4);
 
@@ -2553,7 +2608,7 @@ static void webview_fetch_http(const struct webview_request *request, struct web
             WEBVIEW_FETCH_FAIL("No network.");
         }
         snprintf(progress, sizeof(progress), "Connecting to %s...", host);
-        webview_progress(request->id, progress);
+        webview_progress(request->id, progress, 25);
         memset(&address, 0, sizeof(address));
         address.ipv4 = ipv4;
         address.port = (uint16_t)port;
@@ -2581,7 +2636,7 @@ static void webview_fetch_http(const struct webview_request *request, struct web
             WEBVIEW_FETCH_FAIL("The request failed.");
         }
         snprintf(progress, sizeof(progress), "Waiting for %s...", host);
-        webview_progress(request->id, progress);
+        webview_progress(request->id, progress, 40);
         for (;;)
         {
             long got;
@@ -2604,6 +2659,16 @@ static void webview_fetch_http(const struct webview_request *request, struct web
             {
                 read_failed = 1;
                 break;
+            }
+            if ((total + (size_t)got) / 1024 != total / 1024)
+            {
+                /* The length is not known yet: the bar fills against the
+                 * 32 KiB the page may take. */
+                unsigned kib = (unsigned)((total + (size_t)got) / 1024);
+
+                snprintf(progress, sizeof(progress), "Receiving from %s (%u KB)...", host, kib);
+                webview_progress(request->id, progress,
+                    40 + (int)(55 * (total + (size_t)got) / sizeof(g_load_raw)));
             }
             total += (size_t)got;
         }
@@ -2788,9 +2853,12 @@ struct webview_navigation
 static struct webview_navigation g_nav;
 static uint32_t g_nav_counter = 0;
 
+static void webview_refresh_commands(void);
+
 static void webview_set_loading(int loading)
 {
-    WEBVIEW_GO->text = loading ? "Stop" : "Go";
+    WEBVIEW_PROGRESS->value = loading ? 5 : 0;
+    webview_refresh_commands();
     sxngui_app_request_repaint(&g_app);
 }
 
@@ -2812,9 +2880,10 @@ static int webview_cancel_navigation(void)
     return 1;
 }
 
-/* Stop (the Stop button, Esc, Go > Stop): the page on screen stays. */
+/* Stop (the toolbar's Stop, Esc, View > Stop): the page on screen stays. */
 static void webview_stop(void)
 {
+    webview_status_takes_over();
     if (webview_cancel_navigation())
     {
         snprintf(g_status, sizeof(g_status), "Stopped.");
@@ -2879,6 +2948,7 @@ static void on_wake(struct sxngui_app *app)
     static struct webview_result result;
     struct webview_navigation nav = g_nav;
     char progress[WEBVIEW_STATUS_CAPACITY];
+    int percent = 0;
     int have_progress = 0;
     int have_result = 0;
 
@@ -2887,6 +2957,7 @@ static void on_wake(struct sxngui_app *app)
     if (g_progress_id != 0 && g_progress_id == nav.id)
     {
         memcpy(progress, g_progress, sizeof(progress));
+        percent = g_progress_percent;
         have_progress = 1;
     }
     g_progress_id = 0;
@@ -2905,11 +2976,16 @@ static void on_wake(struct sxngui_app *app)
     }
     webview_unlock();
 
+    if (have_progress || have_result)
+    {
+        webview_status_takes_over();
+    }
     if (!have_result)
     {
         if (have_progress)
         {
             memcpy(g_status, progress, sizeof(g_status));
+            WEBVIEW_PROGRESS->value = percent;
         }
         return;
     }
@@ -2976,6 +3052,7 @@ static int webview_open_location(const char *location, int push, int hist_target
     char target[WEBVIEW_PATH_CAPACITY];
     int resolved;
 
+    webview_status_takes_over();
     if (location == 0 || location[0] == '\0')
     {
         return -1;
@@ -3058,6 +3135,7 @@ static void webview_toggle_source(void)
 
 static void webview_refresh_nav(void)
 {
+    webview_refresh_commands();
     if (g_hist_index > 0)
     {
         WEBVIEW_BACK->flags &= ~(uint32_t)SXGUI_FLAG_DISABLED;
@@ -3637,29 +3715,65 @@ static void on_paint(struct sxngui_app *app)
 
 /* ---- layout ----------------------------------------------------------------- */
 
+/* Toolbar order, separators included: the history, the page, the document. */
+static struct sxgui_widget *const k_toolbar_order[] = {
+    WEBVIEW_BACK, WEBVIEW_FWD, WEBVIEW_SEP_NAV, WEBVIEW_STOP, WEBVIEW_REFRESH, WEBVIEW_HOME,
+    WEBVIEW_SEP_PAGE, WEBVIEW_OPEN, WEBVIEW_SOURCE,
+};
+
+/* Bands under the menu, each ruled off by an etched line as in the Explorer
+ * (and Files): the toolbar, the address bar, the page, the status bar with
+ * its progress pane. */
 static void webview_layout(struct sxngui_app *app)
 {
     int width = (int)app->info.width;
     int height = (int)app->info.height;
-    int bar_y = sxgui_menubar_height() + SXGUI_MARGIN;
-    int field_x = SXGUI_MARGIN;
+    int toolbar_height = sxgui_toolbar_height();
+    int button_width = sxgui_toolbar_button_width("Forward");
+    int label_width = gfx_text_width("Address") + SXGUI_GAP;
+    int y = sxgui_menubar_height();
+    int x = SXGUI_MARGIN;
     int go_x = width - SXGUI_MARGIN - WEBVIEW_GO_WIDTH;
-    int top = bar_y + SXGUI_FIELD_HEIGHT + SXGUI_GAP;
+    int field_x = SXGUI_MARGIN + label_width;
+    int top;
     int status_y = height - SXGUI_MARGIN - SXGUI_STATUS_HEIGHT;
     int content_width = width - SXGUI_MARGIN * 2;
-    int view_height = status_y - SXGUI_GAP - top;
+    int view_height;
 
-    WEBVIEW_BACK->rect = sx_rect_make(field_x, bar_y, WEBVIEW_NAV_WIDTH, SXGUI_FIELD_HEIGHT);
-    field_x += WEBVIEW_NAV_WIDTH + SXGUI_GAP;
-    WEBVIEW_FWD->rect = sx_rect_make(field_x, bar_y, WEBVIEW_NAV_WIDTH, SXGUI_FIELD_HEIGHT);
-    field_x += WEBVIEW_NAV_WIDTH + SXGUI_GAP;
+    WEBVIEW_RULE_MENU->rect = sx_rect_make(0, y, width, WEBVIEW_RULE_HEIGHT);
+    y += WEBVIEW_RULE_HEIGHT;
+    /* Buttons that do not fit a narrow window are hidden, not squeezed. */
+    for (size_t index = 0; index < sizeof(k_toolbar_order) / sizeof(k_toolbar_order[0]); ++index)
+    {
+        struct sxgui_widget *widget = k_toolbar_order[index];
+        int item_width = widget->kind == SXGUI_BUTTON ? button_width : WEBVIEW_SEPARATOR_WIDTH;
+
+        widget->rect = widget->kind == SXGUI_BUTTON
+            ? sx_rect_make(x, y, item_width, toolbar_height)
+            : sx_rect_make(x + 3, y + 3, 2, toolbar_height - 6);
+        if (x + item_width <= width - SXGUI_MARGIN)
+        {
+            widget->flags |= SXGUI_FLAG_VISIBLE;
+        }
+        else
+        {
+            widget->flags &= ~(uint32_t)SXGUI_FLAG_VISIBLE;
+        }
+        x += item_width;
+    }
+    y += toolbar_height;
+    WEBVIEW_RULE_TOOLBAR->rect = sx_rect_make(0, y, width, WEBVIEW_RULE_HEIGHT);
+    y += WEBVIEW_RULE_HEIGHT;
+
     if (go_x < field_x + 60)
     {
         go_x = field_x + 60;
     }
-    WEBVIEW_GO->rect = sx_rect_make(go_x, bar_y, WEBVIEW_GO_WIDTH, SXGUI_FIELD_HEIGHT);
-    WEBVIEW_ADDR->rect = sx_rect_make(field_x, bar_y, go_x - SXGUI_GAP - field_x,
-        SXGUI_FIELD_HEIGHT);
+    WEBVIEW_ADDR_LABEL->rect = sx_rect_make(SXGUI_MARGIN, y, label_width, SXGUI_FIELD_HEIGHT);
+    WEBVIEW_ADDR->rect = sx_rect_make(field_x, y, go_x - SXGUI_GAP - field_x, SXGUI_FIELD_HEIGHT);
+    WEBVIEW_GO->rect = sx_rect_make(go_x, y, WEBVIEW_GO_WIDTH, SXGUI_FIELD_HEIGHT);
+    top = y + SXGUI_FIELD_HEIGHT + SXGUI_GAP;
+    view_height = status_y - SXGUI_GAP - top;
 
     if (view_height < 60)
     {
@@ -3672,7 +3786,10 @@ static void webview_layout(struct sxngui_app *app)
     g_view = sx_rect_make(SXGUI_MARGIN, top, content_width, view_height);
     WEBVIEW_SCROLL->rect = sx_rect_make(g_view.x + g_view.width - SXGUI_SCROLLBAR_THICKNESS,
         g_view.y, SXGUI_SCROLLBAR_THICKNESS, g_view.height);
-    WEBVIEW_STATUS->rect = sx_rect_make(SXGUI_MARGIN, status_y, content_width, SXGUI_STATUS_HEIGHT);
+    WEBVIEW_STATUS->rect = sx_rect_make(SXGUI_MARGIN, status_y,
+        content_width - WEBVIEW_PROGRESS_WIDTH - SXGUI_GAP / 2, SXGUI_STATUS_HEIGHT);
+    WEBVIEW_PROGRESS->rect = sx_rect_make(SXGUI_MARGIN + content_width - WEBVIEW_PROGRESS_WIDTH,
+        status_y, WEBVIEW_PROGRESS_WIDTH, SXGUI_STATUS_HEIGHT);
 }
 
 static void on_resize(struct sxngui_app *app)
@@ -3690,6 +3807,8 @@ static void on_scroll_changed(struct sxgui_widget *widget, void *user)
     sxngui_app_request_repaint(&g_app);
 }
 
+static void on_menu_command(int id, void *user);
+
 static void on_back(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
@@ -3704,15 +3823,35 @@ static void on_forward(struct sxgui_widget *widget, void *user)
     webview_history_go(1);
 }
 
+static void on_toolbar(struct sxgui_widget *widget, void *user)
+{
+    (void)user;
+    if (widget == WEBVIEW_STOP)
+    {
+        webview_stop();
+    }
+    else if (widget == WEBVIEW_REFRESH)
+    {
+        on_menu_command(WEBVIEW_MENU_RELOAD, 0);
+    }
+    else if (widget == WEBVIEW_HOME)
+    {
+        on_menu_command(WEBVIEW_MENU_HOME, 0);
+    }
+    else if (widget == WEBVIEW_OPEN)
+    {
+        on_menu_command(WEBVIEW_MENU_OPEN, 0);
+    }
+    else if (widget == WEBVIEW_SOURCE)
+    {
+        on_menu_command(WEBVIEW_MENU_SOURCE, 0);
+    }
+}
+
 static void on_go(struct sxgui_widget *widget, void *user)
 {
     (void)widget;
     (void)user;
-    if (g_nav.id != 0)
-    {
-        webview_stop(); /* the button reads Stop while a page loads */
-        return;
-    }
     webview_navigate(g_address, 1);
     sxgui_focus(&g_app.ui, -1);
 }
@@ -3773,6 +3912,9 @@ static void on_menu_command(int id, void *user)
     case WEBVIEW_MENU_STOP:
         webview_stop();
         break;
+    case WEBVIEW_MENU_HOME:
+        (void)webview_open_location(WEBVIEW_HOME_PAGE, 1, -1);
+        break;
     case WEBVIEW_MENU_EXIT:
         sxngui_app_quit(&g_app, 0);
         break;
@@ -3799,8 +3941,47 @@ static void on_menu_command(int id, void *user)
  * same 3-rows-per-tick convention the toolkit uses elsewhere. A left-button
  * press and release inside the text area follows the link under the cursor,
  * if any. While a modal dialog is open the hook stays out of the way. */
+static const struct sxgui_menu k_page_menu;
+static void webview_refresh_commands(void);
+
 static int g_prev_left = 0;
+static int g_prev_right = 0;
 static int g_press_in_text = 0;
+/* The link under the pointer, shown in the status bar instead of the page's
+ * own status while the pointer rests on it, as browsers do. */
+static char g_hover_target[WEBVIEW_PATH_CAPACITY];
+static int g_hovering = 0;
+/* The pointer's last position: a link shows only after the pointer moves. */
+static int g_pointer_x = -1;
+static int g_pointer_y = -1;
+
+static void webview_hover(int x, int y)
+{
+    char href[WEBVIEW_PATH_CAPACITY];
+    char target[WEBVIEW_PATH_CAPACITY];
+    int over = sx_rect_contains_point(g_text_area, x, y) &&
+               webview_link_at(x, y, href, sizeof(href));
+
+    /* The link as it would be opened, absolute, not as the page wrote it. */
+    if (over && webview_resolve_against(g_has_file ? g_path : "/", href, target, sizeof(target)) != 0)
+    {
+        memcpy(target, href, sizeof(target));
+    }
+
+    if (over && (!g_hovering || strcmp(target, g_hover_target) != 0))
+    {
+        memcpy(g_hover_target, target, sizeof(g_hover_target));
+        WEBVIEW_STATUS->text = g_hover_target;
+        g_hovering = 1;
+        sxngui_app_request_repaint(&g_app);
+    }
+    else if (!over && g_hovering)
+    {
+        WEBVIEW_STATUS->text = g_status;
+        g_hovering = 0;
+        sxngui_app_request_repaint(&g_app);
+    }
+}
 
 static int on_pointer(struct sxngui_app *app, const struct savanxp_gui_pointer_event *event)
 {
@@ -3821,6 +4002,24 @@ static int on_pointer(struct sxngui_app *app, const struct savanxp_gui_pointer_e
         }
         webview_set_scroll(WEBVIEW_SCROLL->value - event->wheel * 54);
         return 1;
+    }
+    if (event->x != g_pointer_x || event->y != g_pointer_y)
+    {
+        g_pointer_x = event->x;
+        g_pointer_y = event->y;
+        webview_hover(event->x, event->y);
+    }
+    {
+        int right = (event->buttons & SAVANXP_MOUSE_BUTTON_RIGHT) != 0;
+
+        if (!right && g_prev_right && sx_rect_contains_point(g_view, event->x, event->y))
+        {
+            g_prev_right = 0;
+            webview_refresh_commands();
+            sxgui_context_menu_open(&g_app.ui, &k_page_menu, event->x, event->y, on_menu_command, 0);
+            return 1;
+        }
+        g_prev_right = right;
     }
     left = (event->buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0;
     if (left && !g_prev_left)
@@ -3939,28 +4138,117 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
     }
 }
 
-/* ---- menus -------------------------------------------------------------------- */
+/* ---- menus and toolbar glyphs ---------------------------------------------------- */
+
+static struct sx_bitmap g_glyphs[WEBVIEW_TOOLBAR_BUTTONS];
+static const struct sx_bitmap *g_glyph_refs[WEBVIEW_TOOLBAR_BUTTONS];
+
+/* Wraps the embedded 20x20 glyphs, in toolbar order, as bitmaps. */
+static void webview_init_glyphs(void)
+{
+    static const uint32_t *const pixels[WEBVIEW_TOOLBAR_BUTTONS] = {
+        toolbar_glyph_go_previous, toolbar_glyph_go_next, webview_glyph_process_stop,
+        webview_glyph_view_refresh, webview_glyph_go_home, webview_glyph_document_open,
+        webview_glyph_text_html,
+    };
+    struct savanxp_fb_info info = {0};
+
+    info.width = info.height = TOOLBAR_GLYPH_SIZE;
+    info.pitch = TOOLBAR_GLYPH_SIZE * 4;
+    info.bpp = 32;
+    info.buffer_size = TOOLBAR_GLYPH_SIZE * TOOLBAR_GLYPH_SIZE * 4;
+    for (int index = 0; index < WEBVIEW_TOOLBAR_BUTTONS; ++index)
+    {
+        sx_bitmap_wrap(&g_glyphs[index], (uint32_t *)pixels[index], &info, SX_PIXEL_FORMAT_BGRA8888);
+        g_glyph_refs[index] = &g_glyphs[index];
+    }
+}
 
 static const struct sxgui_menu_item k_file_items[] = {
     {"Open...", WEBVIEW_MENU_OPEN, 0},
-    {"Reload", WEBVIEW_MENU_RELOAD, 0},
     {0, 0, 0},
     {"Exit", WEBVIEW_MENU_EXIT, 0},
 };
 
-static const struct sxgui_menu_item k_view_items[] = {
+/* Enabled and disabled with the toolbar, by webview_refresh_commands. */
+static struct sxgui_menu_item k_view_items[] = {
+    {"Stop", WEBVIEW_MENU_STOP, 0},
+    {"Refresh", WEBVIEW_MENU_RELOAD, 0},
+    {0, 0, 0},
     {"Top of page", WEBVIEW_MENU_TOP, 0},
     {"End of page", WEBVIEW_MENU_BOTTOM, 0},
     {0, 0, 0},
     {"View Source", WEBVIEW_MENU_SOURCE, 0},
 };
 
-static const struct sxgui_menu_item k_go_items[] = {
+static struct sxgui_menu_item k_go_items[] = {
     {"Back", WEBVIEW_MENU_BACK, 0},
     {"Forward", WEBVIEW_MENU_FORWARD, 0},
     {0, 0, 0},
-    {"Stop", WEBVIEW_MENU_STOP, 0},
+    {"Home Page", WEBVIEW_MENU_HOME, 0},
 };
+
+/* The page's context menu (a right click on it). */
+static struct sxgui_menu_item k_page_items[] = {
+    {"Back", WEBVIEW_MENU_BACK, 0},
+    {"Forward", WEBVIEW_MENU_FORWARD, 0},
+    {0, 0, 0},
+    {"Refresh", WEBVIEW_MENU_RELOAD, 0},
+    {0, 0, 0},
+    {"View Source", WEBVIEW_MENU_SOURCE, 0},
+};
+
+static const struct sxgui_menu k_page_menu = {
+    "Page", k_page_items, (int)(sizeof(k_page_items) / sizeof(k_page_items[0]))};
+
+static void webview_menu_enable(struct sxgui_menu_item *items, int count, int id, int enabled)
+{
+    for (int index = 0; index < count; ++index)
+    {
+        if (items[index].id == id)
+        {
+            items[index].flags = enabled ? 0 : SXGUI_MENU_DISABLED;
+        }
+    }
+}
+
+static void webview_button_enable(struct sxgui_widget *widget, int enabled)
+{
+    if (enabled)
+    {
+        widget->flags &= ~(uint32_t)SXGUI_FLAG_DISABLED;
+    }
+    else
+    {
+        widget->flags |= SXGUI_FLAG_DISABLED;
+    }
+}
+
+/* One place decides what can be done now, so a grey button and a grey menu
+ * item never disagree (as in Files). Back and Forward stay with
+ * webview_refresh_nav, which calls this. */
+static void webview_refresh_commands(void)
+{
+    const int loading = g_nav.id != 0;
+    const int back = g_hist_index > 0;
+    const int forward = g_hist_index >= 0 && g_hist_index + 1 < g_hist_count;
+    const int count_view = (int)(sizeof(k_view_items) / sizeof(k_view_items[0]));
+    const int count_go = (int)(sizeof(k_go_items) / sizeof(k_go_items[0]));
+    const int count_page = (int)(sizeof(k_page_items) / sizeof(k_page_items[0]));
+
+    webview_button_enable(WEBVIEW_STOP, loading);
+    webview_button_enable(WEBVIEW_REFRESH, g_has_file);
+    webview_button_enable(WEBVIEW_SOURCE, g_has_file);
+    webview_menu_enable(k_view_items, count_view, WEBVIEW_MENU_STOP, loading);
+    webview_menu_enable(k_view_items, count_view, WEBVIEW_MENU_RELOAD, g_has_file);
+    webview_menu_enable(k_view_items, count_view, WEBVIEW_MENU_SOURCE, g_has_file);
+    webview_menu_enable(k_go_items, count_go, WEBVIEW_MENU_BACK, back);
+    webview_menu_enable(k_go_items, count_go, WEBVIEW_MENU_FORWARD, forward);
+    webview_menu_enable(k_page_items, count_page, WEBVIEW_MENU_BACK, back);
+    webview_menu_enable(k_page_items, count_page, WEBVIEW_MENU_FORWARD, forward);
+    webview_menu_enable(k_page_items, count_page, WEBVIEW_MENU_RELOAD, g_has_file);
+    webview_menu_enable(k_page_items, count_page, WEBVIEW_MENU_SOURCE, g_has_file);
+}
 
 static const struct sxgui_menu_item k_help_items[] = {
     {"About Web Viewer", WEBVIEW_MENU_ABOUT, 0},
@@ -3986,8 +4274,20 @@ int main(int argc, char **argv)
 {
     *WEBVIEW_ADDR = sxgui_textfield(sx_rect_make(0, 0, 0, 0), g_address, sizeof(g_address));
     *WEBVIEW_GO = sxgui_button(sx_rect_make(0, 0, 0, 0), "Go", on_go, 0);
-    *WEBVIEW_BACK = sxgui_button(sx_rect_make(0, 0, 0, 0), "<", on_back, 0);
-    *WEBVIEW_FWD = sxgui_button(sx_rect_make(0, 0, 0, 0), ">", on_forward, 0);
+    webview_init_glyphs();
+    *WEBVIEW_BACK = sxgui_toolbar_button(sx_rect_make(0, 0, 0, 0), "Back", &g_glyph_refs[0], on_back, 0);
+    *WEBVIEW_FWD = sxgui_toolbar_button(sx_rect_make(0, 0, 0, 0), "Forward", &g_glyph_refs[1], on_forward, 0);
+    *WEBVIEW_STOP = sxgui_toolbar_button(sx_rect_make(0, 0, 0, 0), "Stop", &g_glyph_refs[2], on_toolbar, 0);
+    *WEBVIEW_REFRESH = sxgui_toolbar_button(sx_rect_make(0, 0, 0, 0), "Refresh", &g_glyph_refs[3], on_toolbar, 0);
+    *WEBVIEW_HOME = sxgui_toolbar_button(sx_rect_make(0, 0, 0, 0), "Home", &g_glyph_refs[4], on_toolbar, 0);
+    *WEBVIEW_OPEN = sxgui_toolbar_button(sx_rect_make(0, 0, 0, 0), "Open", &g_glyph_refs[5], on_toolbar, 0);
+    *WEBVIEW_SOURCE = sxgui_toolbar_button(sx_rect_make(0, 0, 0, 0), "Source", &g_glyph_refs[6], on_toolbar, 0);
+    *WEBVIEW_SEP_NAV = sxgui_separator(sx_rect_make(0, 0, 0, 0));
+    *WEBVIEW_SEP_PAGE = sxgui_separator(sx_rect_make(0, 0, 0, 0));
+    *WEBVIEW_RULE_MENU = sxgui_separator(sx_rect_make(0, 0, 0, 0));
+    *WEBVIEW_RULE_TOOLBAR = sxgui_separator(sx_rect_make(0, 0, 0, 0));
+    *WEBVIEW_ADDR_LABEL = sxgui_label(sx_rect_make(0, 0, 0, 0), "Address");
+    *WEBVIEW_PROGRESS = sxgui_progress(sx_rect_make(0, 0, 0, 0), 0, 100, 0);
     *WEBVIEW_SCROLL = sxgui_scrollbar(sx_rect_make(0, 0, 0, 0), 0, 0, 10, 0);
     WEBVIEW_SCROLL->on_action = on_scroll_changed;
     *WEBVIEW_STATUS = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status);

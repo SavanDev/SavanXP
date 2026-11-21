@@ -146,6 +146,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Web Viewer's window, after Internet Explorer 5:** a toolbar of icons (Back, Forward, Stop, Refresh, Home, Open,
+  Source), an `Address` band, a progress pane in the status bar, a context menu on the page, the page's title in the
+  window title, and a hovered link's address in the status bar. Stop moves from the Go button to the toolbar and
+  View > Stop ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#the-window)).
 - **A full TCP socket table reclaims the `TIME_WAIT` slot closest to expiry** instead of returning `ENOMEM` after
   rapid closes; closings that still owe data or a FIN are kept. `tcp-smoke` checks 40 active closes in a row
   ([NETWORKING.md](docs/net/NETWORKING.md#closing-keeps-protocol-state-alive)).
