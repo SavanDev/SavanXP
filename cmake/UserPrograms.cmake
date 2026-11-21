@@ -231,6 +231,15 @@ savanxp_program(NAME sunlibtest TEST NATIVE DEPENDS libmath LINK_PROFILE PIE
 # (docs/desktop/CLIPBOARD.md); the core smoke runs it.
 savanxp_program(NAME guicliptest TEST NATIVE DEPENDS libsxgui libgfx2d LINK_PROFILE PIE
     SOURCES system/runtime/guicliptest.c)
+# The OpenSSL port from both subsystems, one source (ports/openssl/README.md):
+# built only when the port is.
+if(SAVANXP_HAVE_OPENSSL)
+    savanxp_program(NAME ssltest TEST DEPENDS libssl libcrypto LINK_PROFILE PIE
+        SOURCES system/runtime/ssltest.c)
+    savanxp_program(NAME sunssltest TEST NATIVE DEPENDS libssl libcrypto LINK_PROFILE PIE
+        SOURCES system/runtime/ssltest.c)
+    target_compile_definitions(sunssltest PRIVATE SSLTEST_NATIVE)
+endif()
 # How a DT_NEEDED resolves: the exact file, else the highest newer minor of the
 # same ABI (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution"). One
 # source, one library per version; the program links against the 0.4s, and

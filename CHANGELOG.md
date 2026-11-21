@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **OpenSSL 3.5.3 port** (N5): `ports/openssl` builds `/lib/libcrypto.so.0.4` and `/lib/libssl.so.0.4` for SUN and
+  POSIX programs alike and installs the Mozilla CA store as `/system/ssl/cert.pem`, both pinned in the provenance
+  registry; smoke `openssl-sun` and `openssl-posix` ([ports/openssl/README.md](ports/openssl/README.md)).
 - **SDK:** `atexit`, and libc time, sleep, randomness and identity in SUN programs: `time`, `gettimeofday`,
   `clock_gettime`, `nanosleep`, `getentropy`, `getrandom`, `getpid` and `getuid` stand on runtime hooks with native
   definitions instead of failing on `ENOSYS` ([NATIVE_HEAP.md](docs/userland/NATIVE_HEAP.md)).

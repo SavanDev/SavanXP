@@ -508,6 +508,29 @@ else()
         "FFmpeg. Construi ports/ffmpeg primero. El registro lo descarta.")
 endif()
 
+# OpenSSL, like FFmpeg, is a port the tree consumes when it has been built
+# (ports/openssl): /lib/libcrypto.so.0.4 and /lib/libssl.so.0.4, with the
+# release's headers and the ones its configuration generates.
+set(SAVANXP_OPENSSL_SOURCE "${SAVANXP_OUTPUT_ROOT}/ports/openssl/work/openssl-3.5.3")
+set(SAVANXP_OPENSSL_BUILD "${SAVANXP_OUTPUT_ROOT}/ports/openssl/work/build")
+set(SAVANXP_HAVE_OPENSSL OFF)
+if(EXISTS "${SAVANXP_OUTPUT_ROOT}/external/libcrypto.so.0.4"
+   AND EXISTS "${SAVANXP_OUTPUT_ROOT}/external/libssl.so.0.4"
+   AND EXISTS "${SAVANXP_OPENSSL_SOURCE}/include/openssl/ssl3.h"
+   AND EXISTS "${SAVANXP_OPENSSL_BUILD}/include/openssl/ssl.h")
+    set(SAVANXP_HAVE_OPENSSL ON)
+    foreach(library IN ITEMS libcrypto libssl)
+        add_library(${library} SHARED IMPORTED GLOBAL)
+        set_target_properties(${library} PROPERTIES
+            IMPORTED_LOCATION "${SAVANXP_OUTPUT_ROOT}/external/${library}.so.0.4"
+            INTERFACE_INCLUDE_DIRECTORIES
+                "${SAVANXP_OPENSSL_BUILD}/include;${SAVANXP_OPENSSL_SOURCE}/include")
+    endforeach()
+    message(STATUS "openssl: the tree uses ${SAVANXP_OUTPUT_ROOT}/external/libssl.so.0.4")
+else()
+    message(STATUS "openssl: not built; run ports/openssl/build.sh for ssltest and sunssltest")
+endif()
+
 function(savanxp_runtime_variant)
     set(options PIC)
     set(oneValueArgs NAME)

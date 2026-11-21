@@ -1,0 +1,10 @@
+# Staged by ports/openssl/install.sh when the port is installed.
+name=OpenSSL
+license=Apache-2.0
+copyright=The OpenSSL Project Authors
+origin=https://github.com/openssl/openssl
+version=3.5.3, release tag openssl-3.5.3
+used-in=/lib/libcrypto.so.0.4, /lib/libssl.so.0.4
+source=openssl-3.5.3.tar.gz from the origin's releases, with ports/openssl/patches of https://github.com/SavanDev/SavanXP at the tag of this image
+provenance=OpenSSL
+text=ports/openssl/LICENSE.txt

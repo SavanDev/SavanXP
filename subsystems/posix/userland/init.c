@@ -159,6 +159,12 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "linuxtest")) {
         return "LINUX TEST";
     }
+    if (spec != 0 && text_contains(spec, "sunssltest")) {
+        return "SUN SSL TEST";
+    }
+    if (spec != 0 && text_contains(spec, "ssltest")) {
+        return "SSL TEST";
+    }
     if (spec != 0 && text_contains(spec, "sunlibtest")) {
         return "SUN LIBRARY TEST";
     }
@@ -270,6 +276,8 @@ static int run_automation_spec(const char* spec) {
     const char* win32test_argv[] = {"/system/win32test.sxe", 0};
     const char* linuxtest_argv[] = {"/system/linuxtest.sxe", 0};
     const char* sunlibtest_argv[] = {"/system/sunlibtest.sxe", 0};
+    const char* ssltest_argv[] = {"/bin/ssltest", 0};
+    const char* sunssltest_argv[] = {"/system/sunssltest.sxe", 0};
     const char* sonametest_argv[] = {"/system/sonametest.sxe", 0};
     const char* ldfailtest_argv[] = {"/system/ldfailtest.sxe", 0};
     const char* ldstatictest_argv[] = {"/system/ldstatictest.sxe", 0};
@@ -535,6 +543,13 @@ static int run_automation_spec(const char* spec) {
             /* The Linux fixtures through the launcher (docs/userland/LINUX.md). */
             path = "/system/linuxtest.sxe";
             argv = linuxtest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "ssltest") == 0 || strcmp(spec, "sunssltest") == 0) {
+            /* The OpenSSL port from POSIX and from SUN (ports/openssl); the
+             * scenario installs the port first. */
+            const int native = strcmp(spec, "sunssltest") == 0;
+            path = native ? "/system/sunssltest.sxe" : "/bin/ssltest";
+            argv = native ? sunssltest_argv : ssltest_argv;
             argc = 1;
         } else if (strcmp(spec, "sunlibtest") == 0) {
             /* A SUN program mapping libmath through the shared loader

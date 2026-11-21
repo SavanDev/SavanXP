@@ -150,6 +150,12 @@ POSIX and Linux interfaces.
 `clock_status`; [TIME.md](../../kernel/TIME.md#can-the-date-be-believed)):
 whether the date can be believed, its source, and why not.
 
+**N5c landed 2026-11-21:** the OpenSSL 3.5.3 port and the Mozilla CA store
+([ports/openssl/README.md](../../../ports/openssl/README.md)), pinned and in the
+provenance registry: `libcrypto.so.0.4` and `libssl.so.0.4`, neutral, with
+no file system below them, and `/system/ssl/cert.pem`. `openssl-sun` and
+`openssl-posix` check them from each subsystem without a network.
+
 ## N3 implementation checkpoint — 2026-11-21
 
 **N3 is complete.** Slow DNS and stalled downloads no longer hold the window:

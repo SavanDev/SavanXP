@@ -1,0 +1,90 @@
+SavanXP: no file system below the library.
+
+The library serves SUN and POSIX programs alike and asks the program only for
+what both runtimes give (ports/openssl/README.md). Built with no-stdio and
+OPENSSL_NO_POSIX_IO, three places still reached the file system; here they
+say "unsupported" instead:
+
+- crypto/o_dir.c: directory listing is not implemented (LPdir_nyi.c, as on
+  UEFI);
+- crypto/rand/randfile.c: RAND_load_file and RAND_write_file have no seed
+  file to read or write;
+- providers/.../file_store.c: the "file:" store opens nothing.
+
+Certificates reach the library in memory (PEM through a memory BIO).
+
+diff -ru a/crypto/o_dir.c b/crypto/o_dir.c
+--- a/crypto/o_dir.c
++++ b/crypto/o_dir.c
+@@ -23,7 +23,10 @@
+ #include "internal/o_dir.h"
+ 
+ #define LPDIR_H
+-#if defined OPENSSL_SYS_UNIX || defined DJGPP \
++#if defined OPENSSL_NO_POSIX_IO
++/* No file system below the library: directories are not implemented. */
++# include "LPdir_nyi.c"
++#elif defined OPENSSL_SYS_UNIX || defined DJGPP \
+     || (defined __VMS_VER && __VMS_VER >= 70000000)
+ # include "LPdir_unix.c"
+ #elif defined OPENSSL_SYS_VMS
+diff -ru a/crypto/rand/randfile.c b/crypto/rand/randfile.c
+--- a/crypto/rand/randfile.c
++++ b/crypto/rand/randfile.c
+@@ -82,6 +82,20 @@
+  * devices and EGD sockets are handled in rand_unix.c  If |bytes| is
+  * -1 read the complete file; otherwise read the specified amount.
+  */
++#ifdef OPENSSL_NO_STDIO
++/* No file system below the library: there is no seed file to read or write. */
++int RAND_load_file(const char *file, long bytes)
++{
++    ERR_raise(ERR_LIB_RAND, ERR_R_UNSUPPORTED);
++    return -1;
++}
++
++int RAND_write_file(const char *file)
++{
++    ERR_raise(ERR_LIB_RAND, ERR_R_UNSUPPORTED);
++    return -1;
++}
++#else
+ int RAND_load_file(const char *file, long bytes)
+ {
+     /*
+@@ -267,6 +281,7 @@
+     OPENSSL_cleanse(buf, RAND_BUF_SIZE);
+     return ret;
+ }
++#endif
+ 
+ const char *RAND_file_name(char *buf, size_t size)
+ {
+diff -ru a/providers/implementations/storemgmt/file_store.c b/providers/implementations/storemgmt/file_store.c
+--- a/providers/implementations/storemgmt/file_store.c
++++ b/providers/implementations/storemgmt/file_store.c
+@@ -248,6 +248,16 @@
+     }
+ 
+ 
++#ifdef OPENSSL_NO_POSIX_IO
++    /* No file system below the library: "file:" opens nothing. */
++    (void)i;
++    (void)path;
++    (void)st;
++    (void)bio;
++    ERR_clear_last_mark();
++    ERR_raise(ERR_LIB_PROV, ERR_R_UNSUPPORTED);
++    return NULL;
++#else
+     for (i = 0, path = NULL; path == NULL && i < path_data_n; i++) {
+         /*
+          * If the scheme "file" was an explicit part of the URI, the path must
+@@ -283,6 +293,7 @@
+         BIO_free_all(bio);
+ 
+     return ctx;
++#endif
+ }
+ 
+ void *file_attach(void *provctx, OSSL_CORE_BIO *cin)

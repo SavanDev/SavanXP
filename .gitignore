@@ -28,6 +28,8 @@ ports/*
 !ports/ccleste/**
 !ports/tinycc/
 !ports/tinycc/**
+!ports/openssl/
+!ports/openssl/**
 ports/doomgeneric/wad/*.wad
 !ports/doomgeneric/wad/
 !ports/doomgeneric/wad/README.md

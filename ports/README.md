@@ -5,7 +5,10 @@ officially. Each port owns its upstream pin, small patches, SavanXP overlay,
 build entry point, and documentation. A port is built independently from the
 base CMake target and installs through the SxFS candidate flow.
 
-The official ports are `doomgeneric`, `ffmpeg`, `ccleste` and `tinycc`. FFmpeg
+The official ports are `doomgeneric`, `ffmpeg`, `ccleste`, `tinycc` and
+`openssl`. `openssl` builds the TLS libraries and installs the Mozilla CA
+store; like FFmpeg it builds no program and keeps its upstream archive outside
+Git. FFmpeg
 intentionally keeps its upstream archive outside Git; its `UPSTREAM` pin and
 build recipe make the download reproducible. `ccleste` does the same for a
 different reason: upstream ships no license file, so nothing may be vendored.

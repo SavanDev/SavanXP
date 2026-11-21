@@ -1,0 +1,10 @@
+# Staged by ports/openssl/install.sh when the port is installed.
+name=Mozilla CA certificate store
+license=MPL-2.0
+copyright=Mozilla Foundation and contributors
+origin=https://curl.se/docs/caextract.html, extracted from Mozilla NSS certdata.txt
+version=2026-11-05 extract
+used-in=/system/ssl/cert.pem
+source=https://curl.se/ca/cacert-2026-11-05.pem
+provenance=Mozilla CA certificate store
+text=ports/openssl/licenses/MPL-2.0.txt

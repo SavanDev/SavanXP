@@ -117,6 +117,10 @@ strictly downward: nothing depends on anything above it.
 | `libsxgui.so.0.4` | 154 KB | `libgfx2d` | neutral |
 | `libsxgfx.so.0.4` | 68 KB | `libgfx2d` | POSIX |
 
+`libcrypto.so.0.4` and `libssl.so.0.4` are not in it either: `ports/openssl`
+links them, neutral, asking the program only for C functions both runtimes
+define ([ports/openssl/README.md](../../ports/openssl/README.md)).
+
 `libffmpeg.so.0.4` is not in this table because the tree does not **build** it:
 `ports/ffmpeg` links it and stages it at `/lib`, and the tree consumes it as an
 imported CMake target, so it exists only in an image that has the port installed —

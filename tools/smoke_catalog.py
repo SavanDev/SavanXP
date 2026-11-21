@@ -1259,6 +1259,25 @@ SCENARIOS: dict[str, Scenario] = {
     # Cuanto tarda el cargador con libffmpeg: 6.8 MB, 2334 simbolos. Es lo unico
     # aqui que mide algo en vez de afirmar un resultado, y por eso es el escenario
     # que contesta si la busqueda lineal de simbolos es un problema.
+    # The OpenSSL port (ports/openssl): the libraries, the CA store and a
+    # ClientHello, from each subsystem. The port is built and installed first;
+    # the programs exist only in a tree configured after it was built.
+    "openssl-sun": _qemu_scenario(
+        "sunssltest",
+        "SUN SSL TEST PASS",
+        "SUN SSL TEST FAIL",
+        "OpenSSL 3.5.3 and the Mozilla CA store in a SUN program, no network",
+        240.0,
+        prepare=("./ports/openssl/build.sh",),
+    ),
+    "openssl-posix": _qemu_scenario(
+        "ssltest",
+        "SSL TEST PASS",
+        "SSL TEST FAIL",
+        "OpenSSL 3.5.3 and the Mozilla CA store in a POSIX program, no network",
+        240.0,
+        prepare=("./ports/openssl/build.sh",),
+    ),
     "ffmpegload": _qemu_scenario(
         "ffmpegload",
         "FFMPEGLOAD OK",

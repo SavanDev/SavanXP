@@ -177,6 +177,41 @@ which is why both go into the registry.
 - Distributed in: `/lib/libffmpeg.so.0.4`, linked in as a static archive by
   `ports/ffmpeg/link.sh`. Built by `ports/ffmpeg/dav1d.sh` with Meson
 
+### OpenSSL
+
+- Origin: https://github.com/openssl/openssl, release `openssl-3.5.3`: the
+  version the pinned Ladybird (commit `37ec6a08`) overrides to in its
+  `vcpkg.json` (`openssl` `3.5.3#0`)
+- Versioned: no source vendored; `ports/openssl/UPSTREAM` pins the release
+  archive, SHA-256
+  `c9489d2abcf943cdc8329a57092331c598a402938054dc3a22218aea8a8ec3bf`
+  (the same in the GitHub release's `.sha256` and openssl.org's), 53183370
+  bytes; `SAVANXP_VERIFY_SIGNATURE=1` also checks the release signature
+- Patches: one, `ports/openssl/patches/0001-no-file-system.patch`: directory
+  listing, the random seed file and the `file:` store answer "unsupported",
+  so the library reaches no file system
+- License reviewed: Apache-2.0, `ports/openssl/LICENSE.txt` (the release's
+  `LICENSE.txt`)
+- Decision: `Adopt`
+- Distributed in: `/lib/libcrypto.so.0.4` and `/lib/libssl.so.0.4`, linked by
+  `ports/openssl/link.sh` from the configuration in `ports/openssl/configure.sh`;
+  built only when the port is installed
+
+### Mozilla CA certificate store
+
+- Origin: Mozilla NSS `certdata.txt`, as extracted to PEM by curl,
+  https://curl.se/docs/caextract.html
+- Pinned version: the 2026-11-05 extract, `cacert-2026-11-05.pem`, SHA-256
+  `427c064216761a1e72a8b30f0d954d08cb6e4435a82091fb865afd20c8497285`
+  (curl's published `cacert.pem.sha256` on that day), 200116 bytes, 118
+  roots; `ports/openssl/UPSTREAM`, checked by `ports/openssl/fetch.sh`
+- Versioned: no; downloaded by the port
+- License reviewed: MPL-2.0 (the certificate data),
+  `ports/openssl/licenses/MPL-2.0.txt`
+- Decision: `Adopt`, unchanged. Test CAs are never added to it
+- Distributed in: `/system/ssl/cert.pem`, OpenSSL's default file under
+  `--openssldir=/system/ssl`, installed with the port
+
 ### Celeste Classic (ccleste)
 
 - Origin: https://github.com/lemon32767/ccleste, commit
