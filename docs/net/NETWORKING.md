@@ -161,11 +161,15 @@ and restart the interval. Old data and resets cannot tear it down. Unfinished
 orphan closes, including `FIN_WAIT_2`, expire after 60 seconds; retransmission
 exhaustion can end them earlier. The heartbeat reclaims every expired slot.
 
-Attached and detached sockets share the existing 32-slot budget. Rapid closes
-can therefore temporarily exhaust it (`ENOMEM`), and an explicitly bound port
-stays busy until its protocol state expires. This is bounded retention, not a
-handle leak. Reclaiming a `TIME_WAIT` slot when the table is full is planned
-before N4 ([WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md#next-implementation-step--n3)). The read-only `NET_IOC_GET_TCP_LIFETIMES` diagnostic reports
+Attached and detached sockets share the existing 32-slot budget. When it is
+full, a new socket takes the `TIME_WAIT` slot closest to expiry instead of
+failing: that state only waits out stray segments of a finished connection,
+and losing it early risks no more than a late duplicate meeting a new
+connection on the same tuple, which a 30-second MSL on a LAN makes remote.
+Closing states that still owe data or a FIN are never reclaimed, so a table
+full of those still returns `ENOMEM`. An explicitly bound port stays busy until
+its protocol state expires or is reclaimed. `tcp-smoke` opens and actively
+closes 40 connections within one `TIME_WAIT` interval to prove it. The read-only `NET_IOC_GET_TCP_LIFETIMES` diagnostic reports
 attached streams, closing streams, `TIME_WAIT` streams, FIN retransmissions and
 orphan close timeouts, without servicing the stack. Existing TCP statistics
 and fault-injection structures keep their ABI sizes.

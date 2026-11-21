@@ -1885,21 +1885,38 @@ int create_socket(uint32_t domain, uint32_t type, uint32_t protocol, Socket*& ou
         return negative_error(SX_EINVAL);
     }
 
+    // A free slot, else the TIME_WAIT closest to expiry: it only waits out
+    // stray segments of a finished connection, while a new socket would fail
+    // with ENOMEM. Other closing states still owe data or a FIN and are kept.
+    net::Socket* slot = nullptr;
     for (auto& socket : g_sockets) {
         if (!socket.in_use) {
-            nic::cancel_transmit(&socket);
-            memset(&socket, 0, sizeof(socket));
-            socket.in_use = true;
-            socket.asynchronous = asynchronous;
-            socket.domain = domain;
-            socket.type = type;
-            socket.protocol = type == SAVANXP_SOCK_STREAM ? SAVANXP_IPPROTO_TCP : SAVANXP_IPPROTO_UDP;
-            socket.tcp_state = net::TcpState::closed;
-            out_socket = &socket;
-            return 0;
+            slot = &socket;
+            break;
         }
     }
-    return negative_error(SX_ENOMEM);
+    if (slot == nullptr) {
+        for (auto& socket : g_sockets) {
+            if (socket.type == SAVANXP_SOCK_STREAM && socket.detached &&
+                socket.tcp_state == net::TcpState::time_wait &&
+                (slot == nullptr || socket.close_deadline_ms < slot->close_deadline_ms)) {
+                slot = &socket;
+            }
+        }
+    }
+    if (slot == nullptr) {
+        return negative_error(SX_ENOMEM);
+    }
+    nic::cancel_transmit(slot);
+    memset(slot, 0, sizeof(*slot));
+    slot->in_use = true;
+    slot->asynchronous = asynchronous;
+    slot->domain = domain;
+    slot->type = type;
+    slot->protocol = type == SAVANXP_SOCK_STREAM ? SAVANXP_IPPROTO_TCP : SAVANXP_IPPROTO_UDP;
+    slot->tcp_state = net::TcpState::closed;
+    out_socket = slot;
+    return 0;
 }
 
 void close_socket(Socket* socket) {

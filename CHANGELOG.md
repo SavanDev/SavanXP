@@ -146,6 +146,9 @@ Cut-off notes:
 
 ### Changed
 
+- **A full TCP socket table reclaims the `TIME_WAIT` slot closest to expiry** instead of returning `ENOMEM` after
+  rapid closes; closings that still owe data or a FIN are kept. `tcp-smoke` checks 40 active closes in a row
+  ([NETWORKING.md](docs/net/NETWORKING.md#closing-keeps-protocol-state-alive)).
 - **A thread the timer tick wakes runs at once**: on a free idle core (`smp::kick_free_core`), or in place of the
   BSP's current thread, instead of after the rest of its 20 ms slice; `audio-preferences` no longer underruns while
   an AP waits for the disk ([SMP_ROADMAP.md](docs/roadmaps/open/SMP_ROADMAP.md), slice 5.2).

@@ -375,7 +375,8 @@ with both SUN and POSIX socket operations by the kernel's global lock. FIN uses
 the same retained single segment as data; close waits for accepted data to be
 acknowledged before queuing FIN. Active close retains `TIME_WAIT` for 60 seconds;
 unfinished orphan closes expire within 60 seconds. The 32-slot socket budget
-includes detached close state, so rapid closes can temporarily return `ENOMEM`.
+includes detached close state; a full table reclaims the `TIME_WAIT` slot closest
+to expiry, and returns `ENOMEM` only when every slot is live or still closing.
 See [NETWORKING.md](../net/NETWORKING.md#closing-keeps-protocol-state-alive).
 Names resolve through `sxn/sxndns.h`: a caller-owned resolver with a TTL
 cache, source-checked UDP, a TCP retry for truncated replies and a cancel

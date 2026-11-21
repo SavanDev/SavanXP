@@ -111,8 +111,8 @@ responsive UI.
 **N3 is complete.** Slow DNS and stalled downloads no longer hold the window:
 remote loading runs on one network worker per window, with Stop, cancellation
 and stale results discarded, over the shared SUN resolver. The next stage is
-N4; the TIME_WAIT reclamation planned before it is still open
-([below](#next-implementation-step--n3)).
+N4; the TIME_WAIT reclamation planned before it has landed (2026-11-21,
+[NETWORKING.md](../../net/NETWORKING.md#closing-keeps-protocol-state-alive)).
 
 ### The worker
 
@@ -161,9 +161,9 @@ resolver yet; that gap is recorded there as pending.
 
 Extract URL and HTTP/1.1 loading from Web Viewer into a reusable SUN library
 that the worker calls, with the framing, redirect, limit and budget rules of
-step 4 above, including the 30-second total navigation budget. Reclaim a
-`TIME_WAIT` slot when the socket table is full first, as planned in the N2
-checkpoint, since N4 opens many short connections.
+step 4 above, including the 30-second total navigation budget. Its
+prerequisite, reclaiming a `TIME_WAIT` slot when the socket table is full, has
+landed.
 
 ## N2 implementation checkpoint — 2026-11-16
 

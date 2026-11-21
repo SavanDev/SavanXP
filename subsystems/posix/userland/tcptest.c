@@ -473,6 +473,58 @@ cleanup:
     return ok;
 }
 
+/* More active closes than the socket table has slots: each leaves a
+ * TIME_WAIT behind, and once the table is full a new socket must take the
+ * TIME_WAIT closest to expiry instead of failing with ENOMEM. */
+#define RECLAIM_CONNECTIONS 40
+
+static int check_time_wait_reclaim(const struct savanxp_sockaddr_in* peer) {
+    long device = savanxp_open_mode("/dev/net0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+    struct savanxp_net_tcp_lifetimes life = {0};
+    const unsigned long started = uptime_ms();
+    unsigned i;
+    int ok = 0;
+    if (device < 0) goto cleanup;
+    for (i = 0; i < RECLAIM_CONNECTIONS; ++i) {
+        long fd = savanxp_socket(SAVANXP_AF_INET, SAVANXP_SOCK_STREAM, 0);
+        unsigned waited = 0;
+        if (fd < 0) {
+            eprintf("tcptest: socket %u of %u failed (%s)\n", i + 1, RECLAIM_CONNECTIONS,
+                result_error_string(fd));
+            goto cleanup;
+        }
+        if (savanxp_connect((int)fd, peer, 5000) < 0) {
+            savanxp_close((int)fd);
+            goto cleanup;
+        }
+        /* We close first; the echo server sees EOF and closes too, which
+         * leaves this side in TIME_WAIT. */
+        savanxp_close((int)fd);
+        do {
+            sleep_ms(50);
+            waited += 50;
+            if (savanxp_ioctl((int)device, NET_IOC_GET_TCP_LIFETIMES, (unsigned long)&life) < 0) goto cleanup;
+        } while (life.closing != 0 && waited < 5000);
+        if (life.closing != 0) goto cleanup;
+    }
+    /* Within the 60 s a TIME_WAIT lasts, so none expired on its own: every
+     * socket past the table's size had to reclaim one. */
+    if (uptime_ms() - started >= 55000) {
+        eprintf("tcptest: %u connections took too long to prove reclamation\n", RECLAIM_CONNECTIONS);
+        goto cleanup;
+    }
+    /* The table really filled with TIME_WAIT on the way. */
+    if (life.time_wait < 24 || life.attached != 0) {
+        eprintf("tcptest: time_wait=%u attached=%u after reclaiming\n", life.time_wait, life.attached);
+        goto cleanup;
+    }
+    puts_out("tcptest: a full table reclaims the TIME_WAIT closest to expiry\n");
+    ok = 1;
+cleanup:
+    if (device >= 0) savanxp_close((int)device);
+    return ok;
+}
+
 int main(int argc, char** argv) {
     long net_fd;
     long fd;
@@ -628,6 +680,8 @@ int main(int argc, char** argv) {
     if (!check_connect_timeout(&address)) return fail("connect timeout cleanup");
 
     if (!check_independent_close(&address)) return fail("independent progress and close lifetime");
+
+    if (!check_time_wait_reclaim(&address)) return fail("TIME_WAIT reclaimed when the table is full");
 
     puts_out("TCP SMOKE PASS\n");
     return 0;

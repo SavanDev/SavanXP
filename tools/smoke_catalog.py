@@ -797,7 +797,7 @@ SCENARIOS: dict[str, Scenario] = {
         "tcptest {port}",
         "TCP SMOKE PASS",
         "TCP SMOKE FAIL",
-        "TCP loss, independent progress, concurrent close, FIN retries and TIME_WAIT",
+        "TCP loss, independent progress, concurrent close, FIN retries, TIME_WAIT and its reclamation",
         300.0,
         host_server="tcp",
     ),
