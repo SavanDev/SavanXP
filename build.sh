@@ -13,6 +13,8 @@ SMP=${SAVANXP_SMP:-2}
 VIRTIO=${SAVANXP_VIRTIO:-OFF}
 GL=${SAVANXP_GL:-OFF}
 USB=${SAVANXP_USB:-OFF}
+IOMMU=${SAVANXP_IOMMU:-}
+BOOT_OPTIONS=${SAVANXP_BOOT_OPTIONS:-}
 HEADLESS=${SAVANXP_HEADLESS:-OFF}
 JOBS=${SAVANXP_JOBS:-}
 SMOKE_SCENARIO=""
@@ -78,6 +80,16 @@ while [[ $# -gt 0 ]]; do
             HEADLESS=ON
             shift
             ;;
+        --iommu)
+            [[ $# -ge 2 ]] || { echo "build.sh: --iommu requires none, amd or intel" >&2; exit 2; }
+            IOMMU=$2
+            shift 2
+            ;;
+        --boot-options)
+            [[ $# -ge 2 ]] || { echo "build.sh: --boot-options requires a value" >&2; exit 2; }
+            BOOT_OPTIONS=$2
+            shift 2
+            ;;
         --scenario)
             [[ $# -ge 2 ]] || { echo "build.sh: --scenario requires a value" >&2; exit 2; }
             SMOKE_SCENARIO=$2
@@ -118,6 +130,8 @@ Options:
   --gl              virtio hardware with virtio-vga-gl (virgl); needs virglrenderer
   --usb             add a QEMU xHCI controller with a USB keyboard and tablet
   --headless        do not open a graphical QEMU window
+  --iommu none|amd|intel  add an emulated IOMMU (smokes: overrides the scenario's)
+  --boot-options S  extra kernel boot options for the development image
   --jobs N          pass a parallelism limit to Ninja
   --scenario NAME   smoke scenario (for the smoke command)
   --smoke-command   override the scenario init command
@@ -190,6 +204,8 @@ SMOKE_CLEAN_AUDIO_PREFERENCES=False
 SMOKE_USB_POINTER=mouse
 SMOKE_USB_HUB=False
 SMOKE_USB_HOST=xhci
+SMOKE_IOMMU=none
+SMOKE_BOOT_OPTIONS=""
 if [[ "$COMMAND" == smoke ]]; then
     [[ -n "$SMOKE_SCENARIO" ]] || SMOKE_SCENARIO=smoke
     if [[ -n "$SMOKE_COMMAND_OVERRIDE" ]]; then
@@ -230,6 +246,8 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_USB_POINTER=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_pointer)
         SMOKE_USB_HUB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_hub)
         SMOKE_USB_HOST=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_host)
+        SMOKE_IOMMU=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field iommu)
+        SMOKE_BOOT_OPTIONS=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field boot_options)
         SMOKE_WIN32_FILES=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field win32_files)
         [[ -z "$SMOKE_UNSUPPORTED" ]] || {
             echo "build.sh: smoke scenario '$SMOKE_SCENARIO' is not Linux-ready: $SMOKE_UNSUPPORTED" >&2
@@ -392,6 +410,7 @@ CONFIGURE_ARGS=(
     "-DSAVANXP_VIRTIO=$VIRTIO"
     "-DSAVANXP_HEADLESS=$HEADLESS"
     "-DSAVANXP_SMOKE_COMMAND=${SMOKE_SPEC:-}"
+    "-DSAVANXP_BOOT_OPTIONS=${SMOKE_BOOT_OPTIONS:+$SMOKE_BOOT_OPTIONS }${BOOT_OPTIONS}"
 )
 if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     CONFIGURE_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=$ROOT/cmake/toolchain-linux.cmake")
@@ -504,6 +523,7 @@ case "$COMMAND" in
         [[ "$SMOKE_NO_PS2" == True ]] && SMOKE_ARGS+=(--no-ps2)
         [[ "$SMOKE_USB_HUB" == True ]] && SMOKE_ARGS+=(--usb-hub)
         SMOKE_ARGS+=(--usb-host "$SMOKE_USB_HOST")
+        SMOKE_ARGS+=(--iommu "${IOMMU:-$SMOKE_IOMMU}")
         if [[ "$SMOKE_USB_STICK_MIB" != 0 ]]; then
             build_target savanxp_fat_image
             SMOKE_ARGS+=(--usb-stick-mib "$SMOKE_USB_STICK_MIB" --fat-image "$OUTPUT_ROOT/tools/fat-image")
@@ -551,6 +571,7 @@ case "$COMMAND" in
         [[ "$GL" == ON ]] && QEMU_ARGS+=(--gl)
         [[ "$USB" == ON ]] && QEMU_ARGS+=(--usb)
         [[ "$HEADLESS" == ON ]] && QEMU_ARGS+=(--headless)
+        [[ -z "$IOMMU" ]] || QEMU_ARGS+=(--iommu "$IOMMU")
         [[ "$COMMAND" == debug ]] && QEMU_ARGS+=(--debug)
         exec python3 "$ROOT/tools/run_qemu.py" "${QEMU_ARGS[@]}"
         ;;

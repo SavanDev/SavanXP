@@ -522,6 +522,10 @@ which has no access to the machine and so runs in the host tests:
   whoever can write the table can write the sum. The boot log says
   `acpi: XXXX has a wrong checksum, using it anyway`.
 
+The IVRS and DMAR, read for the IOMMU, follow the same rules and refuse a
+table that breaks one ([IOMMU.md](IOMMU.md#rules-the-parsers-enforce));
+`iommu-tables-test` checks them the same way.
+
 `acpi-tables-test` builds its tables in memory that ends at a page with no
 access, so a read past a bad length is a crash, not a pass. Checked only in
 QEMU with OVMF (the XSDT path); the RSDT path and wrong checksums are covered

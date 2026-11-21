@@ -18,6 +18,8 @@ option(SAVANXP_VIRTIO "Use QEMU virtio hardware" OFF)
 option(SAVANXP_HEADLESS "Run QEMU without a graphical display" OFF)
 set(SAVANXP_SMOKE_COMMAND "" CACHE STRING
     "Optional init automation command staged in the smoke initramfs")
+set(SAVANXP_BOOT_OPTIONS "" CACHE STRING
+    "Extra kernel boot options appended to the development image's command line")
 set(SAVANXP_OUTPUT_ROOT "${CMAKE_SOURCE_DIR}/build" CACHE PATH
     "Shared SavanXP output root (staging, images and persistent disk)")
 set(SAVANXP_SXFS_SECTORS 2097152 CACHE STRING "Size of the persistent SxFS image in sectors")
@@ -263,6 +265,11 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/acpi.cpp
     kernel/acpi_tables.cpp
     kernel/ioapic.cpp
+    kernel/iommu.cpp
+    kernel/iommu_tables.cpp
+    kernel/iommu_selftest.cpp
+    kernel/amd_vi.cpp
+    kernel/amd_vi_tables.cpp
     kernel/uacpi_glue.cpp
     kernel/rtc.cpp
     kernel/heap.cpp
@@ -973,6 +980,21 @@ target_include_directories(savanxp-acpi-tables-test PRIVATE "${CMAKE_SOURCE_DIR}
 target_compile_options(savanxp-acpi-tables-test PRIVATE -O1 -Wall -Wextra -Werror)
 set_target_properties(savanxp-acpi-tables-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+add_executable(savanxp-iommu-tables-test
+    kernel/iommu_tables.cpp
+    tests/host/kernel_string_stubs.cpp
+    tests/host/iommu_tables_test.cpp)
+target_include_directories(savanxp-iommu-tables-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_options(savanxp-iommu-tables-test PRIVATE -O1 -Wall -Wextra -Werror)
+set_target_properties(savanxp-iommu-tables-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
+add_executable(savanxp-amd-vi-tables-test
+    kernel/amd_vi_tables.cpp
+    tests/host/amd_vi_tables_test.cpp)
+target_include_directories(savanxp-amd-vi-tables-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_options(savanxp-amd-vi-tables-test PRIVATE -O1 -Wall -Wextra -Werror)
+set_target_properties(savanxp-amd-vi-tables-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
 add_executable(savanxp-block-writeback-test
     kernel/block.cpp
     tests/host/kernel_string_stubs.cpp
@@ -1224,7 +1246,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
@@ -1236,6 +1258,8 @@ add_test(NAME sximg-test COMMAND savanxp-sximg-test)
 add_test(NAME doom-mus-test COMMAND savanxp-doom-mus-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
 add_test(NAME acpi-tables-test COMMAND savanxp-acpi-tables-test)
+add_test(NAME iommu-tables-test COMMAND savanxp-iommu-tables-test)
+add_test(NAME amd-vi-tables-test COMMAND savanxp-amd-vi-tables-test)
 add_test(NAME sxdisk-test COMMAND savanxp-sxdisk-test)
 add_test(NAME block-writeback-test COMMAND savanxp-block-writeback-test)
 add_test(NAME sxfs-volume-test COMMAND savanxp-sxfs-volume-test)
@@ -1535,14 +1559,35 @@ if(NOT EXISTS "${SAVANXP_LIMINE_INSTALLER}")
     message(STATUS "Limine ISO deployer is not built; the savanxp_iso target is unavailable.")
 endif()
 
+# The development path's limine.conf, with SAVANXP_BOOT_OPTIONS (build.sh
+# --boot-options, or a smoke scenario's boot_options) appended to the kernel's
+# command line. Rewritten only when it changes.
+if(NOT SAVANXP_BOOT_OPTIONS MATCHES "^[A-Za-z0-9_.=, -]*$")
+    message(FATAL_ERROR "SAVANXP_BOOT_OPTIONS may hold only letters, digits, spaces and _.=,-")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/boot/limine-dev.conf")
+file(READ "${CMAKE_SOURCE_DIR}/boot/limine-dev.conf" SAVANXP_LIMINE_DEV_CONF)
+if(NOT SAVANXP_BOOT_OPTIONS STREQUAL "")
+    string(REGEX REPLACE "(\n[ \t]*cmdline:[^\n]*)" "\\1 ${SAVANXP_BOOT_OPTIONS}"
+        SAVANXP_LIMINE_DEV_CONF "${SAVANXP_LIMINE_DEV_CONF}")
+endif()
+set(SAVANXP_LIMINE_DEV_CONF_PATH "${CMAKE_BINARY_DIR}/limine-dev.conf")
+set(SAVANXP_LIMINE_DEV_CONF_OLD "")
+if(EXISTS "${SAVANXP_LIMINE_DEV_CONF_PATH}")
+    file(READ "${SAVANXP_LIMINE_DEV_CONF_PATH}" SAVANXP_LIMINE_DEV_CONF_OLD)
+endif()
+if(NOT SAVANXP_LIMINE_DEV_CONF_OLD STREQUAL SAVANXP_LIMINE_DEV_CONF)
+    file(WRITE "${SAVANXP_LIMINE_DEV_CONF_PATH}" "${SAVANXP_LIMINE_DEV_CONF}")
+endif()
+
 add_custom_target(savanxp_image
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_IMAGE_ROOT}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_IMAGE_ROOT}/boot/limine"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_IMAGE_ROOT}/EFI/BOOT"
     COMMAND "${CMAKE_COMMAND}" -E copy
-            "${CMAKE_SOURCE_DIR}/boot/limine-dev.conf" "${SAVANXP_IMAGE_ROOT}/limine.conf"
+            "${SAVANXP_LIMINE_DEV_CONF_PATH}" "${SAVANXP_IMAGE_ROOT}/limine.conf"
     COMMAND "${CMAKE_COMMAND}" -E copy
-            "${CMAKE_SOURCE_DIR}/boot/limine-dev.conf" "${SAVANXP_IMAGE_ROOT}/boot/limine/limine.conf"
+            "${SAVANXP_LIMINE_DEV_CONF_PATH}" "${SAVANXP_IMAGE_ROOT}/boot/limine/limine.conf"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${SAVANXP_KERNEL_ELF}" "${SAVANXP_IMAGE_ROOT}/boot/kernel.elf"
     COMMAND "${CMAKE_COMMAND}" -E copy

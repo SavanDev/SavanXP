@@ -259,7 +259,10 @@ What it actually took, against the plan below:
 - **No reschedule IPI for wakeups.** See
   [the trap below](#known-traps): the same-core handoff stays, and an idle core
   picks up whatever is left in the queue on its own tick, at most 1 ms later.
-  The IPI exists, but only kills use it.
+  The IPI exists, but only kills use it, and since slice 5.2 the BSP's tick:
+  what that tick wakes (sleepers, wait timeouts, timers) goes to a free idle
+  core by IPI, or takes the BSP from its current thread if no core is free.
+  Wakeups from system calls, the RPC case below, are unchanged.
 - **CPU accounting counts every core.** `cpu_ticks_total` is now the ticks that
   found a process running on *any* core, so one tick still increments exactly
   one process; `cpu_online` is the number of cores that schedule, which is also
@@ -465,8 +468,10 @@ What it actually took:
   - **An APIC ID above 254 gets no device interrupts.** An IOAPIC entry names
     its destination in 8 bits (255 is broadcast). Logical destination mode, the
     remedy the original plan named, does not help in x2APIC mode, where logical
-    IDs are 32 bits; the remedy is interrupt remapping (VT-d / AMD-Vi), which
-    this kernel does not have. Such cores are skipped.
+    IDs are 32 bits; the remedy is interrupt remapping (VT-d / AMD-Vi) with
+    entries that name 32 bits. AMD-Vi remapping exists now
+    ([IOMMU.md](../../kernel/IOMMU.md#interrupt-remapping-m4)), but with
+    32-bit entries, which name 8 bits as well. Such cores are skipped.
   - **MSI-X stays on the BSP.** virtio-gpu programs its MSI-X entry at boot,
     before the APs schedule; moving it means rewriting that entry afterwards,
     and nothing measured asks for it.
@@ -927,6 +932,151 @@ disk waits. What it must respect:
   ([VIRGL_ROADMAP.md](VIRGL_ROADMAP.md): up to 2 s spinning) and Azalia's
   ([AZALIA_ROADMAP.md](AZALIA_ROADMAP.md), AZ-3).
 
+**State: the first cut landed; acceptance not met yet.** An application
+processor's idle waits for its writeback command with the kernel lock released
+and interrupts off (`smp::run_without_kernel_lock`); the BSP's idle no longer
+steps on an SMP machine. The command is chosen and applied under the lock, the
+queue stays consistent and readable meanwhile, and any path that needs a
+driver under the lock settles the command first
+([BLOCK_WRITEBACK.md](../../kernel/BLOCK_WRITEBACK.md#draining)). Power-off
+waits for it the same way ([POWER.md](../../kernel/POWER.md#why-it-may-run-from-an-interrupt)).
+`make_room`, `sync` and reads still wait under the lock.
+
+Measured on 2026-11-20, 2-core TCG, the Ryzen 5 1600 host, `audio-preferences`:
+
+| | Passes | HDA underruns (2 streams) | Holds over 15 ms |
+| --- | --- | --- | --- |
+| Before: every idle steps under the lock | 0 of 5 | 9, in both streams | 37 in the earlier measurement, 34 of them the idle's `YIELD` |
+| After | 4 of 5, then 0 of 5, 0 of 5 in later batches | 6 in 5 runs, none in the first stream | 4-6 per run, none from the idle |
+
+With a temporary probe in `unlock_kernel()` it passed 7 of 7, which says the
+remaining failure is sensitive to timing rather than tied to a long hold.
+
+**The second cut is scheduling.** The BSP's tick woke `audiod` from its 10 ms
+sleep and left it in the queue: the AP waiting for the disk could not take
+it (its interrupts, its tick included, are off), and the BSP went on with its
+current thread for the rest of a 20 ms slice. Now a thread the tick wakes goes
+to a free idle core at once (`smp::kick_free_core`, which skips a core in
+`waiting_on_device`), or, with none free, takes the BSP from its current
+thread. Same conditions, 8 runs each:
+
+| | Passes | HDA underruns |
+| --- | --- | --- |
+| First cut only | 0 of 8 | 9, at least one in every run |
+| Tick wakeups preempt the BSP | 2 of 8 | 3 |
+| Free core first, then the BSP | 7 of 8 | 0 |
+
+The one failure left had a 40.6 ms gap in the recording and no underrun
+anywhere in the guest; the scenario is not yet passing "repeatedly".
+
+**The 4 MB copy, measured again** on 2026-11-20 the way the table above was:
+KVM, AHCI, the desktop with a Command Prompt, `cp` of
+`/system/samples/system.mp3` (3.9 MiB) to `/tmp`, on a quiet Ryzen 5 1600
+host. Windows of 2000 ticks; idle, the same machine sits at `held` 5-10% and
+loses no ticks.
+
+| | Copy takes | Windows above idle | `held` | Ticks lost | Longest hold |
+| --- | --- | --- | --- | --- | --- |
+| Before 5.2, 2 cores | about 50 s | all of them | 97-99% | 87% | 2.3 s, the idle's `SAVANXP_SYS_YIELD` |
+| First cuts, 2 cores (2 runs) | 2 s, by `date` | one | 43-48% | 26-31% | 8-51 ms |
+| First cuts, 4 cores, before the fix below | not timed | two | 91%, then 68% | 75%, then 56% | 73 ms, `SAVANXP_SYS_YIELD` |
+| First cuts, 4 cores (2 runs) | 1-2 s | one | 50-53% | 32-36% | 42-47 ms, `SAVANXP_SYS_READ` |
+| Reads in 64 KiB pieces, 2 cores (2 runs) | under 1 s | one | 13-16% | 1-2% | 5-29 ms, `SAVANXP_SYS_READ` |
+| Reads in 64 KiB pieces, 4 cores (2 runs) | under 1 s | one | 29% | 14-15% | 37-39 ms, `SAVANXP_SYS_READ` |
+
+- *The compositor keeps up.* It drew 6 frames a second in the copy's window
+  (the console's output) against 2 at rest, where before it fell to 2 for
+  the length of the copy.
+- *Writeback no longer shows.* The queue the copy leaves drains afterwards
+  with every window at idle levels; `make_room` does not run, since 4 MB is
+  under the 8 MiB budget.
+- *The copy's reads were one sector at a time.* `sx::read_file` handed the
+  VFS 256 bytes per call from a stack scratch, so SxFS asked the disk for
+  half a sector: a timing probe in `block::read` counted about 7 900
+  one-sector commands of ~100 µs each under KVM, with no time at all spent
+  settling another core's command on two cores. Reads now go through a heap
+  buffer of up to 64 KiB, the way writes already did, and SxFS reads whole
+  runs of up to 128 sectors: the copy's reads held the lock 45-78 ms in all
+  instead of 1.0-1.35 s.
+- *What is left is settling, on four cores.* With idle APs to drain it, the
+  queue the copy fills is written back while the copy still reads; a read
+  that finds a writeback command in flight settles it under the lock, and
+  when that command is a flush, QEMU's `fsync` on the host makes it a
+  30-40 ms hold. The tick waits behind it with interrupts off, which is the
+  ticks lost. Taking reads out of the lock is what answers it.
+- *The fix below.* On four cores a second idle AP's `begin_writeback_step`
+  settled the first one's command under the lock: 5.6 s of `YIELD` holds in
+  an 8 s window. An idle that finds a command running now leaves it to its
+  core.
+- *Not chased:* the BSP tick's forced step ("Age" in
+  [BLOCK_WRITEBACK.md](../../kernel/BLOCK_WRITEBACK.md#draining)) still runs
+  under the lock; one run showed a 143 ms tick hold before the copy started.
+
+**Reads outside the lock: built and measured, not merged.** Branch
+`smp-storage-owner` (910fa017) takes reads out the "single owner" way. A read
+of a disk from a system call on an SMP machine waits for the device with the
+lock released, and for that long it owns storage (`block::waiting_unlocked()`).
+The system call doors park every call its subsystem has not declared
+storage-free (`subsystem::register_storage_free`) and restart it from its
+`syscall` when the read ends; the tick and the idle skip their storage work;
+a volume node's last release and a power-button shutdown wait for a safe
+point. The branch's BLOCK_WRITEBACK.md, "Reads outside the kernel lock",
+describes it. The copy, measured as above:
+
+| | `held` | Ticks lost | Longest hold |
+| --- | --- | --- | --- |
+| Reads outside the lock, 2 cores (2 runs) | 13% | 1-3% | 4.2-4.4 ms, `SAVANXP_SYS_WRITE` |
+| Reads outside the lock, 4 cores (2 runs) | 13-15% | 0% | 4.4-4.9 ms, `SAVANXP_SYS_WRITE` |
+
+What the copy still holds the lock for is its writes into the queue, about
+100 ms in each 2 s window.
+
+It is not on master because `audio-preferences` regresses under 2-core TCG.
+Each variant ran in one worktree, interleaved run by run with `b04c1632` in
+another whose path has the same length (see the build-path trap in
+[Known traps](#known-traps)):
+
+| The branch, as | Runs with an HDA underrun | `b04c1632`, same batch |
+| --- | --- | --- |
+| Committed | 6 of 6 | 1 of 6 |
+| Without installing the wait (no read leaves the lock) | 6 of 6 | 0 of 6 |
+| With a partition's read settling first, as before | 2 of 4, 4 of 4 failing | 0 of 5 |
+
+The underruns land at the same two points every time: about 27 KB (140 ms)
+into the first `audiod`'s stream, while it loads its preferences and spawns
+its save worker after claiming the device
+([AUDIO_DAEMON.md](../../media/AUDIO_DAEMON.md#who-holds-the-device)), and
+about 141 KB into the second `audiod`'s, during the capture checks. The base's
+rare underruns land anywhere. Since the second row regresses with no read
+leaving the lock, the cause is in a part that should be inert then:
+- the door checks and the safe point;
+- the tick's and the idle's guards;
+- `runnable_here` refusing a thread with no context;
+- a partition's read no longer settling first;
+- two new struct fields;
+- a kernel 2.5 KB larger, with `.bss` 16 KB larger and one page further on.
+
+**Owed before it can merge:**
+1. *Isolate the cause.* Under KVM (`--accel kvm`, 2 cores, 4 interleaved
+   pairs) the branch passed both runs that booted and the base passed 4/4,
+   which fits a failure that needs TCG's timing, though two runs prove little. The branch's other two runs
+   stopped in OVMF before `BdsDxe: loading Boot0002`, with the kernel never
+   loaded. Two stalls in four, both on the branch side, are not explained
+   either. Not run when the work stopped:
+   - a probe of reads of a device that does not defer its writes (only `/boot`
+     here, mounted read-only, which nothing in the scenario should read);
+   - the door, tick and idle changes alone, and the struct fields alone;
+   - a kernel padded to the same size with nothing else changed: TCG's
+     software TLB and translation blocks depend on layout, and two of the rows
+     above being equal is what a layout effect would also show;
+   - more KVM pairs, and where the firmware stalls come from.
+2. *`SXN_SYS_PORT_ACCEPT` and `PORT_ACCEPT_EX` are not storage-free.* `audiod`
+   calls one every turn of its loop, so it parks during every read, though
+   the call touches only handles and pipes.
+3. *The tick's forced step,* above, and the copy's writes.
+4. *`audio-preferences` itself.* Without any of this it fails about one run in
+   three, mostly on a gap of 22-43 ms with no underrun in the guest.
+
 Done when the 4 MB copy of the table above leaves `held` and the compositor's
 frame rate where an idle desktop has them, and the tick clock loses no time.
 Done also when `audio-preferences` passes repeatedly under TCG with no HDA
@@ -1039,6 +1189,13 @@ Two stays the default: it is what the whole suite is verified on.
   idle process per core costs a real process slot each. The machine runs in
   512 MiB, and the boot log puts the usable figure at 368 MiB with another
   46 MiB reclaimable.
+- **Two worktrees of one commit are not one machine.** The binaries carry
+  their absolute build path (debug info, `__FILE__`), so worktrees at paths of
+  different lengths build images whose files differ in size and layout. With
+  identical code, `/mnt/proyectos/sxbase` failed `audio-preferences` 5 of 5
+  times in the batch where `/mnt/proyectos/sxnew` passed 5 of 5. Compare
+  worktrees whose paths have the same length, interleaved run by run, and
+  check the host is idle: TCG turns host load into guest time.
 - **`kMaxProcesses` and the fd budget** are unchanged by SMP, but a scheduler
   that actually runs four processes at once makes the existing ceilings easier
   to hit.

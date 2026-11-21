@@ -58,6 +58,7 @@
 #include "sxn/sxnaudio.h"
 #include "sxn/sxncapture.h"
 #include "sxn/sxnpointer.h"
+#include "sxn/sxnprofile.h"
 #include "sxgfx/virgl_protocol.h"
 
 #define SXN_CHILD_STATUS 42
@@ -447,6 +448,35 @@ static void run_user_terminate_child(int argc, char** argv) {
 
 /* Storage child, run as the user: listing is open, sectors and rescans are
  * the system's. argv[2] is the id of the device mounted at "/". */
+/* QUERY_IDENTITY and the settings path seen from the person's side: started
+ * as uid 1000, acting as itself ("profileuser") or as the system
+ * ("profileelevated"); the profile is the real uid's either way. Nothing is
+ * written: a setting that does not exist is looked up, read and write. */
+static void run_profile_user_child(int elevated) {
+    struct sxn_identity identity;
+    char path[96];
+
+    if (sxn_query_identity(&identity) != 0 || identity.uid != 1000u ||
+        identity.euid != (elevated ? 0u : 1000u) || identity.gid != 100u) {
+        sxn_exit(2);
+    }
+    if (!streq(sxn_profile_directory(), "/users/user")) {
+        sxn_exit(3);
+    }
+    if (sxn_settings_path("nativetest-none.cfg", 1, path, sizeof(path)) != 0 ||
+        !streq(path, "/users/user/Settings/nativetest-none.cfg")) {
+        sxn_exit(4);
+    }
+    if (sxn_settings_path("nativetest-none.cfg", 0, path, sizeof(path)) != 0 ||
+        !streq(path, "/users/user/Settings/nativetest-none.cfg")) {
+        sxn_exit(5);
+    }
+    if (sxn_settings_path("nativetest-none.cfg", 0, path, 20) != -SAVANXP_E2BIG) {
+        sxn_exit(6);
+    }
+    sxn_exit(0);
+}
+
 static void run_storage_user_child(int argc, char** argv) {
     static uint8_t sector[512];
     struct sxn_storage_device device;
@@ -3562,6 +3592,9 @@ int main(int argc, char** argv) {
     if (argc > 1 && streq(argv[1], "storageuser")) {
         run_storage_user_child(argc, argv);
     }
+    if (argc > 1 && (streq(argv[1], "profileuser") || streq(argv[1], "profileelevated"))) {
+        run_profile_user_child(streq(argv[1], "profileelevated"));
+    }
 
     /* P1's snapshot contract also works while the pointer is outside the
      * client. Real windowd publication is exercised by linux-xclient. */
@@ -4164,6 +4197,46 @@ int main(int argc, char** argv) {
             check(child > 0 && sxn_waitpid(child, &status) == child && status == 0);
             check(sxn_log("nativetest: storage read, write, rescan, mount and unmount done") == 0);
         }
+    }
+
+    /* QUERY_IDENTITY and the settings path (sxnprofile.h). This process acts
+     * as the system or as the user, depending on how the scenario starts it;
+     * its profile follows its real uid. Two children run as the user, one of
+     * them elevated, and see /users/user either way. */
+    {
+        struct sxn_identity identity;
+        struct sxn_identity user = {1000u, 1000u, 100u, 0u};
+        struct sxn_identity elevated = {1000u, 0u, 100u, 0u};
+        struct sxn_spawn_request request;
+        char* child_argv[3] = {"/bin/nativetest.sxe", "profileuser", 0};
+        char path[96];
+        long child;
+        int status = -1;
+
+        check(sxn_query_identity(0) == -SAVANXP_EINVAL);
+        check(sxn_query_identity((struct sxn_identity*)8) == -SAVANXP_EINVAL);
+        check(sxn_query_identity(&identity) == 0);
+        check(streq(sxn_profile_directory(), identity.uid == 1000u ? "/users/user" : "/"));
+        check(sxn_settings_path(0, 0, path, sizeof(path)) == -SAVANXP_EINVAL);
+        check(sxn_settings_path("", 0, path, sizeof(path)) == -SAVANXP_EINVAL);
+        check(sxn_settings_path("/abs.cfg", 0, path, sizeof(path)) == -SAVANXP_EINVAL);
+        check(sxn_settings_path("x.cfg", 0, 0, sizeof(path)) == -SAVANXP_EINVAL);
+        check(sxn_settings_path("x.cfg", 0, path, 0) == -SAVANXP_EINVAL);
+        if (identity.uid == 0u) {
+            check(sxn_settings_path("nativetest-none.cfg", 1, path, sizeof(path)) == 0 &&
+                streq(path, "/nativetest-none.cfg"));
+            check(sxn_settings_path("nativetest-none.cfg", 0, path, 4) == -SAVANXP_E2BIG);
+
+            sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 2);
+            child = sxn_spawn_ex_as(&request, &user);
+            check(child > 0 && sxn_waitpid(child, &status) == child && status == 0);
+            child_argv[1] = "profileelevated";
+            status = -1;
+            sxn_spawn_request_init(&request, "/bin/nativetest.sxe", child_argv, 2);
+            child = sxn_spawn_ex_as(&request, &elevated);
+            check(child > 0 && sxn_waitpid(child, &status) == child && status == 0);
+        }
+        check(sxn_log("nativetest: identity and settings path done") == 0);
     }
 
     /* PIPE_CREATE: a pipe made by a native process, both ends in its table.

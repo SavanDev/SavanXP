@@ -32,7 +32,7 @@ static int child_seen_running(const long* children, unsigned int count) {
     unsigned long index;
     unsigned int child;
 
-    for (index = 0; proc_info(index, &info) >= 0; ++index) {
+    for (index = 0; proc_info(index, &info) > 0; ++index) {
         if (info.state != SAVANXP_PROC_RUNNING) {
             continue;
         }

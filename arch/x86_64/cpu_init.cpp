@@ -629,6 +629,16 @@ void send_pic_eoi(uint8_t irq) {
     out8(kPicMasterCommand, kPicEoi);
 }
 
+// See set_edge_eoi_hook.
+void (*g_edge_eoi_hook)(uint8_t vector) = nullptr;
+
+// Whether the local APIC accepted `vector` as level-triggered (its TMR bit),
+// so that its EOI is broadcast to the I/O APICs.
+bool local_apic_level_triggered(uint8_t vector) {
+    const uint32_t tmr = read_local_apic(0x180u + 0x10u * (vector / 32u));
+    return ((tmr >> (vector % 32u)) & 1u) != 0;
+}
+
 void dispatch_external_vector(uint8_t vector) {
     if (vector >= kIdtEntryCount) {
         return;
@@ -654,9 +664,14 @@ void dispatch_external_vector(uint8_t vector) {
         case InterruptEoi::pic:
             send_pic_eoi(static_cast<uint8_t>(vector - kPicVectorBase));
             break;
-        case InterruptEoi::local_apic:
+        case InterruptEoi::local_apic: {
+            const bool broadcast = local_apic_level_triggered(vector);
             local_apic_eoi();
+            if (!broadcast && takes_kernel_lock && g_edge_eoi_hook != nullptr) {
+                g_edge_eoi_hook(vector);
+            }
             break;
+        }
         case InterruptEoi::none:
         default:
             break;
@@ -1338,6 +1353,20 @@ bool local_apic_ready() {
 
 bool local_apic_x2apic_mode() {
     return g_local_apic_x2apic;
+}
+
+void set_edge_eoi_hook(void (*hook)(uint8_t vector)) {
+    g_edge_eoi_hook = hook;
+}
+
+// Whether `vector` waits in this core's IRR: arrived, not yet taken. Lets a
+// test see an interrupt reach the core while it runs with IF=0.
+bool local_apic_interrupt_pending(uint8_t vector) {
+    if (!g_local_apic_ready) {
+        return false;
+    }
+    const uint32_t irr = read_local_apic(0x200u + 0x10u * (vector / 32u));
+    return ((irr >> (vector % 32u)) & 1u) != 0;
 }
 
 uint32_t local_apic_id() {

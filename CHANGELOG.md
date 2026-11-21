@@ -15,6 +15,27 @@ Cut-off notes:
 - **The POSIX libc gains `realpath`, `freopen`, `strtold` and `ldexpl`, and `math.h` works without GNU builtins (SDK 2.0).**
   What a C compiler running on the system (TCC) needs from the libc; `libctest` covers them. Limits are in the
   [SDK reference](subsystems/posix/sdk/v1/REFERENCE.md).
+- **The kernel reports the IOMMU at boot** (phase M1): it reads the IVRS or DMAR and logs `iommu: AMD-Vi, 1 unit, ...`,
+  `iommu: VT-d, ...`, `iommu: none`, or why a malformed table was refused; nothing is enabled yet. New smokes
+  `iommu-amd`, `iommu-intel`, `iommu-none` and `run_qemu.py --iommu` ([IOMMU.md](docs/kernel/IOMMU.md)).
+- **AMD-Vi translation behind the `iommu` boot option** (phase M2): every device in one identity domain over memory,
+  I/O page faults logged as `iommu: I/O page fault from bb:dd.f ...`; `noiommu` always wins. New `build.sh --iommu`
+  and `--boot-options` (`SAVANXP_IOMMU`, `SAVANXP_BOOT_OPTIONS`), boot option `iommu-selftest` and smoke
+  `iommu-amd-on` ([IOMMU.md](docs/kernel/IOMMU.md#translation-one-identity-domain-m2)).
+- **Per-device IOMMU domains** (phase M3): `iommu::create_domain`, `map`, `unmap`, `attach` (whole isolation groups
+  from the IVRS aliases), `block` and a blocked domain; faults reach the domain's owner. The RTL8139 runs in its own
+  domain with `iommu`. New boot option `rtl8139-unmapped-tx` and smoke `iommu-rtl8139-fault` ([IOMMU.md](docs/kernel/IOMMU.md#domains-of-their-own-m3)).
+- **AMD-Vi interrupt remapping** (phase M4): with `iommu`, a device or I/O APIC raises only the vectors the kernel gave
+  it (`iommu::allow_interrupt`); refusals log `iommu: interrupt from bb:dd.f refused`. Boot option `nointremap` turns it off. Level-triggered I/O APIC
+  lines get a directed EOI when their interrupt arrives edge-triggered ([IOMMU.md](docs/kernel/IOMMU.md#interrupt-remapping-m4)).
+- **`iommu` turns on an AMD-Vi register window the firmware left off**, from the unit's PCI capability:
+  `iommu: unit 0: firmware left its register window off; turned on at ...`. VirtualBox's EFI is such a firmware
+  ([IOMMU.md](docs/kernel/IOMMU.md#virtualboxs-amd-iommu-as-measured-virtualbox-7222)).
+- **ISO boot entry SavanXP (IOMMU on)**: boots with `iommu`, for trying AMD-Vi translation and interrupt remapping on
+  real hardware without editing the entry in Limine ([BUILD_LINUX.md](docs/build/BUILD_LINUX.md)).
+- **SUN programs find the person's settings**: `sxn_profile_directory` and `sxn_settings_path` (`sxn/sxnprofile.h`),
+  the same rules as POSIX's `savanxp_settings_path`, over the new `sxn_query_identity` (`SXN_SYS_QUERY_IDENTITY`).
+  Display Properties uses them ([USERS_AND_PERMISSIONS.md](docs/kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines)).
 
 - **New Folder in Files and in the Open/Save As dialog.** Files has **New Folder...** in its File menu and the folder's
   context menu; the SUN file dialog has a Create New Folder button beside Up One Level. Both ask for the name, offer the
@@ -103,6 +124,21 @@ Cut-off notes:
   It accepts 32-bit BGR and names it so callers can warn. FB1a of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
 
 ### Changed
+
+- **A thread the timer tick wakes runs at once**: on a free idle core (`smp::kick_free_core`), or in place of the
+  BSP's current thread, instead of after the rest of its 20 ms slice; `audio-preferences` no longer underruns while
+  an AP waits for the disk ([SMP_ROADMAP.md](docs/roadmaps/open/SMP_ROADMAP.md), slice 5.2).
+- **Files are read in pieces of up to 64 KiB** instead of 256 bytes, so SxFS asks the disk for whole runs rather
+  than one sector at a time: a 4 MB `cp` takes under a second under KVM and holds the kernel lock 13-29% of its window
+  instead of 43-53% ([SMP_ROADMAP.md](docs/roadmaps/open/SMP_ROADMAP.md), slice 5.2).
+- **Disk writeback waits outside the kernel lock** on an SMP machine (slice 5.2, first cut): one application
+  processor's idle at a time sends a writeback command with the lock released, so the other cores no longer stop for
+  the disk; the BSP leaves the queue to the APs ([BLOCK_WRITEBACK.md](docs/kernel/BLOCK_WRITEBACK.md#draining)).
+- **Turning AMD-Vi on queues its invalidations** instead of handing each to the unit: for an IVHD that covers every
+  bus, 336 ms drop to 35 ms under QEMU (the Ryzen 5 1600 spent 330 ms there)
+  ([IOMMU.md](docs/kernel/IOMMU.md#translation-one-identity-domain-m2)).
+- **Display Properties' Browse... opens the common Open dialog** instead of
+  asking for a typed path ([DISPLAY_PROPERTIES.md](docs/desktop/DISPLAY_PROPERTIES.md)).
 
 - **Display Properties is a SUN program**, `/system/display.sxe` from `system/display`; the POSIX `/bin/display` is
   retired from the image. It looks and behaves as before. SUN gains `sxnwm_set_display_mode` for its resolution trial

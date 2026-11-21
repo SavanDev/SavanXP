@@ -87,7 +87,10 @@ external programs.
 What SUN can do, POSIX should too, and the other way round, as far as the
 platform allows. A gap is closed in the subsystem that lacks it, not worked
 around in the program, and a planned port to SUN is no reason to leave POSIX
-without it.
+without it. **Parity only grows:** what a subsystem has stays even when its
+last consumer moves to the other one, and nothing is removed to make the two
+match. A gap left open for now (the Open/Save As dialog is SUN's only) is
+recorded as pending in the area's document and closed later.
 
 ### 8. Commit to `master`, and never discard work
 

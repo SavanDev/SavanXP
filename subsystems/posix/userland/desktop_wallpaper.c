@@ -44,6 +44,30 @@ int desktop_wallpaper_read_config(struct desktop_wallpaper_config *config)
     return 0;
 }
 
+int desktop_wallpaper_write_config(const struct desktop_wallpaper_config *config)
+{
+    char text[DESKTOP_WALLPAPER_CONFIG_BYTES];
+    char path[256];
+    int length = desktop_wallpaper_format_config(config, text, sizeof(text));
+    long written;
+    int fd;
+
+    if (length < 0)
+    {
+        return -1;
+    }
+    fd = savanxp_settings_path(DESKTOP_WALLPAPER_CONFIG_NAME, 1, path, sizeof(path)) == 0
+        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE)
+        : -1;
+    if (fd < 0)
+    {
+        return -1;
+    }
+    written = savanxp_write(fd, text, (unsigned long)length);
+    savanxp_close(fd);
+    return written == length ? 0 : -1;
+}
+
 /* ---- images -------------------------------------------------------------- */
 
 static int read_exact(int fd, void *buffer, unsigned long count)

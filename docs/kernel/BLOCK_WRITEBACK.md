@@ -88,7 +88,10 @@ direct-mapped cache, for the devices that queue their writes.
 - **Small requests only.** A read of up to 8 sectors is answered from the
   cache when it holds all of them, and fills it otherwise. Longer reads are
   bulk file data: they go to the device and leave the cache alone, so a large
-  file does not evict the directory blocks and headers the cache is for.
+  file does not evict the directory blocks and headers the cache is for. That
+  depends on callers asking for whole runs: `sx::read_file` reads files in
+  pieces of up to 64 KiB, where 256-byte pieces made every sector of a file a
+  one-sector miss.
 - **One sector, one copy.** A partition forwards to its disk, so its reads and
   writes use the disk's slots under the disk's LBAs. A sector reached through
   the partition and through the whole disk is the same slot.
@@ -109,18 +112,39 @@ direct-mapped cache, for the devices that queue their writes.
 ## Draining
 
 - **Idle.** The idle task is a user-mode loop of `SYS_YIELD`. When nothing else
-  is runnable, the yield handler runs one `block::writeback_step()` instead of
-  halting, and returns. A step is one device command: up to 128 sectors (64 KiB)
-  of adjacent writes merged from consecutive records, or one device flush. On
+  is runnable, the yield handler runs one step instead of halting, and
+  returns. A step is one device command: up to 128 sectors (64 KiB) of
+  adjacent writes merged from consecutive records, or one device flush. On
   the way back to user mode interrupts are enabled again, so a process that
-  became runnable gets the CPU after at most one step. That holds for the
-  idle core only. The step runs with the kernel lock held and the disk polled,
-  so a system call on any other core waits for it too. Audio is where that is
-  heard: [SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md#what-storage-under-the-lock-sounds-like)
-  measures it, and slice 5.2 takes the wait out of the lock.
+  became runnable gets the CPU after at most one step.
+- **Outside the kernel lock.** On an SMP machine only the application
+  processors' idles step, and each waits for its device command with the
+  kernel lock released (`block::begin_writeback_step`, `run_writeback_step`
+  under `smp::run_without_kernel_lock`, `finish_writeback_step`), so the other
+  cores' system calls no longer wait for the disk (SMP slice 5.2,
+  [SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md#what-storage-under-the-lock-sounds-like)).
+  - The command is chosen and its result applied under the lock. Between the
+    two its records stay queued, so reads still see them, and the bytes the
+    device is given are the record's own or the step's staging buffer, which
+    nobody else touches meanwhile.
+  - Only the device is busy. Every path that calls into a driver under the
+    lock (a read that misses the cache, a write-through, `sync`, a writer
+    over the budget, power-off) settles the command first: it spins until
+    the device answers and applies the result itself. That wait is one
+    command long, and ends on its own: the core running the command has its
+    interrupts off and needs nothing from anyone.
+  - Another idle core that finds a command still running leaves it alone and
+    halts: it is not a path that needs the driver, and settling would be the
+    same wait under the lock. With four cores that wait was 5.6 s of `YIELD`
+    holds during a 4 MB copy.
+  - The BSP does not step on an SMP machine: it would wait with interrupts
+    off, and its tick is the clock, the sleepers' wakeups and the polled
+    devices. A machine with one core steps under the lock, as before.
+  - What a driver prints meanwhile is held back and written once the lock is
+    taken again (`console::begin_deferred_output`).
 - **Age.** If no CPU goes idle (a process that never sleeps), the timer tick on
   the bootstrap core does one step every 100 ms once the oldest record is a
-  second old.
+  second old, under the lock. It skips while a command is in flight.
 - **Budget.** The queue holds at most 8 MiB. A writer that would exceed it
   drains the queue itself until its data fits, so a fast writer is slowed to the
   disk's pace instead of exhausting kernel memory.
@@ -161,7 +185,8 @@ per step, but no longer for the whole operation.
 that log every command: deferral and read-through, order and flushes at ordering
 points, merging and splitting, durability of `write`, the budget, a failed write
 stopping the queue, write-through for memory and partitions, the age-based
-drain, and the read cache: repeated reads that do not reach the disk, a queued
+drain, a step split around its device wait (the tick leaving it alone, a
+read settling it, a failure in it stopping the queue), and the read cache: repeated reads that do not reach the disk, a queued
 write seen through the cache before and after it lands, large reads and writes
 bypassing it, the slots a partition shares with its disk, and a new device at
 a reused index starting cold. The SxFS power-cut cases in `sxfs_volume_test` cover the ordering points

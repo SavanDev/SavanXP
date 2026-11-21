@@ -23,7 +23,7 @@
 #
 #   --sx-profile=nosse|sse|pie   the runtime variant (default: sse, or
 #                                $SAVANXP_SDK_PROFILE)
-#   --sx-native                  a SUN program: links sxn_runtime.o, and the
+#   --sx-native                  a SUN program: links sxn_runtime.o and -lsxn, and the
 #                                pie profile neither exports symbols nor
 #                                carries <dlfcn.h>
 #
@@ -102,7 +102,9 @@ if ((PIE)); then
     RUNTIME_TAIL+=("$LIB/ldso.o")
     ((NATIVE)) || RUNTIME_TAIL+=("$LIB/dlfcn.o")
 fi
-RUNTIME_TAIL+=(-L "$LIB" -lsavanxp)
+RUNTIME_TAIL+=(-L "$LIB")
+((NATIVE == 0)) || RUNTIME_TAIL+=(-lsxn)
+RUNTIME_TAIL+=(-lsavanxp)
 
 if ((PIE == 0)); then
     # The bare-metal driver links a static image with ld.lld, sources included.

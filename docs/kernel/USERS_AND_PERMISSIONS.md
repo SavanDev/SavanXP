@@ -181,6 +181,14 @@ system's, so that copy stays and the first save goes to `Settings`. The
 system's profile is the root itself and its settings stay loose there, which
 is why the smokes, which run as the system, read and write where they always
 did. `getenv("HOME")` answers the profile, not `Settings`.
+
+SUN programs have the same lookup in `sxn/sxnprofile.h`: `sxn_profile_directory`
+and `sxn_settings_path`, over `sxn_query_identity` (the native
+`GET_IDENTITY`), with the same rules in the same order. One difference
+remains: SUN has no chown, so an elevated SUN program does not make a missing
+`Settings` folder for the person (init makes it at boot anyway). The other
+SUN settings programs (Mouse, the effects and cursor services) still name
+`/users/user/Settings` directly.
 `/system` holds no setting yet; it is where a machine-wide one would go, and
 writing it would take elevation.
 

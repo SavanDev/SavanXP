@@ -208,7 +208,9 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file`; `sxn_create_file`, `sxn_write`, `sxn_flush_file` | Existing regular files, sequential reads, durable whole-file saves up to 4 KiB, and streaming writes from offset 0 of any size; no seek. |
 | `GetFileAttributesEx`, `FindFirstFile`/`FindNextFile` | `sxn_query_path`, `sxn_open_directory`, `sxn_read_directory` | done (the file dialog) |
 | `CreateDirectory`, `MoveFileEx` | `sxn_make_directory`, `sxn_rename_path` | done (SxBASIC's IDE: New Project, and Save as a rename over the old file; the file dialog's Create New Folder); durable when they return |
-| `GetOpenFileName`, `GetSaveFileName` | `sxn_file_dialog_begin` ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) | done (Log Viewer's Save Log...); one filter, Create New Folder |
+| `GetOpenFileName`, `GetSaveFileName` | `sxn_file_dialog_begin` ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) | done (Log Viewer's Save Log..., Display Properties' Browse...); one filter, Create New Folder |
+| `OpenProcessToken` + `GetTokenInformation(TokenUser)` | `sxn_query_identity` (`SXN_SYS_QUERY_IDENTITY`: uid, euid, gid, as POSIX's `GET_IDENTITY`) | done (consumer: `sxn_settings_path`) |
+| `SHGetFolderPath(CSIDL_APPDATA)`, the per-user half of the registry | `sxn_profile_directory`, `sxn_settings_path` (`sxn/sxnprofile.h`), the same rules as POSIX's `savanxp_settings_path` ([USERS_AND_PERMISSIONS.md](../kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines)) | done (Display Properties); an elevated SUN program does not make a missing `Settings` folder, since SUN has no chown yet |
 | Registry / profile settings | `sxncursor_query`, `sxncursor_select`, `sxneffects_request` | Cursor and visual-effects preferences supplied by compositord; no general registry service. |
 | Owned windows and dialogs | `sxnwm_window_open`, `sxnwm_popup_open`, `sxnwm_window_close`, `sxnwm_poll_owned_input`; the `sxngui` frame hosts SXGUI dialogs and context menus in them | done (Task Manager) |
 | `SetCursor` | `sxnwm_set_cursor_shape` | done |

@@ -43,6 +43,10 @@ class Scenario:
     usb_pointer: str = "mouse"
     usb_hub: bool = False
     usb_host: str = "xhci"
+    # An emulated IOMMU on the board (run_qemu.IOMMUS).
+    iommu: str = "none"
+    # Extra kernel boot options for the run (CMake SAVANXP_BOOT_OPTIONS).
+    boot_options: str = ""
     # The user's own Windows files the scenario needs, by name, from the
     # folder SAVANXP_WIN32_FIXTURES names: copied into the disposable disk
     # under /system/win/drive_c/tests, or with NAME@DIR under drive_c/DIR,
@@ -83,6 +87,8 @@ def _qemu_scenario(
     usb_pointer: str = "mouse",
     usb_hub: bool = False,
     usb_host: str = "xhci",
+    iommu: str = "none",
+    boot_options: str = "",
     win32_files: tuple[str, ...] = (),
 ) -> Scenario:
     return Scenario(
@@ -117,6 +123,8 @@ def _qemu_scenario(
         usb_pointer=usb_pointer,
         usb_hub=usb_hub,
         usb_host=usb_host,
+        iommu=iommu,
+        boot_options=boot_options,
         win32_files=win32_files,
     )
 
@@ -152,6 +160,57 @@ SCENARIOS: dict[str, Scenario] = {
         "smp: other cores stopped",
         "smp: other cores NOT stopped",
         "A kernel panic halts every core",
+        120.0,
+    ),
+    # IOMMU discovery (M1, docs/kernel/IOMMU.md): the kernel reads the
+    # firmware's IVRS or DMAR at boot and names what it found. The token is
+    # the boot log line, so the guest command is only something to run.
+    "iommu-amd": _qemu_scenario(
+        "uname",
+        "iommu: AMD-Vi, 1 unit, interrupt remapping available",
+        "iommu: none",
+        "Boot log reports QEMU's amd-iommu from the IVRS",
+        120.0,
+        iommu="amd",
+    ),
+    "iommu-intel": _qemu_scenario(
+        "uname",
+        "iommu: VT-d, 1 unit, interrupt remapping available",
+        "iommu: none",
+        "Boot log reports QEMU's intel-iommu from the DMAR",
+        120.0,
+        iommu="intel",
+    ),
+    # M2: AMD-Vi on with one identity domain. The kernel's self-test drives
+    # QEMU's edu device: a DMA inside the domain must arrive, one outside it
+    # must fault and be reported, and DMA must keep working after.
+    "iommu-amd-on": _qemu_scenario(
+        "uname",
+        "iommu: selftest passed",
+        "iommu: selftest failed",
+        "AMD-Vi translating: edu's DMA arrives, a stray one faults and is logged",
+        180.0,
+        iommu="amd",
+        boot_options="iommu iommu-selftest",
+    ),
+    # M3: the RTL8139 in a domain of its own, with transmit buffer 0 left out
+    # of it. The first frame sent faults; the card must be stopped and moved
+    # to the blocked domain, and the kernel carries on (netsmoke then fails
+    # for want of a network, which is expected and not what is checked).
+    "iommu-rtl8139-fault": _qemu_scenario(
+        "netsmoke",
+        "the card is stopped and blocked",
+        "NET SMOKE PASS",
+        "AMD-Vi: a DMA outside the RTL8139's own domain is named, the card blocked",
+        180.0,
+        iommu="amd",
+        boot_options="iommu rtl8139-unmapped-tx",
+    ),
+    "iommu-none": _qemu_scenario(
+        "uname",
+        "iommu: none",
+        "refused",
+        "Boot log reports no IOMMU on a board without one",
         120.0,
     ),
     # The panic text is what the screen shows, whichever DISPI buffer was
@@ -1296,6 +1355,8 @@ def main() -> int:
             "usb_pointer",
             "usb_hub",
             "usb_host",
+            "iommu",
+            "boot_options",
             "win32_files",
         ),
         required=False,

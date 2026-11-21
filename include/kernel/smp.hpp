@@ -43,6 +43,10 @@ struct Cpu {
     // Ya se le mando un IPI de replanificar y todavia no paso por el scheduler.
     // Evita repetirlo mientras el primero esta en vuelo.
     bool kicked;
+    // In smp::run_without_kernel_lock(): its idle is current, but the core
+    // waits for a device with interrupts off and takes up no thread until
+    // that ends. Written by the core itself.
+    bool waiting_on_device;
 };
 
 // Una entrada por core posible, indexada por cpu_index(). Estatica y en cero
@@ -201,5 +205,20 @@ void reclassify_lock_hold(Door door);
 // runnable_here() en process.cpp): el codigo del kernel en la mitad de una
 // syscall no esta preparado para despertarse en otro.
 void wait_for_interrupt();
+
+// Runs `work` with the kernel lock released and interrupts still off, then
+// takes the lock again: for a wait on a device that nothing else on this core
+// needs to end (block::run_writeback_step). With interrupts off nothing else
+// runs on this core meanwhile, so neither an interrupt handler nor another
+// thread here can wait for the lock while a core holding it waits for `work`.
+// What `work` prints is held back until the lock is taken again
+// (console::begin_deferred_output). `work` must touch only state no other
+// core reaches while it runs, and no kernel memory that can be unmapped.
+void run_without_kernel_lock(void (*work)(void*), void* context);
+
+// Another scheduling core is in its idle and free to take up a thread now
+// (not waiting for a device); it is sent a reschedule IPI so it does so at
+// once. False when every other core is busy.
+bool kick_free_core();
 
 } // namespace smp

@@ -162,6 +162,11 @@ static inline long sxn_flush_file(long handle) {
     return sxn_trap(SXN_SYS_FLUSH_FILE, (unsigned long)handle, 0, 0);
 }
 
+/* Who this process is: the person (uid) and whom it acts as (euid). */
+static inline long sxn_query_identity(struct sxn_identity* out) {
+    return sxn_trap(SXN_SYS_QUERY_IDENTITY, (unsigned long)out, 0, 0);
+}
+
 /* A new directory, 0700, durable when it returns. */
 static inline long sxn_make_directory(const char* path) {
     return sxn_trap(SXN_SYS_MAKE_DIRECTORY, (unsigned long)path, 0, 0);

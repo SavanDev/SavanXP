@@ -2,6 +2,7 @@
 
 #include "arch/cpu.hpp"
 #include "kernel/console.hpp"
+#include "kernel/iommu.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vmm.hpp"
 
@@ -161,6 +162,13 @@ bool enable_msix(Device& device, uint8_t apic_vector) {
         console::printf("virtio-pci: msi-x table offset 0x%x beyond bar size 0x%llx\n",
             static_cast<unsigned>(table_offset),
             static_cast<unsigned long long>(mapped_bar->info.size));
+        return false;
+    }
+
+    // With interrupt remapping on, the IOMMU delivers only the vectors it was
+    // told about; the message names APIC 0, and so does the entry.
+    if (!iommu::allow_interrupt(device.pci_device, apic_vector, 0)) {
+        console::printf("virtio-pci: the IOMMU did not take msi-x vector %u\n", static_cast<unsigned>(apic_vector));
         return false;
     }
 

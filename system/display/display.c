@@ -29,7 +29,9 @@
 #include "sxgfx/wallpaper.h"
 #include "sxn/sxn.h"
 #include "sxn/sxneffects.h"
+#include "sxn/sxnfiledlg.h"
 #include "sxn/sxngui.h"
+#include "sxn/sxnprofile.h"
 
 #include "display.sunres.h"
 
@@ -37,16 +39,12 @@ static struct sxngui_app g_app;
 
 /* ---- the user's files ------------------------------------------------------
  *
- * The session's profile, as the other SUN settings programs name it
- * (SXN_POINTER_SETTINGS_PATH, SXN_EFFECTS_PATH): the session belongs to the
- * user whose profile is /users/user. The desktop, a POSIX program, finds the
- * same files through savanxp_settings_path. */
-#define DISPLAY_PROFILE_DIR "/users/user"
-#define DISPLAY_SETTINGS_DIR DISPLAY_PROFILE_DIR "/Settings"
-#define DISPLAY_WALLPAPER_PATH DISPLAY_SETTINGS_DIR "/" DESKTOP_WALLPAPER_CONFIG_NAME
+ * desktop.cfg and display.cfg in the person's profile, found as the desktop
+ * finds them: sxn_settings_path here, savanxp_settings_path there. */
+
 /* The saved resolution, one line, "mode=<width>x<height>": the format the
  * desktop reads when it starts (display_settings_read_mode). */
-#define DISPLAY_MODE_PATH DISPLAY_SETTINGS_DIR "/display.cfg"
+#define DISPLAY_MODE_NAME "display.cfg"
 
 /* Reads a whole small file into `text`, NUL-terminated. 0, or -1. */
 static int read_small_file(const char *path, char *text, size_t capacity)
@@ -73,40 +71,27 @@ static int read_small_file(const char *path, char *text, size_t capacity)
     return 0;
 }
 
-/* Saves a whole small file in the Settings folder, making the folder the
- * first time. 0, or the negative status. */
-static long write_settings_file(const char *path, const char *text, size_t length)
+/* Saves a whole small setting in the person's profile. 0, or the negative
+ * status. */
+static long write_setting(const char *name, const char *text, size_t length)
 {
-    long result = sxn_write_file(path, text, (unsigned long)length);
+    char path[DESKTOP_WALLPAPER_PATH_MAX];
+    long result = sxn_settings_path(name, 1, path, sizeof(path));
 
-    if (result == -SAVANXP_ENOENT && sxn_make_directory(DISPLAY_SETTINGS_DIR) >= 0)
-    {
-        result = sxn_write_file(path, text, (unsigned long)length);
-    }
-    return result;
+    return result < 0 ? result : sxn_write_file(path, text, (unsigned long)length);
 }
 
-/* The configuration the desktop shows. The defaults when there is none. A
- * copy loose in the profile or at the root, from before the Settings folder,
- * is read where it is, as the desktop reads it; the first save goes to
- * Settings. */
+/* The configuration the desktop shows; the defaults when there is none. */
 static void read_wallpaper_config(struct desktop_wallpaper_config *config)
 {
-    static const char *const paths[] = {
-        (DISPLAY_WALLPAPER_PATH),
-        (DISPLAY_PROFILE_DIR "/" DESKTOP_WALLPAPER_CONFIG_NAME),
-        ("/" DESKTOP_WALLPAPER_CONFIG_NAME),
-    };
+    char path[DESKTOP_WALLPAPER_PATH_MAX];
     char text[DESKTOP_WALLPAPER_CONFIG_BYTES];
-    size_t index;
 
-    for (index = 0; index < sizeof(paths) / sizeof(paths[0]); ++index)
+    if (sxn_settings_path(DESKTOP_WALLPAPER_CONFIG_NAME, 0, path, sizeof(path)) == 0 &&
+        read_small_file(path, text, sizeof(text)) == 0)
     {
-        if (read_small_file(paths[index], text, sizeof(text)) == 0)
-        {
-            desktop_wallpaper_parse_config(config, text);
-            return;
-        }
+        desktop_wallpaper_parse_config(config, text);
+        return;
     }
     desktop_wallpaper_default_config(config);
 }
@@ -955,7 +940,7 @@ static void write_wallpaper(void)
         return;
     }
     length = desktop_wallpaper_format_config(&g_pending, text, sizeof(text));
-    if (length >= 0 && write_settings_file(DISPLAY_WALLPAPER_PATH, text, (size_t)length) == 0)
+    if (length >= 0 && write_setting(DESKTOP_WALLPAPER_CONFIG_NAME, text, (size_t)length) == 0)
     {
         g_saved = g_pending;
     }
@@ -969,16 +954,16 @@ static void write_mode(const struct display_mode *mode)
 
     if (length > 0 && length < (int)sizeof(text))
     {
-        (void)write_settings_file(DISPLAY_MODE_PATH, text, (size_t)length);
+        (void)write_setting(DISPLAY_MODE_NAME, text, (size_t)length);
     }
 }
 
 /* ---- dialogs ---------------------------------------------------------------
  *
- * Two small ones, each a prompt with a field: the path of an image for
- * Browse, and an RGB value for "Other..." in the colour list. The OK button
- * checks the field and leaves the dialog open, with the reason in its prompt,
- * when the value cannot be used. */
+ * A prompt with a field, for the RGB value of "Other..." in the colour list
+ * (Browse uses the common Open dialog instead). The OK button checks the
+ * field and leaves the dialog open, with the reason in its prompt, when the
+ * value cannot be used. */
 #define DISPLAY_DIALOG_WIDTH 320
 #define DISPLAY_DIALOG_HEIGHT 104
 
@@ -1044,38 +1029,6 @@ static void open_prompt(const char *title, const char *prompt, const char *initi
     g_dialog.default_button = D_OK;
     sxgui_dialog_begin(&g_app.ui, &g_dialog, DISPLAY_DIALOG_WIDTH, DISPLAY_DIALOG_HEIGHT);
     sxngui_app_request_repaint(&g_app);
-}
-
-static void accept_browse(void)
-{
-    struct desktop_wallpaper_image probe;
-    int row;
-
-    memset(&probe, 0, sizeof(probe));
-    if (g_dialog_text[0] != '/')
-    {
-        g_dialog_widgets[D_PROMPT].text = "Type the full path, starting with /.";
-        sxngui_app_request_repaint(&g_app);
-        return;
-    }
-    if (display_image_load(&probe, g_dialog_text) < 0)
-    {
-        g_dialog_widgets[D_PROMPT].text = "That file is not an image this system can show.";
-        sxngui_app_request_repaint(&g_app);
-        return;
-    }
-    display_image_unload(&probe);
-
-    row = add_background(g_dialog_text);
-    if (row < 0)
-    {
-        g_dialog_widgets[D_PROMPT].text = "The list is full.";
-        sxngui_app_request_repaint(&g_app);
-        return;
-    }
-    refresh_list_widget();
-    sxgui_dialog_end(&g_app.ui, 1);
-    select_background(g_backgrounds[row].path);
 }
 
 static void accept_color(void)
@@ -1408,11 +1361,69 @@ static void on_background_changed(struct sxgui_widget *widget, void *user)
     }
 }
 
+/* The Open dialog has ended: NULL when it was cancelled. The dialog is closed
+ * by now, so a notice can open in its place. */
+static void on_browse_done(struct sxngui_app *app, const char *path, void *user)
+{
+    struct desktop_wallpaper_image probe;
+    int row;
+
+    (void)app;
+    (void)user;
+    if (path == 0)
+    {
+        return;
+    }
+    memset(&probe, 0, sizeof(probe));
+    if (display_image_load(&probe, path) < 0)
+    {
+        show_message("Browse", "That file is not an image this system can show.");
+        return;
+    }
+    display_image_unload(&probe);
+
+    row = add_background(path);
+    if (row < 0)
+    {
+        show_message("Browse", "The list is full.");
+        return;
+    }
+    refresh_list_widget();
+    select_background(g_backgrounds[row].path);
+}
+
+/* Browse opens the common Open dialog in the current wallpaper's folder, or
+ * in the shipped wallpapers' when there is none. */
 static void on_browse(struct sxgui_widget *widget, void *user)
 {
+    static char directory[DESKTOP_WALLPAPER_PATH_MAX];
+    struct sxn_file_dialog_request request;
+    char *slash;
+
     (void)widget;
     (void)user;
-    open_prompt("Browse", "Path of a BMP, PNG or JPEG image:", g_pending.path[0] != '\0' ? g_pending.path : "/", accept_browse);
+    copy_text(directory, sizeof(directory), DESKTOP_WALLPAPER_DIRECTORY);
+    if (g_pending.path[0] == '/')
+    {
+        copy_text(directory, sizeof(directory), g_pending.path);
+        slash = strrchr(directory, '/');
+        if (slash == directory)
+        {
+            slash[1] = '\0';
+        }
+        else if (slash != 0)
+        {
+            *slash = '\0';
+        }
+    }
+    memset(&request, 0, sizeof(request));
+    request.mode = SXN_FILE_DIALOG_OPEN;
+    request.title = "Browse";
+    request.initial_directory = directory;
+    request.filter_description = "Images (*.bmp;*.png;*.jpg;*.jpeg)";
+    request.filter_patterns = "*.bmp;*.png;*.jpg;*.jpeg";
+    request.on_done = on_browse_done;
+    (void)sxn_file_dialog_begin(&g_app, &request);
 }
 
 static void on_position_changed(struct sxgui_widget *widget, void *user)

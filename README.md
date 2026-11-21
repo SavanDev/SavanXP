@@ -193,6 +193,12 @@ tablet, on either machine. The `usb-*-smoke` scenarios drive the USB stack
 against it, with a machine that has no PS/2 controller at all
 ([`USB_ROADMAP.md`](docs/roadmaps/done/USB_ROADMAP.md)).
 
+`--iommu amd|intel` (or `SAVANXP_IOMMU`) adds QEMU's emulated IOMMU, and
+`--boot-options "..."` (or `SAVANXP_BOOT_OPTIONS`) appends kernel boot options
+to the development image's command line. `--iommu amd --boot-options iommu`
+boots with AMD-Vi translating ([IOMMU.md](docs/kernel/IOMMU.md)); with a smoke
+scenario, both apply on top of what the scenario asks for.
+
 Other available targets:
 
 ```bash

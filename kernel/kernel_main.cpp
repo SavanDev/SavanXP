@@ -25,6 +25,7 @@
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
 #include "kernel/ioapic.hpp"
+#include "kernel/iommu.hpp"
 #include "kernel/net.hpp"
 #include "kernel/nvme.hpp"
 #include "kernel/nic.hpp"
@@ -238,6 +239,11 @@ namespace
     // maquina lo expone: es el que va al ritmo del tiempo virtual y de los
     // devices emulados, mientras que el TSC va al del host (ver timer.hpp).
     timer::adopt_pm_timer();
+    // Reports the IOMMU the firmware describes, then turns translation on
+    // with the iommu boot option, before any driver starts DMA
+    // (docs/kernel/IOMMU.md).
+    iommu::discover(boot_info);
+    iommu::start(boot_info);
 
     tty::initialize();
     input::initialize();
@@ -260,6 +266,10 @@ namespace
     uacpi_glue::dump_pci_routing();
     boot_screen::show("Scanning PCI bus");
     pci::initialize();
+    if (boot::has_option(boot_info.cmdline, "iommu-selftest"))
+    {
+        iommu::selftest();
+    }
     // USB before input and storage: its class drivers register keyboards,
     // pointers and disks like any other driver (docs/roadmaps/done/USB_ROADMAP.md).
     boot_screen::show("Starting USB");
@@ -333,6 +343,7 @@ namespace
     // recognizes the device but does not bring it up: net:: asks for that
     // when someone issues NET_IOC_UP on /dev/net0.
     nic::register_driver(virtio_net::driver());
+    rtl8139::leave_transmit_buffer_unmapped(boot::has_option(boot_info.cmdline, "rtl8139-unmapped-tx"));
     nic::register_driver(rtl8139::driver());
     nic::register_driver(rtl8168::driver());
     if (const nic::Driver* bound = nic::bind_best())

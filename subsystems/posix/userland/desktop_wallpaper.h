@@ -4,10 +4,11 @@
 #include "sxgfx/wallpaper.h"
 
 /*
- * The desktop background, the POSIX side: what the desktop needs to draw it.
- * It keeps one configuration and one decoded image (desktop_wallpaper_init,
- * _reload, _draw), read from the user's profile (desktop.cfg) and restored on
- * the next boot. The format, the parsing and the painting are shared with
+ * The desktop background, the POSIX side: reading and saving desktop.cfg in
+ * the user's profile and decoding the image, for any POSIX program, and the
+ * desktop's own background, which keeps one configuration and one decoded
+ * image (desktop_wallpaper_init, _reload, _draw) and is restored on the next
+ * boot. The format, the parsing and the painting are shared with
  * Display Properties, the SUN program that edits the configuration
  * (sxgfx/wallpaper.h); the format and the rules are in
  * docs/desktop/DISPLAY_PROPERTIES.md. The configuration file is what keeps
@@ -19,6 +20,8 @@
 /* Reads the user's configuration, migrating the old one-digit format. Leaves
  * the defaults and returns -1 when there is none. */
 int desktop_wallpaper_read_config(struct desktop_wallpaper_config *config);
+/* Returns 0 once written. */
+int desktop_wallpaper_write_config(const struct desktop_wallpaper_config *config);
 
 /* ---- images -------------------------------------------------------------- */
 

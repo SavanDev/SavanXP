@@ -16,6 +16,7 @@
 #include "kernel/acpi.hpp"
 #include "kernel/acpi_tables.hpp"
 #include "kernel/console.hpp"
+#include "kernel/iommu.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vmm.hpp"
 
@@ -38,10 +39,15 @@ constexpr uint8_t kMadtIoApic = 1;
 constexpr uint8_t kMadtIso    = 2;
 
 // ---- Estado descubierto ----
-struct IoApic { uint32_t id, gsi_base, gsi_count; volatile uint32_t* regs; };
+struct IoApic { uint32_t id, gsi_base, gsi_count; volatile uint32_t* regs; uint8_t version; };
 struct Iso    { uint8_t source; uint32_t gsi; uint16_t flags; };
 // Una GSI ya ruteada: se recuerda para compartirla en vez de reprogramarla.
 struct Routed { uint32_t gsi; uint8_t vector; bool active_low; bool level; };
+
+// IOREGSEL, IOWIN and, from version 0x20, the EOI register at 0x40.
+constexpr uint64_t kRegisterWindow = 0x44;
+constexpr uint32_t kEoiRegister = 0x40 / sizeof(uint32_t);
+constexpr uint8_t kFirstVersionWithEoi = 0x20;
 
 constexpr size_t kMaxIoApics = 4;
 constexpr size_t kMaxIsos    = 16;
@@ -112,13 +118,14 @@ void parse_madt(const SdtHeader& madt) {
         if (h->type == kMadtIoApic && h->length >= sizeof(MadtIoApic) && g_ioapic_count < kMaxIoApics) {
             const auto* e = reinterpret_cast<const MadtIoApic*>(h);
             void* virt = nullptr;
-            if (vm::map_kernel_mmio(e->io_apic_address, 0x20,
+            if (vm::map_kernel_mmio(e->io_apic_address, kRegisterWindow,
                     vm::kPagePresent | vm::kPageWrite | vm::kPageCacheDisable, &virt)) {
                 IoApic& io = g_ioapics[g_ioapic_count++];
                 io.id = e->io_apic_id; io.gsi_base = e->gsi_base;
                 io.regs = reinterpret_cast<volatile uint32_t*>(virt);
                 // VER (reg 0x01) bits [23:16] = max redirection entry (count-1).
                 io.gsi_count = ((ioapic_read(io, 0x01) >> 16) & 0xff) + 1;
+                io.version = static_cast<uint8_t>(ioapic_read(io, 0x01) & 0xff);
             }
         } else if (h->type == kMadtIso && h->length >= sizeof(MadtIso) && g_iso_count < kMaxIsos) {
             const auto* e = reinterpret_cast<const MadtIso*>(h);
@@ -139,6 +146,29 @@ void resolve_isa(uint8_t irq, uint32_t& gsi, ioapic::Polarity& pol, ioapic::Trig
         if (p == 0x3) pol = ioapic::Polarity::active_low;   // 1=high, 3=low, 0=bus-default(ISA=high)
         if (t == 0x3) trg = ioapic::Trigger::level;         // 1=edge, 3=level, 0=bus-default(ISA=edge)
         break;
+    }
+}
+
+/* The EOI a level-triggered line did not get. With AMD-Vi interrupt
+ * remapping in QEMU, the message reaches the local APIC as edge-triggered, so
+ * the APIC broadcasts no EOI and the entry's remote IRR stays set: the line
+ * would never interrupt again. arch calls this after the local APIC's EOI of
+ * a vector that arrived edge-triggered; hardware that keeps the trigger mode
+ * never gets here for a level line. */
+void level_eoi_after_edge(uint8_t vector) {
+    for (size_t i = 0; i < g_routed_count; ++i) {
+        if (g_routed[i].vector != vector || !g_routed[i].level) continue;
+        IoApic* io = owner_of_gsi(g_routed[i].gsi);
+        if (!io) continue;
+        if (io->version >= kFirstVersionWithEoi) {
+            io->regs[kEoiRegister] = vector;
+            continue;
+        }
+        // No EOI register: an entry made edge-triggered drops its remote IRR.
+        const uint32_t index = 0x10 + (g_routed[i].gsi - io->gsi_base) * 2;
+        const uint32_t low = ioapic_read(*io, index);
+        ioapic_write(*io, index, (low | (1u << 16)) & ~(1u << 15));
+        ioapic_write(*io, index, low);
     }
 }
 
@@ -168,6 +198,7 @@ bool initialize(uint64_t rsdp_addr, uint64_t hhdm_offset) {
     if (g_ioapic_count == 0) { console::printf("ioapic: no IOAPIC in MADT\n"); return false; }
 
     g_ready = true;
+    arch::set_edge_eoi_hook(&level_eoi_after_edge);
     console::printf("ioapic: %u IOAPIC(s), %u override(s), GSIs base=%u count=%u\n",
                     unsigned(g_ioapic_count), unsigned(g_iso_count),
                     unsigned(g_ioapics[0].gsi_base), unsigned(g_ioapics[0].gsi_count));
@@ -218,11 +249,18 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::IrqHandler hand
         return 0;
     }
 
+    // With interrupt remapping on, the IOMMU must know the vector before the
+    // entry is unmasked: one it refused would leave a level line's remote IRR
+    // set with no EOI coming (docs/kernel/IOMMU.md).
+    const uint32_t destination = arch::local_apic_id();
+    if (!iommu::allow_ioapic_interrupt(static_cast<uint8_t>(io->id), vector, destination)) {
+        console::printf("ioapic: GSI %u: the IOMMU did not take vector %u\n", unsigned(gsi), unsigned(vector));
+    }
     // Destination: this core, in physical mode. During boot that is the BSP;
     // spread() moves every GSI to the APs once they schedule.
     write_redirection(*io, gsi, vector, active_low, level,
                       /*masked=*/false,
-                      /*dest_apic=*/static_cast<uint8_t>(arch::local_apic_id()));
+                      /*dest_apic=*/static_cast<uint8_t>(destination));
     g_routed[g_routed_count++] = Routed{gsi, vector, active_low, level};
     return vector;
 }
@@ -241,6 +279,9 @@ uint32_t spread(const uint32_t* lapic_ids, uint32_t count) {
         if (!io) continue;
         const uint32_t lapic = lapic_ids[i % count];
         if (lapic > kMaxDestination) continue;
+        // With interrupt remapping on, the remapping entry is what names the
+        // core; the redirection entry's destination is then ignored.
+        if (!iommu::allow_ioapic_interrupt(static_cast<uint8_t>(io->id), g_routed[i].vector, lapic)) continue;
         // Only the high half: one 32-bit write, so the entry never names half
         // an old destination. The vector, mask and trigger stay as routed.
         const uint32_t index = 0x10 + (g_routed[i].gsi - io->gsi_base) * 2;

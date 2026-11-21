@@ -8,6 +8,7 @@
 #include "arch/cpu.hpp"
 #include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
+#include "kernel/iommu.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -65,9 +66,25 @@ constexpr uint32_t kRcrAcceptPhysical = 1u << 1;
 constexpr uint32_t kRcrAcceptMulticast = 1u << 2;
 constexpr uint32_t kRcrAcceptBroadcast = 1u << 3;
 
+/* With the IOMMU translating, the card gets a domain of its own
+ * (docs/kernel/IOMMU.md) and sees its buffers here, not at their physical
+ * addresses. 2 GiB is not memory on the QEMU boards, so a card left in the
+ * shared identity domain by mistake faults instead of writing somewhere. */
+constexpr uint32_t kRxDeviceAddress = 0x80000000u;
+constexpr uint32_t kTxDeviceAddress = 0x80010000u;
+
 pci::DeviceInfo g_pci_device = {};
 memory::PageAllocation g_rx_allocation = {};
 memory::PageAllocation g_tx_allocation[4] = {};
+// What the card is told: physical addresses, or its domain's.
+uint32_t g_rx_device_address = 0;
+uint32_t g_tx_device_address[4] = {};
+iommu::Domain g_domain;
+// Boot option rtl8139-unmapped-tx: transmit buffer 0 is left out of the
+// domain, so the first frame sent faults (the M3 fault scenario).
+bool g_leave_tx_unmapped = false;
+// A DMA fault stopped the card for good.
+bool g_failed = false;
 uint16_t g_io_base = 0;
 uint16_t g_cur_rx = 0;
 uint8_t g_tx_index = 0;
@@ -131,7 +148,7 @@ bool transmit(const void* frame, size_t length) {
     memset(tx_buffer, 0, wire_length);
     memcpy(tx_buffer, frame, length);
 
-    out32(static_cast<uint16_t>(g_io_base + kRegTxAddress0 + tx_slot * 4), static_cast<uint32_t>(g_tx_allocation[tx_slot].physical_address));
+    out32(static_cast<uint16_t>(g_io_base + kRegTxAddress0 + tx_slot * 4), g_tx_device_address[tx_slot]);
     out32(static_cast<uint16_t>(g_io_base + kRegTxStatus0 + tx_slot * 4), static_cast<uint32_t>(wire_length));
 
     g_tx_busy[tx_slot] = true;
@@ -235,10 +252,62 @@ void get_stats(nic::Stats& stats) {
     stats.rx_errors = g_rx_errors;
 }
 
+/* The IOMMU's report of a DMA the card's domain does not allow: the card
+ * is stopped and moved to the blocked domain, and stays down; the rest of
+ * the system carries on without it. */
+void dma_fault(void*, uint16_t, uint64_t, bool write) {
+    if (g_failed) {
+        return;
+    }
+    g_failed = true;
+    g_up = false;
+    out16(static_cast<uint16_t>(g_io_base + kRegImr), 0x0000);
+    out8(static_cast<uint16_t>(g_io_base + kRegCommand), 0x00);
+    const uint16_t command = pci::read_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset);
+    pci::write_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset,
+        static_cast<uint16_t>(command & ~kPciCommandBusMaster));
+    iommu::block(g_pci_device);
+    console::printf("rtl8139: a DMA %s outside the card's domain; the card is stopped and blocked\n",
+        write ? "write" : "read");
+}
+
+/* Where the card is told its buffers are. Without translation, or when no
+ * domain can be had, the physical addresses, as before; otherwise the card
+ * moves into a domain that maps its buffers and nothing else. */
+void set_up_dma() {
+    g_rx_device_address = static_cast<uint32_t>(g_rx_allocation.physical_address);
+    for (size_t index = 0; index < 4; ++index) {
+        g_tx_device_address[index] = static_cast<uint32_t>(g_tx_allocation[index].physical_address);
+    }
+    if (g_domain.valid() || !iommu::translating() || !iommu::create_domain(&dma_fault, nullptr, g_domain)) {
+        return;
+    }
+    // The card only writes what it receives and only reads what it sends.
+    bool mapped = iommu::map(g_domain, kRxDeviceAddress, g_rx_allocation.physical_address,
+        g_rx_allocation.page_count * memory::kPageSize, iommu::kDeviceWrites);
+    for (size_t index = 0; index < 4 && mapped; ++index) {
+        if (index == 0 && g_leave_tx_unmapped) {
+            console::printf("rtl8139: transmit buffer 0 left out of the card's domain (rtl8139-unmapped-tx)\n");
+            continue;
+        }
+        mapped = iommu::map(g_domain, kTxDeviceAddress + index * memory::kPageSize,
+            g_tx_allocation[index].physical_address, memory::kPageSize, iommu::kDeviceReads);
+    }
+    if (!mapped || !iommu::attach(g_domain, g_pci_device)) {
+        console::printf("rtl8139: no IOMMU domain of its own; the card stays in the shared one\n");
+        iommu::destroy_domain(g_domain);
+        return;
+    }
+    g_rx_device_address = kRxDeviceAddress;
+    for (size_t index = 0; index < 4; ++index) {
+        g_tx_device_address[index] = static_cast<uint32_t>(kTxDeviceAddress + index * memory::kPageSize);
+    }
+}
+
 int prepare() {
     static unsigned phase;
     static uint64_t deadline;
-    if (!g_present) {
+    if (!g_present || g_failed) {
         return -SX_EIO;
     }
     if (g_up) {
@@ -272,6 +341,7 @@ int prepare() {
             }
             memset(g_tx_allocation[index].virtual_address, 0, memory::kPageSize);
         }
+        set_up_dma();
 
         out8(static_cast<uint16_t>(g_io_base + kRegConfig1), 0x00);
         out8(static_cast<uint16_t>(g_io_base + kRegCommand), kCommandReset);
@@ -289,7 +359,7 @@ int prepare() {
         g_mac[index] = in8(static_cast<uint16_t>(g_io_base + kRegMac0 + index));
     }
 
-    out32(static_cast<uint16_t>(g_io_base + kRegRxBuffer), static_cast<uint32_t>(g_rx_allocation.physical_address));
+    out32(static_cast<uint16_t>(g_io_base + kRegRxBuffer), g_rx_device_address);
     out16(static_cast<uint16_t>(g_io_base + kRegImr), 0x0000);
     out16(static_cast<uint16_t>(g_io_base + kRegIsr), 0xffff);
     out32(static_cast<uint16_t>(g_io_base + kRegTcr), 0x03000700u);
@@ -372,5 +442,7 @@ const nic::Driver kDriver = {
 namespace rtl8139 {
 
 const nic::Driver& driver() { return kDriver; }
+
+void leave_transmit_buffer_unmapped(bool leave) { g_leave_tx_unmapped = leave; }
 
 } // namespace rtl8139

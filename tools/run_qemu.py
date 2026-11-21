@@ -50,6 +50,10 @@ USB_POINTERS = ("tablet", "mouse")
 # two OHCI companions instead, as on an AMD board. (QEMU's plain usb-ehci
 # takes no companions.)
 USB_HOSTS = ("xhci", "ehci", "ehci-ohci", "uhci", "ohci")
+# The emulated IOMMU --iommu adds, with interrupt remapping, so the guest
+# finds an IVRS (amd) or a DMAR (intel) in its ACPI tables
+# (docs/kernel/IOMMU.md). "none" is the board without one.
+IOMMUS = ("none", "amd", "intel")
 
 
 def usb_host_devices(usb_host: str) -> tuple[list[str], str]:
@@ -134,6 +138,7 @@ def build_qemu_args(
     usb_pointer: str = "tablet",
     usb_hub: bool = False,
     usb_host: str = "xhci",
+    iommu: str = "none",
 ) -> list[str]:
     """Build the common QEMU command used by normal and smoke launches.
 
@@ -156,7 +161,16 @@ def build_qemu_args(
     mass-storage device on the same controller
     (docs/roadmaps/done/USB_ROADMAP.md). SAVANXP_USB_TRACE=PATH logs QEMU's
     usb_xhci_* trace events to PATH.
+
+    iommu adds an emulated AMD or Intel IOMMU (IOMMUS). QEMU wants it before
+    any other device, and under KVM its interrupt remapping needs the split
+    irqchip. QEMU's amd-iommu translates emulated devices' DMA only with
+    dma-remap=on. The board also gets QEMU's edu device, whose DMA engine the
+    kernel's iommu-selftest points inside and outside the identity domain; its
+    DMA mask is widened so that it does not clip the address that must fault.
     """
+    if iommu not in IOMMUS:
+        raise SystemExit(f"unknown IOMMU {iommu!r}; expected one of {', '.join(IOMMUS)}")
     virtio = virtio or gl
     disk_bus = disk_bus or os.environ.get("SAVANXP_DISK_BUS", "ahci")
     if disk_bus not in DISK_BUSES:
@@ -164,7 +178,8 @@ def build_qemu_args(
     args_list = [
         "qemu-system-x86_64",
         "-machine",
-        "q35,pcspk-audiodev=audio0" + ("" if ps2 else ",i8042=off"),
+        "q35,pcspk-audiodev=audio0" + ("" if ps2 else ",i8042=off")
+        + (",kernel-irqchip=split" if iommu != "none" and accel == "kvm" else ""),
         "-accel",
         accel,
         "-m",
@@ -196,6 +211,10 @@ def build_qemu_args(
         "-global",
         "isa-debugcon.iobase=0xe9",
     ]
+    if iommu == "amd":
+        args_list += ["-device", "amd-iommu,intremap=on,dma-remap=on"]
+    elif iommu == "intel":
+        args_list += ["-device", "intel-iommu,intremap=on"]
     args_list += ["-netdev", "user,id=net0"] if network else ["-nic", "none"]
     if monitor_path is not None:
         args_list += ["-no-reboot", "-no-shutdown"]
@@ -329,6 +348,9 @@ def build_qemu_args(
     args_list += ["-audiodev", audio1]
     for device in devices:
         args_list += ["-device", device]
+    if iommu != "none":
+        # Last, so that every other device keeps the slot it has without it.
+        args_list += ["-device", "edu,dma_mask=0xffffffffffffffff"]
     if debug:
         args_list += ["-s", "-S"]
     return args_list
@@ -391,6 +413,8 @@ def main() -> int:
                         help="attach this raw image as a USB mass-storage device")
     parser.add_argument("--usb-host", choices=USB_HOSTS, default="xhci",
                         help="the USB host controller --usb uses (default: xhci)")
+    parser.add_argument("--iommu", choices=IOMMUS, default="none",
+                        help="add an emulated AMD or Intel IOMMU (default: none)")
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
         parser.error("--smp must be between 1 and 32")
@@ -430,6 +454,7 @@ def main() -> int:
         usb_stick=args.usb_stick.resolve() if args.usb_stick else None,
         usb_pointer=args.usb_pointer,
         usb_host=args.usb_host,
+        iommu=args.iommu,
     )
     args_list[0] = qemu
 

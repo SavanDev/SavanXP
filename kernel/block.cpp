@@ -196,34 +196,77 @@ void fail(Device& device, const char* what) {
     ++g_stats.failures;
 }
 
-bool step() {
+// --- One step, in three parts -------------------------------------------
+//
+// A step is one device command: prepare() picks it under the kernel lock,
+// execute() sends it and waits for the device, complete() applies the result
+// under the lock. Synchronous callers do all three at once (step()). The idle
+// core of an SMP machine runs execute() with the kernel lock released
+// (begin/run/finish_writeback_step), so the disk wait stops every other core
+// no longer; see docs/kernel/BLOCK_WRITEBACK.md.
+//
+// While a command is in flight the queue is consistent: its records stay
+// queued until complete() pops them, so reads still lay them over the device
+// data, and the bytes the device is given (the record's own buffer or
+// g_stage) are not touched by anyone else. Only the device is busy: every
+// path that calls into a driver settles the command first.
+
+struct InFlight {
+    // Which command this is. A core that ran one without the lock finishes
+    // it only if nobody completed it meanwhile: by then g_in_flight may hold
+    // another core's command.
+    uint64_t sequence;
+    bool active;   // prepared and not yet completed; written under the lock
+    bool done;     // execute() returned; atomic, written by the executing core
+    bool ok;
+    bool flush;
+    size_t device;
+    uint32_t lba;
+    uint32_t count;
+    uint32_t remaining;
+    size_t merged;
+    const uint8_t* source;
+};
+
+InFlight g_in_flight = {};
+uint64_t g_command_sequence = 0;
+
+enum class Prepared {
+    nothing,   // the queue is empty, or stuck behind a failed device
+    finished,  // an ordering point with nothing to flush: popped already
+    command,   // g_in_flight holds a device command to execute
+};
+
+Prepared prepare() {
     Pending* record = g_queue_head;
     if (record == nullptr) {
-        return false;
+        return Prepared::nothing;
     }
     Device& device = g_devices[record->device];
     if (device.failed) {
-        return false;
+        return Prepared::nothing;
     }
     ++g_stats.steps;
 
+    InFlight& command = g_in_flight;
+    command = {};
+    command.sequence = ++g_command_sequence;
+    command.device = record->device;
     if (record->sector_count == 0) {
-        if (device.unflushed && device.ops->flush != nullptr) {
-            if (!device.ops->flush(device.context)) {
-                fail(device, "flush");
-                return false;
-            }
-            ++g_stats.device_flushes;
+        if (!device.unflushed || device.ops->flush == nullptr) {
+            device.unflushed = false;
+            pop_head();
+            return Prepared::finished;
         }
-        device.unflushed = false;
-        pop_head();
-        return true;
+        command.flush = true;
+        command.active = true;
+        return Prepared::command;
     }
 
     // The head record, from where an earlier step left it, plus any whole
     // records right behind it that continue it on the same device, up to one
     // step's worth. A lone record is written from its own buffer.
-    uint32_t remaining = record->sector_count - record->written;
+    const uint32_t remaining = record->sector_count - record->written;
     uint32_t count = remaining < kStepSectors ? remaining : kStepSectors;
     const uint32_t lba = record->lba + record->written;
     const uint8_t* source = record->data + static_cast<size_t>(record->written) * block::kSectorSize;
@@ -242,24 +285,82 @@ bool step() {
             ++merged;
         }
     }
+    command.lba = lba;
+    command.count = count;
+    command.remaining = remaining;
+    command.merged = merged;
+    command.source = source;
+    command.active = true;
+    return Prepared::command;
+}
 
-    if (!device.ops->write(device.context, lba, count, source)) {
+// The device wait. Touches only the driver and the bytes prepare() chose.
+void execute() {
+    InFlight& command = g_in_flight;
+    const Device& device = g_devices[command.device];
+    command.ok = command.flush
+        ? device.ops->flush(device.context)
+        : device.ops->write(device.context, command.lba, command.count, command.source);
+    __atomic_store_n(&command.done, true, __ATOMIC_RELEASE);
+}
+
+bool complete() {
+    InFlight& command = g_in_flight;
+    command.active = false;
+    Device& device = g_devices[command.device];
+    if (command.flush) {
+        if (!command.ok) {
+            fail(device, "flush");
+            return false;
+        }
+        ++g_stats.device_flushes;
+        device.unflushed = false;
+        pop_head();
+        return true;
+    }
+    if (!command.ok) {
         fail(device, "write");
         return false;
     }
     ++g_stats.device_writes;
     device.unflushed = true;
-
-    if (count < remaining) {
-        record->written += count;
-        g_stats.queued_bytes -= static_cast<uint64_t>(count) * block::kSectorSize;
+    if (command.count < command.remaining) {
+        g_queue_head->written += command.count;
+        g_stats.queued_bytes -= static_cast<uint64_t>(command.count) * block::kSectorSize;
         return true;
     }
     pop_head();
-    for (size_t index = 0; index < merged; ++index) {
+    for (size_t index = 0; index < command.merged; ++index) {
         pop_head();
     }
     return true;
+}
+
+// Under the lock, before anything calls into a driver: a command another core
+// is executing without the lock ends first. It is one device command, and the
+// core executing it waits for nothing but the device.
+void settle() {
+    if (!g_in_flight.active) {
+        return;
+    }
+    while (!__atomic_load_n(&g_in_flight.done, __ATOMIC_ACQUIRE)) {
+        __builtin_ia32_pause();
+    }
+    (void)complete();
+}
+
+bool step() {
+    settle();
+    switch (prepare()) {
+        case Prepared::nothing:
+            return false;
+        case Prepared::finished:
+            return true;
+        case Prepared::command:
+            break;
+    }
+    execute();
+    return complete();
 }
 
 // Drains until `bytes` more fit in the queue. False if the queue is stuck.
@@ -278,6 +379,7 @@ bool make_room(uint64_t bytes) {
 }
 
 bool drain_all() {
+    settle();
     while (g_queue_head != nullptr) {
         if (!step()) {
             return false;
@@ -396,6 +498,7 @@ bool unregister_device(size_t index) {
 }
 
 size_t probe_all() {
+    settle();
     memset(g_devices, 0, sizeof(g_devices));
     g_device_count = 0;
     g_ready = false;
@@ -502,6 +605,7 @@ bool read(size_t index, uint32_t lba, uint32_t sector_count, void* buffer) {
         }
         ++g_cache_stats.misses;
     }
+    settle();
     if (!device->ops->read(device->context, lba, sector_count, buffer)) {
         return false;
     }
@@ -524,6 +628,7 @@ bool write_cached(size_t index, uint32_t lba, uint32_t sector_count, const void*
         return false;
     }
     if (!defers(*device)) {
+        settle();
         return device->ops->write(device->context, lba, sector_count, buffer);
     }
     if (device->failed) {
@@ -571,6 +676,7 @@ bool flush(size_t index) {
         return false;
     }
     if (!defers(*device)) {
+        settle();
         return device->ops->flush == nullptr || device->ops->flush(device->context);
     }
     if (device->failed) {
@@ -620,6 +726,8 @@ bool sync_all() {
 }
 
 bool shutdown_all() {
+    // drain_all() settles a command in flight on another core first: power-off
+    // from the SCI waits for it rather than cutting it off.
     const bool drained = drain_all();
     for (size_t i = 0; i < g_driver_count; ++i) {
         if (g_drivers[i]->shutdown != nullptr) {
@@ -652,8 +760,43 @@ bool writeback_step() {
     return step();
 }
 
+BackgroundStep begin_writeback_step(uint64_t& command) {
+    // Another core's command still running makes that core the drain; waiting
+    // for it here would wait with the kernel lock held.
+    if (g_in_flight.active && !__atomic_load_n(&g_in_flight.done, __ATOMIC_ACQUIRE)) {
+        return BackgroundStep::none;
+    }
+    settle();
+    switch (prepare()) {
+        case Prepared::nothing:
+            return BackgroundStep::none;
+        case Prepared::finished:
+            return BackgroundStep::finished;
+        case Prepared::command:
+            break;
+    }
+    command = g_in_flight.sequence;
+    return BackgroundStep::in_flight;
+}
+
+void run_writeback_step() {
+    execute();
+}
+
+void finish_writeback_step(uint64_t command) {
+    // Another core may have needed the device meanwhile and completed it, and
+    // a third may already have begun the next command.
+    if (g_in_flight.active && g_in_flight.sequence == command) {
+        (void)complete();
+    }
+}
+
 void writeback_tick(uint64_t now_ms) {
     g_clock_ms = now_ms;
+    // A command in flight is the drain already running on another core.
+    if (g_in_flight.active) {
+        return;
+    }
     if (g_queue_head == nullptr || now_ms - g_queue_head->queued_ms < kMaxAgeMs ||
         now_ms - g_last_forced_ms < kForcedStepIntervalMs) {
         return;

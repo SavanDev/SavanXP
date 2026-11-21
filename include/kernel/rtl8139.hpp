@@ -10,4 +10,10 @@ namespace rtl8139 {
 // solo a polling.
 const nic::Driver& driver();
 
+/* Boot option `rtl8139-unmapped-tx`: with the IOMMU translating, transmit
+ * buffer 0 is left out of the card's domain, so the first frame it sends
+ * faults and the card ends blocked (docs/kernel/IOMMU.md#testing). Call
+ * before the card is brought up. */
+void leave_transmit_buffer_unmapped(bool leave);
+
 } // namespace rtl8139

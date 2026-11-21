@@ -84,15 +84,23 @@ The power button calls `power::shutdown()` from the SCI handler when nobody
 watches it ([below](#the-power-button)). That is safe
 because an external IRQ takes the big kernel lock
 ([`smp.hpp`](../../include/kernel/smp.hpp)), and every filesystem mutation runs
-inside a system call that holds that lock from start to finish. SxFS and the
-block layer never drop it partway through (`smp::wait_for_interrupt()` is used
-only by the network, the TTY and the PC speaker). So when the handler runs, no
-volume is halfway through a mutation, its mutation lock is free, and the
-storage drivers complete by polling, without needing interrupts.
+inside a system call that holds that lock from start to finish. SxFS never
+drops it partway through (`smp::wait_for_interrupt()` is used only by the
+network, the TTY and the PC speaker). So when the handler runs, no volume is
+halfway through a mutation, its mutation lock is free, and the storage drivers
+complete by polling, without needing interrupts.
+
+The block layer drops it for one thing only: an idle application processor
+waits for one writeback command with the lock released and interrupts off
+(SMP slice 5.2, [BLOCK_WRITEBACK.md](BLOCK_WRITEBACK.md#draining)). The
+queue is consistent the whole time; only the device is busy.
+`block::shutdown_all()` first settles that command, spinning under the lock
+until the device answers. That wait ends on its own, because the core running
+the command needs nothing else to finish it: no lock, and no interrupt, since
+its own are off. An SCI routed to that core waits for the command to end.
 **Keep it that way.** A filesystem or block path that sleeps with the lock
-released would make this handler deadlock on the mutation lock. The SMP
-roadmap's slice 5.2, which takes the disk wait out of the lock, has to answer
-this first ([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md#what-storage-under-the-lock-sounds-like)).
+released, and needs something from a core holding it to wake up, would make
+this handler deadlock.
 
 ## The test
 

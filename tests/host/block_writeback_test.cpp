@@ -416,6 +416,79 @@ void case_aging_drains_without_idle() {
     check(block::sync(0), "sync");
 }
 
+void case_step_outside_the_lock() {
+    printf("case: a step whose device wait runs outside the kernel lock\n");
+    reset();
+    uint64_t command = 0;
+    uint8_t data[kSectorSize];
+    uint8_t back[kSectorSize];
+    fill(data, 0x51);
+    block::write_cached(0, 20, 1, data);
+    block::flush(0);
+    check(block::begin_writeback_step(command) == block::BackgroundStep::in_flight, "begin: a write in flight");
+    check(g_disk.event_count == 0, "nothing reached the disk before it runs");
+    uint64_t other = 0;
+    check(block::begin_writeback_step(other) == block::BackgroundStep::none && g_disk.event_count == 0,
+          "a second idle core leaves it running instead of waiting for it");
+    fill(data, 0x52);
+    check(block::write_cached(0, 21, 1, data), "a write is queued while the command is in flight");
+    block::writeback_tick(50000);
+    block::writeback_tick(52000);
+    check(g_disk.event_count == 0, "the tick leaves a command in flight alone");
+    block::run_writeback_step();
+    check(g_disk.event_count == 1 && g_disk.events[0].lba == 20, "run: the device took the write");
+    block::finish_writeback_step(command);
+    check(block::begin_writeback_step(command) == block::BackgroundStep::in_flight, "the ordering point is the next command");
+    block::run_writeback_step();
+    block::finish_writeback_step(command);
+    check(g_disk.event_count == 2 && g_disk.events[1].kind == 'F', "then its flush");
+
+    printf("case: a reader settles a command another core finished\n");
+    check(block::begin_writeback_step(command) == block::BackgroundStep::in_flight, "the write queued meanwhile is in flight");
+    block::run_writeback_step();
+    const size_t reads_before = g_disk.reads;
+    check(block::read(0, 300, 1, back), "a read that needs the device");
+    check(g_disk.reads == reads_before + 1, "it reached the device after the command");
+    check(!block::writeback_pending(), "it completed the command: the queue is empty");
+    block::finish_writeback_step(command);
+    check(!block::writeback_pending() && sector_is(g_disk.image, 21, 0x52),
+          "finishing a command someone else completed changes nothing");
+
+    printf("case: a late finish leaves another core's command alone\n");
+    fill(data, 0x54);
+    block::write_cached(0, 40, 1, data);
+    block::write_cached(0, 50, 1, data);
+    uint64_t first = 0, second = 0;
+    check(block::begin_writeback_step(first) == block::BackgroundStep::in_flight, "core 1 begins the first write");
+    block::run_writeback_step();
+    check(block::read(0, 301, 1, back), "a reader on another core settles it");
+    check(block::begin_writeback_step(second) == block::BackgroundStep::in_flight && second != first,
+          "core 2 begins the second write");
+    const size_t events_before = g_disk.event_count;
+    block::finish_writeback_step(first);
+    check(block::writeback_pending() && g_disk.event_count == events_before,
+          "core 1's late finish does not complete core 2's command");
+    block::run_writeback_step();
+    block::finish_writeback_step(second);
+    check(!block::writeback_pending() && sector_is(g_disk.image, 50, 0x54), "core 2 finishes its own");
+
+    printf("case: an ordering point with nothing to flush needs no device\n");
+    check(block::begin_writeback_step(command) == block::BackgroundStep::none, "an empty queue: nothing to begin");
+
+    printf("case: a command that fails outside the lock stops the queue\n");
+    fill(data, 0x53);
+    block::write_cached(0, 30, 1, data);
+    g_disk.fail_writes = true;
+    check(block::begin_writeback_step(command) == block::BackgroundStep::in_flight, "begin");
+    block::run_writeback_step();
+    block::finish_writeback_step(command);
+    check(!block::writeback_pending(), "the device is failed and the queue stuck");
+    check(block::begin_writeback_step(command) == block::BackgroundStep::none, "nothing more is begun for it");
+    g_disk.fail_writes = false;
+    (void)block::probe_all();
+    check(block::sync_all() && sector_is(g_disk.image, 30, 0x53), "kept and written once the device recovers");
+}
+
 } // namespace
 
 int main() {
@@ -433,6 +506,7 @@ int main() {
     case_memory_and_partitions_write_through();
     case_aging_drains_without_idle();
     case_read_cache_is_coherent();
+    case_step_outside_the_lock();
     {
         reset();
         uint8_t data[256*kSectorSize]; fill(data,0x39,256);

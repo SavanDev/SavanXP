@@ -1,5 +1,6 @@
 #include "display_settings.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #define DISPLAY_SETTINGS_NAME "display.cfg"
@@ -67,4 +68,28 @@ int display_settings_read_mode(uint32_t *width, uint32_t *height)
         return -1;
     }
     return 0;
+}
+
+int display_settings_write_mode(uint32_t width, uint32_t height)
+{
+    char path[256];
+    char text[48];
+    int length;
+    long written;
+    int fd;
+
+    length = snprintf(text, sizeof(text), "mode=%ux%u\n", (unsigned int)width, (unsigned int)height);
+    if (length <= 0 || length >= (int)sizeof(text) ||
+        savanxp_settings_path(DISPLAY_SETTINGS_NAME, 1, path, sizeof(path)) != 0)
+    {
+        return -1;
+    }
+    fd = (int)savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
+    if (fd < 0)
+    {
+        return -1;
+    }
+    written = savanxp_write(fd, text, (unsigned long)length);
+    savanxp_close(fd);
+    return written == length ? 0 : -1;
 }
