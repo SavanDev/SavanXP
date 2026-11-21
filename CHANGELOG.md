@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Linux programs get a penguin icon:** a Linux ELF under `/system/linux/` (Xeyes, `jq`) shows it on the desktop,
+  in Files and in the Start menu, and its window carries it in the title bar and the taskbar. A program's own
+  icon still wins ([LINUX.md](docs/userland/LINUX.md#the-linux-program-icon)).
 - **SUN file locks: `sxn_lock_file` and `sxn_unlock_file`** (`SXN_SYS_LOCK_FILE`/`UNLOCK_FILE`), `LockFileEx`'s
   model over the same kernel table as POSIX's `fcntl` locks; `nativetest` covers them.
 - **POSIX record locks: `fcntl` `F_GETLK`, `F_SETLK` and `F_SETLKW` with `struct flock`.** Advisory and per

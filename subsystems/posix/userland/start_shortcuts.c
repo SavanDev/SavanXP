@@ -1,5 +1,6 @@
 #include "start_shortcuts.h"
 
+#include "shortcut.h"
 #include "start_pins.h"
 
 #include "savanxp/sxe.h"
@@ -80,36 +81,56 @@ static int icon_from_pe(const char *path, uint32_t *out)
     return pe_icon_from_file(g_pe_scratch, total, START_SHORTCUTS_ICON_EXTENT, out);
 }
 
-/* A program's .sxicon: its 16x16 image, or the nearest one sampled to it. */
+/* The 16x16 image of `icons`, or the nearest one sampled to it. */
+static int icon_from_set(const struct sxe_icons *icons, uint32_t *out)
+{
+    const struct sxe_icon_entry *entry = sxe_icons_best(icons, START_SHORTCUTS_ICON_EXTENT);
+    const uint32_t *pixels = entry != 0 ? sxe_icons_pixels(icons, entry) : 0;
+
+    if (pixels == 0 || entry->width == 0 || entry->height == 0)
+    {
+        return 0;
+    }
+    for (uint32_t y = 0; y < START_SHORTCUTS_ICON_EXTENT; ++y)
+    {
+        for (uint32_t x = 0; x < START_SHORTCUTS_ICON_EXTENT; ++x)
+        {
+            out[y * START_SHORTCUTS_ICON_EXTENT + x] =
+                pixels[(y * entry->height / START_SHORTCUTS_ICON_EXTENT) * entry->width +
+                       x * entry->width / START_SHORTCUTS_ICON_EXTENT];
+        }
+    }
+    return 1;
+}
+
+/* A program's .sxicon. */
 static int icon_from_sxe(const char *path, uint32_t *out)
 {
     struct sxe_file file;
     struct sxe_icons icons;
-    const struct sxe_icon_entry *entry;
-    const uint32_t *pixels;
     int ok = 0;
 
     if (sxe_file_open(&file, path) != SXE_OK)
     {
         return 0;
     }
-    if (sxe_file_load_icons(&file, g_icon_scratch, sizeof(g_icon_scratch), &icons) == SXE_OK &&
-        (entry = sxe_icons_best(&icons, START_SHORTCUTS_ICON_EXTENT)) != 0 &&
-        (pixels = sxe_icons_pixels(&icons, entry)) != 0 && entry->width > 0 && entry->height > 0)
+    if (sxe_file_load_icons(&file, g_icon_scratch, sizeof(g_icon_scratch), &icons) == SXE_OK)
     {
-        for (uint32_t y = 0; y < START_SHORTCUTS_ICON_EXTENT; ++y)
-        {
-            for (uint32_t x = 0; x < START_SHORTCUTS_ICON_EXTENT; ++x)
-            {
-                out[y * START_SHORTCUTS_ICON_EXTENT + x] =
-                    pixels[(y * entry->height / START_SHORTCUTS_ICON_EXTENT) * entry->width +
-                           x * entry->width / START_SHORTCUTS_ICON_EXTENT];
-            }
-        }
-        ok = 1;
+        ok = icon_from_set(&icons, out);
     }
     sxe_file_close(&file);
     return ok;
+}
+
+/* An icon of the catalog in /icons, by name. */
+static int icon_from_catalog(const char *name, uint32_t *out)
+{
+    struct sxe_icons icons;
+    char path[SHORTCUT_PATH_CAPACITY];
+
+    snprintf(path, sizeof(path), "/icons/%s.sxicon", name);
+    return sxe_load_icon_file(path, g_icon_scratch, sizeof(g_icon_scratch), &icons) == SXE_OK &&
+        icon_from_set(&icons, out);
 }
 
 static void add(const char *folder, const char *file_name)
@@ -142,6 +163,11 @@ static void add(const char *folder, const char *file_name)
         const char *source = link.icon[0] != '\0' ? link.icon : link.target;
 
         s->has_icon = ends_with_nocase(source, ".exe") ? icon_from_pe(source, s->icon) : icon_from_sxe(source, s->icon);
+        /* A Linux ELF carries no .sxicon: it gets the Linux program icon. */
+        if (!s->has_icon && shortcut_is_linux_program(link.target))
+        {
+            s->has_icon = icon_from_catalog(SHORTCUT_LINUX_ICON, s->icon);
+        }
     }
     /* Kept sorted by name. */
     for (int i = 0; i < g_count; ++i)

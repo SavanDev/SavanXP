@@ -38,6 +38,12 @@ struct shortcut
 int shortcut_is_shortcut_name(const char *name);
 /* Non-zero for a program: a file in /bin (or /disk/bin), or an .sxe. */
 int shortcut_is_program_path(const char *path);
+/* Non-zero for an ELF64 x86-64 file inside the Linux guest tree
+ * (/system/linux/, no dot components): what the shell opens through SSL. */
+int shortcut_is_linux_program(const char *path);
+/* The /icons name a Linux program shows when it brings no icon of its own;
+ * the desktop, Files and the Start menu share it. */
+#define SHORTCUT_LINUX_ICON "application-x-linux"
 
 /* 0 and the fields filled, or -1 if the text has no target. */
 int shortcut_parse(const char *text, size_t length, struct shortcut *out);

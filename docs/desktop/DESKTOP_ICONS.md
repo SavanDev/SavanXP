@@ -99,9 +99,10 @@ shortcut is made for them: `/system/console.sxe` becomes `Command Prompt.sxlnk`.
   its name below, wrapped to two lines and ending in "..." when it does not
   fit, white with a black shadow so it reads on any wallpaper. A shortcut
   carries the arrow in its lower left corner.
-- **Icons.** A program's `.sxicon`, the type's icon from `/icons` (through
-  `mimeicon.ini`), or the folder's; for a shortcut, its `icon=` or its
-  target's. The generic program icon is the last resort.
+- **Icons.** A program's `.sxicon`, the Linux program icon for a Linux ELF
+  ([LINUX.md](../userland/LINUX.md#the-linux-program-icon)), the type's icon
+  from `/icons` (through `mimeicon.ini`), or the folder's; for a shortcut, its
+  `icon=` or its target's. The generic program icon is the last resort.
 - **Positions** are cells, not pixels, kept in `desktopicons.ini` in the
   profile (`name=column,row`), so a change of video mode only pulls back the
   icons that fall off the screen. A new icon takes its saved cell or the first

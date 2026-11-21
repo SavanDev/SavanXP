@@ -680,7 +680,8 @@ endif()
 file(GLOB_RECURSE SAVANXP_SXE_MANIFESTS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.sxres"
     "${CMAKE_SOURCE_DIR}/system/*.sxres"
-    "${CMAKE_SOURCE_DIR}/subsystems/win32/host/*.sxres")
+    "${CMAKE_SOURCE_DIR}/subsystems/win32/host/*.sxres"
+    "${CMAKE_SOURCE_DIR}/subsystems/linux/x11/*.sxres")
 file(GLOB_RECURSE SAVANXP_SXE_ASSETS CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/assets/desktop/icons/*.png"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/userland/*.png"
@@ -713,6 +714,8 @@ add_custom_command(OUTPUT "${SAVANXP_SXE_STAMP}"
             --manifest-dir "${CMAKE_SOURCE_DIR}/system/sxbide"
             # The Win32 subsystem's host, whose sources live with the subsystem.
             --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/win32/host"
+            # SSL's X11 server, whose windows carry the Linux program icon.
+            --manifest-dir "${CMAKE_SOURCE_DIR}/subsystems/linux/x11"
             ${SAVANXP_SXE_ARGUMENTS}
     COMMAND "${CMAKE_COMMAND}" -E touch "${SAVANXP_SXE_STAMP}"
     DEPENDS

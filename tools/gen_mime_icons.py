@@ -27,13 +27,21 @@ from gen_sxe_resources import build_icon_blob, load_format, read_icon_png, write
 # porque su procedencia es distinta (ver docs/third-party/THIRD_PARTY_PROVENANCE.md).
 ICON_ROOT = ("assets", "desktop", "icons", "mime")
 
+# Catalog names drawn by the project itself, for what the Tango set has no
+# icon for. They are emitted into /icons next to the catalog but read from the
+# house directories (assets/desktop/icons/<size>/), keeping "this is ours"
+# verifiable from the tree. name -> PNG basename.
+HOUSE_ICONS = {"application-x-linux": "app-linux"}
 
-def collect_sizes(fmt, project_root, icon_name):
-    """Los dos tamanos que el sistema usa son obligatorios, por el mismo motivo
-    que en collect_icons(): un .sxicon con uno solo obligaria a escalar en
-    runtime, y escalar un icono de 16 a 32 se ve mal."""
+
+def collect_sizes(fmt, project_root, icon_name, root=None):
+    """Both sizes the system uses are required, for the same reason as in
+    collect_icons(): an .sxicon with only one would force scaling at run time,
+    and scaling an icon from 16 to 32 looks bad. `root` is the directory that
+    holds the <size>x<size> folders; the type catalog's by default."""
     images = []
-    root = os.path.join(project_root, *ICON_ROOT)
+    if root is None:
+        root = os.path.join(project_root, *ICON_ROOT)
     for size in (fmt["SXE_ICON_SIZE_SMALL"], fmt["SXE_ICON_SIZE_LARGE"]):
         path = os.path.join(root, f"{size}x{size}", f"{icon_name}.png")
         width, height, pixels = read_icon_png(path)
@@ -81,6 +89,13 @@ def main():
         blob = build_icon_blob(fmt, images, f"mime-icons: {name}")
         if write_if_changed(os.path.join(args.output_dir, name + ".sxicon"), blob):
             written += 1
+    house_root = os.path.join(args.project_root, "assets", "desktop", "icons")
+    for name, source in sorted(HOUSE_ICONS.items()):
+        images = collect_sizes(fmt, args.project_root, source, house_root)
+        blob = build_icon_blob(fmt, images, f"mime-icons: {name}")
+        if write_if_changed(os.path.join(args.output_dir, name + ".sxicon"), blob):
+            written += 1
+        names.append(name)
 
     print(f"mime-icons: {len(names)} iconos, {written} escritos en {args.output_dir}")
     return 0

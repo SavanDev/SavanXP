@@ -230,6 +230,27 @@ static int filesapp_join_path(const char *base, const char *name, char *buffer, 
     return snprintf(buffer, capacity, "%s/%s", base, name) < (int)capacity;
 }
 
+/* The small and large icons of the entry at `index`: the type's, except a
+ * Linux ELF, which has no icon of its own and gets the Linux program icon. */
+static void filesapp_set_entry_icons(int index, const struct filesapp_entry *entry, int launchable)
+{
+    char full_path[FILESAPP_PATH_CAPACITY];
+
+    g_item_icons[index] = 0;
+    if (!entry->is_dir && strncmp(g_current_path, "/system/linux/", 14) == 0 &&
+        filesapp_join_path(g_current_path, entry->name, full_path, sizeof(full_path)) &&
+        shortcut_is_linux_program(full_path))
+    {
+        g_item_icons[index] = mime_icon_small(SHORTCUT_LINUX_ICON);
+        g_item_large_icons[index] = mime_icon_large(SHORTCUT_LINUX_ICON);
+    }
+    if (g_item_icons[index] == 0)
+    {
+        g_item_icons[index] = mime_icon_for_file(entry->name, entry->is_dir, launchable);
+        g_item_large_icons[index] = mime_icon_large_for_file(entry->name, entry->is_dir, launchable);
+    }
+}
+
 static void filesapp_parent_path(const char *path, char *buffer, size_t capacity)
 {
     size_t length;
@@ -481,8 +502,7 @@ static void filesapp_rebuild_labels(void)
             SXGUI_COLUMN_SEPARATOR,
             type_cell);
         g_item_ptrs[index] = g_item_labels[index];
-        g_item_icons[index] = mime_icon_for_file(entry->name, entry->is_dir, launchable);
-        g_item_large_icons[index] = mime_icon_large_for_file(entry->name, entry->is_dir, launchable);
+        filesapp_set_entry_icons(index, entry, launchable);
     }
     filesapp_apply_cut_fade();
     /* A folder opens with nothing selected, as Explorer opens one. */
@@ -1845,8 +1865,7 @@ static void filesapp_refresh_icons(void)
             filesapp_join_path(g_current_path, entry->name, full_path, sizeof(full_path)) &&
             filesapp_path_is_launchable(full_path);
 
-        g_item_icons[index] = mime_icon_for_file(entry->name, entry->is_dir, launchable);
-        g_item_large_icons[index] = mime_icon_large_for_file(entry->name, entry->is_dir, launchable);
+        filesapp_set_entry_icons(index, entry, launchable);
     }
     filesapp_apply_cut_fade();
 }

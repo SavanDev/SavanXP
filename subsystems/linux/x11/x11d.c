@@ -8,6 +8,7 @@
 #include "sxn/sxn.h"
 #include "sxn/sxnwm.h"
 #include "x11.h"
+#include "x11d.sunres.h"
 
 struct desktop {
     struct sxnwm_client wm;
@@ -22,13 +23,21 @@ static int send_reply(void* opaque, const void* bytes, size_t count) {
     while (count) { long n = sxn_write(1, p, count); if (n <= 0) return -1; p += n; count -= n; }
     return 0;
 }
+/* A window's title with the Linux program icon: an X client's own icon
+ * pixmaps are not presented, so every window of this server carries it. */
+static int publish_presentation(struct desktop* d, const char* title) {
+    struct sxnwm_presentation_source presentation = {0};
+    presentation.title = title;
+    presentation.icon_extent = sun_resources.icon_extent;
+    presentation.icon_pixels = sun_resources.icon_pixels;
+    return sxnwm_set_presentation(&d->wm, &presentation);
+}
 static int map_window(void* opaque, struct sx11_window* w) {
     struct desktop* d = opaque;
     // The first profile has one top-level window per X client. Refuse a
     // second rather than aliasing it onto an existing desktop surface.
     if (d->mapped || w->parent != SX11_ROOT) return -1;
-    struct sxnwm_presentation_source presentation = {0}; presentation.title = w->title;
-    if (sxnwm_set_presentation(&d->wm, &presentation) || sxnwm_request_size(&d->wm, w->width, w->height)) return -1;
+    if (publish_presentation(d, w->title) || sxnwm_request_size(&d->wm, w->width, w->height)) return -1;
     const uint64_t deadline = sxn_clock_ns() + 3000000000ull;
     while (d->wm.width != w->width || d->wm.height != w->height) {
         (void)sxn_event_reset(d->wm.wake_fd);
@@ -47,8 +56,7 @@ static void present(void* opaque, struct sx11_window* w) {
     struct desktop* d = opaque;
     if (d->mapped == w->id) {
         if (strcmp(d->title, w->title)) {
-            struct sxnwm_presentation_source presentation = {0}; presentation.title = w->title;
-            if (sxnwm_set_presentation(&d->wm, &presentation)) d->protocol.failed = 1;
+            if (publish_presentation(d, w->title)) d->protocol.failed = 1;
             strcpy(d->title, w->title);
         }
         d->dirty = 1;

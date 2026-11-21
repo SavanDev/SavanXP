@@ -60,7 +60,7 @@ int shortcut_is_shortcut_name(const char *name)
 /* A desktop file in the explicit Linux guest tree selects SSL. ELF alone
  * cannot distinguish Linux from POSIX, so files elsewhere keep their normal
  * association. Reject path traversal before selecting this subsystem. */
-static int linux_program(const char *path)
+int shortcut_is_linux_program(const char *path)
 {
     if (!path || strncmp(path, "/system/linux/", 14) != 0) return 0;
     const char *part = path + 14;
@@ -83,7 +83,7 @@ static int linux_program(const char *path)
 int shortcut_is_program_path(const char *path)
 {
     return path != 0 &&
-        (linux_program(path) || strncmp(path, "/bin/", 5) == 0 || strncmp(path, "/disk/bin/", 10) == 0 || ends_with_nocase(path, ".sxe"));
+        (shortcut_is_linux_program(path) || strncmp(path, "/bin/", 5) == 0 || strncmp(path, "/disk/bin/", 10) == 0 || ends_with_nocase(path, ".sxe"));
 }
 
 int shortcut_parse(const char *text, size_t length, struct shortcut *out)
@@ -355,7 +355,7 @@ static enum shortcut_open_kind open_plain(const struct savanxp_gfx_context *cont
     if (edit)
     {
         const char *editor;
-        if (is_directory(path) || shortcut_is_program_path(path) || linux_program(path)) return SHORTCUT_OPEN_FAILED;
+        if (is_directory(path) || shortcut_is_program_path(path) || shortcut_is_linux_program(path)) return SHORTCUT_OPEN_FAILED;
         ensure_associations();
         editor = file_assoc_editor_for_file(path);
         return editor && launch(context, editor, path) >= 0 ? SHORTCUT_OPEN_ASSOCIATED : SHORTCUT_OPEN_FAILED;
@@ -364,7 +364,7 @@ static enum shortcut_open_kind open_plain(const struct savanxp_gfx_context *cont
     {
         return launch(context, SHORTCUT_FILES_PATH, path) >= 0 ? SHORTCUT_OPEN_FOLDER : SHORTCUT_OPEN_FAILED;
     }
-    if (linux_program(path))
+    if (shortcut_is_linux_program(path))
     {
         /* The desktop API passes one argument. The physical guest path is
          * the launcher's desktop mode; Linux sees the stripped guest path. */
@@ -436,7 +436,7 @@ int shortcut_can_edit_path(const char *path)
         if (shortcut_load(path, &shortcut) != 0 || shortcut_is_shortcut_name(shortcut.target)) return 0;
         path = shortcut.target;
     }
-    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode) || shortcut_is_program_path(path) || linux_program(path)) return 0;
+    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode) || shortcut_is_program_path(path) || shortcut_is_linux_program(path)) return 0;
     ensure_associations();
     return file_assoc_editor_for_file(path) != 0;
 }
@@ -492,6 +492,19 @@ int shortcut_selftest(void)
     expect(shortcut_is_program_path("/bin/calc") && shortcut_is_program_path("/users/user/game.sxe") &&
                !shortcut_is_program_path("/users/user/notes.txt"),
         "program paths");
+    expect(!shortcut_is_linux_program("/bin/calc") && !shortcut_is_linux_program("/system/linux.sxe") &&
+               !shortcut_is_linux_program("/system/linux/../linux.sxe") &&
+               !shortcut_is_linux_program("/system/linux/./fixtures/hello"),
+        "linux programs: only the guest tree, no dot components");
+    {
+        /* Present only in test images; when it is there it must be a Linux program. */
+        struct stat fixture;
+
+        if (stat("/system/linux/fixtures/hello", &fixture) == 0)
+        {
+            expect(shortcut_is_linux_program("/system/linux/fixtures/hello"), "linux programs: a guest ELF");
+        }
+    }
 
     shortcut_for_target("/users/user/notes.txt", &again, name, sizeof(name));
     expect(strcmp(name, "notes.txt.sxlnk") == 0 && strcmp(again.target, "/users/user/notes.txt") == 0,

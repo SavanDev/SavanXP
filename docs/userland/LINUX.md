@@ -496,6 +496,25 @@ pad), and `QueryColors` (default TrueColor colormap). Pixmaps share the X
 resource namespace and are bounded to eight 512x512 depth-1 images per
 connection; their pixels are retained and freed on disconnect. Icon pixmaps
 in `WM_HINTS` are accepted as hints and are not presented as desktop icons.
+
+### The Linux program icon
+
+A Linux ELF carries no `.sxicon`, so every place that shows a program's icon
+would fall back to the generic executable. They show the penguin instead
+(`assets/desktop/icons/{16x16,32x32}/app-linux.png`, house art), whatever the
+program is:
+
+- **Desktop, Files and the Start menu** use `shortcut_is_linux_program` (the
+  same rule that selects `linux.sxe`) and the catalog name `SHORTCUT_LINUX_ICON`,
+  `application-x-linux`, which `tools/gen_mime_icons.py` emits into `/icons`
+  from the house PNGs. An icon the program brings itself wins over it.
+- **Windows** of any X client carry it in their published presentation
+  (`x11d.sxres`, compiled into `x11d` as `sun_resources`), so the title bar
+  and the taskbar button show it too. `WM_HINTS` icon pixmaps still are not
+  presented, so a client cannot choose its own.
+
+Pending: the SUN file dialog (`sxnfiledlg`) resolves icons by name only and
+still shows a Linux ELF with the generic executable icon.
 The server advertises the depth-1 and depth-24 pixmap formats. The original
 client may probe unsupported pixmap depths and handle the resulting errors.
 

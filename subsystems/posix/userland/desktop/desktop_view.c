@@ -419,6 +419,11 @@ static int load_icon_for_path(struct view_item *item, const char *path, int is_d
     {
         return 1;
     }
+    /* A Linux ELF carries no .sxicon: it gets the Linux program icon. */
+    if (shortcut_is_linux_program(path) && load_named_icon(item, SHORTCUT_LINUX_ICON))
+    {
+        return 1;
+    }
     return load_named_icon(item, mime_icon_name_for(base_name(path), 0, shortcut_is_program_path(path)));
 }
 
