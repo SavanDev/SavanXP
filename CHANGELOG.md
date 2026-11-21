@@ -30,6 +30,9 @@ Cut-off notes:
   `sxn_random_status`, POSIX `getrandom`, `getentropy` and `random_status`; Linux `getrandom` and `AT_RANDOM` use it.
   QEMU machines get `virtio-rng-pci` unless `--no-rng`; new host test `random-crypto-test` and smoke
   `random-unseeded` ([RANDOM.md](docs/kernel/RANDOM.md)).
+- **Win32 declared entry points: every load-time import of Windows XP WordPad and MFC resolves** (WP1). A
+  function imported but not yet written is a line in its DLL's `declared.txt`; it reports itself once on the debug
+  output and fails cleanly. New DLLs `ole32`, `comdlg32` and `shlwapi` ([WIN32.md](docs/userland/WIN32.md#declared-entry-points)).
 - **Win32 (SSW) loads images with delay-load imports** (WordPad WP1): the PE parser checks the descriptors
   (`pe_for_each_delay_imported_dll`) and leaves binding to the image's own helper; descriptors with VAs are refused
   by name. `mfc42u.dll` has thirteen ([WIN32.md](docs/userland/WIN32.md#what-it-accepts)).

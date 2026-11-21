@@ -24,7 +24,9 @@ The user's own Windows XP Solitaire runs unchanged and is played to a win
 with the same pixels Windows XP shows (see [Solitaire](#solitaire)). A `.exe`
 opens from Files through its association with `winhost`, and Solitaire has a
 shortcut at the top of the Start menu. Nothing of the Windows API beyond what
-`sol.exe` and the fixtures import exists.
+`sol.exe` and the fixtures use is written; what Windows XP WordPad and its MFC
+import beyond that is [declared](#declared-entry-points), so their imports
+resolve.
 
 ```text
 subsystems/win32/
@@ -32,8 +34,9 @@ subsystems/win32/
   pe/            the PE32 parser and mapper, portable C
   loader/        the process loader, portable C
   dlls/          ntdll, kernel32, msvcrt, advapi32, gdi32, user32, shell32,
-                 comctl32 (PE32); common/ holds the code page, regions and
-                 memcpy they share
+                 comctl32, ole32, comdlg32, shlwapi (PE32); common/ holds the
+                 code page, regions, memcpy and declared entry points they
+                 share; declared.py generates those from each declared.txt
   fixtures/      hello, initorder (+ alpha.dll, beta.dll), missing, startup,
                  window (+ its input script), cards, resource (+ its .rc and
                  the script that writes its images), dialog (+ its .rc and
@@ -47,8 +50,8 @@ subsystems/win32/
 On the disk image, under `/system/win/drive_c` (the guest's `C:`):
 
 ```text
-windows/system32/   ntdll, kernel32, msvcrt, advapi32, gdi32, user32, shell32
-                    and comctl32 .dll
+windows/system32/   ntdll, kernel32, msvcrt, advapi32, gdi32, user32, shell32,
+                    comctl32, ole32, comdlg32 and shlwapi .dll
 tests/              the fixtures, when the test applications are built
 ```
 
@@ -237,7 +240,9 @@ Each DLL is a directory with C sources and a `.def` file. They are built at
 Windows XP's own bases (`ntdll.dll` at `0x7C900000`, `kernel32.dll` at
 `0x7C800000`, `msvcrt.dll` at `0x77C10000`, `advapi32.dll` at `0x77DD0000`,
 `gdi32.dll` at `0x77F10000`, `user32.dll` at `0x7E410000`, `shell32.dll` at
-`0x7C9C0000`, `comctl32.dll` at `0x5D090000`), so none of them relocates. `include/windows.h` is the subsystem's own header;
+`0x7C9C0000`, `comctl32.dll` at `0x5D090000`, `ole32.dll` at `0x774E0000`,
+`comdlg32.dll` at `0x763B0000`, `shlwapi.dll` at `0x77F60000`), so none of
+them relocates. `include/windows.h` is the subsystem's own header;
 it declares what the DLLs and fixtures use and grows with the W0 matrix.
 `dlls/common/codepage.c`, compiled into the DLLs that need it, converts
 between UTF-16 and the "ANSI" code page, Windows-1252, the one Windows XP uses
@@ -253,6 +258,36 @@ in Western European languages.
 | `user32.dll` | The matrix's sixty-two: windows and messages (classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor`), resources (`LoadBitmapA`, `LoadStringW`, `LoadStringA`, `LoadIconW`, `LoadCursorW`, `LoadImageW`, `LoadAcceleratorsW`, `TranslateAcceleratorW`), menus (`GetMenu`, `EnableMenuItem`), dialogs (`DialogBoxParamW`, `EndDialog`, `GetDlgItem`, `CheckDlgButton`, `IsDlgButtonChecked`, `CheckRadioButton`, `MessageBoxW`) and `WinHelpW`; the full list is `dlls/user32/user32.def`. Private: `SxwDialogBoxIndirectParamW` |
 | `shell32.dll` | `ShellAboutW` |
 | `comctl32.dll` | `InitCommonControlsEx`, which registers nothing: Solitaire uses no common control |
+| `ole32.dll`, `comdlg32.dll`, `shlwapi.dll` | Declared entry points only (below) |
+
+The table lists what is written. Each DLL also exports the entry points of
+its `declared.txt`, below.
+
+### Declared entry points
+
+A program's imports must all resolve before it runs, including the many it
+never calls in a given session: of the 599 functions `wordpad.exe` and
+`mfc42u.dll` import at load time, a recorded session reached 385. A function
+that is imported but not yet written is **declared**: it is a line in its
+DLL's `declared.txt` (name, the argument bytes a `stdcall` function pops or
+`cdecl`, and the value it returns), and `dlls/declared.py` generates an
+entry point for it and appends it to the DLL's exports. Called, a declared
+entry point:
+
+- writes `<dll>!<name> is only declared` on the debug output, the first time
+  only (`win32: debug:` on the host's error stream);
+- sets the last error to `ERROR_CALL_NOT_IMPLEMENTED` (120) when it is
+  `stdcall`; the C runtime's functions have no last error;
+- returns its table's value, which is the function's documented failure: 0
+  for most, -1 where the failure is `INVALID_HANDLE_VALUE`, `WAIT_FAILED`,
+  `CLR_INVALID` and the like, `E_NOTIMPL` for an `HRESULT`, 120 for a
+  function that returns its error (the registry's).
+
+A `data` line exports four zero bytes instead (`msvcrt.dll`'s `_wcmdln`).
+A name may not be both written and declared: the generator refuses it, and
+writing a function means removing its line. So `declared.txt` is, per DLL,
+the list of what a program may import and still finds unimplemented, and the
+debug output says which of those a run reached.
 
 ### What they do, and what they refuse
 

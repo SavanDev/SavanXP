@@ -1,0 +1,2 @@
+LIBRARY comdlg32.dll
+EXPORTS

@@ -1,0 +1,7 @@
+# advapi32.dll: entry points exported so that imports resolve, with no behaviour
+# yet (docs/userland/WIN32.md, "Declared entry points"). Name, argument
+# bytes popped (or cdecl, or data), and the value returned. A function moves
+# out of this table when it is written.
+
+RegDeleteKeyW      8  120
+RegOpenKeyExW     20  120

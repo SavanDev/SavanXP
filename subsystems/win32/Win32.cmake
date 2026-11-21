@@ -171,31 +171,60 @@ endfunction()
 set(SXW_DLLS "${SAVANXP_WIN32_ROOT}/dlls")
 set(SXW_FX "${SAVANXP_WIN32_ROOT}/fixtures")
 
+# sxw_declared(<stem>): the declared entry points of dlls/<stem>
+# (declared.txt, see dlls/declared.py). Sets SXW_<stem>_DECLARED to the
+# sources to add to the DLL and SXW_<stem>_DEF to its full .def file.
+function(sxw_declared stem)
+    set(table "${SXW_DLLS}/${stem}/declared.txt")
+    set(base "${SXW_DLLS}/${stem}/${stem}.def")
+    set(gen "${SXW_OUT}/gen")
+    file(MAKE_DIRECTORY "${gen}")
+    add_custom_command(OUTPUT "${gen}/${stem}_declared.c" "${gen}/${stem}.def"
+        COMMAND "${Python3_EXECUTABLE}" "${SXW_DLLS}/declared.py" "${stem}.dll" "${table}" "${base}"
+                "${gen}/${stem}_declared.c" "${gen}/${stem}.def"
+        DEPENDS "${SXW_DLLS}/declared.py" "${table}" "${base}"
+        COMMENT "Generating ${stem}.dll's declared entry points"
+        VERBATIM)
+    set(SXW_${stem}_DECLARED "${gen}/${stem}_declared.c" "${SXW_DLLS}/common/declared.c" PARENT_SCOPE)
+    set(SXW_${stem}_DEF "${gen}/${stem}.def" PARENT_SCOPE)
+endfunction()
+foreach(stem kernel32 msvcrt advapi32 gdi32 user32 shell32 ole32 comdlg32 shlwapi)
+    sxw_declared(${stem})
+endforeach()
+
 # The DLL set. Bases are Windows XP's, so nothing of ours relocates.
 sxw_image(NAME ntdll.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c900000
     SOURCES "${SXW_DLLS}/ntdll/ntdll.c" DEF "${SXW_DLLS}/ntdll/ntdll.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c800000
-    SOURCES "${SXW_DLLS}/kernel32/kernel32.c" DEF "${SXW_DLLS}/kernel32/kernel32.def" LIBS ntdll)
+    SOURCES "${SXW_DLLS}/kernel32/kernel32.c" ${SXW_kernel32_DECLARED} DEF "${SXW_kernel32_DEF}" LIBS ntdll)
 sxw_image(NAME msvcrt.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77c10000 ENTRY DllMain
-    SOURCES "${SXW_DLLS}/msvcrt/msvcrt.c" "${SXW_DLLS}/common/codepage.c"
-    DEF "${SXW_DLLS}/msvcrt/msvcrt.def" LIBS kernel32 ntdll)
+    SOURCES "${SXW_DLLS}/msvcrt/msvcrt.c" "${SXW_DLLS}/common/codepage.c" ${SXW_msvcrt_DECLARED}
+    DEF "${SXW_msvcrt_DEF}" LIBS kernel32 ntdll)
 sxw_image(NAME advapi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77dd0000
-    SOURCES "${SXW_DLLS}/advapi32/advapi32.c" "${SXW_DLLS}/common/codepage.c"
-    DEF "${SXW_DLLS}/advapi32/advapi32.def" LIBS ntdll)
+    SOURCES "${SXW_DLLS}/advapi32/advapi32.c" "${SXW_DLLS}/common/codepage.c" ${SXW_advapi32_DECLARED}
+    DEF "${SXW_advapi32_DEF}" LIBS ntdll)
 sxw_image(NAME gdi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f10000
     SOURCES "${SXW_DLLS}/gdi32/gdi32.c" "${SXW_DLLS}/gdi32/raster.c" "${SXW_DLLS}/gdi32/dib.c"
             "${SXW_DLLS}/common/region.c"
-            "${SXW_DLLS}/common/memory.c"
-    DEF "${SXW_DLLS}/gdi32/gdi32.def" LIBS ntdll)
+            "${SXW_DLLS}/common/memory.c" ${SXW_gdi32_DECLARED}
+    DEF "${SXW_gdi32_DEF}" LIBS ntdll)
 sxw_image(NAME user32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7e410000
     SOURCES "${SXW_DLLS}/user32/user32.c" "${SXW_DLLS}/user32/menu.c" "${SXW_DLLS}/user32/dialog.c"
             "${SXW_DLLS}/user32/controls.c" "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
-            "${SXW_DLLS}/common/codepage.c"
-    DEF "${SXW_DLLS}/user32/user32.def" LIBS gdi32 kernel32 ntdll)
+            "${SXW_DLLS}/common/codepage.c" ${SXW_user32_DECLARED}
+    DEF "${SXW_user32_DEF}" LIBS gdi32 kernel32 ntdll)
 sxw_image(NAME shell32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c9c0000
-    SOURCES "${SXW_DLLS}/shell32/shell32.c" DEF "${SXW_DLLS}/shell32/shell32.def" LIBS user32)
+    SOURCES "${SXW_DLLS}/shell32/shell32.c" ${SXW_shell32_DECLARED} DEF "${SXW_shell32_DEF}" LIBS user32 ntdll)
 sxw_image(NAME comctl32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x5d090000
     SOURCES "${SXW_DLLS}/comctl32/comctl32.c" DEF "${SXW_DLLS}/comctl32/comctl32.def")
+# Only declared entry points so far: what WordPad imports from them at load
+# time (docs/roadmaps/open/WIN32_WORDPAD_ROADMAP.md, WP1).
+sxw_image(NAME ole32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x774e0000
+    SOURCES ${SXW_ole32_DECLARED} DEF "${SXW_ole32_DEF}" LIBS ntdll)
+sxw_image(NAME comdlg32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x763b0000
+    SOURCES ${SXW_comdlg32_DECLARED} DEF "${SXW_comdlg32_DEF}" LIBS ntdll)
+sxw_image(NAME shlwapi.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f60000
+    SOURCES ${SXW_shlwapi_DECLARED} DEF "${SXW_shlwapi_DEF}" LIBS ntdll)
 
 # Fixtures: hello.exe; initorder.exe with alpha.dll and beta.dll, which
 # share a base; missingdll.exe and missingsym.exe, whose loads must fail.
@@ -256,6 +285,7 @@ set(SAVANXP_WIN32_COPY_COMMANDS
             "${SXW_SYSTEM32}/msvcrt.dll" "${SXW_SYSTEM32}/advapi32.dll"
             "${SXW_SYSTEM32}/gdi32.dll" "${SXW_SYSTEM32}/user32.dll"
             "${SXW_SYSTEM32}/shell32.dll" "${SXW_SYSTEM32}/comctl32.dll"
+            "${SXW_SYSTEM32}/ole32.dll" "${SXW_SYSTEM32}/comdlg32.dll" "${SXW_SYSTEM32}/shlwapi.dll"
             "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32/"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/start"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different

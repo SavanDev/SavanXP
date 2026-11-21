@@ -1,0 +1,16 @@
+# ole32.dll: entry points exported so that imports resolve, with no behaviour
+# yet (docs/userland/WIN32.md, "Declared entry points"). Name, argument
+# bytes popped (or cdecl, or data), and the value returned. A function moves
+# out of this table when it is written.
+
+CLSIDFromString                   8  0x80004001
+CoRegisterActivationFilter        4  0x80004001
+CoTaskMemFree                     4  0
+CreateILockBytesOnHGlobal        12  0x80004001
+OleInitialize                     4  0x80004001
+OleRegGetUserType                12  0x80004001
+OleUninitialize                   0  0
+ReadClassStg                      8  0x80004001
+ReleaseStgMedium                  4  0
+StgCreateDocfileOnILockBytes     16  0x80004001
+StringFromCLSID                   8  0x80004001

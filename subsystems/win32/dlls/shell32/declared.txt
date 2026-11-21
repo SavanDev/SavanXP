@@ -1,0 +1,10 @@
+# shell32.dll: entry points exported so that imports resolve, with no behaviour
+# yet (docs/userland/WIN32.md, "Declared entry points"). Name, argument
+# bytes popped (or cdecl, or data), and the value returned. A function moves
+# out of this table when it is written.
+
+DragFinish                   4  0
+DragQueryFileW              16  0
+ShellExecuteExW              4  0
+SHGetSettings                8  0
+SHGetSpecialFolderPathW     16  0
