@@ -900,7 +900,7 @@ gets a `.sxmeta`, manifest or not:
 |---|---|
 | `NAME` | the program's own name |
 | `VERSION` / `VERSION_STRING` | the system version (`include/shared/version.h`) |
-| `SUBSYSTEM` | `posix` — the only subsystem going through this generator today |
+| `SUBSYSTEM` | what the build stamps in `EI_OSABI`: `native` for a `--native-program`, `posix` otherwise |
 | `BUILD_ID` | the short git commit, resolved once per build and cached |
 
 It is the same role played by the `VERSIONINFO` block the Windows *linker* adds
@@ -1047,7 +1047,10 @@ honored the day a VM exists, if one ever does.
 ## Native subsystem value
 
 The `subsystem` manifest field accepts `posix` or `native`. It is
-informational: the loader trusts the `EI_OSABI` stamp, and the native value
+informational: the loader trusts the `EI_OSABI` stamp. The build already knows
+which one it stamps, so the field can be left out, and a value that
+contradicts the build is a generator error (`declares subsystem=posix, but the
+program is built as native`): the mirror never disagrees with the byte. The native value
 (`0x53`) comes from `include/abi/savanxp_native_abi.h`. Native images come from
 `savanxp_program(... NATIVE)`, `savanxp_system_service` and
 `tools/build-user.sh --native` ([NATIVE_APPS.md](NATIVE_APPS.md)). They all

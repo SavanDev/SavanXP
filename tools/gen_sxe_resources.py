@@ -261,21 +261,31 @@ def split_list(text):
 # --- Estampado por default ----------------------------------------------------
 
 
-def apply_automatic_defaults(manifest, program_name, build_id):
-    """Identidad minima que todo binario recibe SIN pedirla.
-    Una clave presente pero vacia en el .sxres ("name=") cuenta como
-    no declarada: se completa igual, no se respeta el vacio.
+def apply_automatic_defaults(manifest, program_name, build_id, native, label):
+    """The minimum identity every binary gets WITHOUT asking for it.
+    A key present but empty in the .sxres ("name=") counts as undeclared: it
+    is filled in all the same, the empty value is not kept.
 
-    Deliberadamente NO se inventan aca: icono, accent, launch_flags,
-    descripcion, mimes. Esos son enriquecimiento -- nadie los puede derivar
-    del build, y fabricarlos seria peor que no tenerlos."""
+    SUBSYSTEM mirrors EI_OSABI, which the build decides (`native` is true for
+    a --native-program), so the default follows it and a .sxres that declares
+    the other subsystem is an error: the mirror would contradict the byte.
+
+    Deliberately NOT invented here: icon, accent, launch_flags, description,
+    mimes. Those are enrichment -- nobody can derive them from the build, and
+    making them up would be worse than not having them."""
     result = dict(manifest)
     if not result.get("name"):
         result["name"] = program_name
     if not result.get("version"):
         result["version"] = "system"
+    built_as = "native" if native else "posix"
     if not result.get("subsystem"):
-        result["subsystem"] = "posix"
+        result["subsystem"] = built_as
+    elif result["subsystem"].strip().lower() in ("posix", "native") and \
+            result["subsystem"].strip().lower() != built_as:
+        raise SystemExit(
+            f"{label}: declares subsystem={result['subsystem'].strip()}, but the program is "
+            f"built as {built_as}. SUBSYSTEM mirrors EI_OSABI; drop the key or fix the build.")
     if not result.get("build_id"):
         result["build_id"] = build_id
     return result
@@ -609,7 +619,8 @@ def main():
         manifest_path = sxres_by_name.get(name)
         manifest = parse_manifest(manifest_path) if manifest_path else {}
         label = manifest_path or f"{name} (sin .sxres, estampado automatico)"
-        manifest = apply_automatic_defaults(manifest, name, args.build_id)
+        manifest = apply_automatic_defaults(
+            manifest, name, args.build_id, name in args.native_program, label)
 
         meta = build_meta_blob(
             fmt, manifest, launch_flags, window_flags, native_osabi, system_version, label)

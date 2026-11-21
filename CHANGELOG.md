@@ -187,6 +187,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **A SUN program's `.sxmeta` says `SUBSYSTEM` native without a `.sxres` saying so** (`sessiond.sxe` and
+  `build-user.sh --native` builds carried `posix`). A `.sxres` `subsystem=` that contradicts the build now fails it.
+  New host test `sxe-resources-test`.
 - **A forked child no longer loses its private memory** (heap arenas, `MAP_PRIVATE`): the child's copy of a private
   section was freed at `fork` while still mapped, so its pages could be handed to anything else
   ([KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md#found-while-porting-tinycc-2026-11-21), F1).
