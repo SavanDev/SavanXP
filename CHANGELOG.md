@@ -150,6 +150,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Web Viewer loads through `sxnhttp` (N4 complete):** HTTP/1.1 with chunked bodies; contradictory framing and
+  truncated bodies fail with their message and keep the page; `text/plain` shows as text; a non-200 status is
+  noted in the status bar; redirects to `file://` are refused and `https://` says it is not available yet.
 - **Web Viewer's window, after Internet Explorer 5:** a toolbar of icons (Back, Forward, Stop, Refresh, Home, Open,
   Source), an `Address` band, a progress pane in the status bar, a context menu on the page, the page's title in the
   window title, and a hovered link's address in the status bar. Stop moves from the Go button to the toolbar and

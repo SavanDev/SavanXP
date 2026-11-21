@@ -3290,6 +3290,33 @@ def scenario_webview_http(s):
         replaced = s.shot("webview-n3-replaced")
         expect_text(replaced, (0, 0, *replaced.size), "Second page", TEXT, FIELD,
                     "the newer navigation wins over the stalled one", which="title", solid_only=True)
+        # N4: a chunked page sent in small pieces renders; a response with
+        # contradictory framing and one cut short fail and keep the page.
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/chunked.html")
+        s.qmp.tap("ret", pause=6.0)
+        chunked = s.shot("webview-n4-chunked")
+        expect_text(chunked, (0, 0, *chunked.size), "Chunked page", TEXT, FIELD,
+                    "a chunked page reassembled from pieces", which="title", solid_only=True)
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/contradictory")
+        s.qmp.tap("ret", pause=5.0)
+        contradictory = s.shot("webview-n4-contradictory")
+        expect_text(contradictory, (0, 0, *contradictory.size), "contradictory", TEXT, FACE,
+                    "contradictory framing refused", solid_only=True)
+        expect_text(contradictory, (0, 0, *contradictory.size), "Chunked page", TEXT, FIELD,
+                    "the page kept after a refused response", which="title", solid_only=True)
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/truncated")
+        s.qmp.tap("ret", pause=5.0)
+        truncated = s.shot("webview-n4-truncated")
+        expect_text(truncated, (0, 0, *truncated.size), "dropped before the page ended", TEXT, FACE,
+                    "a truncated body refused", solid_only=True)
+        expect_text(truncated, (0, 0, *truncated.size), "Chunked page", TEXT, FIELD,
+                    "the page kept after a truncated response", which="title", solid_only=True)
         # Home, clicked on the toolbar, opens the home page.
         home_at = expect_text(replaced, (0, 0, *replaced.size), "Home", TEXT, FACE,
                               "the Home button", solid_only=True)

@@ -15,6 +15,7 @@
 #include "sxgfx/sxgui.h"
 #include "sxn/sxn.h"
 #include "sxn/sxndns.h"
+#include "sxn/sxnhttp.h"
 #include "sxn/sxngui.h"
 #include "webview.sunres.h"
 #include "icons.inc"
@@ -28,7 +29,7 @@
 #define WEBVIEW_RAW_CAPACITY (32 * 1024)
 #define WEBVIEW_PARA_MAX 256
 #define WEBVIEW_PARA_LENGTH 512
-#define WEBVIEW_PATH_CAPACITY 192
+#define WEBVIEW_PATH_CAPACITY SXNHTTP_URL_CAP
 #define WEBVIEW_TITLE_CAPACITY 128
 #define WEBVIEW_STATUS_CAPACITY 192
 #define WEBVIEW_LINE_BUFFER 512
@@ -301,6 +302,8 @@ static int g_has_file = 0;
 /* One-shot note from the last fetch (" (connection dropped)"): cleared by
  * every load, appended to the status line while it says something. */
 static char g_fetch_note[32];
+/* The page is text/plain: shown line by line, like the source view. */
+static int g_plain = 0;
 
 static struct sx_rect g_view;
 static int g_total_height = 0;
@@ -2037,6 +2040,7 @@ static int webview_load_file(const char *path)
 
     g_truncated = read_bytes == sizeof(g_raw) - 1;
     g_fetch_note[0] = '\0';
+    g_plain = 0;
     snprintf(g_path, sizeof(g_path), "%s", path);
     g_has_file = 1;
     return 0;
@@ -2111,7 +2115,7 @@ static void webview_update_title(void)
  * page views never diverge. */
 static void webview_render_current(void)
 {
-    if (g_show_source)
+    if (g_show_source || g_plain)
     {
         webview_build_source();
     }
@@ -2149,7 +2153,6 @@ static void webview_render_current(void)
 enum webview_load_outcome
 {
     WEBVIEW_LOAD_PAGE,      /* the body is in the result */
-    WEBVIEW_LOAD_FILE,      /* a redirect named a local file: the UI opens it */
     WEBVIEW_LOAD_FAILED,    /* `message` says why */
     WEBVIEW_LOAD_CANCELLED, /* the cancel event was set */
 };
@@ -2165,10 +2168,11 @@ struct webview_result
 {
     uint32_t id;
     enum webview_load_outcome outcome;
-    char location[WEBVIEW_PATH_CAPACITY]; /* the final URL, or the file a redirect named */
+    char location[WEBVIEW_PATH_CAPACITY]; /* the final URL, after redirects */
     char message[WEBVIEW_STATUS_CAPACITY];
     char note[32];
     int truncated;
+    int plain; /* text/plain: shown as text, not parsed as HTML */
     size_t length;
 };
 
@@ -2239,155 +2243,23 @@ static void webview_progress(uint32_t id, const char *text, int percent)
     (void)sxngui_app_wake(&g_app);
 }
 
-/* Waits for the socket through readiness, the cancel event first, until a
- * monotonic deadline. 0, -ETIMEDOUT or -ECANCELED. */
-static long webview_wait_socket(long socket, unsigned interests, uint64_t deadline)
-{
-    struct sxn_io_interest waits[2] = {
-        {(int32_t)g_cancel_event, 0},
-        {(int32_t)socket, interests | SXN_IO_ERROR},
-    };
-    uint64_t now = sxn_clock_ns();
-    long result;
-
-    if (now >= deadline)
-    {
-        return -SAVANXP_ETIMEDOUT;
-    }
-    result = sxn_wait_io(waits, 2, (long)((deadline - now + 999999u) / 1000000u));
-    if (result == 0)
-    {
-        return -SAVANXP_ECANCELED;
-    }
-    return result < 0 ? -SAVANXP_ETIMEDOUT : 0;
-}
-
-/* A read with ten seconds of idle budget. Bytes, 0 at the end, or negative. */
-static long webview_read_socket(long socket, void *buffer, size_t count)
-{
-    uint64_t deadline = sxn_clock_ns() + 10000000000ull;
-    long result;
-
-    while ((result = sxn_read(socket, buffer, count)) == -SAVANXP_EAGAIN)
-    {
-        long waited = webview_wait_socket(socket, SXN_IO_READ, deadline);
-
-        if (waited < 0)
-        {
-            return waited;
-        }
-    }
-    return result;
-}
-
-/* Connects within five seconds. 0, -ECANCELED, or another negative error. */
-static long webview_connect_socket(long socket, const struct sxn_ipv4_endpoint *peer)
-{
-    uint64_t deadline = sxn_clock_ns() + 5000000000ull;
-    long result = sxn_socket_connect(socket, peer);
-
-    while (result == -SAVANXP_EAGAIN)
-    {
-        long waited = webview_wait_socket(socket, SXN_IO_WRITE, deadline);
-
-        if (waited < 0)
-        {
-            return waited;
-        }
-        result = sxn_socket_status(socket);
-    }
-    return result < 0 ? result : 0;
-}
-
-/* ---- fetching ---------------------------------------------------------------
+/* ---- fetching ----------------------------------------------------------------
  *
- * Plain HTTP/1.0 on the worker, the tcpget recipe moved indoors: connect,
- * GET, read to EOF. Hosts resolve through sxndns (numeric IPv4 stays a fast
- * path); no TLS and no chunked body (a 1.0 request avoids it).
+ * On the worker, through SUN's HTTP loader (include/sxn/sxnhttp.h,
+ * docs/net/HTTP.md): framing, redirects, budgets and cancellation are its.
+ * What is left here is turning its answer into what the window shows.
  */
 
 static void webview_refresh_nav(void);
 static void webview_sync_address(void);
 static void webview_history_push(const char *path);
 
-#define WEBVIEW_HTTP_PORT_DEFAULT 80
-#define WEBVIEW_FETCH_REDIRECTS 5
-#define WEBVIEW_URL_HOST_CAP 64
-#define WEBVIEW_URL_PATH_CAP 512
-
-static int webview_parse_uint(const char *text, unsigned *value)
-{
-    unsigned result = 0;
-    size_t index = 0;
-
-    if (text == 0 || text[0] == '\0')
-    {
-        return 0;
-    }
-    while (text[index] != '\0')
-    {
-        if (text[index] < '0' || text[index] > '9')
-        {
-            return 0;
-        }
-        result = result * 10u + (unsigned)(text[index] - '0');
-        index += 1;
-    }
-    *value = result;
-    return 1;
-}
-
+/* http:// and https://: both go to the worker, which says https:// is not
+ * available yet (N5). */
 static int webview_location_is_http(const char *location)
 {
-    return location != 0 && strncmp(location, "http://", 7) == 0;
-}
-
-/* Splits an http:// URL into host, port and path. Host keeps no brackets and
- * no port; an absent path becomes "/". */
-static int webview_split_http_url(const char *url, char *host, size_t host_cap,
-    unsigned *port, char *path, size_t path_cap)
-{
-    const char *cursor = url + 7;
-    const char *slash = strchr(cursor, '/');
-    const char *colon;
-    size_t host_length;
-
-    if (*cursor == '\0')
-    {
-        return -1;
-    }
-    colon = strchr(cursor, ':');
-    if (colon != 0 && (slash == 0 || colon < slash))
-    {
-        char port_text[8];
-        size_t port_length = slash != 0 ? (size_t)(slash - colon - 1)
-                                        : strlen(colon + 1);
-
-        host_length = (size_t)(colon - cursor);
-        if (port_length == 0 || port_length >= sizeof(port_text))
-        {
-            return -1;
-        }
-        memcpy(port_text, colon + 1, port_length);
-        port_text[port_length] = '\0';
-        if (!webview_parse_uint(port_text, port) || *port == 0 || *port > 65535u)
-        {
-            return -1;
-        }
-    }
-    else
-    {
-        host_length = slash != 0 ? (size_t)(slash - cursor) : strlen(cursor);
-        *port = WEBVIEW_HTTP_PORT_DEFAULT;
-    }
-    if (host_length == 0 || host_length + 1 > host_cap)
-    {
-        return -1;
-    }
-    memcpy(host, cursor, host_length);
-    host[host_length] = '\0';
-    snprintf(path, path_cap, "%s", slash != 0 ? slash : "/");
-    return 0;
+    return location != 0 &&
+           (strncmp(location, "http://", 7) == 0 || strncmp(location, "https://", 8) == 0);
 }
 
 /* Resolves `ref` (a link target, a Location header, an address) against the
@@ -2432,60 +2304,11 @@ static int webview_resolve_against(const char *base, const char *ref, char *out,
     }
     if (webview_location_is_http(base))
     {
-        char host[WEBVIEW_URL_HOST_CAP];
-        unsigned port = 0;
-        char ignored[WEBVIEW_URL_PATH_CAP];
-        const char *base_path;
-        const char *last_slash;
-        size_t dir_length;
+        /* RFC 3986 resolution, ports and dot segments included, is the HTTP
+         * loader's. */
+        int resolved = sxnhttp_resolve(base, clean, out, capacity);
 
-        if (webview_split_http_url(base, host, sizeof(host), &port, ignored,
-                sizeof(ignored)) != 0)
-        {
-            return -2;
-        }
-        base_path = strchr(base + 7, '/');
-        if (base_path == 0)
-        {
-            base_path = "/";
-        }
-        if (clean[0] == '/')
-        {
-            if ((size_t)snprintf(out, capacity, "http://%s%s", host, clean) >= capacity)
-            {
-                return -2;
-            }
-            /* Non-default ports have to survive the round trip. */
-            if (port != WEBVIEW_HTTP_PORT_DEFAULT)
-            {
-                char with_port[WEBVIEW_PATH_CAPACITY];
-
-                if ((size_t)snprintf(with_port, sizeof(with_port), "http://%s:%u%s",
-                        host, port, clean) >= sizeof(with_port))
-                {
-                    return -2;
-                }
-                snprintf(out, capacity, "%s", with_port);
-            }
-            return 0;
-        }
-        last_slash = strrchr(base_path, '/');
-        dir_length = last_slash != 0 ? (size_t)(last_slash - base_path + 1) : 1;
-        if (port == WEBVIEW_HTTP_PORT_DEFAULT)
-        {
-            if ((size_t)snprintf(out, capacity, "http://%s%.*s%s", host, (int)dir_length,
-                    base_path, clean) >= capacity)
-            {
-                return -2;
-            }
-            return 0;
-        }
-        if ((size_t)snprintf(out, capacity, "http://%s:%u%.*s%s", host, port,
-                (int)dir_length, base_path, clean) >= capacity)
-        {
-            return -2;
-        }
-        return 0;
+        return resolved == -2 ? -2 : resolved != 0 ? -1 : 0;
     }
     if (clean[0] == '/')
     {
@@ -2507,286 +2330,108 @@ static int webview_resolve_against(const char *base, const char *ref, char *out,
     }
 }
 
-/* Writes all of `buffer`. 0, -ECANCELED, or another negative error. */
-static long webview_fetch_write_all(long fd, const char *buffer, size_t length)
+static struct sxnhttp_client g_http;
+/* The worker's own: the host the loader last named, for a DNS failure's
+ * message, and the last KiB the progress pane was told about. */
+static char g_load_host[SXNHTTP_HOST_CAP];
+static size_t g_load_kib;
+
+static void webview_http_progress(void *user, enum sxnhttp_phase phase, const char *host,
+    size_t received)
 {
-    size_t sent = 0;
-    uint64_t deadline = sxn_clock_ns() + 5000000000ull;
+    const struct webview_request *request = (const struct webview_request *)user;
+    char text[WEBVIEW_STATUS_CAPACITY];
+    int percent;
 
-    while (sent < length)
+    snprintf(g_load_host, sizeof(g_load_host), "%s", host);
+    switch (phase)
     {
-        long written = sxn_write(fd, buffer + sent, length - sent);
-
-        if (written == -SAVANXP_EAGAIN)
+    case SXNHTTP_PHASE_RESOLVING:
+        snprintf(text, sizeof(text), "Resolving %s...", host);
+        percent = 10;
+        break;
+    case SXNHTTP_PHASE_REDIRECTED:
+        snprintf(text, sizeof(text), "Redirected to %s...", host);
+        percent = 15;
+        break;
+    case SXNHTTP_PHASE_CONNECTING:
+        snprintf(text, sizeof(text), "Connecting to %s...", host);
+        percent = 25;
+        break;
+    case SXNHTTP_PHASE_WAITING:
+        g_load_kib = 0;
+        snprintf(text, sizeof(text), "Waiting for %s...", host);
+        percent = 40;
+        break;
+    case SXNHTTP_PHASE_RECEIVING:
+    default:
+        /* Told once per KiB. The length is not known yet: the bar fills
+         * against the 32 KiB a page may take. */
+        if (received / 1024 == g_load_kib)
         {
-            long waited = webview_wait_socket(fd, SXN_IO_WRITE, deadline);
-
-            if (waited < 0)
-            {
-                return waited;
-            }
-            continue;
+            return;
         }
-        if (written <= 0)
-        {
-            return written < 0 ? written : -SAVANXP_EIO;
-        }
-        sent += (size_t)written;
+        g_load_kib = received / 1024;
+        snprintf(text, sizeof(text), "Receiving from %s (%u KB)...", host, (unsigned)g_load_kib);
+        percent = 40 + (int)(55 * received / sizeof(g_load_raw));
+        break;
     }
-    return 0;
+    webview_progress(request->id, text, percent);
 }
 
-#define WEBVIEW_FETCH_FAIL(...)                                                  \
-    do                                                                           \
-    {                                                                            \
-        result->outcome = WEBVIEW_LOAD_FAILED;                                   \
-        snprintf(result->message, sizeof(result->message), __VA_ARGS__);       \
-        return;                                                                  \
-    } while (0)
-
-#define WEBVIEW_FETCH_CANCELLED()                                                \
-    do                                                                           \
-    {                                                                            \
-        result->outcome = WEBVIEW_LOAD_CANCELLED;                                \
-        return;                                                                  \
-    } while (0)
-
-/* On the worker: fetches the request's http:// URL into g_load_raw,
- * following redirects, and says how it went in `result`. Touches nothing the
- * UI owns. */
+/* On the worker: loads the request's URL into g_load_raw and says how it
+ * went in `result`. Touches nothing the UI owns. */
 static void webview_fetch_http(const struct webview_request *request, struct webview_result *result)
 {
-    char current[WEBVIEW_PATH_CAPACITY];
-    char progress[WEBVIEW_STATUS_CAPACITY];
-    int hop;
+    static struct sxnhttp_response response;
+    struct sxnhttp_request load;
+    long status;
 
-    snprintf(current, sizeof(current), "%s", request->url);
-    for (hop = 0; hop <= WEBVIEW_FETCH_REDIRECTS; hop += 1)
+    memset(&load, 0, sizeof(load));
+    load.url = request->url;
+    load.cancel = g_cancel_event;
+    load.user_agent = "SavanXP-WebViewer/" SAVANXP_VERSION_STRING;
+    load.progress = webview_http_progress;
+    load.user = (void *)request;
+    memset(&response, 0, sizeof(response));
+    response.body = (unsigned char *)g_load_raw;
+    response.body_capacity = sizeof(g_load_raw) - 1;
+    g_load_host[0] = '\0';
+
+    status = sxnhttp_get(&g_http, &load, &response);
+    if (status == SXNHTTP_ERROR_CANCELLED)
     {
-        char host[WEBVIEW_URL_HOST_CAP];
-        char path[WEBVIEW_URL_PATH_CAP];
-        unsigned port = 0;
-        uint32_t ipv4 = 0;
-        struct sxn_ipv4_endpoint address;
-        long fd;
-        long io;
-        char request_text[1024];
-        size_t total = 0;
-        int read_failed = 0;
-        const char *headers_end = 0;
-        size_t header_length = 0;
-        const char *body = 0;
-        size_t body_length = 0;
-        int code = 0;
-
-        if (webview_split_http_url(current, host, sizeof(host), &port, path,
-                sizeof(path)) != 0)
-        {
-            WEBVIEW_FETCH_FAIL("That URL is malformed.");
-        }
-        snprintf(progress, sizeof(progress), "Resolving %s...", host);
-        webview_progress(request->id, progress, 10);
-        {
-            long resolved = sxndns_resolve(&g_resolver, host, g_cancel_event, &ipv4);
-
-            if (resolved == SXNDNS_ERROR_CANCELLED)
-            {
-                WEBVIEW_FETCH_CANCELLED();
-            }
-            if (resolved == SXNDNS_ERROR_NO_SUCH_NAME)
-            {
-                WEBVIEW_FETCH_FAIL("No such host: %s.", host);
-            }
-            if (resolved != 0)
-            {
-                WEBVIEW_FETCH_FAIL("Cannot resolve %s: %s", host, sxndns_error_text(resolved));
-            }
-        }
-        fd = sxn_socket_create(SXN_SOCKET_TCP);
-        if (fd < 0)
-        {
-            WEBVIEW_FETCH_FAIL("No network.");
-        }
-        snprintf(progress, sizeof(progress), "Connecting to %s...", host);
-        webview_progress(request->id, progress, 25);
-        memset(&address, 0, sizeof(address));
-        address.ipv4 = ipv4;
-        address.port = (uint16_t)port;
-        io = webview_connect_socket(fd, &address);
-        if (io < 0)
-        {
-            sxn_close(fd);
-            if (io == -SAVANXP_ECANCELED)
-            {
-                WEBVIEW_FETCH_CANCELLED();
-            }
-            WEBVIEW_FETCH_FAIL("Cannot connect to %s.", host);
-        }
-        snprintf(request_text, sizeof(request_text), "GET %s HTTP/1.0\r\nHost: %s\r\n"
-                                                     "Connection: close\r\n\r\n",
-            path, host);
-        io = webview_fetch_write_all(fd, request_text, strlen(request_text));
-        if (io < 0)
-        {
-            sxn_close(fd);
-            if (io == -SAVANXP_ECANCELED)
-            {
-                WEBVIEW_FETCH_CANCELLED();
-            }
-            WEBVIEW_FETCH_FAIL("The request failed.");
-        }
-        snprintf(progress, sizeof(progress), "Waiting for %s...", host);
-        webview_progress(request->id, progress, 40);
-        for (;;)
-        {
-            long got;
-
-            if (total >= sizeof(g_load_raw) - 1)
-            {
-                break;
-            }
-            got = webview_read_socket(fd, g_load_raw + total, sizeof(g_load_raw) - 1 - total);
-            if (got == -SAVANXP_ECANCELED)
-            {
-                sxn_close(fd);
-                WEBVIEW_FETCH_CANCELLED();
-            }
-            if (got == 0)
-            {
-                break;
-            }
-            if (got < 0)
-            {
-                read_failed = 1;
-                break;
-            }
-            if ((total + (size_t)got) / 1024 != total / 1024)
-            {
-                /* The length is not known yet: the bar fills against the
-                 * 32 KiB the page may take. */
-                unsigned kib = (unsigned)((total + (size_t)got) / 1024);
-
-                snprintf(progress, sizeof(progress), "Receiving from %s (%u KB)...", host, kib);
-                webview_progress(request->id, progress,
-                    40 + (int)(55 * (total + (size_t)got) / sizeof(g_load_raw)));
-            }
-            total += (size_t)got;
-        }
-        sxn_close(fd);
-        g_load_raw[total] = '\0';
-
-        headers_end = strstr(g_load_raw, "\r\n\r\n");
-        if (headers_end != 0)
-        {
-            headers_end += 4;
-        }
-        else
-        {
-            headers_end = strstr(g_load_raw, "\n\n");
-            if (headers_end != 0)
-            {
-                headers_end += 2;
-            }
-        }
-        if (headers_end == 0)
-        {
-            if (read_failed || total == 0)
-            {
-                WEBVIEW_FETCH_FAIL("The connection dropped.");
-            }
-            WEBVIEW_FETCH_FAIL("Not an HTTP response.");
-        }
-        header_length = (size_t)(headers_end - g_load_raw);
-        body = headers_end;
-        body_length = total - header_length;
-        {
-            const char *space = strchr(g_load_raw, ' ');
-
-            if (strncmp(g_load_raw, "HTTP/", 5) != 0 || space == 0 || space[1] < '0' ||
-                space[1] > '9' || space[2] < '0' || space[2] > '9' || space[3] < '0' ||
-                space[3] > '9')
-            {
-                WEBVIEW_FETCH_FAIL("Not an HTTP response.");
-            }
-            code = (space[1] - '0') * 100 + (space[2] - '0') * 10 + (space[3] - '0');
-        }
-        if (code >= 300 && code < 400)
-        {
-            /* Redirect: find the Location header, resolve it against this URL
-             * (absolute, root-absolute or relative all work) and refetch. The
-             * half-read body is discarded; the connection is already closed. */
-            const char *line = strchr(g_load_raw, '\n');
-            char location[WEBVIEW_PATH_CAPACITY];
-            char next[WEBVIEW_PATH_CAPACITY];
-            int resolved = -2;
-
-            location[0] = '\0';
-            while (line != 0 && line < headers_end)
-            {
-                const char *name = line + 1;
-
-                if ((name[0] == 'L' || name[0] == 'l') && (name[1] == 'o' || name[1] == 'O') &&
-                    strncmp(name + 2, "cation:", 7) == 0)
-                {
-                    /* "Location:" is 9 characters: name + 9 is the value. */
-                    const char *value = name + 9;
-                    size_t value_length = 0;
-
-                    while (*value == ' ' || *value == '\t')
-                    {
-                        value += 1;
-                    }
-                    while (value[value_length] != '\0' && value[value_length] != '\r' &&
-                           value[value_length] != '\n' &&
-                           value_length + 1 < sizeof(location))
-                    {
-                        value_length += 1;
-                    }
-                    memcpy(location, value, value_length);
-                    location[value_length] = '\0';
-                    break;
-                }
-                line = strchr(line + 1, '\n');
-            }
-            if (location[0] == '\0')
-            {
-                WEBVIEW_FETCH_FAIL("The server redirected without saying where.");
-            }
-            resolved = webview_resolve_against(current, location, next, sizeof(next));
-            if (resolved == -1 || strstr(next, "://") == 0 ||
-                (strncmp(next, "http://", 7) != 0 && strncmp(next, "file://", 7) != 0))
-            {
-                WEBVIEW_FETCH_FAIL("Cannot follow that redirect.");
-            }
-            if (resolved == -2)
-            {
-                WEBVIEW_FETCH_FAIL("That address is too long.");
-            }
-            if (strncmp(next, "file://", 7) == 0)
-            {
-                /* An http URL redirecting to a file: the UI thread opens it. */
-                result->outcome = WEBVIEW_LOAD_FILE;
-                snprintf(result->location, sizeof(result->location), "%s", next + 7);
-                return;
-            }
-            snprintf(current, sizeof(current), "%s", next);
-            continue;
-        }
-        /* Any other status keeps its body: error pages are pages too. */
-        memmove(g_load_raw, body, body_length);
-        g_load_raw[body_length] = '\0';
-        result->outcome = WEBVIEW_LOAD_PAGE;
-        result->length = body_length;
-        result->truncated = total >= sizeof(g_load_raw) - 1;
-        result->note[0] = '\0';
-        if (read_failed)
-        {
-            snprintf(result->note, sizeof(result->note), " (connection dropped)");
-        }
-        snprintf(result->location, sizeof(result->location), "%s", current);
+        result->outcome = WEBVIEW_LOAD_CANCELLED;
         return;
     }
-    WEBVIEW_FETCH_FAIL("Too many redirects.");
+    result->outcome = WEBVIEW_LOAD_FAILED;
+    if (status == SXNHTTP_ERROR_DNS && response.dns_error == SXNDNS_ERROR_NO_SUCH_NAME)
+    {
+        snprintf(result->message, sizeof(result->message), "No such host: %s.", g_load_host);
+        return;
+    }
+    if (status == SXNHTTP_ERROR_DNS)
+    {
+        snprintf(result->message, sizeof(result->message), "Cannot resolve %s: %s", g_load_host,
+            sxndns_error_text(response.dns_error));
+        return;
+    }
+    if (status != 0)
+    {
+        snprintf(result->message, sizeof(result->message), "%s", sxnhttp_error_text(status));
+        return;
+    }
+    g_load_raw[response.body_length] = '\0';
+    result->outcome = WEBVIEW_LOAD_PAGE;
+    result->length = response.body_length;
+    result->truncated = (response.flags & SXNHTTP_RESPONSE_CUT) != 0;
+    result->plain = strncmp(response.content_type, "text/plain", 10) == 0;
+    result->note[0] = '\0';
+    if (response.status != 200)
+    {
+        snprintf(result->note, sizeof(result->note), " (HTTP %d)", response.status);
+    }
+    memcpy(result->location, response.url, sizeof(result->location));
 }
 
 /* The worker thread: one request at a time, each with the cancel event
@@ -2797,6 +2442,7 @@ static void webview_worker_main(void *argument)
     struct webview_request request;
 
     (void)argument;
+    sxnhttp_client_init(&g_http, &g_resolver);
     for (;;)
     {
         int have = 0;
@@ -2995,18 +2641,12 @@ static void on_wake(struct sxngui_app *app)
     {
     case WEBVIEW_LOAD_PAGE:
         g_truncated = result.truncated;
+        g_plain = result.plain;
         memcpy(g_fetch_note, result.note, sizeof(g_fetch_note));
         memcpy(g_path, result.location, sizeof(g_path));
         g_has_file = 1;
         webview_finish_load(nav.push, nav.hist_target);
         return;
-    case WEBVIEW_LOAD_FILE:
-        if (webview_load_file(result.location) == 0)
-        {
-            webview_finish_load(nav.push, nav.hist_target);
-            return;
-        }
-        break;
     case WEBVIEW_LOAD_FAILED:
         memcpy(g_status, result.message, sizeof(g_status));
         break;

@@ -1,9 +1,9 @@
 # Web Viewer: the rendering contract
 
-> Web Viewer runs on SUN as `/system/webview.sxe` (N1) and loads remote pages
-> on a network worker with Stop (N3). Shared HTTP and validated HTTPS are the
-> later network stages, before replacing this renderer with the pinned Ladybird
-> engine. See the [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
+> Web Viewer runs on SUN as `/system/webview.sxe` (N1), loads remote pages on a
+> network worker with Stop (N3) through SUN's HTTP loader (N4). Validated HTTPS
+> is the last network stage, before replacing this renderer with the pinned
+> Ladybird engine. See the [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 
 `/system/webview.sxe` ("Web Viewer", also launched as `webview`) is the in-tree
 browser prototype, in the spirit of IE 1.1: chrome (address bar, Back/Forward
@@ -78,9 +78,24 @@ resolver, its sockets and a body buffer of its own:
   <host>...`, `Waiting for <host>...`. History moves (a push, or Back/Forward's
   target) are applied only when the page arrives.
 
-Budgets are monotonic: route setup six seconds, DNS replies two seconds per
-attempt, connect and writes five seconds, reads ten seconds idle. A total
-navigation budget arrives with shared HTTP (N4).
+The worker loads through `sxnhttp_get` ([HTTP.md](../net/HTTP.md)), which
+owns the request, the framing, redirects and the budgets: DNS as `sxndns`
+sets them, connect and writes five seconds, ten seconds idle between reads,
+thirty for the whole navigation. What Web Viewer adds:
+
+- A failure shows the loader's sentence in the status bar, `No such host:
+  <name>.` for NXDOMAIN, and keeps the page on screen. A response with
+  contradictory framing, a body cut short or a malformed head is a failure,
+  never a short page.
+- A status other than 200 renders its page with `(HTTP <status>)` after the
+  title in the status bar; a page past 32 KiB renders its first 32 KiB with
+  `(first 32 KB)`.
+- `text/plain` is shown line by line, as the source view shows HTML.
+- Redirects go only to other `http://` URLs: one to `file://` is refused
+  (an http page could otherwise open local files). `https://`, typed or
+  redirected to, says HTTPS is not available yet (N5).
+- Links resolve against an http page by RFC 3986 through `sxnhttp_resolve`,
+  dot segments and ports included; local paths keep Web Viewer's own rules.
 
 ## Selectors and origins
 
@@ -141,7 +156,9 @@ while the painter blends in sequence (see the scenario comments).
 
 The window's own steps check the toolbar captions, the absolute URL of a
 hovered link in the status bar, the page's context menu, and the Home button
-clicked on the toolbar. The N3 steps load `/stall`, a download that never
+clicked on the toolbar. The N4 steps check that a page sent chunked in pieces of 11 bytes renders, and
+that a response with contradictory framing and one cut short each fail with
+their message while the previous page stays. The N3 steps load `/stall`, a download that never
 finishes, and check that the window repaints the worker's progress and enables
 `Stop`, takes Ctrl+U during the
 load, and keeps its page when Esc stops it; Stop during the resolution of a

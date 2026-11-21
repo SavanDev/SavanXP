@@ -4,7 +4,10 @@
 Serves a directory of static pages plus one redirect (/old.html -> 302 to
 /index.html) and /stall, a download that never finishes: headers, then one
 byte every two seconds for a minute, so the viewer's idle budget never runs
-out. It is the page Stop and background loading are tried on.
+out. It is the page Stop and background loading are tried on. Three more
+answer the N4 steps: /chunked.html, a page sent chunked in small pieces with
+pauses; /contradictory, a Content-Length and chunking together; and
+/truncated, a Content-Length the body never reaches before the close.
 Each request has its own thread, so a stalled one does not hold the others. Binds an ephemeral port on loopback and prints READY <port>: the
 guest reaches the host at 10.0.2.2 through QEMU slirp, so the scenario types
 http://10.0.2.2:<port>/... into the address bar.
@@ -50,6 +53,34 @@ class Handler(BaseHTTPRequestHandler):
         # The viewer under test asks HTTP/1.0; answer 1.0 with close so no
         # chunked body is ever needed.
         target = self.path.split("?", 1)[0]
+        if target == "/chunked.html":
+            # Status line, headers, chunk sizes and CRLFs all split across
+            # writes, so the page only renders if the client reassembles.
+            page = b"<html><head><title>Chunked</title></head><body>" \
+                   b"<h1>Chunked page</h1><p>Sent in pieces.</p></body></html>"
+            data = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n" \
+                   b"Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+            for start in range(0, len(page), 17):
+                piece = page[start:start + 17]
+                data += b"%x\r\n" % len(piece) + piece + b"\r\n"
+            data += b"0\r\n\r\n"
+            try:
+                for start in range(0, len(data), 11):
+                    self.wfile.write(data[start:start + 11])
+                    self.wfile.flush()
+                    time.sleep(0.01)
+            except OSError:
+                pass
+            return
+        if target == "/contradictory":
+            self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n"
+                             b"Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+                             b"5\r\nhello\r\n0\r\n\r\n")
+            return
+        if target == "/truncated":
+            self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 500\r\n"
+                             b"Connection: close\r\n\r\n<h1>Half a page</h1>")
+            return
         if target == "/stall":
             self.send_response(200)
             self.send_header("Content-Type", "text/html")

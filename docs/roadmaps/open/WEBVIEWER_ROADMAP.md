@@ -1,10 +1,10 @@
 # Web Viewer with Ladybird
 
-> **Status as of 2026-11-21: N1–N3 complete — shared DNS and a loading worker.**
+> **Status as of 2026-11-21: N1–N4 complete — shared DNS, a loading worker and shared HTTP.**
 > Web Viewer runs as `/system/webview.sxe`, resolves through SUN's `sxndns` and
-> loads remote pages on a per-window network worker with Stop. N4 (shared HTTP)
-> is next. N4–N5 and all Ladybird stages remain pending; no Ladybird code has
-> been imported or built.
+> loads remote pages on a per-window network worker through SUN's `sxnhttp`.
+> N5 (validated HTTPS) is next. N5 and all Ladybird stages remain pending; no
+> Ladybird code has been imported or built.
 
 ## Direction
 
@@ -105,6 +105,39 @@ Renderer replacement and its sandbox remain separate later milestones.
 The network delivery is complete only when the SUN Web Viewer retains its
 existing workflows and browses HTTP/validated HTTPS with cancellation and a
 responsive UI.
+
+## N4 implementation checkpoint — 2026-11-21
+
+**N4 is complete.** URL handling and HTTP/1.1 left Web Viewer for a SUN
+library, `include/sxn/sxnhttp.h`, that the worker calls. Its prerequisite,
+reclaiming `TIME_WAIT` slots when the socket table is full, landed first.
+
+- Requests carry `Host`, `Accept-Encoding: identity` and `Connection: close`.
+  Content-Length, chunked and close-delimited bodies are read from any
+  fragmentation; contradictory framing, malformed heads, truncated bodies,
+  heads past 16 KiB and non-identity encodings fail, each with its own error.
+  The body cap is the caller's buffer (32 KiB in Web Viewer), kept and marked
+  as cut rather than failed.
+- Up to five redirects, resolved by RFC 3986; never to `file://`, never from
+  https down to http, `https://` refused until N5.
+- Budgets are monotonic and cancellable: connect 5 s, idle 10 s, total 30 s.
+  TLS's 10 s belong to N5.
+- Contracts are in [HTTP.md](../../net/HTTP.md) and
+  [WEBVIEWER.md](../../desktop/WEBVIEWER.md#loading-in-the-background-n3).
+
+### N4 acceptance evidence
+
+| Gate | Evidence |
+|---|---|
+| Correct responses render independently of header, chunk and TCP fragmentation | `sxnhttp-message-test` feeds every response whole, split at every byte and byte by byte; `native-network` loads each framing from `tools/http_fixture.py`, which sends every response in small pieces; the webview scenario renders a chunked page sent 11 bytes at a time. |
+| Contradictory framing and truncated bodies fail explicitly | The host test covers each framing error and truncation at every cut of a good response (two parser mutations each make it fail); `native-network` gets `BAD_FRAMING`, `TRUNCATED` (close and reset), `BAD_RESPONSE`, `HEADERS_TOO_LARGE` and `UNSUPPORTED_ENCODING` from the fixture; the webview scenario shows the message and keeps the page. |
+| Redirects, timeout, cancellation | `native-network`: a relative redirect, five allowed and the sixth refused, file and https targets refused, the total and idle budgets, cancellation from a thread mid-body. |
+
+### Next implementation step — N5
+
+A system CSPRNG with real entropy, civil-clock validity, and an audited
+shared OpenSSL with its CA store, before `sxnhttp` accepts `https://`: see
+step 5 above.
 
 ## N3 implementation checkpoint — 2026-11-21
 
