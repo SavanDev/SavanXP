@@ -304,7 +304,7 @@ pe_status pe_parse(pe_image *image, const void *file, size_t file_size, pe_error
         if (d->size == 0u || i == PE_DIR_SECURITY) {
             continue; /* the security directory holds a file offset */
         }
-        if (i == PE_DIR_DELAY_IMPORT || i == PE_DIR_CLR) {
+        if (i == PE_DIR_CLR) {
             return fail(error, PE_ERR_UNSUPPORTED_DIRECTORY, i, d->rva);
         }
         if (d->rva == 0u || !fits(d->rva, d->size, image->size_of_image)) {
@@ -531,6 +531,78 @@ pe_status pe_for_each_import(const pe_image *image, const pe_mapped *mapped,
             if (code != 0) {
                 return fail(error, PE_ERR_CALLBACK, i, (uint32_t)code);
             }
+        }
+    }
+}
+
+/* ---- Delay-load imports ------------------------------------------------- */
+
+#define PE_DELAY_DESCRIPTOR 32u
+#define PE_DELAY_RVA_BASED 1u
+
+/* A slot of 4 bytes at rva, which must be inside the image and not 0. */
+static int slot_fits(uint32_t rva, const pe_mapped *mapped) {
+    return rva != 0u && fits(rva, 4u, mapped->size);
+}
+
+pe_status pe_for_each_delay_imported_dll(const pe_image *image, const pe_mapped *mapped,
+                                         pe_dll_visitor visit, void *context, pe_error *error) {
+    const pe_directory *dir = &image->directories[PE_DIR_DELAY_IMPORT];
+    if (dir->size == 0u) {
+        return ok(error);
+    }
+    for (uint32_t i = 0;; ++i) {
+        uint64_t at = (uint64_t)dir->rva + (uint64_t)i * PE_DELAY_DESCRIPTOR;
+        if (!fits(at, PE_DELAY_DESCRIPTOR, mapped->size)) {
+            return fail(error, PE_ERR_DELAY_IMPORT, i, (uint32_t)at);
+        }
+        const uint8_t *d = mapped->base + at;
+        uint32_t attributes = rd32(d);
+        uint32_t name = rd32(d + 4);
+        uint32_t module = rd32(d + 8);
+        uint32_t iat = rd32(d + 12);
+        uint32_t names = rd32(d + 16);
+        uint32_t bound = rd32(d + 20);
+        uint32_t unload = rd32(d + 24);
+        if (name == 0u) {
+            return ok(error); /* the terminating descriptor */
+        }
+        if ((attributes & PE_DELAY_RVA_BASED) == 0u) {
+            return fail(error, PE_ERR_DELAY_IMPORT, i, (uint32_t)at);
+        }
+        const char *dll = mapped_string(mapped, name);
+        if (dll == 0) {
+            return fail(error, PE_ERR_STRING, i, name);
+        }
+        if (!slot_fits(module, mapped) || !slot_fits(iat, mapped) || !slot_fits(names, mapped) ||
+            (bound != 0u && !fits(bound, 4u, mapped->size)) ||
+            (unload != 0u && !fits(unload, 4u, mapped->size))) {
+            return fail(error, PE_ERR_DELAY_IMPORT, i, (uint32_t)at);
+        }
+        for (uint32_t j = 0;; ++j) {
+            uint64_t name_at = (uint64_t)names + 4u * (uint64_t)j;
+            uint64_t iat_at = (uint64_t)iat + 4u * (uint64_t)j;
+            if (!fits(name_at, 4u, mapped->size)) {
+                return fail(error, PE_ERR_DELAY_IMPORT, i, (uint32_t)name_at);
+            }
+            uint32_t entry = rd32(mapped->base + name_at);
+            if (entry == 0u) {
+                break;
+            }
+            if (!fits(iat_at, 4u, mapped->size)) {
+                return fail(error, PE_ERR_DELAY_IMPORT, i, (uint32_t)iat_at);
+            }
+            if ((entry & 0x80000000u) != 0u) {
+                if ((entry & 0x7fff0000u) != 0u) {
+                    return fail(error, PE_ERR_DELAY_IMPORT, i, entry);
+                }
+            } else if (!fits(entry, 3u, mapped->size) || mapped_string(mapped, entry + 2u) == 0) {
+                return fail(error, PE_ERR_STRING, i, entry + 2u);
+            }
+        }
+        int code = visit != 0 ? visit(context, dll, i) : 0;
+        if (code != 0) {
+            return fail(error, PE_ERR_CALLBACK, i, (uint32_t)code);
         }
     }
 }
@@ -782,7 +854,7 @@ size_t pe_format_error(const pe_error *error, char *buffer, size_t capacity) {
     case PE_ERR_SECTION_WX: put(&t, "section "); put_dec(&t, error->index); put(&t, " is both writable and executable"); break;
     case PE_ERR_ENTRY_POINT: put(&t, "entry point "); put_hex(&t, error->value); put(&t, " is outside an executable section"); break;
     case PE_ERR_DIRECTORY: put(&t, "data directory "); put_dec(&t, error->index); put(&t, " lies outside the image"); break;
-    case PE_ERR_UNSUPPORTED_DIRECTORY: put(&t, error->index == PE_DIR_DELAY_IMPORT ? "delay-load imports are not supported" : "managed (CLR) images are not supported"); break;
+    case PE_ERR_UNSUPPORTED_DIRECTORY: put(&t, "managed (CLR) images are not supported"); break;
     case PE_ERR_BUFFER: put(&t, "buffer too small"); break;
     case PE_ERR_RELOCS_STRIPPED: put(&t, "image must load at "); put_hex(&t, error->value); put(&t, " and has no relocations"); break;
     case PE_ERR_RELOC_BLOCK: put(&t, "malformed relocation block at "); put_hex(&t, error->value); break;
@@ -793,6 +865,7 @@ size_t pe_format_error(const pe_error *error, char *buffer, size_t capacity) {
     case PE_ERR_EXPORT: put(&t, "malformed export directory"); break;
     case PE_ERR_TLS: put(&t, "malformed TLS directory"); break;
     case PE_ERR_STRING: put(&t, "invalid name at "); put_hex(&t, error->value); break;
+    case PE_ERR_DELAY_IMPORT: put(&t, "malformed delay-load descriptor "); put_dec(&t, error->index); put(&t, " at "); put_hex(&t, error->value); break;
     case PE_ERR_CALLBACK: put(&t, "stopped by the caller with "); put_dec(&t, error->value); break;
     default: put(&t, "unknown error"); break;
     }

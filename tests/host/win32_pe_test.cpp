@@ -195,6 +195,20 @@ Image make_dll() {
     m.r32(0x2344, kBase + 0x1020);
     m.directory(PE_DIR_TLS, 0x2300, 24);
 
+    // Delay-load imports: late.dll, one function by name and one by ordinal.
+    // The module handle slot and the delay IAT are in .data.
+    m.r32(0x2380, 1);       // attributes: RVA-based
+    m.r32(0x2384, 0x23d0);  // name
+    m.r32(0x2388, 0x3040);  // module handle slot
+    m.r32(0x238c, 0x3048);  // delay IAT
+    m.r32(0x2390, 0x23c0);  // name table
+    m.r32(0x23c0, 0x23e0);
+    m.r32(0x23c4, 0x80000003u);
+    m.rstr(0x23d0, "late.dll");
+    m.r16(0x23e0, 0);
+    m.rstr(0x23e2, "Later");
+    m.directory(PE_DIR_DELAY_IMPORT, 0x2380, 0x40);
+
     // .data: a pointer the relocations must move, and the TLS template.
     m.r32(0x3100, kBase + 0x1000);
     for (uint32_t i = 0; i < 0x10; ++i) m.u8(Image::off(0x3200 + i), (uint8_t)(0xa0 + i));
@@ -313,6 +327,20 @@ void test_valid_image() {
               l.error.value == 9,
           "a visitor can stop the walk");
 
+    std::vector<std::string> late;
+    check(pe_for_each_delay_imported_dll(
+              &im, &l.mapped,
+              [](void *c, const char *dll, uint32_t) {
+                  static_cast<std::vector<std::string> *>(c)->push_back(dll);
+                  return 0;
+              },
+              &late, &l.error) == PE_OK &&
+              late == std::vector<std::string>{"late.dll"},
+          "delay-loaded DLLs are checked and listed");
+    uint32_t slot = 1;
+    pe_read_u32(&l.mapped, 0x3048, &slot);
+    check(slot == 0, "delay-load slots are left to the image's helper");
+
     pe_export e{};
     int found = 0;
     check(pe_find_export_by_name(&im, &l.mapped, "Alpha", &e, &found, &l.error) == PE_OK && found &&
@@ -380,7 +408,7 @@ void test_stripped_relocations() {
 
 // ---- The malformed corpus ---------------------------------------------------
 
-enum class Stage { Parse, Relocate, Imports, Exports, Tls };
+enum class Stage { Parse, Relocate, Imports, Delay, Exports, Tls };
 
 struct Case {
     const char *name;
@@ -404,6 +432,8 @@ pe_status run_stage(Loaded &l, Stage stage) {
             &seen, &l.error);
         return status == PE_ERR_CALLBACK ? PE_OK : status;
     }
+    case Stage::Delay:
+        return pe_for_each_delay_imported_dll(&l.image, &l.mapped, nullptr, nullptr, &l.error);
     case Stage::Exports: {
         pe_export e;
         int found;
@@ -468,7 +498,6 @@ void test_malformed_corpus() {
         {"executable with no entry point", Stage::Parse, PE_ERR_ENTRY_POINT, [](Image &m) { m.u32(kOpt + 16, 0); m.u16(kCoff + 18, PE_FILE_EXECUTABLE); }},
         {"import directory outside the image", Stage::Parse, PE_ERR_DIRECTORY, [](Image &m) { m.directory(PE_DIR_IMPORT, 0x4f00, 0x200); }},
         {"export directory at RVA 0", Stage::Parse, PE_ERR_DIRECTORY, [](Image &m) { m.directory(PE_DIR_EXPORT, 0, 0x40); }},
-        {"delay-load imports", Stage::Parse, PE_ERR_UNSUPPORTED_DIRECTORY, [](Image &m) { m.directory(PE_DIR_DELAY_IMPORT, 0x2400, 0x20); }},
         {"managed image", Stage::Parse, PE_ERR_UNSUPPORTED_DIRECTORY, [](Image &m) { m.directory(PE_DIR_CLR, 0x2400, 0x48); }},
 
         {"relocation block shorter than its header", Stage::Relocate, PE_ERR_RELOC_BLOCK, [](Image &m) { m.r32(0x4004, 6); }},
@@ -493,6 +522,15 @@ void test_malformed_corpus() {
          }},
         {"lookup table running off the image", Stage::Imports, PE_ERR_IMPORT, [](Image &m) { m.r32(0x2014, 0x4ffe); }},
         {"descriptors running off the image", Stage::Imports, PE_ERR_IMPORT, [](Image &m) { m.directory(PE_DIR_IMPORT, 0x4ff0, 0x10); }},
+
+        {"delay-load descriptor with VAs", Stage::Delay, PE_ERR_DELAY_IMPORT, [](Image &m) { m.r32(0x2380, 0); }},
+        {"delay-load DLL name outside the image", Stage::Delay, PE_ERR_STRING, [](Image &m) { m.r32(0x2384, 0x90000); }},
+        {"delay-load without a module handle slot", Stage::Delay, PE_ERR_DELAY_IMPORT, [](Image &m) { m.r32(0x2388, 0); }},
+        {"delay-load IAT outside the image", Stage::Delay, PE_ERR_DELAY_IMPORT, [](Image &m) { m.r32(0x238c, 0x4ffe); }},
+        {"delay-load name table missing", Stage::Delay, PE_ERR_DELAY_IMPORT, [](Image &m) { m.r32(0x2390, 0); }},
+        {"delay-load ordinal with stray bits", Stage::Delay, PE_ERR_DELAY_IMPORT, [](Image &m) { m.r32(0x23c4, 0x80010003u); }},
+        {"delay-load hint/name outside the image", Stage::Delay, PE_ERR_STRING, [](Image &m) { m.r32(0x23c0, 0x7fff0000u); }},
+        {"delay-load descriptors running off the image", Stage::Delay, PE_ERR_DELAY_IMPORT, [](Image &m) { m.directory(PE_DIR_DELAY_IMPORT, 0x4ff0, 0x10); }},
 
         {"export function count too large", Stage::Exports, PE_ERR_EXPORT, [](Image &m) { m.r32(0x2214, 0x01000000u); }},
         {"export base above 65535", Stage::Exports, PE_ERR_EXPORT, [](Image &m) { m.r32(0x2210, 0x10000); }},
@@ -537,7 +575,7 @@ void test_mutations() {
     };
     uint32_t accepted = 0;
     bool messages = true;
-    const Stage stages[] = {Stage::Relocate, Stage::Imports, Stage::Exports, Stage::Tls};
+    const Stage stages[] = {Stage::Relocate, Stage::Imports, Stage::Delay, Stage::Exports, Stage::Tls};
     for (int round = 0; round < 20000; ++round) {
         Image m = base;
         uint32_t edits = 1 + next() % 4;

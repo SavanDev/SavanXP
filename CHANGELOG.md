@@ -30,6 +30,9 @@ Cut-off notes:
   `sxn_random_status`, POSIX `getrandom`, `getentropy` and `random_status`; Linux `getrandom` and `AT_RANDOM` use it.
   QEMU machines get `virtio-rng-pci` unless `--no-rng`; new host test `random-crypto-test` and smoke
   `random-unseeded` ([RANDOM.md](docs/kernel/RANDOM.md)).
+- **Win32 (SSW) loads images with delay-load imports** (WordPad WP1): the PE parser checks the descriptors
+  (`pe_for_each_delay_imported_dll`) and leaves binding to the image's own helper; descriptors with VAs are refused
+  by name. `mfc42u.dll` has thirteen ([WIN32.md](docs/userland/WIN32.md#what-it-accepts)).
 - **SUN HTTP loader, `sxn/sxnhttp.h` (`sxnhttp_get`)** (N4): HTTP/1.1 GET with Content-Length, chunked and
   close-delimited bodies, five relative redirects, 30 s total and 10 s idle budgets and a cancel event; contradictory
   framing, truncated bodies, oversized heads and redirects to files or from https fail explicitly. New host test

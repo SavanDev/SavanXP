@@ -14,7 +14,9 @@
  *
  * Anything the subsystem does not support is rejected by name: other
  * machines, PE32+, low section alignment, writable and executable sections,
- * unknown relocation types, delay-load imports. Nothing is silently skipped.
+ * unknown relocation types, managed images. Nothing is silently skipped.
+ * Delay-load imports are checked but not bound: the image's own helper binds
+ * them at run time.
  *
  * See docs/userland/WIN32.md.
  */
@@ -79,7 +81,7 @@ typedef enum pe_status {
     PE_ERR_SECTION_WX,        /* section both writable and executable; index = section */
     PE_ERR_ENTRY_POINT,       /* entry point outside an executable section */
     PE_ERR_DIRECTORY,         /* data directory outside the image; index = directory */
-    PE_ERR_UNSUPPORTED_DIRECTORY, /* delay-load or CLR directory; index = directory */
+    PE_ERR_UNSUPPORTED_DIRECTORY, /* CLR directory; index = directory */
     PE_ERR_BUFFER,            /* the caller's buffer is too small */
     PE_ERR_RELOCS_STRIPPED,   /* the image must move but has no relocations */
     PE_ERR_RELOC_BLOCK,       /* malformed relocation block; value = block RVA */
@@ -90,6 +92,7 @@ typedef enum pe_status {
     PE_ERR_EXPORT,            /* malformed export directory */
     PE_ERR_TLS,               /* malformed TLS directory */
     PE_ERR_STRING,            /* a name is unterminated, empty or too long; value = RVA */
+    PE_ERR_DELAY_IMPORT,      /* malformed delay-load descriptor; index = descriptor, value = RVA */
     PE_ERR_CALLBACK,          /* the caller's callback refused; value = its code */
 } pe_status;
 
@@ -207,6 +210,16 @@ pe_status pe_for_each_import(const pe_image *image, const pe_mapped *mapped,
 typedef int (*pe_dll_visitor)(void *context, const char *dll, uint32_t descriptor);
 pe_status pe_for_each_imported_dll(const pe_image *image, const pe_mapped *mapped,
                                    pe_dll_visitor visit, void *context, pe_error *error);
+
+/* Checks every delay-load descriptor and its name table, and calls
+ * visit(context, dll, descriptor) once per descriptor, in file order. The
+ * loader binds none of these imports: the image's delay-load helper loads the
+ * DLL and fills the slots on first call, through LoadLibrary and
+ * GetProcAddress. Only descriptors with RVAs (attribute bit 0, what every
+ * linker since Visual C++ 7 writes) are accepted; the older form, with VAs,
+ * is refused by name. */
+pe_status pe_for_each_delay_imported_dll(const pe_image *image, const pe_mapped *mapped,
+                                         pe_dll_visitor visit, void *context, pe_error *error);
 
 /* Export lookups. Return PE_OK and fill *result when found; *found says
  * whether the symbol exists. Malformed directories fail with PE_ERR_EXPORT. */

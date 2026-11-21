@@ -287,8 +287,11 @@ static int load_module(sxw_process *p, const char *name, const char *requester, 
         return -1;
     }
     pe_mapped mapped = mapped_of(m);
+    /* Delay-load descriptors are only checked here: the image's own helper
+     * loads their DLLs and binds their slots when they are first called. */
     if (pe_map(&m->image, &mapped, &error) != PE_OK ||
-        pe_relocate(&m->image, &mapped, m->base, &error) != PE_OK) {
+        pe_relocate(&m->image, &mapped, m->base, &error) != PE_OK ||
+        pe_for_each_delay_imported_dll(&m->image, &mapped, 0, 0, &error) != PE_OK) {
         d_pe(p, m->name, &error);
         return -1;
     }

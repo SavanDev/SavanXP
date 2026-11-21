@@ -75,6 +75,8 @@ build for the host tests and, at the guest half of W1, for `winhost`.
      RVA or a forwarder string (`DLL.Name` or `DLL.#N`);
    - `pe_read_tls()` and `pe_tls_callback()` read the TLS directory and its
      callbacks, after relocation;
+   - `pe_for_each_delay_imported_dll()` checks the delay-load descriptors
+     and their name tables, and lists their DLLs;
    - `pe_protection_runs()` gives the page protection of each range (headers
      read-only, then each section as R, RW or RX, with equal neighbours
      merged), which is the list of views the loader maps.
@@ -99,6 +101,11 @@ What a linker for Windows XP produces, and what the profile's two files need:
 - Base relocations of type `HIGHLOW`, with `ABSOLUTE` as padding.
 - Imports by name and by ordinal. A bound IAT (both profile files have one) is
   never read: every import is resolved again from the lookup table.
+- Delay-load imports with RVAs, what every linker since Visual C++ 7 writes
+  (`mfc42u.dll` has thirteen). They are checked, not bound: the image's own
+  helper loads each DLL and fills its slots on the first call, through
+  `LoadLibrary` and `GetProcAddress`, so a DLL that is never called need not
+  exist.
 
 ### What it refuses, by name
 
@@ -115,8 +122,10 @@ and the offending value, and `pe_format_error()` turns it into a line such as
 - **A section both writable and executable.** A view is never writable and
   executable at once, so no loader of this subsystem could map it.
 - An entry point outside an executable section, or an EXE with none.
-- A data directory outside the image. **Delay-load imports and CLR images** are
-  refused outright, not ignored.
+- A data directory outside the image. **CLR images** are refused outright,
+  not ignored.
+- Delay-load descriptors with VAs instead of RVAs, and descriptors whose
+  name, module handle slot, IAT or name table lies outside the image.
 - Moving an image whose relocations are stripped. `sol.exe` is one: it loads
   at `0x01000000` or not at all.
 - Relocation blocks that are short, odd-sized or past their directory; other
@@ -143,7 +152,8 @@ the user half starts.
 
 1. **Map the executable, then each DLL it imports, depth first.** An image
    goes at its preferred base when the range is free, otherwise at the first
-   free 64 KiB step from `0x10000000`, and is relocated. It is mapped as one
+   free 64 KiB step from `0x10000000`, and is relocated, and its delay-load
+   descriptors are checked. It is mapped as one
    platform mapping per protection run (on SavanXP, one section each), so
    every run can take its own final access. Names are compared
    without case and opened lower-case: next to the executable first, then in
