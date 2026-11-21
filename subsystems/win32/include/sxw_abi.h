@@ -10,7 +10,7 @@
 #ifndef SAVANXP_WIN32_SXW_ABI_H
 #define SAVANXP_WIN32_SXW_ABI_H
 
-#define SXW_ABI_VERSION 5u
+#define SXW_ABI_VERSION 6u
 
 /* ---- Thread environment block (32-bit layout, the fields we fill) ------- */
 
@@ -125,7 +125,12 @@
  * 0xAARRGGBB, top row first, for its caption and its taskbar button. */
 #define SXW_SVC_WINDOW_ICON 21u
 #define SXW_ICON_EXTENT 16u
-#define SXW_SVC_COUNT 22u
+/* (base, buffer, capacity) -> units written: the Windows path of the module
+ * loaded at base (C:\... or Z:\...), UTF-16 and NUL-terminated in
+ * buffer[capacity] units, truncated to fit; 0 when nothing is loaded there.
+ * GetModuleFileName. */
+#define SXW_SVC_MODULE_PATH 22u
+#define SXW_SVC_COUNT 23u
 
 #define SXW_INFINITE 0xffffffffu
 

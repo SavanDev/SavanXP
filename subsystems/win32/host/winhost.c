@@ -290,8 +290,20 @@ static int join(char *out, uint32_t capacity, const char *dir, const char *name)
     return 1;
 }
 
+/* Copies a path, truncated to fit. */
+static void copy_path(char *out, size_t capacity, const char *path) {
+    size_t n = 0;
+    while (path[n] != 0 && n + 1u < capacity) {
+        out[n] = path[n];
+        ++n;
+    }
+    if (capacity != 0u) {
+        out[n] = 0;
+    }
+}
+
 static int platform_open(void *context, const char *name, const uint8_t **data, size_t *size,
-                         void **handle) {
+                         void **handle, char *found_path, size_t capacity) {
     (void)context;
     file_buffer *file = malloc(sizeof(*file));
     if (file == 0) {
@@ -300,12 +312,14 @@ static int platform_open(void *context, const char *name, const uint8_t **data, 
     int found = 0;
     if (name[0] == '/') {
         found = read_whole(name, file) == 0;
+        copy_path(found_path, capacity, name);
     } else {
         char path[512];
         found = join(path, sizeof(path), g_exe_dir, name) && read_whole(path, file) == 0;
         if (!found) {
             found = join(path, sizeof(path), g_system_dir, name) && read_whole(path, file) == 0;
         }
+        copy_path(found_path, capacity, path);
     }
     if (!found) {
         free(file);

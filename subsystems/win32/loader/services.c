@@ -337,7 +337,7 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
     }
     const uint32_t service = frame[1];
     static const uint8_t argument_count[SXW_SVC_COUNT] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5,
-                                                           1, 5, 5, 0, 1, 8, 1, 6, 2, 2, 2};
+                                                           1, 5, 5, 0, 1, 8, 1, 6, 2, 2, 2, 3};
     if (service >= sizeof(argument_count)) {
         write_text(s, "win32: unknown service\n");
         end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);
@@ -383,6 +383,10 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
         uint32_t base = 0;
         return sxw_allocate_region(p, a[0], &base) == 0 ? base : 0u;
     }
+    case SXW_SVC_MODULE_PATH:
+        return a[2] != 0u && a[2] <= 0x8000u && sxw_guest_range(p, a[1], 2u * a[2])
+                   ? sxw_module_path(p, a[0], a[1], a[2])
+                   : 0u;
     case SXW_SVC_FIND_MODULE: {
         char name[SXW_MAX_STRING];
         const sxw_module *m = read_ansi(p, a[0], name) ? sxw_find_module(p, name) : 0;

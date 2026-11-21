@@ -16,9 +16,13 @@ EXPORTS
     EnableWindow
     EndDialog
     EndPaint
+    EqualRect
+    FindWindowW
     FrameRect
+    GetActiveWindow
     GetCapture
     GetClientRect
+    GetCursorPos
     GetDC
     GetDesktopWindow
     GetDlgItem
@@ -26,12 +30,15 @@ EXPORTS
     GetMenu
     GetMessageW
     GetSysColor
+    GetSysColorBrush
+    GetSystemMetrics
     InflateRect
     IntersectRect
     InvalidateRect
     InvertRect
     IsDlgButtonChecked
     IsIconic
+    IsRectEmpty
     KillTimer
     LoadAcceleratorsW
     LoadBitmapA
@@ -43,23 +50,28 @@ EXPORTS
     MessageBoxW
     MoveWindow
     MsgWaitForMultipleObjects
+    OffsetRect
     PeekMessageW
     PostMessageW
     PostQuitMessage
     PtInRect
     RegisterClassExW
     RegisterClassW
+    RegisterClipboardFormatW
     RegisterWindowMessageW
     ReleaseCapture
     ReleaseDC
     SetCapture
     SetCursorPos
     SetFocus
+    SetRect
+    SetRectEmpty
     SetTimer
     ShowCursor
     ShowWindow
+    SxwDialogBoxIndirectParamW
     TranslateAcceleratorW
     TranslateMessage
+    UnionRect
     UpdateWindow
     WinHelpW
-    SxwDialogBoxIndirectParamW

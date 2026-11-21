@@ -1,0 +1,85 @@
+wstartup: begin
+__wgetmainargs: 0, argc 4 [alpha] [two words] [3]
+__p___argc and __p___wargv agree: yes
+_wcmdln ends with the arguments: yes
+setlocale query: C
+GlobalAlloc(GHND, 10) size, flags: 10, 0x00000000
+two locks: same address, zeroed, *(void **)handle is it, flags: yes, yes, 0x00000002
+GlobalHandle(address) is the handle: yes
+unlock, unlock: 1, 0 error 0
+a third unlock: 0 error 158
+GlobalReAlloc to 100: same handle, size, kept, zero tail: yes, 100, yes, yes
+GlobalReAlloc to 0: same handle, flags, lock: yes, 0x00004000, yes
+GlobalFree: yes
+GlobalAlloc(GMEM_MOVEABLE, 0): flags, lock, size: 0x00004000, yes, 0
+GlobalAlloc(GMEM_FIXED, 10): size, flags, handle, lock: 10, 0x00000000, yes, yes
+GlobalReAlloc of a fixed block without GMEM_MOVEABLE, to 4000: yes
+LocalAlloc(LHND, 6): lock gives zeroed memory, unlock: yes, 0
+malloc(10): _msize: 10
+realloc to 3000: _msize, kept: 3000, yes
+_expand to 20: in place, _msize: yes, 20
+calloc(4, 4): zeroed, _msize: yes, 16
+memmove overlapping, memcmp, memset: aabcdeg, -1, xxxcdeg
+TlsAlloc: a new slot reads NULL with no error: yes error 0
+TlsSetValue then TlsGetValue: 0x00001234
+TlsFree twice: 1, 0 error 87
+TlsGetValue(1100): yes error 87
+critical section: initial lock count, recursion: -1, 0
+entered twice: recursion, owner is this thread: 2, yes
+left twice: lock count, recursion, owner: -1, 0, yes
+InterlockedIncrement, Decrement, Exchange: 6, 5, 5 then 42
+GetVersion: 0x0a280105
+GetVersionExA: 1 5.1.2600 platform 2 Service Pack 3
+GetVersionExA with a short size: 0 error 122
+GetProcessVersion(0): 0x00050001
+SetErrorMode returns the previous mode: 1
+lstrcpynW(4): [abc] lstrcatW [abcXYZ]
+lstrcmpW abc/abd, abc/abc, lstrcmpiW HELLO/hello: -1, 0, 0
+MultiByteToWideChar(ACP) count and units: 6 0x00000061 0x000000f1 0x000000e9 0x000020ac 0x0000007a 0x00000000
+MultiByteToWideChar size query: 6
+MultiByteToWideChar into 2 units: 0 error 122
+MultiByteToWideChar(UTF8) count and units: 5 0x000000f1 0x000020ac 0x0000d83d 0x0000de00 0x00000000
+WideCharToMultiByte(UTF8) round trip: 10 yes
+WideCharToMultiByte(ACP) of a missing character with a default: 4 a#z used 1
+_wcsicmp ABC/abc, Ã‘/Ã±; _wcsnicmp; wcsncmp: 0, 1, 0, -1
+_wcslwr, _wcsupr, _wcsrev: [mixed case Ñ] [MIXED CASE Ñ] [Ñ ESAC DEXIM]
+wcschr, wcsrchr, wcsstr, wcspbrk, wcsspn, wcscspn: 3, 12, 4, 3, 4, 3
+wcsncpy pads with zeros: yes
+iswspace space, nbsp, x; iswdigit 7, a: yes, yes, no, yes, no
+wcstol: -123 rest [abc], 31, 15, 2147483647, 1295, none 0 rest [x1]
+wcstoul, _wtoi: 0xffffffff, 0xffffffff, 42
+wcstod 3.25e2: 325 rest [xyz], 1.5e: 15 rest [e]
+_itow -42 base 10, 255 base 16, -1 base 2; _ultow: [-42] [ff] [11111111111111111111111111111111] [4000000000]
+floor, ceil, modf(-2.75), abs: -3 -2 2 3 -2 -75 7
+integers: 50 [42|   -7|3    |00042|+5|ff|FF|0xff|10|4000000000|%]
+strings and characters: 40 [wide|     right|left  |cu|narrow|w|n|l|h]
+floating point: 97 [3.141590|2.67|  -1.500|0.1     |1.234568e+004|1.230000E-004|0.0001|1e-005|1.23457e+008|100|3.14|3]
+floating point edges: 94 [0.13|9.99|0.0|0|0.000000e+000|0.000000|9.99989e-321|6.022e+023|1E-010|3.|-2.5e-007|-2147483648]
+1e300 with %.0f: length, first and last digits: 308 [100000000000][00000|1e+300]
+lengths and %p: 34 [-5000000000|123456789|7|0|00011170]
+_vsnwprintf over 5: result, no terminator: -1 yes
+_vsnwprintf exactly 5: 5 yes
+swprintf: 6 [9-nine]
+GetModuleFileNameW(NULL): length matches, file name: yes [wstartup.exe]
+GetModuleFileNameW(kernel32): file name: [kernel32.dll]
+GetModuleFileNameW into 4 units: result, terminated: 4 error 0 no untouched after yes
+LoadLibraryW(kernel32) is the loaded module, FreeLibrary: yes, 1
+GetModuleHandleW(nosuch.dll): yes error 126
+GetSystemDirectoryW: 19 [C:\WINDOWS\system32], into 3: 20
+PathFindFileNameW: [file.txt] [dir\] [plain] [x.txt]
+FindResourceW(100, RT_RCDATA): size, text: 7 hundred
+FindResourceW("#100") and by name DATA: yes yes
+FindResourceW(101): yes error 1814
+UnionRect: 1,0,20,12
+OffsetRect, EqualRect, IsRectEmpty: 0,5 1 0 1 0
+RegisterClipboardFormatW: registered range, any case, the same as the message: yes yes yes
+FindWindowW of no such class: yes
+GetSystemMetrics icon, small icon, border, edge, scroll, menu check: 32 16 1 2 16 13
+CreateFontIndirectW then GetObjectW: 92 -13 700 1 [Arial] size query 92
+RegCreateKeyExW, RegOpenKeyExW, a missing key: 0 0 2
+OleInitialize twice, then uninitialize twice: 0x00000000 0x00000001
+CoTaskMemAlloc: yes
+__dllonexit: entries, then run by hand: 2 2
+wstartup: exit 5
+exit: the second registered runs first
+exit: the first registered runs last

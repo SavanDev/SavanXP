@@ -19,13 +19,13 @@
 #include "user32_private.h"
 
 #include "codepage.h"
+#include "resource.h"
 
 #define MAX_CLASSES 32
-#define MAX_WINDOWS 128
 #define MAX_TIMERS 32
 #define MAX_POSTED 256
 #define MAX_INPUT 128
-#define MAX_REGISTERED 32
+#define MAX_REGISTERED 128
 #define DOUBLE_CLICK_MS 500u
 #define DOUBLE_CLICK_DISTANCE 2 /* half of SM_CXDOUBLECLK */
 #define DESKTOP_HANDLE ((HWND)0x00010010)
@@ -2016,79 +2016,14 @@ static u32 main_module(void) {
     return *(u32 *)(peb + SXW_PEB_IMAGE_BASE);
 }
 
-/* The entry of a resource directory with this id, or this name (UTF-16, any
- * case); 0 when there is none. The entry's second word, as stored. */
-static int find_entry(const unsigned char *root, const unsigned char *dir, LPCWSTR name, u32 *entry) {
-    const u32 named = get16(dir + 12);
-    const u32 ids = get16(dir + 14);
-    for (u32 i = 0; i < named + ids; ++i) {
-        const unsigned char *e = dir + 16 + 8 * i;
-        const u32 key = get32(e);
-        int match;
-        if ((u32)name < 0x10000u) {
-            match = (key & 0x80000000u) == 0 && key == (u32)name;
-        } else if ((key & 0x80000000u) != 0) {
-            const unsigned char *string = root + (key & 0x7fffffffu);
-            const u32 length = get16(string);
-            match = 1;
-            u32 k = 0;
-            for (; k < length && match; ++k) {
-                WCHAR a = (WCHAR)get16(string + 2 + 2 * k);
-                WCHAR b = name[k];
-                a = a >= 'a' && a <= 'z' ? (WCHAR)(a - 32) : a;
-                b = b >= 'a' && b <= 'z' ? (WCHAR)(b - 32) : b;
-                match = b != 0 && a == b;
-            }
-            match = match && name[k] == 0;
-        } else {
-            match = 0;
-        }
-        if (match) {
-            *entry = get32(e + 4);
-            return 1;
-        }
-    }
-    return 0;
-}
-
 /* A resource's data and size in the module at base, or 0. */
 const unsigned char *find_resource(u32 base, u32 type, LPCWSTR name, u32 *size) {
-    const unsigned char *image = (const unsigned char *)base;
-    if (base == 0 || get16(image) != 0x5a4du) {
+    const unsigned char *entry = sxw_resource_entry(base, (LPCWSTR)(ULONG_PTR)type, name, SXW_ANY_LANGUAGE);
+    if (entry == 0) {
         return 0;
     }
-    const unsigned char *nt = image + get32(image + 0x3c);
-    if (get32(nt) != 0x4550u || get16(nt + 24) != 0x10bu) {
-        return 0;
-    }
-    const unsigned char *optional = nt + 24;
-    if (get32(optional + 92) <= 2u) {
-        return 0;
-    }
-    const u32 rva = get32(optional + 96 + 2 * 8);
-    if (rva == 0) {
-        return 0;
-    }
-    const unsigned char *root = image + rva;
-    u32 entry = 0;
-    if (!find_entry(root, root, (LPCWSTR)(ULONG_PTR)type, &entry) || (entry & 0x80000000u) == 0) {
-        return 0;
-    }
-    const unsigned char *names = root + (entry & 0x7fffffffu);
-    if (!find_entry(root, names, name, &entry) || (entry & 0x80000000u) == 0) {
-        return 0;
-    }
-    const unsigned char *languages = root + (entry & 0x7fffffffu);
-    if (get16(languages + 12) + get16(languages + 14) == 0u) {
-        return 0;
-    }
-    entry = get32(languages + 16 + 4);
-    if ((entry & 0x80000000u) != 0) {
-        return 0;
-    }
-    const unsigned char *data = root + entry;
-    *size = get32(data + 4);
-    return image + get32(data);
+    *size = get32(entry + 4);
+    return (const unsigned char *)base + get32(entry);
 }
 
 u32 module_of(HINSTANCE instance) {

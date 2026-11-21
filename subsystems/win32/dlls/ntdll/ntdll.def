@@ -5,6 +5,8 @@ EXPORTS
     SxwGetProcAddress
     SxwHeapAllocate
     SxwHeapFree
+    SxwHeapIsBlock
+    SxwHeapResize
     SxwHeapSize
     SxwLoadLibrary
     SxwProcessStart

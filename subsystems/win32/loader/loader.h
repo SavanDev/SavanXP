@@ -28,6 +28,7 @@ extern "C" {
 #define SXW_MAX_MODULES 32u
 #define SXW_MAX_REGIONS 64u
 #define SXW_MODULE_NAME 64u
+#define SXW_MODULE_PATH 512u
 #define SXW_DIAGNOSTIC 256u
 
 /* Guest addresses the loader places regions in: from the platform's
@@ -48,10 +49,11 @@ typedef struct sxw_platform {
     /* Gives a mapped range its final protection, keeping its contents. */
     int (*protect)(void *context, uint32_t base, uint32_t size, pe_protection protection);
     void (*unmap)(void *context, uint32_t base, uint32_t size);
-    /* Opens an image by the name an import uses (or the executable's path).
+    /* Opens an image by the name an import uses (or the executable's path),
+     * and writes the host path of the file it opened to path[capacity].
      * Nonzero when there is no such file. */
     int (*open_image)(void *context, const char *name, const uint8_t **data, size_t *size,
-                      void **handle);
+                      void **handle, char *path, size_t capacity);
     void (*close_image)(void *context, void *handle);
     /* The guest address the TEB's gate field points at. */
     uint32_t gate;
@@ -63,6 +65,7 @@ typedef struct sxw_platform {
 
 typedef struct sxw_module {
     char name[SXW_MODULE_NAME]; /* lower-case file name */
+    char path[SXW_MODULE_PATH]; /* the host file it was loaded from */
     pe_image image;
     uint32_t base;
     void *handle;
@@ -128,6 +131,12 @@ void sxw_unload(sxw_process *process);
 
 /* The module with this name (any case), or NULL. */
 const sxw_module *sxw_find_module(const sxw_process *process, const char *name);
+
+/* GetModuleFileName: the Windows path of the module at base (C:\... or
+ * Z:\..., as the executable's), written as UTF-16 with a terminating NUL to
+ * the guest buffer of capacity units, truncated to fit. Returns the units
+ * written without the NUL, or 0 when no module is loaded at base. */
+uint32_t sxw_module_path(sxw_process *process, uint32_t base, uint32_t buffer, uint32_t capacity);
 
 #ifdef __cplusplus
 }

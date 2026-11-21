@@ -69,6 +69,7 @@ static const fixture k_fixtures[] = {
     {"startup.exe", "startup-1.out", 5u, 1, 1, 0},
     {"startup.exe", "startup-2.out", 5u, 1, 1, 0},
     {"resource.exe", "resource.out", 0u, 0, 0, 0},
+    {"wstartup.exe", "wstartup.out", 5u, 1, 1, 0},
 };
 
 static const fixture k_window = {"window.exe", "window.out", 3u, 0, 0, WINDOW_READY};

@@ -1,0 +1,3 @@
+// wstartup.exe's resources: two RCDATA blocks, one by id and one by name.
+100 RCDATA { "hundred" }
+DATA RCDATA { "named" }

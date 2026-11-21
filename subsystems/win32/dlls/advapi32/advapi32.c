@@ -57,6 +57,15 @@ LONG WINAPI RegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM sa
     return (LONG)SxwService(SXW_SVC_REG_OPEN, arguments);
 }
 
+LONG WINAPI RegOpenKeyExW(HKEY hKey, LPCWSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) {
+    (void)samDesired;
+    if (ulOptions != 0 || phkResult == NULL) {
+        return ERROR_INVALID_PARAMETER;
+    }
+    u32 arguments[5] = {(u32)hKey, (u32)lpSubKey, 0u, (u32)phkResult, 0u};
+    return (LONG)SxwService(SXW_SVC_REG_OPEN, arguments);
+}
+
 LONG WINAPI RegQueryValueExW(HKEY hKey, LPCWSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType,
                              LPBYTE lpData, LPDWORD lpcbData) {
     if (lpReserved != NULL) {

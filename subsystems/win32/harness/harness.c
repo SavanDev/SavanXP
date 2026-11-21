@@ -158,7 +158,7 @@ static int read_whole(const char *path, file_buffer *out) {
 }
 
 static int platform_open(void *context, const char *name, const uint8_t **data, size_t *size,
-                         void **handle) {
+                         void **handle, char *found_path, size_t capacity) {
     (void)context;
     file_buffer *file = calloc(1, sizeof(*file));
     if (file == NULL) {
@@ -167,6 +167,7 @@ static int platform_open(void *context, const char *name, const uint8_t **data, 
     int found;
     if (strchr(name, '/') != NULL) {
         found = read_whole(name, file) == 0;
+        snprintf(found_path, capacity, "%s", name);
     } else {
         /* Next to the executable, then the DLL folder; names are installed
          * lower-case. */
@@ -186,6 +187,7 @@ static int platform_open(void *context, const char *name, const uint8_t **data, 
             snprintf(path, sizeof(path), "%s/%s", g_dll_dir, lower);
             found = read_whole(path, file) == 0;
         }
+        snprintf(found_path, capacity, "%s", path);
     }
     if (!found) {
         free(file);

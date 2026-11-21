@@ -24,6 +24,13 @@ is always the same, playing fixtures/solitaire/input-1.txt and input-2.txt
 equal expected/solitaire.reg, and each image the scripts dump must have the
 SHA-256 expected/solitaire.sha256 lists: the images show Microsoft's card
 art, so only their hashes are kept. Without the files it exits 77.
+
+With --wordpad FOLDER it starts the user's own wordpad.exe from FOLDER, with
+mfc42u.dll and mfc42loc.dll from FOLDER/system32 beside the subsystem's DLLs,
+and dumps the first window it shows (WIN32_WORDPAD_ROADMAP.md, WP1): every
+import must resolve, MFC and WordPad must initialize, and the program must be
+waiting for input with a window up. Nothing of it is compared with an image:
+it is Microsoft's text. Without the files it exits 77.
 """
 
 import argparse
@@ -61,6 +68,7 @@ CASES = [
     ("window.exe", [], "window.out", 0x3, None, False, "window/input.txt"),
     ("resource.exe", [], "resource.out", 0x0, None, False, None),
     ("dialog.exe", [], "dialog.out", 0x5, None, False, "dialog/input.txt"),
+    ("wstartup.exe", STARTUP_ARGUMENTS, "wstartup.out", 0x5, None, True, None),
 ]
 
 # The images a scripted fixture dumps, each with a golden NAME.ppm.gz.
@@ -132,6 +140,43 @@ def run_solitaire(args, expected_dir):
     return 0
 
 
+def run_wordpad(args):
+    folder = pathlib.Path(args.wordpad) if args.wordpad else None
+    files = ["wordpad.exe", "system32/mfc42u.dll", "system32/mfc42loc.dll"]
+    if folder is None or not all((folder / name).is_file() for name in files):
+        print("skipped: needs the user's wordpad.exe and MFC in SAVANXP_WIN32_WORDPAD")
+        return 77
+    problems = []
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = pathlib.Path(scratch)
+        (scratch / "app").mkdir()
+        (scratch / "system32").mkdir()
+        shutil.copyfile(folder / "wordpad.exe", scratch / "app/wordpad.exe")
+        for dll in pathlib.Path(args.system32).glob("*.dll"):
+            shutil.copyfile(dll, scratch / "system32" / dll.name)
+        for name in ("mfc42u.dll", "mfc42loc.dll"):
+            shutil.copyfile(folder / "system32" / name, scratch / "system32" / name)
+        script = scratch / "input.txt"
+        script.write_text("wait 500\ndump first-window.ppm\n")
+        result = subprocess.run([args.harness, "--dlls", str(scratch / "system32"), "--registry",
+                                 str(scratch / "hkcu.reg"), "--input", str(script), str(scratch / "app/wordpad.exe")],
+                                capture_output=True, timeout=120, cwd=scratch)
+        errors = result.stderr.decode(errors="replace").splitlines()
+        for line in errors:
+            if "is not exported" in line or "missing DLL" in line or "guest fault" in line:
+                problems.append(line)
+        if result.returncode != 125 or "win32: the input script ended and the guest still waits" not in errors:
+            problems.append(f"status {result.returncode}, {errors[-3:]!r}: not waiting for input")
+        dump = scratch / "first-window.ppm"
+        if not dump.exists() or not dump.read_bytes().startswith(b"P6"):
+            problems.append("no window was up to dump")
+    if problems:
+        print("FAIL wordpad.exe: " + "; ".join(problems))
+        return 1
+    print("ok   wordpad.exe: started up to its first window")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--harness", required=True)
@@ -140,12 +185,15 @@ def main():
     parser.add_argument("--expected", required=True)
     parser.add_argument("--cards", help="the folder holding the user's cards.dll")
     parser.add_argument("--solitaire", help="the folder holding the user's sol.exe and cards.dll")
+    parser.add_argument("--wordpad", help="the folder holding the user's wordpad.exe and system32/mfc42u.dll")
     args = parser.parse_args()
     expected_dir = pathlib.Path(args.expected)
     if args.cards is not None:
         return run_cards(args, expected_dir)
     if args.solitaire is not None:
         return run_solitaire(args, expected_dir)
+    if args.wordpad is not None:
+        return run_wordpad(args)
 
     failures = 0
     with tempfile.TemporaryDirectory() as scratch:

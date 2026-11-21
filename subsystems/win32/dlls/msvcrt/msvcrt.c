@@ -1,8 +1,11 @@
 /*
- * msvcrt.dll -- The C runtime functions the W0 matrix names: what a Visual
- * C++ 7 program's start-up code calls (sol.exe's is the classic
- * WinMainCRTStartup over msvcrt.dll), its exit, and rand, srand and time.
- * Nothing else of the C runtime is here.
+ * msvcrt.dll -- The C runtime functions Solitaire and WordPad use: what a
+ * Visual C++ program's start-up code calls, ANSI (sol.exe's
+ * WinMainCRTStartup) and Unicode (wordpad.exe's wWinMainCRTStartup), its
+ * exit with the functions registered by _onexit and __dllonexit, rand, srand
+ * and time. The heap and mem functions are in memory.c, the wide strings in
+ * wstring.c, the arithmetic in math.c and the wide printf family in
+ * wprintf.c; the rest of what programs import is declared (declared.txt).
  */
 #include <windows.h>
 
@@ -22,8 +25,15 @@ __declspec(dllimport) u32 WINAPI SxwTime(void);
 
 /* The Pentium FDIV flaw: no processor this runs on has it. */
 int _adjust_fdiv = 0;
-/* The command line, in the ANSI code page, set when the DLL attaches. */
+/* The command line, in the ANSI code page and as UTF-16, set when the DLL
+ * attaches. */
 char *_acmdln = 0;
+WCHAR *_wcmdln = 0;
+
+/* What __wgetmainargs and __getmainargs last produced, for __p___argc and
+ * __p___wargv (MFC reads its command line through them). */
+static int g_argc;
+static WCHAR **g_wargv;
 
 /* Kept for what a later C runtime function may need to know: console or
  * GUI, and the program's _matherr. */
@@ -193,6 +203,149 @@ int __cdecl __getmainargs(int *argc, char ***argv, char ***envp, int expand_wild
     return 0;
 }
 
+/* The wide twin of split(): the same rules over UTF-16. */
+static int split_wide(const WCHAR *line, WCHAR **argv, WCHAR *out, u32 *chars) {
+    const WCHAR *s = line;
+    int argc = 0;
+    u32 n = 0;
+    if (argv != 0) {
+        argv[argc] = out + n;
+    }
+    if (*s == '"') {
+        ++s;
+        while (*s != 0 && *s != '"') {
+            if (out != 0) {
+                out[n] = *s;
+            }
+            ++n;
+            ++s;
+        }
+        if (*s == '"') {
+            ++s;
+        }
+    } else {
+        while (*s != 0 && *s != ' ' && *s != '\t') {
+            if (out != 0) {
+                out[n] = *s;
+            }
+            ++n;
+            ++s;
+        }
+    }
+    if (out != 0) {
+        out[n] = 0;
+    }
+    ++n;
+    ++argc;
+    for (;;) {
+        while (*s == ' ' || *s == '\t') {
+            ++s;
+        }
+        if (*s == 0) {
+            break;
+        }
+        if (argv != 0) {
+            argv[argc] = out + n;
+        }
+        int quoted = 0;
+        while (*s != 0 && (quoted || (*s != ' ' && *s != '\t'))) {
+            u32 slashes = 0;
+            while (*s == '\\') {
+                ++slashes;
+                ++s;
+            }
+            if (*s == '"') {
+                for (u32 i = 0; i < slashes / 2u; ++i) {
+                    if (out != 0) {
+                        out[n] = '\\';
+                    }
+                    ++n;
+                }
+                if ((slashes & 1u) != 0u) {
+                    if (out != 0) {
+                        out[n] = '"';
+                    }
+                    ++n;
+                    ++s;
+                } else if (quoted && s[1] == '"') {
+                    if (out != 0) {
+                        out[n] = '"';
+                    }
+                    ++n;
+                    s += 2;
+                } else {
+                    quoted = !quoted;
+                    ++s;
+                }
+            } else {
+                for (u32 i = 0; i < slashes; ++i) {
+                    if (out != 0) {
+                        out[n] = '\\';
+                    }
+                    ++n;
+                }
+                if (*s != 0 && (quoted || (*s != ' ' && *s != '\t'))) {
+                    if (out != 0) {
+                        out[n] = *s;
+                    }
+                    ++n;
+                    ++s;
+                }
+            }
+        }
+        if (out != 0) {
+            out[n] = 0;
+        }
+        ++n;
+        ++argc;
+    }
+    *chars = n;
+    return argc;
+}
+
+/* argc and argv from _wcmdln, as __getmainargs does from _acmdln. */
+int __cdecl __wgetmainargs(int *argc, WCHAR ***argv, WCHAR ***envp, int expand_wildcards,
+                           _startupinfo *startup) {
+    (void)expand_wildcards;
+    (void)startup;
+    static WCHAR *empty_environment[1] = {0};
+    static const WCHAR empty_line[1] = {0};
+    const WCHAR *line = _wcmdln != 0 ? _wcmdln : empty_line;
+    u32 chars = 0;
+    int count = split_wide(line, 0, 0, &chars);
+    WCHAR **vector = SxwHeapAllocate((u32)(count + 1) * sizeof(WCHAR *) + chars * sizeof(WCHAR), 0);
+    if (vector == 0) {
+        *argc = 0;
+        *argv = empty_environment;
+        *envp = empty_environment;
+        return -1;
+    }
+    WCHAR *strings = (WCHAR *)(vector + count + 1);
+    split_wide(line, vector, strings, &chars);
+    vector[count] = 0;
+    *argc = g_argc = count;
+    *argv = g_wargv = vector;
+    *envp = empty_environment;
+    return 0;
+}
+
+int *__cdecl __p___argc(void) {
+    return &g_argc;
+}
+
+WCHAR ***__cdecl __p___wargv(void) {
+    return &g_wargv;
+}
+
+/* Only the C locale: the answer to any query or request. Nothing here
+ * formats or classifies by locale. */
+char *__cdecl setlocale(int category, const char *locale) {
+    (void)category;
+    (void)locale;
+    static char c_locale[] = "C";
+    return c_locale;
+}
+
 /* ---- Floating point ------------------------------------------------------------ */
 
 #define MCW_EM 0x0008001fu
@@ -278,24 +431,93 @@ int __cdecl _XcptFilter(unsigned long code, void *pointers) {
 
 /* ---- Exit ----------------------------------------------------------------------- */
 /*
- * Nothing registers an exit function (atexit and _onexit are not in the
- * matrix) and there is no stdio to flush, so the cleanups have nothing to
- * run and exit is ExitProcess.
+ * The program's exit functions (_onexit; a C++ program's static destructors)
+ * run in reverse order on exit and _cexit; a DLL keeps its own table through
+ * __dllonexit and runs it from its DllMain. There is no stdio to flush.
  */
 
+void *__cdecl malloc(unsigned int size);
+void *__cdecl realloc(void *block, unsigned int size);
+
+static _PVFV *g_onexit_begin;
+static _PVFV *g_onexit_end;
+
+/* Appends function to the table [*begin, *end), growing it on the heap. */
+static int append_exit_function(_PVFV function, _PVFV **begin, _PVFV **end) {
+    u32 count = *begin != 0 ? (u32)(*end - *begin) : 0u;
+    _PVFV *table = realloc(*begin, (count + 1u) * sizeof(_PVFV));
+    if (table == 0) {
+        return 0;
+    }
+    table[count] = function;
+    *begin = table;
+    *end = table + count + 1u;
+    return 1;
+}
+
+_PVFV __cdecl _onexit(_PVFV function) {
+    return append_exit_function(function, &g_onexit_begin, &g_onexit_end) ? function : 0;
+}
+
+_PVFV __cdecl __dllonexit(_PVFV function, _PVFV **begin, _PVFV **end) {
+    return append_exit_function(function, begin, end) ? function : 0;
+}
+
+static void run_exit_functions(void) {
+    while (g_onexit_end != 0 && g_onexit_end > g_onexit_begin) {
+        _PVFV function = *--g_onexit_end;
+        if (function != 0) {
+            function();
+        }
+    }
+}
+
 void __cdecl _cexit(void) {
+    run_exit_functions();
 }
 
 void __cdecl _c_exit(void) {
 }
 
 __declspec(noreturn) void __cdecl exit(int status) {
+    run_exit_functions();
     ExitProcess((unsigned int)status);
 }
 
 __declspec(noreturn) void __cdecl _exit(int status) {
     ExitProcess((unsigned int)status);
 }
+
+/* ---- Abnormal termination --------------------------------------------------------- */
+
+__declspec(dllimport) u32 WINAPI SxwService(u32 service, const u32 *arguments);
+
+static __declspec(noreturn) void die(const char *message, unsigned int status) {
+    u32 n = 0;
+    while (message[n] != 0) {
+        ++n;
+    }
+    u32 arguments[2] = {(u32)message, n};
+    SxwService(SXW_SVC_DEBUG_OUTPUT, arguments);
+    ExitProcess(status);
+}
+
+/* "abnormal program termination", status 3, without the message box. */
+__declspec(noreturn) void __cdecl abort(void) {
+    die("msvcrt: abnormal program termination", 3);
+}
+
+/* R6025: a pure virtual function was called. */
+void __cdecl _purecall(void) {
+    die("msvcrt: R6025 pure virtual function call", 255);
+}
+
+/* std::terminate(), with no handler set: abort. */
+__asm__(".text\n.globl \"?terminate@@YAXXZ\"\n\"?terminate@@YAXXZ\":\n\tjmp _abort\n");
+
+/* type_info::~type_info(), __thiscall with no arguments. The undecorated
+ * name a type_info may cache is not kept here, so there is nothing to free. */
+__asm__(".text\n.globl \"??1type_info@@UAE@XZ\"\n\"??1type_info@@UAE@XZ\":\n\tret\n");
 
 /* ---- rand, srand, time ---------------------------------------------------------- */
 
@@ -334,6 +556,13 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
             _acmdln[i] = (char)sxw_wide_to_ansi(wide[i]);
         }
         _acmdln[n] = 0;
+        _wcmdln = SxwHeapAllocate(((u32)n + 1u) * sizeof(WCHAR), 0);
+        if (_wcmdln == 0) {
+            return FALSE;
+        }
+        for (int i = 0; i <= n; ++i) {
+            _wcmdln[i] = wide[i];
+        }
     }
     return TRUE;
 }

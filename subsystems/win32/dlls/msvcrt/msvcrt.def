@@ -1,11 +1,16 @@
 LIBRARY msvcrt.dll
 EXPORTS
-    _XcptFilter
+    ??1type_info@@UAE@XZ
+    ?terminate@@YAXXZ
+    __dllonexit
     __getmainargs
+    __p___argc
+    __p___wargv
     __p__commode
     __p__fmode
     __set_app_type
     __setusermatherr
+    __wgetmainargs
     _acmdln DATA
     _adjust_fdiv DATA
     _c_exit
@@ -13,8 +18,65 @@ EXPORTS
     _controlfp
     _except_handler3
     _exit
+    _expand
+    _ftol
     _initterm
+    _itow
+    _ltow
+    _msize
+    _onexit
+    _purecall
+    _snwprintf
+    _ultow
+    _vsnwprintf
+    _wcmdln DATA
+    _wcsdup
+    _wcsicmp
+    _wcslwr
+    _wcsnicmp
+    _wcsrev
+    _wcsupr
+    _wtoi
+    _wtol
+    _XcptFilter
+    abort
+    abs
+    calloc
+    ceil
     exit
+    fabs
+    floor
+    free
+    iswdigit
+    iswspace
+    labs
+    malloc
+    memcmp
+    memcpy
+    memmove
+    memset
+    modf
     rand
+    realloc
+    setlocale
     srand
+    strcmp
+    strcpy
+    swprintf
     time
+    vswprintf
+    wcschr
+    wcscmp
+    wcscoll
+    wcscpy
+    wcscspn
+    wcslen
+    wcsncmp
+    wcsncpy
+    wcspbrk
+    wcsrchr
+    wcsspn
+    wcsstr
+    wcstod
+    wcstol
+    wcstoul

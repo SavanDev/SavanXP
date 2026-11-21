@@ -1,2 +1,7 @@
 LIBRARY ole32.dll
 EXPORTS
+    CoRegisterMessageFilter
+    CoTaskMemAlloc
+    CoTaskMemFree
+    OleInitialize
+    OleUninitialize

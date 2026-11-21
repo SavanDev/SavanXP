@@ -1,6 +1,7 @@
 # Windows XP WordPad on SSW — the second Win32 profile
 
-> **Status: planned (2026-11-21); nothing implemented.** This is the plan of
+> **Status: planned (2026-11-21); WP1 complete (2026-11-21): the user's
+> WordPad loads and starts up to its first window.** This is the plan of
 > [W7](WIN32_SUBSYSTEM_ROADMAP.md#w7--later-profiles)'s first named profile.
 > Its inventory, the W0 record taken before any code, is
 > [WIN32_WORDPAD_PROFILE.md](../../userland/WIN32_WORDPAD_PROFILE.md); every
@@ -202,6 +203,43 @@ Size M.
 and frames to unwind runs alike on all three environments; with the user's
 files, a host test loads `wordpad.exe` and MFC, resolves every import, and
 runs MFC's initialization up to its first window call.
+
+**Done (2026-11-21).** Under `win32-harness` the user's `wordpad.exe`, with
+`mfc42u.dll` and `mfc42loc.dll`, loads with its 599 load-time imports
+resolved, runs MFC's and the C runtime's start-up and WordPad's own through
+`OleInitialize` and its registry settings, and shows its first window: its
+own message box saying it cannot load the RichEdit DLL, which is WP7's.
+`win32-wordpad-test` checks that much, skipped without the files.
+`wstartup.exe` writes byte-identical output with status 5 on Windows XP, in
+`win32-harness-test` and in `win32-hello` ([WIN32.md](../../userland/WIN32.md#wordpad)).
+
+What changed from the plan above, and why:
+
+- **Declared entry points** are generated from a table per DLL
+  (`declared.txt`, `dlls/declared.py`): 491 functions at first, each
+  reporting its first call on the debug output, which is how the start-up
+  was driven function by function. A function leaves the table when it is
+  written.
+- **More than the plan listed was on the path to the first window**, and
+  is written: moveable memory (WP4's), TLS and critical sections for one
+  thread, code pages, the locale (one: Spanish, Argentina), resources,
+  module paths (a new host service, ABI version 6), `GetSystemMetrics`,
+  registered clipboard formats, `GetObjectW`, and `ole32`'s initialization.
+  MFC's delay-loaded `CoRegisterMessageFilter` is one: a delay-loaded
+  function that is called must exist too.
+- **The fixture is C, not C++.** It starts as a Unicode program and
+  registers exit functions as a C++ program's static destructors are;
+  `operator new` comes from MFC, not `msvcrt.dll`, in this profile, and a
+  frame to unwind needs WP2's exception dispatch. Both are WP2's fixture.
+- **Windows XP corrected two guesses.** Its `msvcrt.dll` prints floating
+  point with 17 significant digits and zeros after them, and has no `ll`
+  length; its `GetModuleFileNameW` leaves the last error alone when it cuts
+  the path short. The heap now keeps the size asked for, which
+  `GlobalSize`, `LocalSize` and `_msize` answer exactly there.
+- **MFC's second thread is not on this path yet.** WordPad starts it right
+  after loading the RichEdit DLL and before its main window (the thread asks
+  for the default printer), so it is WP3's to meet once WP7's control
+  exists. What WordPad does when it cannot start the thread is not known.
 
 ### WP2 — exceptions in user mode
 

@@ -152,20 +152,26 @@ __declspec(dllexport) u32 __stdcall SxwTime(void) {
 
 /* ---- The process heap ------------------------------------------------------- */
 /*
- * First fit over arenas the host maps. Each block has an 8-byte header (its
- * total size and a tag); free blocks are kept in address order and merged
- * with a free neighbour. Payloads are 8-byte aligned, as Windows' heap gives
- * them.
+ * First fit over arenas the host maps. Each block has a 16-byte header: its
+ * total size, a tag, and the size the caller asked for, which is what
+ * HeapSize, LocalSize and _msize answer on Windows XP (10 for a request of
+ * 10). Free blocks are kept in address order and merged with a free
+ * neighbour. Payloads are 8-byte aligned, as Windows' heap gives them.
  */
 
 #define HEAP_ARENA 0x40000u
+#define HEAP_HEADER 16u
 #define HEAP_USED 0x5358a110u
 #define HEAP_FREE 0x5358f4eeu
 
 typedef struct heap_block {
     u32 size; /* the whole block, header included */
     u32 tag;
-    struct heap_block *next_free; /* free blocks only: overlaps the payload */
+    union {
+        u32 requested;                /* used blocks: the size asked for */
+        struct heap_block *next_free; /* free blocks */
+    } u;
+    u32 reserved;
 } heap_block;
 
 typedef struct heap_arena {
@@ -199,25 +205,25 @@ static void insert_free(heap_block *block) {
     heap_block *previous = 0;
     while (*link != 0 && *link < block) {
         previous = *link;
-        link = &(*link)->next_free;
+        link = &(*link)->u.next_free;
     }
     block->tag = HEAP_FREE;
-    block->next_free = *link;
+    block->u.next_free = *link;
     *link = block;
-    heap_block *next = block->next_free;
+    heap_block *next = block->u.next_free;
     if (next != 0 && (u32)block + block->size == (u32)next && arena_of((u32)next) == arena_of((u32)block)) {
         block->size += next->size;
-        block->next_free = next->next_free;
+        block->u.next_free = next->u.next_free;
     }
     if (previous != 0 && (u32)previous + previous->size == (u32)block &&
         arena_of((u32)previous) == arena_of((u32)block)) {
         previous->size += block->size;
-        previous->next_free = block->next_free;
+        previous->u.next_free = block->u.next_free;
     }
 }
 
 static int grow(u32 needed) {
-    u32 size = needed + 8u > HEAP_ARENA ? (needed + 8u + 0xffffu) & ~0xffffu : HEAP_ARENA;
+    u32 size = needed + HEAP_HEADER > HEAP_ARENA ? (needed + HEAP_HEADER + 0xffffu) & ~0xffffu : HEAP_ARENA;
     if (g_arena_count == sizeof(g_arenas) / sizeof(g_arenas[0])) {
         return 0;
     }
@@ -241,32 +247,33 @@ __declspec(dllexport) void *__stdcall SxwHeapAllocate(u32 size, u32 zero) {
     if (size > 0x7ff00000u) {
         return 0;
     }
-    u32 needed = ((size < 8u ? 8u : size) + 8u + 7u) & ~7u;
+    u32 needed = ((size < 8u ? 8u : size) + HEAP_HEADER + 7u) & ~7u;
     for (int attempt = 0; attempt < 2; ++attempt) {
         heap_block **link = &g_free;
         while (*link != 0) {
             heap_block *block = *link;
             if (block->size >= needed) {
-                if (block->size - needed >= 16u) {
+                if (block->size - needed >= HEAP_HEADER + 8u) {
                     heap_block *rest = (heap_block *)((u32)block + needed);
                     rest->size = block->size - needed;
                     rest->tag = HEAP_FREE;
-                    rest->next_free = block->next_free;
+                    rest->u.next_free = block->u.next_free;
                     *link = rest;
                     block->size = needed;
                 } else {
-                    *link = block->next_free;
+                    *link = block->u.next_free;
                 }
                 block->tag = HEAP_USED;
-                u8 *payload = (u8 *)block + 8;
+                block->u.requested = size;
+                u8 *payload = (u8 *)block + HEAP_HEADER;
                 if (zero) {
-                    for (u32 i = 0; i < block->size - 8u; ++i) {
+                    for (u32 i = 0; i < block->size - HEAP_HEADER; ++i) {
                         payload[i] = 0;
                     }
                 }
                 return payload;
             }
-            link = &block->next_free;
+            link = &block->u.next_free;
         }
         if (attempt == 0 && !grow(needed)) {
             return 0;
@@ -276,27 +283,46 @@ __declspec(dllexport) void *__stdcall SxwHeapAllocate(u32 size, u32 zero) {
 }
 
 /* Frees a block from SxwHeapAllocate. 0 when the pointer is not one. */
-__declspec(dllexport) int __stdcall SxwHeapFree(void *pointer) {
+/* The used block whose payload starts at pointer, or 0. */
+static heap_block *used_block(const void *pointer) {
     u32 address = (u32)pointer;
-    if (address < 8u || (address & 7u) != 0u || !in_arena(address - 8u)) {
+    if (address < HEAP_HEADER || (address & 7u) != 0u || !in_arena(address - HEAP_HEADER)) {
         return 0;
     }
-    heap_block *block = (heap_block *)(address - 8u);
-    if (block->tag != HEAP_USED) {
+    heap_block *block = (heap_block *)(address - HEAP_HEADER);
+    return block->tag == HEAP_USED ? block : 0;
+}
+
+__declspec(dllexport) int __stdcall SxwHeapFree(void *pointer) {
+    heap_block *block = used_block(pointer);
+    if (block == 0) {
         return 0;
     }
     insert_free(block);
     return 1;
 }
 
-/* The usable size of a block from SxwHeapAllocate, or 0. */
+/* 1 when pointer is a live block from SxwHeapAllocate. */
+__declspec(dllexport) int __stdcall SxwHeapIsBlock(const void *pointer) {
+    return used_block(pointer) != 0;
+}
+
+/* The size a block from SxwHeapAllocate was asked for, or 0. */
 __declspec(dllexport) u32 __stdcall SxwHeapSize(const void *pointer) {
-    u32 address = (u32)pointer;
-    if (address < 8u || (address & 7u) != 0u || !in_arena(address - 8u)) {
+    const heap_block *block = used_block(pointer);
+    return block != 0 ? block->u.requested : 0u;
+}
+
+/* Gives a block a new size without moving it: 1 when it fits in the space
+ * the block already has, 0 otherwise (and nothing changes). Bytes past the
+ * old size are left as they are. */
+__declspec(dllexport) int __stdcall SxwHeapResize(void *pointer, u32 size) {
+    heap_block *block = used_block(pointer);
+    if (block == 0 || size > block->size - HEAP_HEADER) {
         return 0;
     }
-    const heap_block *block = (const heap_block *)(address - 8u);
-    return block->tag == HEAP_USED ? block->size - 8u : 0u;
+    block->u.requested = size;
+    return 1;
 }
 
 /* ---- Process start --------------------------------------------------------- */

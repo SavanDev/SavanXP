@@ -3,6 +3,7 @@ EXPORTS
     RegCloseKey
     RegCreateKeyExW
     RegOpenKeyExA
+    RegOpenKeyExW
     RegQueryValueExA
     RegQueryValueExW
     RegSetValueExW

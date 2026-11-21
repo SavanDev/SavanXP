@@ -63,6 +63,93 @@ typedef unsigned int WPARAM;
 typedef long LPARAM;
 typedef long LRESULT;
 typedef WORD ATOM;
+typedef void *HGLOBAL;
+typedef void *HRSRC;
+typedef DWORD LCID;
+typedef LONG *LPLONG;
+
+typedef struct tagLOGFONTW {
+    LONG lfHeight;
+    LONG lfWidth;
+    LONG lfEscapement;
+    LONG lfOrientation;
+    LONG lfWeight;
+    BYTE lfItalic;
+    BYTE lfUnderline;
+    BYTE lfStrikeOut;
+    BYTE lfCharSet;
+    BYTE lfOutPrecision;
+    BYTE lfClipPrecision;
+    BYTE lfQuality;
+    BYTE lfPitchAndFamily;
+    WCHAR lfFaceName[32];
+} LOGFONTW;
+
+typedef struct _STARTUPINFOW {
+    DWORD cb;
+    LPWSTR lpReserved;
+    LPWSTR lpDesktop;
+    LPWSTR lpTitle;
+    DWORD dwX;
+    DWORD dwY;
+    DWORD dwXSize;
+    DWORD dwYSize;
+    DWORD dwXCountChars;
+    DWORD dwYCountChars;
+    DWORD dwFillAttribute;
+    DWORD dwFlags;
+    WORD wShowWindow;
+    WORD cbReserved2;
+    LPBYTE lpReserved2;
+    HANDLE hStdInput;
+    HANDLE hStdOutput;
+    HANDLE hStdError;
+} STARTUPINFOW, *LPSTARTUPINFOW;
+
+typedef struct _RTL_CRITICAL_SECTION {
+    void *DebugInfo;
+    LONG LockCount;      /* -1 when free */
+    LONG RecursionCount;
+    HANDLE OwningThread; /* the owner's thread id */
+    HANDLE LockSemaphore;
+    ULONG_PTR SpinCount;
+} CRITICAL_SECTION, *LPCRITICAL_SECTION;
+
+typedef struct _OSVERSIONINFOA {
+    DWORD dwOSVersionInfoSize;
+    DWORD dwMajorVersion;
+    DWORD dwMinorVersion;
+    DWORD dwBuildNumber;
+    DWORD dwPlatformId;
+    CHAR szCSDVersion[128];
+} OSVERSIONINFOA, *LPOSVERSIONINFOA;
+
+typedef struct _OSVERSIONINFOEXA {
+    DWORD dwOSVersionInfoSize;
+    DWORD dwMajorVersion;
+    DWORD dwMinorVersion;
+    DWORD dwBuildNumber;
+    DWORD dwPlatformId;
+    CHAR szCSDVersion[128];
+    WORD wServicePackMajor;
+    WORD wServicePackMinor;
+    WORD wSuiteMask;
+    BYTE wProductType;
+    BYTE wReserved;
+} OSVERSIONINFOEXA;
+
+typedef struct _FILETIME {
+    DWORD dwLowDateTime;
+    DWORD dwHighDateTime;
+} FILETIME, *LPFILETIME;
+
+typedef union _LARGE_INTEGER {
+    struct {
+        DWORD LowPart;
+        LONG HighPart;
+    } u;
+    long long QuadPart;
+} LARGE_INTEGER;
 typedef DWORD COLORREF;
 typedef struct HWND__ *HWND;
 typedef struct HDC__ *HDC;
@@ -257,6 +344,7 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
     DWORD Characteristics;
 } IMAGE_TLS_DIRECTORY32;
 
+#define MAX_PATH 260
 #define TRUE 1
 #define FALSE 0
 #define NULL ((void *)0)
@@ -275,6 +363,7 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 #define ERROR_MOD_NOT_FOUND 126u
 #define ERROR_PROC_NOT_FOUND 127u
 #define ERROR_MORE_DATA 234L
+#define ERROR_NO_MORE_ITEMS 259u
 
 #define LMEM_FIXED 0x0000u
 #define LMEM_MOVEABLE 0x0002u
@@ -282,6 +371,35 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 #define LMEM_NODISCARD 0x0020u
 #define LMEM_ZEROINIT 0x0040u
 #define LPTR (LMEM_FIXED | LMEM_ZEROINIT)
+#define LMEM_MODIFY 0x0080u
+#define LMEM_DISCARDABLE 0x0F00u
+#define LMEM_INVALID_HANDLE 0x8000u
+#define GMEM_FIXED 0x0000u
+#define GMEM_MOVEABLE 0x0002u
+#define GMEM_NOCOMPACT 0x0010u
+#define GMEM_NODISCARD 0x0020u
+#define GMEM_ZEROINIT 0x0040u
+#define GMEM_MODIFY 0x0080u
+#define GMEM_DISCARDABLE 0x0100u
+#define GMEM_NOT_BANKED 0x1000u
+#define GMEM_SHARE 0x2000u
+#define GMEM_DDESHARE 0x2000u
+#define GMEM_NOTIFY 0x4000u
+#define GMEM_INVALID_HANDLE 0x8000u
+#define GPTR (GMEM_FIXED | GMEM_ZEROINIT)
+#define GHND (GMEM_MOVEABLE | GMEM_ZEROINIT)
+#define TLS_OUT_OF_INDEXES 0xffffffffu
+#define ERROR_INSUFFICIENT_BUFFER 122u
+#define ERROR_NOT_LOCKED 158u
+#define ERROR_RESOURCE_DATA_NOT_FOUND 1812u
+#define ERROR_RESOURCE_TYPE_NOT_FOUND 1813u
+#define ERROR_RESOURCE_NAME_NOT_FOUND 1814u
+#define ERROR_NO_UNICODE_TRANSLATION 1113u
+#define CP_ACP 0u
+#define CP_OEMCP 1u
+#define CP_THREAD_ACP 3u
+#define CP_UTF8 65001u
+#define MB_ERR_INVALID_CHARS 0x08u
 
 #define STARTF_USESHOWWINDOW 0x00000001u
 #define SW_SHOWDEFAULT 10
@@ -734,6 +852,24 @@ SXW_KERNEL32_API int WINAPI MulDiv(int nNumber, int nNumerator, int nDenominator
 SXW_KERNEL32_API BOOL WINAPI WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite,
                                        LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped);
 SXW_KERNEL32_API __declspec(noreturn) void WINAPI ExitProcess(unsigned int uExitCode);
+SXW_KERNEL32_API DWORD WINAPI GetLastError(void);
+SXW_KERNEL32_API void WINAPI SetLastError(DWORD dwErrCode);
+SXW_KERNEL32_API HGLOBAL WINAPI GlobalAlloc(UINT uFlags, SIZE_T dwBytes);
+SXW_KERNEL32_API HGLOBAL WINAPI GlobalReAlloc(HGLOBAL hMem, SIZE_T dwBytes, UINT uFlags);
+SXW_KERNEL32_API LPVOID WINAPI GlobalLock(HGLOBAL hMem);
+SXW_KERNEL32_API BOOL WINAPI GlobalUnlock(HGLOBAL hMem);
+SXW_KERNEL32_API SIZE_T WINAPI GlobalSize(HGLOBAL hMem);
+SXW_KERNEL32_API UINT WINAPI GlobalFlags(HGLOBAL hMem);
+SXW_KERNEL32_API HGLOBAL WINAPI GlobalHandle(LPCVOID pMem);
+SXW_KERNEL32_API HGLOBAL WINAPI GlobalFree(HGLOBAL hMem);
+SXW_KERNEL32_API HLOCAL WINAPI LocalReAlloc(HLOCAL hMem, SIZE_T uBytes, UINT uFlags);
+SXW_KERNEL32_API LPVOID WINAPI LocalLock(HLOCAL hMem);
+SXW_KERNEL32_API BOOL WINAPI LocalUnlock(HLOCAL hMem);
+SXW_KERNEL32_API int WINAPI MultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr,
+                                                int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
+SXW_KERNEL32_API int WINAPI WideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr,
+                                                int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte,
+                                                LPCSTR lpDefaultChar, BOOL *lpUsedDefaultChar);
 
 
 #ifndef SXW_BUILDING_ADVAPI32

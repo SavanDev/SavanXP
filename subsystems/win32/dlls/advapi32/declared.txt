@@ -4,4 +4,3 @@
 # out of this table when it is written.
 
 RegDeleteKeyW      8  120
-RegOpenKeyExW     20  120

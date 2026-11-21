@@ -95,6 +95,7 @@ struct window {
     HFONT font;
 };
 
+#define MAX_WINDOWS 128
 extern window g_windows[];
 extern window *g_active;
 extern window *g_focus;

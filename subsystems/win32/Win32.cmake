@@ -13,6 +13,8 @@
 
 set(SAVANXP_WIN32_FIXTURES "$ENV{SAVANXP_WIN32_FIXTURES}" CACHE PATH
     "Folder holding the user's Windows XP sol.exe and cards.dll (optional)")
+set(SAVANXP_WIN32_WORDPAD "$ENV{SAVANXP_WIN32_WORDPAD}" CACHE PATH
+    "Folder holding the user's Windows XP wordpad.exe, with mfc42u.dll and mfc42loc.dll in system32/ (optional)")
 
 set(SAVANXP_WIN32_ROOT "${CMAKE_SOURCE_DIR}/subsystems/win32")
 
@@ -196,9 +198,15 @@ endforeach()
 sxw_image(NAME ntdll.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c900000
     SOURCES "${SXW_DLLS}/ntdll/ntdll.c" DEF "${SXW_DLLS}/ntdll/ntdll.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c800000
-    SOURCES "${SXW_DLLS}/kernel32/kernel32.c" ${SXW_kernel32_DECLARED} DEF "${SXW_kernel32_DEF}" LIBS ntdll)
+    SOURCES "${SXW_DLLS}/kernel32/kernel32.c" "${SXW_DLLS}/kernel32/memory.c" "${SXW_DLLS}/kernel32/system.c"
+            "${SXW_DLLS}/kernel32/strings.c" "${SXW_DLLS}/kernel32/locale.c" "${SXW_DLLS}/common/codepage.c"
+            "${SXW_DLLS}/common/resource.c"
+            ${SXW_kernel32_DECLARED}
+    DEF "${SXW_kernel32_DEF}" LIBS ntdll)
 sxw_image(NAME msvcrt.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77c10000 ENTRY DllMain
-    SOURCES "${SXW_DLLS}/msvcrt/msvcrt.c" "${SXW_DLLS}/common/codepage.c" ${SXW_msvcrt_DECLARED}
+    SOURCES "${SXW_DLLS}/msvcrt/msvcrt.c" "${SXW_DLLS}/msvcrt/memory.c" "${SXW_DLLS}/msvcrt/wstring.c"
+            "${SXW_DLLS}/msvcrt/math.c" "${SXW_DLLS}/msvcrt/wprintf.c" "${SXW_DLLS}/common/wformat.c"
+            "${SXW_DLLS}/common/codepage.c" ${SXW_msvcrt_DECLARED}
     DEF "${SXW_msvcrt_DEF}" LIBS kernel32 ntdll)
 sxw_image(NAME advapi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77dd0000
     SOURCES "${SXW_DLLS}/advapi32/advapi32.c" "${SXW_DLLS}/common/codepage.c" ${SXW_advapi32_DECLARED}
@@ -210,21 +218,21 @@ sxw_image(NAME gdi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f10000
     DEF "${SXW_gdi32_DEF}" LIBS ntdll)
 sxw_image(NAME user32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7e410000
     SOURCES "${SXW_DLLS}/user32/user32.c" "${SXW_DLLS}/user32/menu.c" "${SXW_DLLS}/user32/dialog.c"
-            "${SXW_DLLS}/user32/controls.c" "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
-            "${SXW_DLLS}/common/codepage.c" ${SXW_user32_DECLARED}
+            "${SXW_DLLS}/user32/controls.c" "${SXW_DLLS}/user32/system.c" "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
+            "${SXW_DLLS}/common/codepage.c" "${SXW_DLLS}/common/resource.c" ${SXW_user32_DECLARED}
     DEF "${SXW_user32_DEF}" LIBS gdi32 kernel32 ntdll)
 sxw_image(NAME shell32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c9c0000
     SOURCES "${SXW_DLLS}/shell32/shell32.c" ${SXW_shell32_DECLARED} DEF "${SXW_shell32_DEF}" LIBS user32 ntdll)
 sxw_image(NAME comctl32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x5d090000
     SOURCES "${SXW_DLLS}/comctl32/comctl32.c" DEF "${SXW_DLLS}/comctl32/comctl32.def")
-# Only declared entry points so far: what WordPad imports from them at load
-# time (docs/roadmaps/open/WIN32_WORDPAD_ROADMAP.md, WP1).
+# What WordPad's start-up needs from them, and the rest of its load-time
+# imports declared (docs/roadmaps/open/WIN32_WORDPAD_ROADMAP.md, WP1).
 sxw_image(NAME ole32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x774e0000
-    SOURCES ${SXW_ole32_DECLARED} DEF "${SXW_ole32_DEF}" LIBS ntdll)
+    SOURCES "${SXW_DLLS}/ole32/ole32.c" ${SXW_ole32_DECLARED} DEF "${SXW_ole32_DEF}" LIBS ntdll)
 sxw_image(NAME comdlg32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x763b0000
     SOURCES ${SXW_comdlg32_DECLARED} DEF "${SXW_comdlg32_DEF}" LIBS ntdll)
 sxw_image(NAME shlwapi.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f60000
-    SOURCES ${SXW_shlwapi_DECLARED} DEF "${SXW_shlwapi_DEF}" LIBS ntdll)
+    SOURCES "${SXW_DLLS}/shlwapi/shlwapi.c" ${SXW_shlwapi_DECLARED} DEF "${SXW_shlwapi_DEF}" LIBS ntdll)
 
 # Fixtures: hello.exe; initorder.exe with alpha.dll and beta.dll, which
 # share a base; missingdll.exe and missingsym.exe, whose loads must fail.
@@ -256,6 +264,9 @@ add_custom_command(OUTPUT ${SXW_RESOURCE_IMAGE_FILES}
 sxw_image(NAME resource.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/resource/resource.c" LIBS user32 gdi32 kernel32
     RC "${SXW_FX}/resource/resource.rc" RC_INCLUDE "${SXW_RESOURCE_IMAGES}" RC_DEPENDS ${SXW_RESOURCE_IMAGE_FILES})
+sxw_image(NAME wstartup.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/wstartup/wstartup.c" LIBS msvcrt kernel32 user32 gdi32 advapi32 shlwapi ole32
+    RC "${SXW_FX}/wstartup/wstartup.rc" RC_INCLUDE "${SXW_FX}/wstartup")
 sxw_image(NAME dialog.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/dialog/dialog.c" LIBS user32 gdi32 kernel32 shell32 comctl32
     RC "${SXW_FX}/dialog/dialog.rc" RC_INCLUDE "${SXW_FX}/dialog")
@@ -298,7 +309,7 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SXW_FIXTURES}/alpha.dll" "${SXW_FIXTURES}/beta.dll"
                 "${SXW_FIXTURES}/missingdll.exe" "${SXW_FIXTURES}/missingsym.exe"
                 "${SXW_FIXTURES}/startup.exe" "${SXW_FIXTURES}/window.exe" "${SXW_FIXTURES}/cards.exe"
-                "${SXW_FIXTURES}/resource.exe" "${SXW_FIXTURES}/dialog.exe"
+                "${SXW_FIXTURES}/resource.exe" "${SXW_FIXTURES}/dialog.exe" "${SXW_FIXTURES}/wstartup.exe"
                 "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${SXW_FX}/expected" "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/expected")
@@ -344,6 +355,14 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
                 --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}"
                 --expected "${SXW_FX}/expected" --solitaire "${SAVANXP_WIN32_FIXTURES}")
     set_tests_properties(win32-solitaire-test PROPERTIES SKIP_RETURN_CODE 77)
+    # The user's own WordPad and MFC, started up to their first window;
+    # skipped without them.
+    add_test(NAME win32-wordpad-test
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/win32_harness_test.py"
+                --harness "$<TARGET_FILE:savanxp-win32-harness>"
+                --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}"
+                --expected "${SXW_FX}/expected" --wordpad "${SAVANXP_WIN32_WORDPAD}")
+    set_tests_properties(win32-wordpad-test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # The shell's readers of a .exe's icon and version strings

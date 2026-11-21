@@ -239,7 +239,15 @@ static int load_module(sxw_process *p, const char *name, const char *requester, 
 
     const uint8_t *data;
     size_t size;
-    if (p->platform.open_image(p->platform.context, name, &data, &size, &m->handle) != 0) {
+    /* A Windows path (LoadLibrary("C:\\WINDOWS\\system32\\X.DLL")) is looked
+     * up by its file name, in the usual order. */
+    int windows_path = 0;
+    for (const char *c = name; *c != 0; ++c) {
+        windows_path |= *c == '\\' || *c == ':';
+    }
+    m->path[0] = 0;
+    if (p->platform.open_image(p->platform.context, windows_path ? file_name : name, &data, &size,
+                               &m->handle, m->path, sizeof(m->path)) != 0) {
         fail_status(p, SXW_STATUS_DLL_NOT_FOUND);
         if (requester != 0) {
             d_put(p, requester);
@@ -589,6 +597,18 @@ static void put_windows_path(const sxw_platform *platform, uint32_t buffer, uint
     }
     put_utf16(buffer, at, limit, drive, 0);
     put_utf16(buffer, at, limit, rest, 1);
+}
+
+uint32_t sxw_module_path(sxw_process *p, uint32_t base, uint32_t buffer, uint32_t capacity) {
+    for (uint32_t i = 0; i < p->module_count; ++i) {
+        if (p->modules[i].base == base && capacity != 0u) {
+            uint32_t at = 0;
+            put_windows_path(&p->platform, buffer, &at, capacity - 1u, p->modules[i].path);
+            put16(buffer + 2u * at, 0);
+            return at;
+        }
+    }
+    return 0;
 }
 
 /* RTL_USER_PROCESS_PARAMETERS in the PEB's page: the image path, and the

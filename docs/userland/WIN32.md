@@ -6,7 +6,9 @@ the subsystem's name. Its source tree keeps the API's name
 (`subsystems/win32/`), its code the `sxw_` prefix, and its host program is
 `winhost`.
 
-> **Status: W6 complete (2026-11-13).** This document describes what exists
+> **Status: W6 complete (2026-11-13); WordPad's WP1 complete (2026-11-21):
+> the user's Windows XP WordPad and its MFC load and start up to their first
+> window ([WordPad](#wordpad)).** This document describes what exists
 > under `subsystems/win32/`. The plan, the phases and the reasons behind them
 > are in the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the
 > API surface of the first profile is in
@@ -203,8 +205,9 @@ versioned with `SXW_ABI_VERSION`. It is not the NT system call table.
 - **Services.** `ntdll!SxwService(number, arguments)` calls through that
   address with a flat array of 32-bit values. The host checks every guest
   address against the regions it mapped and never calls guest code. Version
-  4 has twenty-one: version, exit, standard handle, write, debug output; the
-  clock; a new region for the heap; find, load and resolve a module; open,
+  6 has twenty-three: version, exit, standard handle, write, debug output; the
+  clock; a new region for the heap; find, load and resolve a module, and a
+  module's Windows path (`GetModuleFileName`); open,
   close, query and set a registry key or value; and for windows, the
   millisecond clock, the screen's size, create, destroy, title and present
   a top-level window, and wait for an event (pointer, key, resize, close).
@@ -250,15 +253,17 @@ in Western European languages.
 
 | DLL | Exports |
 | --- | --- |
-| `ntdll.dll` | `RtlExitUserProcess`; private: `SxwProcessStart`, `SxwService`, `SxwLoadLibrary`, `SxwGetProcAddress`, `SxwFindModule`, `SxwTime`, `SxwHeapAllocate`, `SxwHeapFree`, `SxwHeapSize` |
-| `kernel32.dll` | `ExitProcess`, `GetStdHandle`, `WriteFile`; the matrix's nine: `GetModuleHandleA`, `GetStartupInfoA`, `GetCommandLineW`, `LocalAlloc`, `LocalFree`, `MulDiv`, `lstrlenW`, `LoadLibraryA`, `GetProcAddress` |
-| `msvcrt.dll` | The matrix's eighteen: `__set_app_type`, `__p__fmode`, `__p__commode`, `_adjust_fdiv`, `__setusermatherr`, `_initterm`, `__getmainargs`, `_acmdln`, `_controlfp`, `_except_handler3`, `_XcptFilter`, `exit`, `_exit`, `_cexit`, `_c_exit`, `rand`, `srand`, `time` |
-| `advapi32.dll` | The matrix's six: `RegCreateKeyExW`, `RegOpenKeyExA`, `RegQueryValueExW`, `RegQueryValueExA`, `RegSetValueExW`, `RegCloseKey` |
-| `gdi32.dll` | The matrix's twenty-seven: `GetStockObject`, `SelectObject`, `DeleteObject`, `CreateSolidBrush`, `SetBrushOrgEx`, `PatBlt`, `SetROP2`, `MoveToEx`, `LineTo`, `LineDDA`, `SetPixel`, `GetPixel`, `PtVisible`, `GetDeviceCaps`, `CreateFontW`, `TextOutW`, `SetTextColor`, `SetBkColor`, `GetTextExtentPoint32W`, `GetTextMetricsW`, `CreateCompatibleDC`, `DeleteDC`, `CreateCompatibleBitmap`, `BitBlt`, `StretchBlt`, `GetObjectA`, `GetDCOrgEx`; private: `SxwCreateSurfaceDC`, `SxwSurfaceOfDC`, `SxwCreateBitmapFromDIB`, `SxwSetBkMode` |
-| `user32.dll` | The matrix's sixty-two: windows and messages (classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor`), resources (`LoadBitmapA`, `LoadStringW`, `LoadStringA`, `LoadIconW`, `LoadCursorW`, `LoadImageW`, `LoadAcceleratorsW`, `TranslateAcceleratorW`), menus (`GetMenu`, `EnableMenuItem`), dialogs (`DialogBoxParamW`, `EndDialog`, `GetDlgItem`, `CheckDlgButton`, `IsDlgButtonChecked`, `CheckRadioButton`, `MessageBoxW`) and `WinHelpW`; the full list is `dlls/user32/user32.def`. Private: `SxwDialogBoxIndirectParamW` |
+| `ntdll.dll` | `RtlExitUserProcess`; private: `SxwProcessStart`, `SxwService`, `SxwLoadLibrary`, `SxwGetProcAddress`, `SxwFindModule`, `SxwTime`, `SxwHeapAllocate`, `SxwHeapFree`, `SxwHeapSize`, `SxwHeapResize`, `SxwHeapIsBlock` |
+| `kernel32.dll` | `ExitProcess`, `GetStdHandle`, `WriteFile`; Solitaire's nine (`GetModuleHandleA`, `GetStartupInfoA`, `GetCommandLineW`, `LocalAlloc`, `LocalFree`, `MulDiv`, `lstrlenW`, `LoadLibraryA`, `GetProcAddress`); and for WordPad's start-up: the last error, the version (`GetVersion`, `GetVersionExA`, `GetProcessVersion`), `SetErrorMode`, the current process and thread, `GetStartupInfoW`, the clocks (`GetTickCount`, `GetSystemTimeAsFileTime`, `QueryPerformanceCounter` and `Frequency`), TLS, critical sections, the three `Interlocked` functions, global and local memory with moveable blocks, the `lstr` family, `MultiByteToWideChar`, `WideCharToMultiByte`, modules (`GetModuleHandleW`, `LoadLibraryW`, `LoadLibraryExA` and `W`, `FreeLibrary`, `DisableThreadLibraryCalls`, `GetModuleFileNameW` and `A`, `GetSystemDirectoryA` and `W`), resources (`FindResourceW`, `FindResourceExW`, `LoadResource`, `LockResource`, `SizeofResource`, `FreeResource`) and the locale (`GetUserDefaultLCID`, `GetSystemDefaultLCID`, `GetThreadLocale`, `GetLocaleInfoW`); the full list is `dlls/kernel32/kernel32.def` |
+| `msvcrt.dll` | Solitaire's eighteen; the Unicode start-up (`__wgetmainargs`, `_wcmdln`, `__p___argc`, `__p___wargv`), `_onexit`, `__dllonexit`, `setlocale`, `abort`, `_purecall`, `std::terminate`, `type_info`'s destructor; the heap (`malloc`, `calloc`, `realloc`, `free`, `_msize`, `_expand`) and the `mem` functions; wide strings, `wcstol`, `wcstoul`, `wcstod`, `_wtoi`, `_wtol`, `_itow`, `_ltow`, `_ultow`, `iswdigit`, `iswspace`, `strcmp`, `strcpy`; `abs`, `labs`, `fabs`, `floor`, `ceil`, `modf`, `_ftol`; `_vsnwprintf`, `_snwprintf`, `swprintf`, `vswprintf`; the full list is `dlls/msvcrt/msvcrt.def` |
+| `advapi32.dll` | Solitaire's six (`RegCreateKeyExW`, `RegOpenKeyExA`, `RegQueryValueExW`, `RegQueryValueExA`, `RegSetValueExW`, `RegCloseKey`) and `RegOpenKeyExW` |
+| `gdi32.dll` | The matrix's twenty-seven: `GetStockObject`, `SelectObject`, `DeleteObject`, `CreateSolidBrush`, `SetBrushOrgEx`, `PatBlt`, `SetROP2`, `MoveToEx`, `LineTo`, `LineDDA`, `SetPixel`, `GetPixel`, `PtVisible`, `GetDeviceCaps`, `CreateFontW`, `TextOutW`, `SetTextColor`, `SetBkColor`, `GetTextExtentPoint32W`, `GetTextMetricsW`, `CreateCompatibleDC`, `DeleteDC`, `CreateCompatibleBitmap`, `BitBlt`, `StretchBlt`, `GetObjectA`, `GetDCOrgEx`; for WordPad, `GetObjectW` and `CreateFontIndirectW`; private: `SxwCreateSurfaceDC`, `SxwSurfaceOfDC`, `SxwCreateBitmapFromDIB`, `SxwSetBkMode` |
+| `user32.dll` | The matrix's sixty-two: windows and messages (classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor`), resources (`LoadBitmapA`, `LoadStringW`, `LoadStringA`, `LoadIconW`, `LoadCursorW`, `LoadImageW`, `LoadAcceleratorsW`, `TranslateAcceleratorW`), menus (`GetMenu`, `EnableMenuItem`), dialogs (`DialogBoxParamW`, `EndDialog`, `GetDlgItem`, `CheckDlgButton`, `IsDlgButtonChecked`, `CheckRadioButton`, `MessageBoxW`) and `WinHelpW`; for WordPad, `GetSystemMetrics`, `GetSysColorBrush`, `RegisterClipboardFormatW`, `FindWindowW`, `GetActiveWindow`, `GetCursorPos` and the rest of the rectangle helpers; the full list is `dlls/user32/user32.def`. Private: `SxwDialogBoxIndirectParamW` |
 | `shell32.dll` | `ShellAboutW` |
 | `comctl32.dll` | `InitCommonControlsEx`, which registers nothing: Solitaire uses no common control |
-| `ole32.dll`, `comdlg32.dll`, `shlwapi.dll` | Declared entry points only (below) |
+| `ole32.dll` | `OleInitialize`, `OleUninitialize`, `CoRegisterMessageFilter`, `CoTaskMemAlloc`, `CoTaskMemFree`: the minimum WordPad and MFC need ([WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#ole-is-the-minimum-wordpad-and-mfc-need)) |
+| `shlwapi.dll` | `PathFindFileNameW` |
+| `comdlg32.dll` | Declared entry points only (below) |
 
 The table lists what is written. Each DLL also exports the entry points of
 its `declared.txt`, below.
@@ -300,20 +305,83 @@ debug output says which of those a run reached.
 - **Exceptions.** `_except_handler3` and `_XcptFilter` answer "continue the
   search". Nothing dispatches an exception to a frame before the S3 slice: a
   fault ends the process in the kernel first.
-- **Exit.** No exit function can be registered (`atexit` is not in the
-  matrix) and there is no stdio, so `_cexit` and `_c_exit` have nothing to run
-  and `exit` and `_exit` are `ExitProcess`.
+- **The Unicode start-up.** `_wcmdln` is the command line as UTF-16, made
+  with `_acmdln`; `__wgetmainargs` splits it by the same rules as
+  `__getmainargs` and keeps argc and argv for `__p___argc` and `__p___wargv`,
+  which MFC reads.
+- **Exit.** `_onexit` registers functions (a C++ program's static
+  destructors among them) that `exit` and `_cexit` run last first;
+  `__dllonexit` grows a DLL's own table, which the DLL runs itself. `_exit`
+  and `_c_exit` run nothing. There is no stdio to flush. `abort` ends the
+  process with status 3 and `_purecall` with 255, each with a line on the
+  debug output instead of Windows' message box.
+- **The C locale only.** `setlocale` answers `"C"` to any query or request.
+  The case-insensitive wide functions fold ASCII letters alone, as
+  `msvcrt.dll` does in that locale (`L"Ñ"` and `L"ñ"` differ).
+- **The wide printf family** (`dlls/common/wformat.c`, shared with
+  `user32`) is `msvcrt.dll`'s, as Windows XP showed it to `wstartup.exe`:
+  floating point keeps 17 significant digits and writes zeros after them
+  (1e300 with `%.0f` ends in zeros), rounds half up on the decimal digits of
+  the exact value (2.675 at two decimals is 2.67), prints a zero with no
+  sign, and gives three-digit exponents; `ll` is `l`, the argument 32 bits,
+  as `msvcrt.dll` of Windows XP reads it (`I64` is the 64-bit length);
+  `_vsnwprintf` returns -1 and writes no terminator when the result does not
+  fit.
 - **`rand` and `srand`** are Microsoft's generator, `x * 214013 + 2531011`,
   bits 16 to 30: a seed deals the same cards here as on Windows. **`time`**
   returns a 32-bit `time_t` from the host's clock.
-- **`LocalAlloc`** accepts fixed blocks (`LMEM_FIXED`, `LMEM_ZEROINIT`,
-  `LPTR`) and refuses `LMEM_MOVEABLE` with `ERROR_INVALID_PARAMETER`, rather
-  than hand out a fixed block as if it were moveable. The heap behind it is
-  in `ntdll`: first fit over 256 KiB arenas the host maps, 8-byte aligned
-  blocks, free neighbours merged when they are in the same arena (two arenas
-  the host maps side by side are still two regions, and a block across them
-  would fail the host's range checks). `LocalFree` of a pointer that is not a live
-  block fails with `ERROR_INVALID_HANDLE`.
+- **Global and local memory** (`dlls/kernel32/memory.c`) are one heap, as
+  on Win32. A fixed block's handle is its address. A moveable block's handle
+  is the address of an entry in a table of 8,192 whose first word is the
+  block's address, as on Windows (`*(void **)handle` is the data); the block
+  carries its handle in an 8-byte header, so `GlobalHandle` finds it from the
+  data. `GlobalLock` counts locks, `GlobalFlags` reports them and
+  `GMEM_DISCARDED`, `GlobalReAlloc` moves a moveable block and keeps its
+  handle, a size of 0 discards it, and a fixed block grows in place only
+  within the space it has unless `GMEM_MOVEABLE` lets it move. `LocalFree`
+  of a pointer that is not a live block fails with `ERROR_INVALID_HANDLE`.
+  The heap behind them is `ntdll`'s: first fit over 256 KiB arenas the host
+  maps, 8-byte aligned blocks with a 16-byte header that keeps the size asked
+  for (what `GlobalSize`, `LocalSize` and `_msize` answer, 10 for a request of
+  10, as on Windows XP), free neighbours merged when they are in the same
+  arena (two arenas the host maps side by side are still two regions, and a
+  block across them would fail the host's range checks).
+- **One thread.** Thread-local storage has Windows XP's 64 slots in the TEB
+  (`TEB + 0xE10`). A critical section counts its owner's recursion and keeps
+  Windows XP's fields (`LockCount` -1 when free); nothing waits on one,
+  since nothing else runs. Threads come with WP3 of
+  [WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md).
+- **The version** is Windows XP Professional SP3: `GetVersion` is
+  `0x0A280105`, `GetVersionExA` 5.1.2600 "Service Pack 3".
+- **Strings and code pages.** The ANSI and OEM code pages are both
+  Windows-1252 (Windows XP in Spanish has 850 for OEM, which only console
+  programs see); UTF-8 converts exactly. `lstrcmp` and `lstrcmpi` compare by
+  code unit, `lstrcmpi` folding ASCII and Latin-1, where Windows uses the
+  locale's collation ("a" sorts before "B" there, after it here).
+- **The locale** is one, Spanish (Argentina), LCID `0x2C0A`, the locale of
+  the Windows XP the profiles were taken from: SavanXP has no regional
+  setting yet. `GetLocaleInfoW` knows only the values a program has asked
+  for (the language, the code pages, metric measurement, the decimal and
+  thousands separators); any other is reported once on the debug output and
+  refused with `ERROR_INVALID_FLAGS`.
+- **Modules.** `GetModuleFileNameW` asks the host for the module's path, so
+  it is `C:\...` under the guest's drive and `Z:\...` anywhere else; cut
+  short, it is not terminated and the last error is left alone, as on
+  Windows XP. `LoadLibrary` of a Windows path (MFC loads
+  `C:\WINDOWS\system32\MFC42LOC.DLL`) looks the file name up in the usual
+  order. `LoadLibraryEx`'s flags are not honoured: a DLL asked for as a data
+  file is loaded as a module. `FreeLibrary` succeeds and unloads nothing.
+- **Resources** are found by `dlls/common/resource.c`, shared with `user32`:
+  ids, names in any case, `"#123"` as an id, and a language (the first when
+  the one asked for is not there). An `HRSRC` is the address of the
+  resource's data entry, and the data never moves.
+- **`GetObjectW`** answers a font's `LOGFONTW` as it was made. Every stock
+  font is the System font here, so `DEFAULT_GUI_FONT` answers System's, not
+  Windows XP's MS Shell Dlg at -11 (WP6 brings the fonts).
+- **`RegisterClipboardFormatW`** shares `RegisterWindowMessageW`'s table, as
+  Windows' atom table: the same name gives the same number from either.
+- **`GetSystemMetrics`** answers Windows XP's classic style at 96 dpi, and the
+  screen's size from the host.
 - **`MulDiv`** rounds half away from zero over a 64-bit product and answers
   -1 for a zero divisor or a result that does not fit, as Windows XP did for
   every case in `startup.exe`.
@@ -633,6 +701,7 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `startup.exe` | It starts the way `sol.exe` does: the same runtime imports, an SEH frame at `fs:[0]` with `_except_handler3`, C and C++ initializers through `_initterm`, `__getmainargs`, the tail of `_acmdln`, a `WinMain`. Then every non-GUI function of the matrix, failure paths included: `rand` after two seeds, `MulDiv`'s rounding and overflow, a missing module and procedure, `beta.dll` loaded at run time and found by name and ordinal, 115 `LPTR` blocks, and the registry (a counter, `ERROR_MORE_DATA`, a size query, an ANSI read, the value name `Atrás`, a missing value and key) | Run twice as `startup.exe alpha "two words" 3`: `expected/startup-1.out` then `startup-2.out`, where the counter reads back the first run's 1 as 2; status 5 |
 | `window.exe` | A top-level window with a child, painted with the matrix's drawing calls (`PatBlt` with `PATCOPY`, `BLACKNESS` and `DSTINVERT`, `FrameRect`, `InvertRect`, lines in every octant under `R2_COPYPEN` and `R2_NOT`, `SetPixel`, `TextOutW`, a bold `CreateFontW`, `DrawTextW`), two chained timers (one with a timer procedure), and its input script: clicks, a double click, a right click, a click on the child, a captured drag, keys with Shift, an invalidated rectangle, and the frame's close. It writes the messages it gets (the list it keeps is in `logged()`) and, on the key P, its client area outside the text box as runs of colour read back with `GetPixel` | `expected/window.out`, status 3 |
 | `cards.exe` | Loads the user's own `cards.dll` from its folder with `LoadLibraryA` and draws, with `cdtInit`, `cdtDrawExt` and `cdtTerm`, the 52 faces and 12 backs at 71x96 on Solitaire's green, the other modes (inverted, the empty pile's marks, X, O) on a few cards, and the 12 backs at 33x62 as the Deck dialog does. It writes a CRC-32 of each drawing's pixels read back with `GetPixel`, or, with the argument `pixels`, the pixels themselves | `expected/cards.out`, status 0. The pixel listing describes Microsoft's art and is kept with the user's files, never here |
+| `wstartup.exe` | It starts as `wordpad.exe` does, a Unicode program over `msvcrt.dll` (`__wgetmainargs`, `_wcmdln`, `_onexit`), then checks what WordPad's and MFC's start-up need, failure paths included: moveable and fixed global memory, local memory, the C heap, TLS, critical sections, the interlocked functions, the version, `lstr` functions, code pages (1252 and UTF-8, a default character), the wide C strings, number conversions both ways, `floor`, `ceil` and `modf`, the wide printf family (integers, strings, floating point with its edges, lengths, truncation), module paths cut short, resources by id, `"#100"` and name, rectangles, registered clipboard formats, a font's `LOGFONTW`, the registry, `OleInitialize` twice and `__dllonexit`. It prints no path, handle, TLS index, locale or screen size | Run as `wstartup.exe alpha "two words" 3`: `expected/wstartup.out`, status 5 |
 | `resource.exe` | Its own resources (`resource.rc`): strings, bitmaps in both header formats at 1, 4 and 24 bits, an icon, a cursor and an accelerator table. It loads them as `sol.exe` does, then copies, converts and stretches the bitmaps (grown by 2, grown to odd sizes, shrunk), and drives the accelerators with posted keys | `expected/resource.out`, status 0 |
 | `dialog.exe` | A menu of two popups with separators and an accelerator shown after a tab, an accelerator table, and two dialogs built from the same resource types and styles as `sol.exe`'s (`dialog.rc`): one of owner-drawn buttons with a default and a cancel button, like Deck, and one of group boxes, radio buttons the program checks itself, automatic check boxes and static text left and right, like Options; then `MessageBoxW`, `ShellAboutW` and `InitCommonControlsEx`. Its input script uses the menus by pointer and by keyboard alone, a grayed item, both dialogs by pointer and by keyboard (Tab, arrows, Space, mnemonics, Enter, Escape), an accelerator for a menu command and one for a command no menu has. It writes the messages its procedures get (the list is in `logged()`), where each control is, the buttons' states, and pixels of the controls outside their text | `expected/dialog.out`, status 5 |
 
@@ -679,6 +748,7 @@ these files built with Clang and lld 23.1.4:
 | `cards.exe` | `940f7be09e9f614497ef2b889bebab73233dccdbf8c37b9d68e190c1e60cbcca` |
 | `resource.exe` | `bf9ca037356201d43996cf64670e301c4e63699ec8902f5b753d146ab0404c43` |
 | `dialog.exe` | `2378b6b12d0b486e7cf59fffca46ce2ef137f909905824dec91d5e9fe57836e8` |
+| `wstartup.exe` | `af71162775ebce60f5e4d270ef63586e51f75e027c9ada29c63061a78771b5b9` (2026-11-21) |
 
 A different compiler version may change the bytes, not the behaviour; when
 a fixture changes, it is run on Windows XP again and this table follows. The
@@ -842,6 +912,25 @@ ring) and the region of its pixel buffer when it is larger than a heap
 arena; an open dialog or menu adds the view of its surface. Solitaire's ten
 images need about 50.
 
+## WordPad
+
+The second profile ([WIN32_WORDPAD_PROFILE.md](WIN32_WORDPAD_PROFILE.md),
+planned in [WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md)).
+After WP1 the user's `wordpad.exe`, with their `mfc42u.dll` and
+`mfc42loc.dll` in the system folder, loads with every import resolved (599
+at load time, most of them [declared](#declared-entry-points)), runs MFC's
+initialization and the C runtime's Unicode start-up, and runs WordPad's own
+start-up through OLE's initialization and its settings in the registry. It
+stops where the plan expects: WordPad cannot load `MSFTEDIT.DLL`, the
+RichEdit control of WP7, and says so in its own message box ("No se puede
+cargar la DLL del control RichEdit..."), its first window. Closing it takes
+the path of a C++ exception, which is WP2.
+
+What the run reaches and is only declared is on the debug output; at this
+point `SetWindowsHookExW` (MFC's message-filter hook, WP5) and
+`GetFileAttributesW` (WordPad looking for its Word converters next to it,
+which it then does without).
+
 ## Solitaire
 
 The first profile's application: the user's own Windows XP `sol.exe` and
@@ -946,6 +1035,13 @@ menus and dialogs as `windowd` owned windows, its messages against Windows
 XP's, and the menu and the Settings dialog on the screen against their
 golden images. When an output differs, `win32test` logs the first line that
 does, both ways.
+
+`win32-wordpad-test` starts the user's `wordpad.exe` through the harness,
+with `mfc42u.dll` and `mfc42loc.dll` from `SAVANXP_WIN32_WORDPAD/system32`
+beside the subsystem's DLLs, and checks that every import resolves, nothing
+faults, and the program waits for input with a window up, which it dumps and
+does not compare: the window shows Microsoft's text. Without the files it is
+reported as skipped.
 
 `win32-cards-test` runs `cards.exe` through the harness with the user's
 `cards.dll`, from the folder named by `SAVANXP_WIN32_FIXTURES`, copied next to

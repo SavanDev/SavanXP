@@ -3,6 +3,7 @@ EXPORTS
     BitBlt
     CreateCompatibleBitmap
     CreateCompatibleDC
+    CreateFontIndirectW
     CreateFontW
     CreateSolidBrush
     DeleteDC
@@ -10,6 +11,7 @@ EXPORTS
     GetDCOrgEx
     GetDeviceCaps
     GetObjectA
+    GetObjectW
     GetPixel
     GetStockObject
     GetTextExtentPoint32W
@@ -26,8 +28,8 @@ EXPORTS
     SetROP2
     SetTextColor
     StretchBlt
-    TextOutW
     SxwCreateBitmapFromDIB
     SxwCreateSurfaceDC
     SxwSetBkMode
     SxwSurfaceOfDC
+    TextOutW

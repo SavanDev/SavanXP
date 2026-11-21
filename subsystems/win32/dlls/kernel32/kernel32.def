@@ -1,14 +1,83 @@
 LIBRARY kernel32.dll
 EXPORTS
+    DeleteCriticalSection
+    DisableThreadLibraryCalls
+    EnterCriticalSection
     ExitProcess
+    FindResourceExW
+    FindResourceW
+    FreeLibrary
+    FreeResource
     GetCommandLineW
+    GetCurrentProcess
+    GetCurrentProcessId
+    GetCurrentThread
+    GetCurrentThreadId
+    GetLastError
+    GetLocaleInfoW
+    GetModuleFileNameA
+    GetModuleFileNameW
     GetModuleHandleA
+    GetModuleHandleW
     GetProcAddress
+    GetProcessVersion
     GetStartupInfoA
+    GetStartupInfoW
     GetStdHandle
+    GetSystemDefaultLCID
+    GetSystemDirectoryA
+    GetSystemDirectoryW
+    GetSystemTimeAsFileTime
+    GetThreadLocale
+    GetTickCount
+    GetUserDefaultLCID
+    GetVersion
+    GetVersionExA
+    GlobalAlloc
+    GlobalFlags
+    GlobalFree
+    GlobalHandle
+    GlobalLock
+    GlobalReAlloc
+    GlobalSize
+    GlobalUnlock
+    InitializeCriticalSection
+    InterlockedDecrement
+    InterlockedExchange
+    InterlockedIncrement
+    LeaveCriticalSection
     LoadLibraryA
+    LoadLibraryExA
+    LoadLibraryExW
+    LoadLibraryW
+    LoadResource
     LocalAlloc
     LocalFree
-    MulDiv
-    WriteFile
+    LocalLock
+    LocalReAlloc
+    LocalUnlock
+    LockResource
+    lstrcatA
+    lstrcatW
+    lstrcmpA
+    lstrcmpiA
+    lstrcmpiW
+    lstrcmpW
+    lstrcpyA
+    lstrcpynW
+    lstrcpyW
+    lstrlenA
     lstrlenW
+    MulDiv
+    MultiByteToWideChar
+    QueryPerformanceCounter
+    QueryPerformanceFrequency
+    SetErrorMode
+    SetLastError
+    SizeofResource
+    TlsAlloc
+    TlsFree
+    TlsGetValue
+    TlsSetValue
+    WideCharToMultiByte
+    WriteFile

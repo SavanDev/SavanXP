@@ -1,11 +1,15 @@
 /*
- * kernel32.dll -- Only what the fixtures and the W0 matrix import, over a
- * service of the gate (sxw_abi.h) or the state ntdll keeps.
+ * kernel32.dll -- What the fixtures, Solitaire and WordPad's start-up use,
+ * over a service of the gate (sxw_abi.h) or the state ntdll keeps. The rest
+ * of what programs import is declared (declared.txt). memory.c, system.c and
+ * strings.c hold the heap's handles, the process-wide state and the strings.
  */
 #define SXW_BUILDING_KERNEL32
 #include <windows.h>
 
 #include "sxw_abi.h"
+#include "codepage.h"
+#include "resource.h"
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -15,8 +19,6 @@ __declspec(dllimport) __declspec(noreturn) void WINAPI RtlExitUserProcess(u32 st
 __declspec(dllimport) u32 WINAPI SxwLoadLibrary(const char *name, u32 *error);
 __declspec(dllimport) u32 WINAPI SxwGetProcAddress(u32 base, const char *name, u32 *error);
 __declspec(dllimport) u32 WINAPI SxwFindModule(const char *name);
-__declspec(dllimport) void *WINAPI SxwHeapAllocate(u32 size, u32 zero);
-__declspec(dllimport) int WINAPI SxwHeapFree(void *pointer);
 
 static void set_last_error(DWORD error) {
     __asm__ volatile("movl %0, %%fs:%c1" : : "r"(error), "i"(SXW_TEB_LAST_ERROR) : "memory");
@@ -157,28 +159,187 @@ FARPROC WINAPI GetProcAddress(HMODULE hModule, LPCSTR lpProcName) {
     return (FARPROC)address;
 }
 
-/* ---- Memory ------------------------------------------------------------------ */
-
-/* Fixed blocks only: what the profile allocates is LPTR. A moveable block is
- * refused rather than handed out as if it were fixed. */
-HLOCAL WINAPI LocalAlloc(UINT uFlags, SIZE_T uBytes) {
-    if ((uFlags & ~(UINT)(LMEM_ZEROINIT | LMEM_NOCOMPACT | LMEM_NODISCARD)) != 0u) {
-        set_last_error(ERROR_INVALID_PARAMETER);
-        return NULL;
+/* A wide name in the ANSI code page, for the loader's ANSI services. 0 when
+ * it does not fit or a character has no ANSI form. */
+static int narrow_name(LPCWSTR wide, char *out, u32 capacity) {
+    u32 n = 0;
+    for (; wide[n] != 0; ++n) {
+        if (n + 1u >= capacity) {
+            return 0;
+        }
+        unsigned char c = sxw_wide_to_ansi(wide[n]);
+        if (c == '?' && wide[n] != '?') {
+            return 0;
+        }
+        out[n] = (char)c;
     }
-    void *block = SxwHeapAllocate(uBytes, (uFlags & LMEM_ZEROINIT) != 0u);
-    if (block == NULL) {
-        set_last_error(ERROR_NOT_ENOUGH_MEMORY);
-    }
-    return block;
+    out[n] = 0;
+    return 1;
 }
 
-HLOCAL WINAPI LocalFree(HLOCAL hMem) {
-    if (hMem == NULL || SxwHeapFree(hMem)) {
+HMODULE WINAPI GetModuleHandleW(LPCWSTR lpModuleName) {
+    if (lpModuleName == NULL) {
+        return GetModuleHandleA(NULL);
+    }
+    char name[260];
+    if (!narrow_name(lpModuleName, name, sizeof(name))) {
+        set_last_error(ERROR_MOD_NOT_FOUND);
         return NULL;
     }
-    set_last_error(ERROR_INVALID_HANDLE);
-    return hMem;
+    return GetModuleHandleA(name);
+}
+
+HMODULE WINAPI LoadLibraryW(LPCWSTR lpLibFileName) {
+    char name[260];
+    if (lpLibFileName == NULL || !narrow_name(lpLibFileName, name, sizeof(name))) {
+        set_last_error(ERROR_MOD_NOT_FOUND);
+        return NULL;
+    }
+    return LoadLibraryA(name);
+}
+
+/* The flags are not honoured: LOAD_LIBRARY_AS_DATAFILE loads the DLL as a
+ * module (MFC's resource DLL has no entry point, so nothing of it runs), and
+ * there is one search order. */
+HMODULE WINAPI LoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags) {
+    (void)hFile;
+    (void)dwFlags;
+    return LoadLibraryA(lpLibFileName);
+}
+
+HMODULE WINAPI LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags) {
+    (void)hFile;
+    (void)dwFlags;
+    return LoadLibraryW(lpLibFileName);
+}
+
+/* Modules are never unloaded yet: the call succeeds and the DLL stays. */
+BOOL WINAPI FreeLibrary(HMODULE hLibModule) {
+    if (hLibModule == NULL) {
+        set_last_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* DLL_THREAD_ATTACH and DETACH are not sent yet: there is one thread. */
+BOOL WINAPI DisableThreadLibraryCalls(HMODULE hLibModule) {
+    (void)hLibModule;
+    return TRUE;
+}
+
+/* The module's Windows path. A path longer than the buffer is cut to nSize
+ * units without a terminator and the last error is left alone, as Windows XP
+ * does. */
+DWORD WINAPI GetModuleFileNameW(HMODULE hModule, LPWSTR lpFilename, DWORD nSize) {
+    WCHAR path[520];
+    u32 base = hModule != NULL ? (u32)hModule : *(u32 *)(peb() + SXW_PEB_IMAGE_BASE);
+    u32 arguments[3] = {base, (u32)path, sizeof(path) / sizeof(path[0])};
+    u32 length = SxwService(SXW_SVC_MODULE_PATH, arguments);
+    if (length == 0) {
+        set_last_error(ERROR_MOD_NOT_FOUND);
+        return 0;
+    }
+    if (nSize == 0) {
+        set_last_error(ERROR_INSUFFICIENT_BUFFER);
+        return 0;
+    }
+    u32 copy = length < nSize ? length + 1u : nSize;
+    for (u32 i = 0; i < copy; ++i) {
+        lpFilename[i] = path[i];
+    }
+    if (length >= nSize) {
+        return nSize; /* Windows XP leaves the last error as it was */
+    }
+    return length;
+}
+
+DWORD WINAPI GetModuleFileNameA(HMODULE hModule, LPSTR lpFilename, DWORD nSize) {
+    WCHAR path[520];
+    DWORD length = GetModuleFileNameW(hModule, path, sizeof(path) / sizeof(path[0]));
+    if (length == 0) {
+        return 0;
+    }
+    DWORD copy = length < nSize ? length + 1u : nSize;
+    for (DWORD i = 0; i < copy; ++i) {
+        lpFilename[i] = (char)sxw_wide_to_ansi(path[i]);
+    }
+    if (length >= nSize) {
+        return nSize;
+    }
+    return length;
+}
+
+/* C:\WINDOWS\system32, where the DLLs are (/system/win/drive_c/windows/system32
+ * on SavanXP). Returns the length without the terminator, or the size needed
+ * with it when the buffer is too small. */
+static const char k_system_directory[] = "C:\\WINDOWS\\system32";
+
+UINT WINAPI GetSystemDirectoryA(LPSTR lpBuffer, UINT uSize) {
+    const UINT length = sizeof(k_system_directory) - 1u;
+    if (lpBuffer == NULL || uSize <= length) {
+        return length + 1u;
+    }
+    for (UINT i = 0; i <= length; ++i) {
+        lpBuffer[i] = k_system_directory[i];
+    }
+    return length;
+}
+
+UINT WINAPI GetSystemDirectoryW(LPWSTR lpBuffer, UINT uSize) {
+    const UINT length = sizeof(k_system_directory) - 1u;
+    if (lpBuffer == NULL || uSize <= length) {
+        return length + 1u;
+    }
+    for (UINT i = 0; i <= length; ++i) {
+        lpBuffer[i] = (WCHAR)(unsigned char)k_system_directory[i];
+    }
+    return length;
+}
+
+/* ---- Resources ----------------------------------------------------------------- */
+
+/* An HRSRC is the address of the resource's IMAGE_RESOURCE_DATA_ENTRY. */
+HRSRC WINAPI FindResourceExW(HMODULE hModule, LPCWSTR lpType, LPCWSTR lpName, WORD wLanguage) {
+    u32 base = hModule != NULL ? (u32)hModule : *(u32 *)(peb() + SXW_PEB_IMAGE_BASE);
+    const unsigned char *entry = sxw_resource_entry(base, lpType, lpName, wLanguage == 0 ? SXW_ANY_LANGUAGE : wLanguage);
+    if (entry == 0) {
+        set_last_error(ERROR_RESOURCE_NAME_NOT_FOUND);
+    }
+    return (HRSRC)entry;
+}
+
+HRSRC WINAPI FindResourceW(HMODULE hModule, LPCWSTR lpName, LPCWSTR lpType) {
+    return FindResourceExW(hModule, lpType, lpName, 0);
+}
+
+/* The data never moves: the handle is its address in the mapped image. */
+HGLOBAL WINAPI LoadResource(HMODULE hModule, HRSRC hResInfo) {
+    if (hResInfo == NULL) {
+        set_last_error(ERROR_INVALID_HANDLE);
+        return NULL;
+    }
+    u32 base = hModule != NULL ? (u32)hModule : *(u32 *)(peb() + SXW_PEB_IMAGE_BASE);
+    return (HGLOBAL)(base + *(const u32 *)hResInfo);
+}
+
+LPVOID WINAPI LockResource(HGLOBAL hResData) {
+    return hResData;
+}
+
+DWORD WINAPI SizeofResource(HMODULE hModule, HRSRC hResInfo) {
+    (void)hModule;
+    if (hResInfo == NULL) {
+        set_last_error(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+    return *((const u32 *)hResInfo + 1);
+}
+
+/* Obsolete on Win32: nothing to release, FALSE as Windows XP answers. */
+BOOL WINAPI FreeResource(HGLOBAL hResData) {
+    (void)hResData;
+    return FALSE;
 }
 
 /* ---- Strings and arithmetic -------------------------------------------------- */

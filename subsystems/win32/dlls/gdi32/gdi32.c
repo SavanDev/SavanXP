@@ -67,6 +67,8 @@ typedef struct font {
     int height;
     int ascent;
     int leading;
+    /* What it was made from, for GetObjectW; the strike draws every font. */
+    LOGFONTW logical;
 } font;
 
 typedef struct bitmap {
@@ -191,6 +193,14 @@ static void init_stock(void) {
     g_fonts[0].height = 16;
     g_fonts[0].ascent = 13;
     g_fonts[0].leading = 3;
+    g_fonts[0].logical.lfHeight = 16;
+    g_fonts[0].logical.lfWeight = 700;
+    g_fonts[0].logical.lfCharSet = 0; /* ANSI_CHARSET */
+    g_fonts[0].logical.lfPitchAndFamily = 0x22; /* VARIABLE_PITCH | FF_SWISS */
+    static const char k_system[] = "System";
+    for (u32 i = 0; i < sizeof k_system; ++i) {
+        g_fonts[0].logical.lfFaceName[i] = (WCHAR)k_system[i];
+    }
     g_bitmaps[0].used = 1;
     g_bitmaps[0].stock = 1;
     g_bitmaps[0].mono = 1;
@@ -281,6 +291,25 @@ HFONT WINAPI CreateFontW(int cHeight, int cWidth, int cEscapement, int cOrientat
             g_fonts[i].stock = 0;
             g_fonts[i].bold = cWeight >= 600;
             font_metrics(cHeight, &g_fonts[i]);
+            LOGFONTW *l = &g_fonts[i].logical;
+            l->lfHeight = cHeight;
+            l->lfWidth = cWidth;
+            l->lfEscapement = cEscapement;
+            l->lfOrientation = cOrientation;
+            l->lfWeight = cWeight;
+            l->lfItalic = (BYTE)bItalic;
+            l->lfUnderline = (BYTE)bUnderline;
+            l->lfStrikeOut = (BYTE)bStrikeOut;
+            l->lfCharSet = (BYTE)iCharSet;
+            l->lfOutPrecision = (BYTE)iOutPrecision;
+            l->lfClipPrecision = (BYTE)iClipPrecision;
+            l->lfQuality = (BYTE)iQuality;
+            l->lfPitchAndFamily = (BYTE)iPitchAndFamily;
+            u32 n = 0;
+            for (; pszFaceName != NULL && pszFaceName[n] != 0 && n < 31u; ++n) {
+                l->lfFaceName[n] = pszFaceName[n];
+            }
+            l->lfFaceName[n] = 0;
             return (HFONT)make_handle(OBJ_FONT, i);
         }
     }
@@ -863,6 +892,34 @@ int WINAPI GetObjectA(HANDLE h, int c, LPVOID pv) {
         return 12;
     }
     return 0;
+}
+
+HFONT WINAPI CreateFontIndirectW(const LOGFONTW *lplf) {
+    if (lplf == NULL) {
+        return NULL;
+    }
+    return CreateFontW(lplf->lfHeight, lplf->lfWidth, lplf->lfEscapement, lplf->lfOrientation, lplf->lfWeight,
+                       lplf->lfItalic, lplf->lfUnderline, lplf->lfStrikeOut, lplf->lfCharSet, lplf->lfOutPrecision,
+                       lplf->lfClipPrecision, lplf->lfQuality, lplf->lfPitchAndFamily, lplf->lfFaceName);
+}
+
+/* GetObjectA's answer, and a font's LOGFONTW. Every stock font is the System
+ * font here, so DEFAULT_GUI_FONT answers System's LOGFONTW, not Windows XP's
+ * MS Shell Dlg at -11. */
+int WINAPI GetObjectW(HANDLE h, int c, LPVOID pv) {
+    const font *f = font_of(h);
+    if (f == 0) {
+        return GetObjectA(h, c, pv);
+    }
+    if (pv == NULL) {
+        return (int)sizeof(LOGFONTW);
+    }
+    int n = c < (int)sizeof(LOGFONTW) ? c : (int)sizeof(LOGFONTW);
+    const unsigned char *from = (const unsigned char *)&f->logical;
+    for (int i = 0; i < n; ++i) {
+        ((unsigned char *)pv)[i] = from[i];
+    }
+    return n;
 }
 
 /* The device context's origin on its surface: (0, 0) for a bitmap, the

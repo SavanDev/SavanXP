@@ -30,6 +30,9 @@ Cut-off notes:
   `sxn_random_status`, POSIX `getrandom`, `getentropy` and `random_status`; Linux `getrandom` and `AT_RANDOM` use it.
   QEMU machines get `virtio-rng-pci` unless `--no-rng`; new host test `random-crypto-test` and smoke
   `random-unseeded` ([RANDOM.md](docs/kernel/RANDOM.md)).
+- **Win32: the user's Windows XP WordPad starts up to its first window** (WP1). Under `win32-harness`, WordPad and
+  its MFC load, initialize, run OLE's start-up and show their own "cannot load the RichEdit DLL" box. New host test
+  `win32-wordpad-test` (`SAVANXP_WIN32_WORDPAD`), fixture `wstartup.exe`, host service ABI 6 ([WIN32.md](docs/userland/WIN32.md#wordpad)).
 - **Win32 declared entry points: every load-time import of Windows XP WordPad and MFC resolves** (WP1). A
   function imported but not yet written is a line in its DLL's `declared.txt`; it reports itself once on the debug
   output and fails cleanly. New DLLs `ole32`, `comdlg32` and `shlwapi` ([WIN32.md](docs/userland/WIN32.md#declared-entry-points)).
