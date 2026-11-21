@@ -179,6 +179,12 @@ Cut-off notes:
 
 ### Fixed
 
+- **A forked child no longer loses its private memory** (heap arenas, `MAP_PRIVATE`): the child's copy of a private
+  section was freed at `fork` while still mapped, so its pages could be handed to anything else
+  ([KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md#found-while-porting-tinycc-2026-11-21), F1).
+- **A new thread's kernel stack starts cleared** instead of holding its frames' previous contents. Under QEMU's TCG a
+  stack on a frame that once held code slowed the whole guest about a hundredfold, enough for `smoke smoke` to time
+  out ([KERNEL_SECURITY.md](docs/kernel/KERNEL_SECURITY.md), F2).
 - **A file a POSIX program creates with `fopen` gets 0666 less the umask.** It got a random mode, often 000, so Doom's
   config and saves, `mines.ini` and Files' settings could not be read back. Files already damaged keep their mode.
 - **`help` lists every installed command.** `cp`, `date`, `volume`, `ntpsync`, the desktop programs and the `/system`

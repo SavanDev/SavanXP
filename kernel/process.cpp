@@ -1138,6 +1138,12 @@ process::Thread* allocate_thread(process::Process& proc) {
             thread_object->header.destroy(&thread_object->header);
             return nullptr;
         }
+        // The frames held anything before, another process's code included: a
+        // new stack carries none of it. Under QEMU's TCG it matters for speed
+        // too: a frame that still holds translated code makes every write to
+        // it take the self-modifying-code path, and a stack is written all the
+        // time (docs/kernel/KERNEL_SECURITY.md, F2).
+        memset(kernel_stack.virtual_address, 0, kKernelStackPages * memory::kPageSize);
         if (tid == g_next_pid) {
             g_next_pid += 1;
         }

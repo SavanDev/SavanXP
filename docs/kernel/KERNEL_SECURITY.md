@@ -548,6 +548,32 @@ attacker would read it, and no finding above speaks for them:
 | `kernel/sxfs.cpp` after v2 | Link counts and copy-on-write directories read from a hostile disk |
 | `kernel/ahci.cpp`, block writeback | Carried over from the third pass, which read them only at the system-call edge |
 
+## Found while porting TinyCC (2026-11-21)
+
+**F1 — High, fixed. `fork` freed the child's private pages.** A private
+section view (`VIEW_PRIVATE`: every heap arena, `MAP_PRIVATE`) is cloned for
+the child, and `clone_address_space` released the clone after mapping it. A
+section is born with no references and each holder takes one, so that
+release dropped the view's own: the clone was destroyed and its frames went
+back to the allocator while the child still mapped them. The child's heap
+then shared frames with whatever took them next, a kernel stack or another
+process's pages. The extra release is gone. Every private view of every forked
+process was exposed. The freed frames were not cleared, so a child kept
+reading its own bytes until something else wrote over them.
+
+**F2 — Medium, fixed. A new kernel stack kept its frames' old contents.** A
+thread's kernel stack is fresh frames from the physical allocator, which does
+not clear them, so it started with whatever the last owner left, another
+process's data or code. The stack is now cleared when it is allocated. The
+same omission is what turned F1 visible: the cleared stack of a forked child
+landed on its own freed heap page and zeroed it (`mmaptest`, "child private
+initial mismatch"). It also stalled QEMU's TCG, which keeps translated code
+per frame and sends every write to a frame that still holds some through its
+self-modifying-code check, about a hundred times slower. A kernel stack on
+such a frame made every interrupt and call crawl, and `smoke smoke` timed out
+after `libctest` whenever about 1 MB more on the disk changed which frames
+were reused.
+
 ## Required follow-up work
 
 The third-pass findings are all closed or accepted. What comes first now is
