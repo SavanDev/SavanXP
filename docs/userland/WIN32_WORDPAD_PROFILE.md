@@ -1,6 +1,8 @@
 # Win32 profile: Windows XP WordPad
 
-> **Status: inventory recorded (2026-11-13); nothing implemented.** This is
+> **Status: inventory recorded (2026-11-13), plan written (2026-11-21,
+> [WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md));
+> nothing implemented.** This is
 > the W0 record of the second Win32 profile, the one
 > [W7](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md#w7--later-profiles) asks
 > every later application to take before any code. It describes files the
@@ -377,26 +379,13 @@ By the phase that first needed them:
 - Native `msftedit.dll` asked Wine's text services (`msctf`) for a text
   store; Wine logged its callbacks as stubs and the control worked.
 
-### Decisions this inventory leaves open
+### Decisions this inventory left open
 
-These are for the plan, not answered here:
-
-- **Run the original RichEdit, or write one.** Running `msftedit.dll`
-  unchanged costs 105 more load-time imports than WordPad and MFC alone, and
-  real font metrics. Writing a RichEdit means the 74 messages its window
-  received, 32 of them `EM_*` (selection, character and paragraph formats,
-  streaming RTF in and out, find, undo, printing with `EM_FORMATRANGE`, and
-  the OLE interface and callback), and an RTF reader and writer.
-- **How much OLE.** `OleInitialize` must succeed: WordPad's string 100 is
-  "La inicialización de OLE ha fallado. WordPad no puede continuar." The
-  clipboard, drag and drop and embedded objects go through OLE
-  (`OleSetClipboard`, `DoDragDrop`, structured storage on memory). Which OLE
-  calls may fail without stopping WordPad was not measured.
-- **Threads.** MFC's second thread is on the start-up path.
-- **Exception dispatch.** Not reached in a normal session, but the path
-  every MFC error takes.
-- **The common controls and dialogs.** `comctl32` becomes four classes and a
-  property sheet; `comdlg32` six dialogs.
+Answered on 2026-11-21 in the plan,
+[WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#decisions-taken):
+RichEdit is written here, OLE is the minimum WordPad and MFC need, MFC's
+second thread is WP3, and exceptions are dispatched in user mode (WP2). The
+common controls and dialogs are WP8.
 
 ## Reference captures
 

@@ -357,6 +357,11 @@ all its phases have landed; the links to it move with it.
   Windows XP Solitaire: the chosen architecture (own PE32 DLLs over a 64-bit
   SUN host, no Windows code in the kernel), the paths rejected, the two
   kernel slices, and phases W0-W7 with their acceptance gates.
+- [`WIN32_WORDPAD_ROADMAP.md`](roadmaps/open/WIN32_WORDPAD_ROADMAP.md) — the second
+  Win32 profile, Windows XP WordPad on its original MFC: why RichEdit is written
+  here and OLE kept to the minimum, real fonts from a system rasterizer,
+  comdlg32's own file dialogs, no printer, what the clipboard and drag and
+  drop gain, and phases WP1-WP11.
 - [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer's network-first
   SUN migration and HTTP/HTTPS plan, implementation checkpoint and verification;
   later integration of the pinned Ladybird engine and its acceptance gates.

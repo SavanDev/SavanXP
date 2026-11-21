@@ -9,7 +9,8 @@ Win32 is the API it implements. What exists so far is described in
 > under `winhost`, from Files and from the Start menu, and a recorded game is
 > won with the pixels Windows XP shows, described in
 > [WIN32.md](../../userland/WIN32.md#solitaire). Next: W7, each later
-> profile with its own consumer.** The
+> profile with its own consumer; the first is Windows XP WordPad, planned in
+> [WIN32_WORDPAD_ROADMAP.md](WIN32_WORDPAD_ROADMAP.md).** The
 > first application goal is unchanged: the original **Windows XP Solitaire
 > (`sol.exe`)**, x86/PE32, playable on the SavanXP desktop. This revision
 > replaces the plan of 2026-11-08. It chooses the architecture, reduces the
@@ -705,7 +706,10 @@ own inventory before any code:
 [WIN32_WORDPAD_PROFILE.md](../../userland/WIN32_WORDPAD_PROFILE.md): the
 user's `wordpad.exe` runs on the original MFC (`mfc42u.dll`) and RichEdit
 (`msftedit.dll`) libraries, which pulls several of the items below onto one
-path at once. Its phases are planned from that document.
+path at once. Its plan, phases WP1 to WP11, is
+[WIN32_WORDPAD_ROADMAP.md](WIN32_WORDPAD_ROADMAP.md): RichEdit is written
+here, OLE is kept to what start-up needs, and exceptions, a second thread,
+`comctl32` and `comdlg32` come with it.
 
 - S2 and S3 with their Windows consumers: `VirtualAlloc` semantics and
   structured exception handling.

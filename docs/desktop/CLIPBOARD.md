@@ -166,8 +166,9 @@ In the order they depend on each other:
    `SetClipboardData`, `GetClipboardData`, `CloseClipboard`,
    `IsClipboardFormatAvailable`, `EnumClipboardFormats`,
    `RegisterClipboardFormat` and `GetClipboardSequenceNumber` (which is
-   `sequence`), then OLE's clipboard for WordPad
-   ([`WIN32_WORDPAD_PROFILE.md`](../userland/WIN32_WORDPAD_PROFILE.md)); the
+   `sequence`), which WordPad's copy and paste go through
+   ([`WIN32_WORDPAD_ROADMAP.md`](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#wp5--user32-for-mfc));
+   OLE's clipboard is not planned; the
    device visible to Linux guests; and copy and paste in the console. Files'
    Cut, Copy and Paste of files stand on the toolkit's formats
    ([`FILES.md`](FILES.md#cut-copy-and-paste)).

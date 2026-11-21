@@ -1,0 +1,405 @@
+# Windows XP WordPad on SSW — the second Win32 profile
+
+> **Status: planned (2026-11-21); nothing implemented.** This is the plan of
+> [W7](WIN32_SUBSYSTEM_ROADMAP.md#w7--later-profiles)'s first named profile.
+> Its inventory, the W0 record taken before any code, is
+> [WIN32_WORDPAD_PROFILE.md](../../userland/WIN32_WORDPAD_PROFILE.md); every
+> count and function name below comes from there. What SSW already is, is
+> [WIN32.md](../../userland/WIN32.md).
+
+## Objective
+
+The user's original Windows XP `wordpad.exe` (5.1.2600.7297), unchanged,
+with the user's own `mfc42u.dll` and `mfc42loc.dll`, edits a formatted
+document on the SavanXP desktop, saves it as RTF and as text, and opens it
+again. Copy and paste reach other SavanXP programs in both directions. The
+Microsoft files are supplied by the user, as for Solitaire, and never enter
+the repository, the build, the image or the ISO.
+
+A WordPad written for SavanXP, Wine's WordPad or a source port does not
+satisfy this goal. A RichEdit control written for SavanXP does: the control
+is a system DLL, like `user32`, and the decision below says why.
+
+## Decisions taken
+
+### RichEdit is written here (2026-11-21)
+
+WordPad's document is a `RICHEDIT50W` window from `msftedit.dll`. SSW
+provides its own `msftedit.dll` with that class, as it provides its own
+`user32.dll`, instead of running Microsoft's RichEdit 4.1.
+
+- **What it saves.** The load-time closure drops from 704 imports to 599
+  (`wordpad.exe` and MFC alone). Microsoft's control draws with real font
+  metrics (`GetOutlineTextMetricsA`, `GetCharWidthW`, 1,659 `ExtTextOutW`
+  calls in the trace) and builds pictures as OLE objects; ours measures and
+  draws with what `gdi32` has and draws a picture itself.
+- **What it costs.** The 74 messages the control received, 32 of them
+  `EM_*`, its `EN_*` notifications, its OLE interface to MFC, and an RTF
+  reader and writer.
+- **What the OLE question turned out to be.** It was not what forced the
+  choice. A Wine experiment of 2026-11-21 ran the original `msftedit.dll`
+  with its `ole32` lookups (it loads every `ole32` function at run time,
+  through `GetProcAddress`) either hidden or made to fail. An absent
+  function crashes it: paste without `OleGetClipboard`, start-up without
+  `RegisterDragDrop`. A function that fails with an error is survived:
+  failing clipboard calls fall back to the plain clipboard (RTF and
+  `CF_UNICODETEXT`) and everything works; a failing `RegisterDragDrop` only
+  disables dragging text; failing `OleCreateDefaultHandler` or
+  `CreateStreamOnHGlobal` drops a picture, a failing `OleDraw` leaves its box
+  blank. The tools and logs are kept with the user's files
+  (`WordPadXP/w0/oleexp/`), not here.
+
+### OLE is the minimum WordPad and MFC need
+
+With our own control, the OLE that is left is MFC's and `wordpad.exe`'s.
+`ole32.dll` exists, exports everything the closure imports, and implements
+only what start-up and exit need: `OleInitialize` must succeed, because
+WordPad's string 100 is "La inicialización de OLE ha fallado. WordPad no
+puede continuar." The rest fails with an error HRESULT, the rule the
+experiment above established for this kind of caller.
+
+Not implemented, and not planned here:
+
+- **The OLE clipboard.** Copy and paste go through `user32`'s clipboard
+  (WP5), which reaches SavanXP's. Only Pegado especial (Paste Special) would
+  need the OLE one; it reports nothing to paste.
+- **OLE drag and drop.** The control moves a dragged selection inside the
+  document by itself. Dragging between programs belongs to the desktop's
+  drag and drop ([below](#what-the-rest-of-the-system-gets)), and
+  `DoDragDrop` becomes a bridge onto it when that exists.
+- **Embedded objects.** Insertar objeto lists nothing: SavanXP has no OLE
+  servers. A picture in an RTF document (`\pict`) is drawn by the control; an
+  `\object` shows its `\result`.
+- **Structured storage**, until WP11 (Word documents).
+
+### Exceptions are dispatched in user mode first
+
+MFC reports its errors with C++ exceptions (`_CxxThrowException`), and every
+C++ function with an object to destroy installs a frame at `fs:[0]`. Software
+exceptions (`RaiseException`, C++ `throw`) never enter the kernel: WP2
+dispatches them inside the guest. Hardware faults delivered to the guest
+(S3 in [WIN32_SUBSYSTEM_ROADMAP.md](WIN32_SUBSYSTEM_ROADMAP.md#deferred-s1-s2-and-s3))
+stay deferred: no trace reached one. `IsBadWritePtr`, the one probe on the
+path, is answered from the guest's map without touching the memory.
+
+### Help is out of scope
+
+As for Solitaire. `F1` reaches `HtmlHelpA` in `hhctrl.ocx`, which does not
+exist; WordPad's handling of that is measured in WP9 and kept.
+
+### D1: real fonts, rasterized at run time by a system library (2026-11-21)
+
+A word processor needs scalable text: sizes from 8 to 72 points, bold,
+italic, underline, several faces, and the widths the control lays lines out
+with. `gdi32` draws every font with the 13 px MS Sans Serif strike today,
+and SavanXP has no font rasterizer at run time: its UI fonts are baked into
+tables at build time ([UI_FONTS.md](../../desktop/UI_FONTS.md)).
+
+- **A system library, not part of `gdi32`.** Fonts are loaded from files and
+  rasterized at run time by a library every subsystem and the toolkit can
+  use (rule 7 of `AGENTS.md`). `gdi32` is its first consumer, not its owner.
+  The baked UI tables stay what the desktop draws its own interface with.
+- **FreeType is the candidate**, already used on the build host. It is
+  offered under the FreeType License (BSD-style, with a credit in the
+  documentation) or GPLv2; SavanXP would take the FreeType License, which an
+  MIT project can carry. Its adoption goes through
+  [THIRD_PARTY_PROVENANCE.md](../../third-party/THIRD_PARTY_PROVENANCE.md)
+  like every vendored library: a pinned version, the license texts of the
+  modules actually built, and the credit. If that review fails, the
+  rasterizer is written here.
+- **The faces.** Free fonts metric-compatible with Arial, Times New Roman
+  and Courier New ship with the system, so a document lays out as it does on
+  Windows XP. The user's own fonts, copied from their Windows XP disk like
+  the other files of this profile, are used when present and never enter
+  the repository.
+
+The library's own design (its API, the cache, where font files live, how a
+face is chosen) is a document of its own, written before WP6.
+
+### D3: no printer (2026-11-21)
+
+SavanXP has no printers. Configurar página, Vista preliminar and Imprimir
+report that no printer is installed, as Windows XP does without one. A
+printer that writes a file can be a later decision; nothing here depends on
+it. `EM_FORMATRANGE` is not written until then.
+
+### D2: `comdlg32` draws its own file dialogs (2026-11-21)
+
+WordPad needs a choice of type (RTF, Word, text, Unicode text), and it
+appends its own dialog template to Save As (`DEFAULTFORMATDIALOG`, the
+"Establecer este formato como predeterminado" check box). In Windows XP's
+model that template becomes a child window inside the common dialog, and
+the program talks to the dialog through `CDM_*` messages and `CDN_*`
+notifications, through MFC's hook procedure.
+
+`comdlg32` therefore draws Open and Save As itself, as Win32 windows, where
+all of that works as on Windows XP. It does not open SavanXP's
+[`sxnfiledlg`](../../desktop/FILE_DIALOG.md): that would mean hosting a
+Win32 child window inside a window that is not Win32, and answering `CDM_*`
+for a window `user32` does not own. The layout follows Windows XP's classic
+dialog, from a template written here. `sxnfiledlg` gains a list of types
+on its own account, since its programs need one too.
+
+## What the rest of the system gets
+
+Rule 7 of `AGENTS.md` (parity) applies: what this profile adds to SSW that
+other subsystems lack is added to them too, not only to Win32.
+
+- **The clipboard.** The device already holds a set of formats with
+  `text/rtf` among the shared names ([CLIPBOARD.md](../../desktop/CLIPBOARD.md)).
+  What is missing is Win32's layer over it (WP5), which the clipboard's
+  document already lists. `winhost` is a SUN program, so it is the first
+  consumer of the typed `sxn_` clipboard calls SUN has been waiting to add.
+- **Drag and drop.** SavanXP has none between programs. It is designed in
+  a document of its own before WP5 needs it: the first consumer is a file
+  dragged from Files onto WordPad (`DragAcceptFiles`, `WM_DROPFILES`,
+  `DragQueryFileW`), the second the toolkit's programs, and OLE's
+  `DoDragDrop` a later bridge onto it.
+- **Scalable fonts** for every subsystem and the toolkit, per D1.
+- **A list of file types** in SavanXP's own file dialog (D2), for its own
+  programs.
+
+## Phases
+
+Each phase is one or more commits that leave the tree green, with fixtures
+built here that give the same output on Windows XP, in the build-host
+harness and on SavanXP, as W1 to W5 did. A test that needs the user's files
+is skipped without them.
+
+```text
+WP1 ─► WP2 ─┬─► WP3 ─┐
+            └─► WP4 ─┴─► WP5 ─► WP6 ─► WP7 ─► WP8 ─► WP9 ─► WP10 ─► WP11
+RTF reader and writer (host only) ─────────┘
+```
+
+The RTF reader and writer of WP7 are portable C tested on the build host and
+can start at any time.
+
+### WP1 — loading WordPad and MFC
+
+Size M.
+
+- `wordpad.exe` at `0x01000000`, which has no relocations, as `sol.exe`.
+  `mfc42u.dll` and `mfc42loc.dll` from the system folder, the latter by full
+  path as MFC asks for it.
+- `mfc42u.dll`'s 6,386 exports by ordinal; `wordpad.exe` imports 719 of
+  them. MFC's thirteen delay-loaded DLLs go through MFC's own helper, over
+  `LoadLibraryA` and `GetProcAddress`; a DLL that is never called need not
+  exist.
+- **Every load-time import resolves**, 599 of them. A function the trace
+  never reached is still exported, and fails cleanly when called:
+  `ERROR_CALL_NOT_IMPLEMENTED`, or `E_NOTIMPL` for a function that returns
+  an HRESULT. They are listed by DLL in WIN32.md, so a later profile sees
+  which entry points are only declared.
+- The Unicode start-up (`__wgetmainargs`, `_wcmdln`) and the C++ runtime
+  MFC links against: `operator new` and `delete`, `_purecall`,
+  `__CxxFrameHandler` as a frame (dispatch is WP2), the wide-string
+  functions.
+- `ole32.dll`'s eleven load-time imports of `wordpad.exe` as exports, and
+  `shlwapi.dll`.
+
+**Done when:** a Unicode C++ fixture with static objects, `operator new`
+and frames to unwind runs alike on all three environments; with the user's
+files, a host test loads `wordpad.exe` and MFC, resolves every import, and
+runs MFC's initialization up to its first window call.
+
+### WP2 — exceptions in user mode
+
+Size M. No kernel change.
+
+`RaiseException`; the walk of the `fs:[0]` chain, with the SafeSEH table
+honoured for an image that has one (`wordpad.exe` lists 123 handlers);
+`RtlUnwind` and the unwinding `_except_handler3` does; `__CxxFrameHandler`
+and `_CxxThrowException`, with catch by type, by reference and `...`, a
+rethrow, and the destructors of every unwound frame. An exception nobody
+catches ends the process with Windows XP's status.
+
+**Done when:** an exception fixture (filters, nested handlers, a C++ throw
+through three frames with objects to destroy, an uncaught one) writes the
+same bytes on Windows XP, in the harness and on SavanXP.
+
+### WP3 — a second thread
+
+Size M to L. MFC starts one at start-up (`_beginthreadex` with
+`CREATE_SUSPENDED`, `SetThreadPriority`, `ResumeThread`); it made 44 calls in
+the trace, and the main thread waits for it on events. What it does is
+read from the trace's log before this phase starts.
+
+A guest thread is a SUN thread with its own TEB, guest stack, host stack and
+FS base (K1 made the selectors per-thread). With it: TLS slots, the loader
+lock, `DLL_THREAD_ATTACH` and `DETACH` with `DisableThreadLibraryCalls`,
+suspend counts, critical sections, events, `WaitForSingleObject` and the
+interlocked functions; in `user32`, a message queue per thread and windows
+owned by their thread.
+
+**Done when:** a thread fixture (suspended start, TLS, attach and detach
+order, an event handshake, a window on the second thread) runs alike on all
+three environments, at 1, 2 and 4 vCPUs on SavanXP.
+
+### WP4 — memory and the rest of `kernel32`
+
+Size S to M.
+
+- Moveable memory: `GlobalAlloc` and `LocalAlloc` with `GMEM_MOVEABLE`,
+  handles with lock counts, `GlobalReAlloc`, `GlobalSize`, `GlobalFlags`,
+  `GlobalHandle`; `GMEM_DDESHARE` accepted. Private heaps (`HeapCreate`,
+  `HeapDestroy`, `HeapReAlloc`).
+- Files with wide names: create, read, write, seek, size and times,
+  `FindFirstFileW`, `GetFullPathNameW`, `GetVolumeInformationW`, the
+  file-time conversions.
+- Atoms, local and global. The locale: `GetLocaleInfoW`, the date and time
+  formats and their enumeration for the user's locale (Fecha y hora), and
+  `GetLocalTime`, which [TIMEZONE_ROADMAP.md](TIMEZONE_ROADMAP.md) already
+  counts. `CompareStringW`.
+- `win.ini`: RichEdit read `[windows]` and `[FontSubstitutes]`; with our own
+  control, whoever still reads it gets fixed answers, documented.
+
+**Done when:** a fixture covering each group, failure paths included, writes
+the same bytes on all three environments.
+
+### WP5 — `user32` for MFC
+
+Size L.
+
+- Hooks: `WH_CBT` and `WH_MSGFILTER` on each thread, `WH_CALLWNDPROC`,
+  `CallNextHookEx`. MFC attaches its objects to windows from the CBT hook.
+- Subclassing: `SetWindowLongW` with `GWL_WNDPROC`, `CallWindowProcW`, and
+  window properties, correct for every class, since MFC subclasses all of
+  them.
+- Deferred positioning, `SetParent`, carets, `ScrollWindowEx` and scroll
+  bars; menus built and changed at run time, `TrackPopupMenu`, `SetMenu`;
+  modeless dialogs (`CreateDialogIndirectParamW`, `IsDialogMessageW`).
+- The standard controls Solitaire did not need: single-line Edit, ListBox,
+  ComboBox (simple, drop-down, drop-down list, owner-drawn; the font box
+  received 1,334 `CB_ADDSTRING`), ScrollBar.
+- The clipboard over SavanXP's ([CLIPBOARD.md](../../desktop/CLIPBOARD.md)):
+  `OpenClipboard` to `GetClipboardSequenceNumber`, `CF_UNICODETEXT` as
+  UTF-8 text, `Rich Text Format` as `text/rtf`, `CF_HDROP` as
+  `text/uri-list`, other registered formats under `application/x-win32-`.
+  Delayed rendering is rendered eagerly, as the device requires.
+- `DragAcceptFiles` and `WM_DROPFILES`, once the desktop's drag and drop
+  exists; until then `DragAcceptFiles` succeeds and nothing is dropped.
+
+**Done when:** fixtures for hooks and subclassing, for the controls driven
+by an input script, and for the clipboard (text and RTF set by a fixture and
+read by a SUN program, and the other way round) match Windows XP, and
+`windowd-smoke` still passes.
+
+### WP6 — text and pictures in `gdi32`
+
+Size L. Starts once the font library of D1 exists.
+
+Fonts at any size, weight, slant and underline from `CreateFontIndirectW`;
+`EnumFontFamiliesExW` (the font box and the font dialog),
+`GetTextCharsetInfo`, and the widths and metrics our control lays lines out
+with (`GetCharWidthW`, `GetTextExtentPoint32W`, `GetTextMetricsW`);
+`ExtTextOutW` with clipping and per-character advances. The UI strike stays
+for the faces the desktop draws with. Also what the frame and bars use:
+`StretchDIBits`, 4-bit bitmaps, `SetROP2(R2_XORPEN)` for the ruler, the
+raster operations of the profile's list.
+
+**Done when:** a text fixture reports metrics and widths per face and size
+that agree with Windows XP within a stated tolerance, and its pixels outside
+text equal Windows XP's.
+
+### WP7 — the RichEdit control
+
+Size XL, in parts, each its own commits.
+
+- **7a, text.** `msftedit.dll` with `RICHEDIT50W`: the text, lines broken
+  with `gdi32`'s widths, painting, caret, selection by keyboard and mouse
+  (words, lines, a drag that moves the selection), scrolling, undo and redo,
+  `EN_*` notifications as `EM_SETEVENTMASK` asks, copy and paste through
+  `user32`'s clipboard in RTF and text.
+- **7b, formats.** `CHARFORMAT2` (face, size, bold, italic, underline,
+  colour, charset) and `PARAFORMAT2` (alignment, indents, tab stops,
+  bullets), set and read by range; the word-wrap modes WordPad's Options
+  set.
+- **7c, streams.** `EM_STREAMIN` and `EM_STREAMOUT` in text, Unicode text
+  and RTF. The RTF reader takes what WordPad and Microsoft's RichEdit write
+  and skips groups it does not know; the writer writes what it reads back.
+  `\pict` (DIB first) is drawn by the control; `\object` shows its
+  `\result`.
+- **7d, the rest.** `EM_FINDTEXTEXW` and the selection messages Buscar and
+  Reemplazar use; `EM_GETOLEINTERFACE` returning an `IRichEditOle` with no
+  objects and `EM_SETOLECALLBACK` keeping MFC's callback, which MFC's
+  `CRichEditView` needs whatever OLE does. No `EM_FORMATRANGE` (D3).
+
+**Done when:** a fixture that creates `RICHEDIT50W` gives the same answers
+on Windows XP, with Microsoft's control, as on SavanXP with ours: formats
+read back by range after setting them and after an RTF round trip, the text
+streamed out, the found ranges, the notifications. Line layout is compared
+only where WP6's metrics allow. The RTF reader and writer pass a corpus on
+the build host, documents written by Windows XP's WordPad among them.
+
+### WP8 — common controls and dialogs
+
+Size L.
+
+- `comctl32`: `ToolbarWindow32` (bitmap strips, separators, combo boxes
+  inside it, tooltips), `msctls_statusbar32` (parts and the simple mode for
+  menu help), `tooltips_class32`, image lists, `PropertySheetW` with
+  `SysTabControl32`. Drawn in the classic style; the manifest's request for
+  version 6 is accepted.
+- `comdlg32`: `ChooseFontW`; `FindTextW` and `ReplaceTextW`, modeless, with
+  `FINDMSGSTRING`; `GetOpenFileNameW` and `GetSaveFileNameW`, drawn here
+  (D2), with their list of types, `DEFAULTFORMATDIALOG` appended to Save
+  As, `CDM_*` and `CDN_*`; `GetFileTitleW`; `CommDlgExtendedError`;
+  `PageSetupDlgW` and `PrintDlgExW`, which find no printer (D3).
+
+**Done when:** a fixture drives each control and dialog by pointer and by
+keyboard and matches Windows XP outside text, as `dialog.exe` did for W5.
+
+### WP9 — OLE, the shell and the rest
+
+Size S.
+
+`ole32.dll` as decided above, with the running object table and file
+monikers MFC asks for when a document opens, or their failure if MFC
+tolerates it (measured first); `CoRegisterMessageFilter`,
+`CoLockObjectExternal`, `CoDisconnectObject`, `CoTaskMemFree`, the CLSID
+strings, `OleRegGetUserType` from the registry. `oledlg.dll`: Insertar
+objeto and Pegado especial end as cancelled, `OleUIAddVerbMenuW` adds
+nothing. `shell32`: `ShellExecuteExW`, `SHGetSettings`,
+`SHGetSpecialFolderPathW`, `SHGetFileInfoW`. Help as above.
+
+**Done when:** the user's WordPad starts, opens each menu and dialog,
+and exits with "No" to saving, in the harness and on SavanXP.
+
+### WP10 — Windows XP WordPad
+
+Size M.
+
+Launched from the Start menu with its own icon, and from Files on an `.rtf`
+file. Its settings live under its own key in the per-user registry.
+
+**Done when:** a recorded session on SavanXP types three lines with
+accents, formats them from the keyboard, the bars and the dialogs, sets and
+drags a tab stop, finds and replaces, copies to and pastes from a SavanXP
+program in text and RTF, saves as RTF and as text, opens the RTF again, and
+exits; a second start restores the window and the bars. Captures equal
+Windows XP's outside text. The documents and settings survive
+`./build.sh build` (rule 4). `win32-wordpad` is a smoke scenario, skipped
+without the user's files.
+
+### WP11 — Word documents
+
+Size M. After WP10, and only if wanted.
+
+The converters (`mswrd6.wpc`, `mswrd8.wpc`, `write.wpc`) import
+`StgOpenStorage` and `StgCreateDocfile`: Word 6 and Word 97 documents are
+compound files. This phase writes the compound file format, read and write,
+tested on the build host against real documents, and loads the converters,
+which prefer `0x00400000` (where `winhost` sits) and are relocated.
+`OleLoad`, `OleSave` and `OleConvertIStorageToOLESTREAM` fail; what the
+converters do with an embedded object then is measured.
+
+**Done when:** a Word 97 document opens with its text and formats, and a
+document saved as Word 6 opens on Windows XP.
+
+## Not promised
+
+Embedded and linked objects, OLE automation, printing (D3), Help,
+right-to-left and complex scripts (Uniscribe was never loaded for Latin
+text), WordPad as an OLE server for other programs, and any Microsoft file
+in the tree.
