@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **SUN HTTP loader, `sxn/sxnhttp.h` (`sxnhttp_get`)** (N4): HTTP/1.1 GET with Content-Length, chunked and
+  close-delimited bodies, five relative redirects, 30 s total and 10 s idle budgets and a cancel event; contradictory
+  framing, truncated bodies, oversized heads and redirects to files or from https fail explicitly. New host test
+  `sxnhttp-message-test`; `native-network` checks it against `tools/http_fixture.py` ([HTTP.md](docs/net/HTTP.md)).
 - **Web Viewer loads pages in the background, with Stop** (N3 complete): a network worker per window, so slow names
   and stalled downloads leave the window responsive; Stop (the Go button, Esc, Go > Stop), a newer navigation or
   closing the window cancels the load and keeps the page on screen. New SUN frame call `sxngui_app_wake` with the

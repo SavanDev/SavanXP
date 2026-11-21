@@ -368,7 +368,8 @@ SERVFAIL, an empty answer, a malformed reply, silence, a one-second TTL, and
 cancellation from another thread. The fixture counts the questions it
 receives, which is how the test tells a cached answer apart.
 
-The consumer today is the Web Viewer (`system/webview/webview.c`, see
+`sxnhttp` ([HTTP.md](HTTP.md)) resolves every name it loads through a
+resolver its caller hands it. The consumer today is the Web Viewer (`system/webview/webview.c`, see
 [`WEBVIEWER.md`](../desktop/WEBVIEWER.md#names)), with two overrides for tests:
 `webview --dns 10.0.2.2:5353` at launch and `dns://10.0.2.2:5353` typed in the
 address bar (config, never history). `ntpsync` and the other tools still want

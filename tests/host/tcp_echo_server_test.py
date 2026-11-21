@@ -69,6 +69,35 @@ def check_dns_fixture(port: int) -> None:
             raise AssertionError("DNSCOUNT did not count both questions about big.savanxp")
 
 
+def check_http_fixture(port: int) -> None:
+    """The loader's fixture: its port, a chunked body in pieces, a redirect."""
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as control:
+        control.settimeout(5.0)
+        control.sendall(b"HTTP\n")
+        http_port = int(read_line(control))
+    def get(path: str) -> tuple[bytes, int]:
+        with socket.create_connection(("127.0.0.1", http_port), timeout=5.0) as client:
+            client.settimeout(5.0)
+            client.sendall(b"GET " + path.encode("ascii") + b" HTTP/1.1\r\nHost: x\r\n\r\n")
+            data = b""
+            reads = 0
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    return data, reads
+                data += chunk
+                reads += 1
+    data, reads = get("/chunked")
+    if b"Transfer-Encoding: chunked" not in data or b"chunked \r\n4\r\nbody" not in data or reads < 4:
+        raise AssertionError("/chunked was not a chunked body sent in pieces")
+    data, _ = get("/redirect-relative")
+    if not data.startswith(b"HTTP/1.1 302") or b"Location: length?from=redirect" not in data:
+        raise AssertionError("/redirect-relative did not redirect")
+    data, _ = get("/echo")
+    if b"GET /echo HTTP/1.1" not in data:
+        raise AssertionError("/echo did not echo the request")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--server", required=True, type=Path)
@@ -138,6 +167,7 @@ def main() -> int:
                     else:
                         raise AssertionError("RESET did not reset the established connection")
                 check_dns_fixture(port)
+                check_http_fixture(port)
                 # One idle client must not prevent another connection's work.
                 with socket.create_connection(("127.0.0.1", port), timeout=5.0) as idle:
                     with socket.create_connection(("127.0.0.1", port), timeout=5.0) as writer:

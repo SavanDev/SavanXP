@@ -60,6 +60,7 @@ the name of the layer, not a rename of its symbols.
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
 | Toolkit frame | `include/sxn/sxngui.h`, `system/runtime/sxngui.c` | SXGUI-C on a SUN window: the toolkit's host, the loop, dialogs in owned windows, `sxngui_app_wake` from worker threads | `comctl32` + the message loop |
 | Name resolution | `include/sxn/sxndns.h`, `system/runtime/sxndns.c` | host names to IPv4: a resolver with its own cache, UDP with a TCP retry, cancellable ([NETWORKING.md](../net/NETWORKING.md#name-resolution-sxndns)) | `getaddrinfo`, `DnsQuery` |
+| HTTP | `include/sxn/sxnhttp.h`, `system/runtime/sxnhttp.c` | GET over HTTP/1.1: strict framing, redirects, budgets, cancellable ([HTTP.md](../net/HTTP.md)) | WinINet's `InternetOpenUrl` |
 | Runtime | `system/runtime/sxn_runtime.c` | start-up, `malloc` over SXN sections, `exit` and returning from `main` ([NATIVE_HEAP.md](NATIVE_HEAP.md)) | the CRT |
 | Resources | `<program>.sunres.h`, generated | the program's `.sxres` compiled in: title, accent, window style, 16x16 icon | `.rsrc`, `LoadIcon` |
 | Shared rendering | SXGFX, SXCHROME, SXGUI-C (`system/gfx`, `include/sxgfx`) | 2D painting, system bevels, the Win9x toolkit; call-free code, usable from SUN | GDI, `DrawEdge`, `comctl32` |

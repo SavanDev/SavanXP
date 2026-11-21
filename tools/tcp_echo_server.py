@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Small deterministic TCP echo server used by the tcp and native-network smokes.
 
-It also starts the DNS fixture of tools/dns_fixture.py; the DNS and DNSCOUNT
-commands report its port and how often a name was asked."""
+It also starts the DNS fixture of tools/dns_fixture.py and the HTTP fixture
+of tools/http_fixture.py; the DNS, DNSCOUNT and HTTP commands report their
+ports and how often a name was asked."""
 
 from __future__ import annotations
 
@@ -16,10 +17,13 @@ import threading
 from pathlib import Path
 
 from dns_fixture import DnsFixture
+from http_fixture import HttpFixture
 
 # The resolver's fixture (tools/dns_fixture.py), started with the server: the
 # guest asks DNS for its port and DNSCOUNT <name> for the queries it received.
 DNS: DnsFixture
+# The HTTP loader's fixture (tools/http_fixture.py): HTTP gives its port.
+HTTP: HttpFixture
 
 SAVED: dict[str, bytes] = {}
 SAVED_LOCK = threading.Lock()
@@ -70,6 +74,8 @@ def handle_client_commands(sock: socket.socket, refused_port: int) -> None:
                 return
             elif command == "DNS" and len(parts) == 1:
                 sock.sendall(f"{DNS.port}\n".encode("ascii"))
+            elif command == "HTTP" and len(parts) == 1:
+                sock.sendall(f"{HTTP.port}\n".encode("ascii"))
             elif command == "DNSCOUNT" and len(parts) == 2:
                 sock.sendall(f"{DNS.zone.count(parts[1])}\n".encode("ascii"))
             elif command == "REFUSE" and len(parts) == 1:
@@ -140,8 +146,9 @@ def main() -> int:
     parser.add_argument("--idle-timeout", type=float, default=0.0)
     args = parser.parse_args()
 
-    global DNS
+    global DNS, HTTP
     DNS = DnsFixture().start()
+    HTTP = HttpFixture().start()
 
     stop = False
 

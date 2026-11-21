@@ -30,6 +30,8 @@ sxn/sxnaudio.h
 sxn/sxncapture.h
 sxn/sxncursor.h
 sxn/sxndns.h
+sxn/sxnhttp.h
+sxn/sxnhttp_message.h
 sxn/sxneffects.h
 sxn/sxnelevate.h
 sxn/sxnfiledlg.h

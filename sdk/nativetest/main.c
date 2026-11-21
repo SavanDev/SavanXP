@@ -50,11 +50,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "abi/savanxp_native_abi.h"
 #include "savanxp/syscall.h"
 #include "sxn/sxn.h"
 #include "sxn/sxndns.h"
+#include "sxn/sxnhttp.h"
 #include "sxn/sxnwm.h"
 #include "sxn/sxnaudio.h"
 #include "sxn/sxncapture.h"
@@ -3395,6 +3397,186 @@ cleanup:
     if (delay >= 0) check(sxn_close(delay) == 0);
 }
 
+/* sxnhttp (include/sxn/sxnhttp.h) against tools/http_fixture.py, which the
+ * echo server starts: one path per case, every response sent in pieces. */
+static struct sxnhttp_client g_http_client;
+static unsigned char g_http_body[4096];
+static struct sxnhttp_response g_http_response;
+static unsigned g_http_phases;
+
+static void http_progress(void* user, enum sxnhttp_phase phase, const char* host, size_t received) {
+    (void)user;
+    (void)host;
+    (void)received;
+    g_http_phases |= 1u << phase;
+}
+
+static long http_fetch(unsigned port, const char* host, const char* path, long cancel,
+                       uint32_t total_ms, uint32_t idle_ms) {
+    char url[SXNHTTP_URL_CAP];
+    struct sxnhttp_request request;
+    long result;
+    snprintf(url, sizeof(url), "http://%s:%u%s", host, port, path);
+    memset(&request, 0, sizeof(request));
+    request.url = url;
+    request.cancel = cancel;
+    request.total_ms = total_ms;
+    request.idle_ms = idle_ms;
+    request.progress = http_progress;
+    memset(&g_http_response, 0, sizeof(g_http_response));
+    g_http_response.body = g_http_body;
+    g_http_response.body_capacity = sizeof(g_http_body) - 1;
+    result = sxnhttp_get(&g_http_client, &request, &g_http_response);
+    g_http_body[g_http_response.body_length] = 0;
+    return result;
+}
+
+static int http_body_is(const char* text) {
+    return g_http_response.body_length == strlen(text) &&
+           memcmp(g_http_body, text, g_http_response.body_length) == 0;
+}
+
+static int http_body_has(const char* text) {
+    return strstr((const char*)g_http_body, text) != 0;
+}
+
+static void test_native_http(unsigned port) {
+    struct sxn_ipv4_endpoint peer = {0x0a000202u, (uint16_t)port, 0};
+    struct sxn_ipv4_endpoint dns = {0x0a000202u, 0, 0};
+    long control = sxn_socket_create(SXN_SOCKET_TCP);
+    long cancel = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    long delay = sxn_event_create(0);
+    struct sxn_io_interest interest = {(int32_t)control, SXN_IO_WRITE | SXN_IO_ERROR};
+    char expected[96];
+    unsigned http_port, refused_port;
+    uint64_t started;
+    long result;
+
+    check(control >= 0 && cancel >= 0 && delay >= 0);
+    if (control < 0 || cancel < 0 || delay < 0) goto cleanup;
+    result = sxn_socket_connect(control, &peer);
+    check(result == 0 || result == -SAVANXP_EAGAIN);
+    check(sxn_wait_io(&interest, 1, 5000) == 0 && sxn_socket_status(control) == 0);
+    http_port = dns_control_number(control, "HTTP\n");
+    dns.port = (uint16_t)dns_control_number(control, "DNS\n");
+    refused_port = dns_control_number(control, "REFUSE\n");
+    check(http_port > 0 && http_port <= 65535 && dns.port != 0 && refused_port > 0 && refused_port <= 65535);
+    if (http_port == 0 || http_port > 65535 || dns.port == 0) goto cleanup;
+    sxndns_init(&g_dns_resolver);
+    sxndns_set_server(&g_dns_resolver, &dns);
+    sxnhttp_client_init(&g_http_client, &g_dns_resolver);
+
+    /* Bodies framed every way, sent in pieces. */
+    g_http_phases = 0;
+    check(http_fetch(http_port, "10.0.2.2", "/length", -1, 0, 0) == 0);
+    check(g_http_response.status == 200 && http_body_is("length body"));
+    check(strcmp(g_http_response.content_type, "text/html") == 0);
+    snprintf(expected, sizeof(expected), "http://10.0.2.2:%u/length", http_port);
+    check(strcmp(g_http_response.url, expected) == 0 && g_http_response.redirects == 0);
+    check(g_http_phases == ((1u << SXNHTTP_PHASE_RESOLVING) | (1u << SXNHTTP_PHASE_CONNECTING) |
+                            (1u << SXNHTTP_PHASE_WAITING) | (1u << SXNHTTP_PHASE_RECEIVING)));
+    check(http_fetch(http_port, "10.0.2.2", "/chunked", -1, 0, 0) == 0 && http_body_is("chunked body"));
+    check(http_fetch(http_port, "10.0.2.2", "/close", -1, 0, 0) == 0 && http_body_is("close-delimited body"));
+    check(http_fetch(http_port, "10.0.2.2", "/interim", -1, 0, 0) == 0 && http_body_is("interim"));
+    check(http_fetch(http_port, "10.0.2.2", "/type", -1, 0, 0) == 0 &&
+          strcmp(g_http_response.content_type, "text/plain; charset=utf-8") == 0);
+    check(http_fetch(http_port, "10.0.2.2", "/notfound", -1, 0, 0) == 0 &&
+          g_http_response.status == 404 && http_body_is("missing"));
+    sxn_log("nativetest: sxnhttp reads length, chunked and close-delimited bodies in pieces");
+
+    /* The request this client sends. */
+    check(http_fetch(http_port, "10.0.2.2", "/echo", -1, 0, 0) == 0);
+    check(http_body_has("GET /echo HTTP/1.1\r\n") && http_body_has("Accept-Encoding: identity\r\n") &&
+          http_body_has("Connection: close\r\n"));
+    snprintf(expected, sizeof(expected), "Host: 10.0.2.2:%u\r\n", http_port);
+    check(http_body_has(expected));
+
+    /* The body cap: what fits is kept, and the response says it was cut. */
+    check(http_fetch(http_port, "10.0.2.2", "/big", -1, 0, 0) == 0);
+    check(g_http_response.body_length == sizeof(g_http_body) - 1 &&
+          (g_http_response.flags & SXNHTTP_RESPONSE_CUT) != 0);
+    {
+        size_t i;
+        for (i = 0; i < g_http_response.body_length; ++i)
+            if (g_http_body[i] != (unsigned char)((i * 31u + 7u) & 255u)) break;
+        check(i == g_http_response.body_length);
+    }
+    sxn_log("nativetest: sxnhttp sends Host, identity and close, and cuts at its capacity");
+
+    /* Responses that are wrong fail, each its own way. */
+    check(http_fetch(http_port, "10.0.2.2", "/both", -1, 0, 0) == SXNHTTP_ERROR_BAD_FRAMING);
+    check(http_fetch(http_port, "10.0.2.2", "/twolengths", -1, 0, 0) == SXNHTTP_ERROR_BAD_FRAMING);
+    check(http_fetch(http_port, "10.0.2.2", "/short", -1, 0, 0) == SXNHTTP_ERROR_TRUNCATED);
+    check(http_fetch(http_port, "10.0.2.2", "/chunk-short", -1, 0, 0) == SXNHTTP_ERROR_TRUNCATED);
+    check(http_fetch(http_port, "10.0.2.2", "/reset", -1, 0, 0) == SXNHTTP_ERROR_TRUNCATED);
+    check(http_fetch(http_port, "10.0.2.2", "/badchunk", -1, 0, 0) == SXNHTTP_ERROR_BAD_RESPONSE);
+    check(http_fetch(http_port, "10.0.2.2", "/bigheader", -1, 0, 0) == SXNHTTP_ERROR_HEADERS_TOO_LARGE);
+    check(http_fetch(http_port, "10.0.2.2", "/gzip", -1, 0, 0) == SXNHTTP_ERROR_UNSUPPORTED_ENCODING);
+    sxn_log("nativetest: sxnhttp refuses contradictory, truncated and malformed responses");
+
+    /* Redirects: relative, five allowed, the sixth refused; never to a file,
+     * never to https until N5, never without a Location. */
+    check(http_fetch(http_port, "10.0.2.2", "/redirect-relative", -1, 0, 0) == 0);
+    snprintf(expected, sizeof(expected), "http://10.0.2.2:%u/length?from=redirect", http_port);
+    check(strcmp(g_http_response.url, expected) == 0 && g_http_response.redirects == 1 &&
+          http_body_is("length body"));
+    check(http_fetch(http_port, "10.0.2.2", "/redirect-chain/5", -1, 0, 0) == 0 &&
+          g_http_response.redirects == 5 && http_body_is("chain end"));
+    check(http_fetch(http_port, "10.0.2.2", "/redirect-chain/6", -1, 0, 0) == SXNHTTP_ERROR_TOO_MANY_REDIRECTS);
+    check(http_fetch(http_port, "10.0.2.2", "/redirect-file", -1, 0, 0) == SXNHTTP_ERROR_BAD_REDIRECT);
+    check(http_fetch(http_port, "10.0.2.2", "/redirect-https", -1, 0, 0) == SXNHTTP_ERROR_UNSUPPORTED_SCHEME);
+    check(http_fetch(http_port, "10.0.2.2", "/redirect-none", -1, 0, 0) == SXNHTTP_ERROR_BAD_REDIRECT);
+    sxn_log("nativetest: sxnhttp follows relative redirects up to five and refuses the rest");
+
+    /* Names, refusals and URLs that are not http. */
+    check(http_fetch(http_port, "test.savanxp", "/length", -1, 0, 0) == 0 && http_body_is("length body"));
+    check(http_fetch(http_port, "nosuch.savanxp", "/", -1, 0, 0) == SXNHTTP_ERROR_DNS &&
+          g_http_response.dns_error == SXNDNS_ERROR_NO_SUCH_NAME);
+    check(http_fetch(refused_port, "10.0.2.2", "/", -1, 0, 0) == SXNHTTP_ERROR_CONNECT);
+    {
+        struct sxnhttp_request request;
+        memset(&request, 0, sizeof(request));
+        request.cancel = -1;
+        g_http_response.body = g_http_body;
+        g_http_response.body_capacity = sizeof(g_http_body) - 1;
+        request.url = "https://test.savanxp/";
+        check(sxnhttp_get(&g_http_client, &request, &g_http_response) == SXNHTTP_ERROR_UNSUPPORTED_SCHEME);
+        request.url = "ftp://test.savanxp/";
+        check(sxnhttp_get(&g_http_client, &request, &g_http_response) == SXNHTTP_ERROR_BAD_URL);
+    }
+
+    /* Budgets: the whole navigation, and the silence between two reads. */
+    started = sxn_clock_ns();
+    check(http_fetch(http_port, "10.0.2.2", "/trickle", -1, 2000, 0) == SXNHTTP_ERROR_TIMEOUT);
+    check(sxn_clock_ns() - started >= 1900000000ull && sxn_clock_ns() - started < 4000000000ull);
+    started = sxn_clock_ns();
+    check(http_fetch(http_port, "10.0.2.2", "/silent", -1, 0, 1500) == SXNHTTP_ERROR_TIMEOUT);
+    check(sxn_clock_ns() - started >= 1400000000ull && sxn_clock_ns() - started < 3500000000ull);
+    sxn_log("nativetest: sxnhttp keeps its total and idle budgets");
+
+    /* Cancellation from another thread, in the middle of a body. */
+    {
+        struct dns_cancel_test test = {cancel, delay};
+        long worker = sxn_thread_create(dns_cancel_worker, &test,
+                g_dns_cancel_stack + sizeof(g_dns_cancel_stack), 0);
+        int32_t status = -1;
+        check(worker >= 0);
+        if (worker >= 0) {
+            started = sxn_clock_ns();
+            check(http_fetch(http_port, "10.0.2.2", "/trickle", cancel, 0, 0) == SXNHTTP_ERROR_CANCELLED);
+            check(sxn_clock_ns() - started < 1500000000ull);
+            check(sxn_wait_one(worker, 5000) == 0);
+            check(sxn_thread_exit_code(worker, &status) == 0 && status == 0);
+            check(sxn_close(worker) == 0);
+        }
+    }
+    sxn_log("nativetest: sxnhttp cancels through a manual-reset event");
+cleanup:
+    if (control >= 0) check(sxn_close(control) == 0);
+    if (cancel >= 0) check(sxn_close(cancel) == 0);
+    if (delay >= 0) check(sxn_close(delay) == 0);
+}
+
 /* LOG_READ: walks the whole system log this process may read. Finds the
  * record whose text contains `marker`, checks the sequences only grow and
  * says whether a kernel line was seen. */
@@ -3752,6 +3934,7 @@ int main(int argc, char** argv) {
             if (port && port <= 65535 && *digit == 0) {
                 test_native_tcp(port);
                 test_native_dns(port);
+                test_native_http(port);
                 test_native_tcp_progress(port);
                 test_native_connect_failures(port);
             }

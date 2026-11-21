@@ -290,6 +290,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`NETWORKING.md`](net/NETWORKING.md) — TCP guarantees, independent bounded servicing,
   asynchronous close/TIME_WAIT, windows, fault injection and SUN's shared DNS
   resolver (`sxndns`).
+- [`HTTP.md`](net/HTTP.md) — SUN's HTTP/1.1 loader (`sxnhttp`): the request it
+  sends, the framings it reads and the ones it refuses, redirects, budgets,
+  cancellation and its tests.
 
 ## Roadmaps — `roadmaps/`
 
