@@ -10,6 +10,7 @@
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/elf.hpp"
+#include "kernel/file_lock.hpp"
 #include "kernel/input.hpp"
 #include "kernel/klog.hpp"
 #include "kernel/net.hpp"
@@ -137,7 +138,112 @@ savanxp_stat short_stat(const savanxp_stat_ex& stat) {
 
 namespace process {
 
-int fcntl_fd(process::Process& proc, uint64_t fd, uint64_t command, uint64_t value) {
+namespace {
+
+constexpr int64_t kMaxOffset = 0x7fffffffffffffffLL;
+
+// The bytes a struct flock names: l_start from l_whence, then l_len bytes,
+// to the end and past it for 0, backwards for a negative length. False for a
+// range that starts before byte 0 or does not fit in an off_t.
+bool flock_range(const object::IoObject& file, const savanxp_flock& lock, uint64_t& first, uint64_t& last) {
+    int64_t base = 0;
+    switch (lock.l_whence) {
+        case SAVANXP_SEEK_SET: base = 0; break;
+        case SAVANXP_SEEK_CUR: base = static_cast<int64_t>(file.offset); break;
+        case SAVANXP_SEEK_END: base = static_cast<int64_t>(file.node->size); break;
+        default: return false;
+    }
+    if (lock.l_start > 0 && base > kMaxOffset - lock.l_start) {
+        return false;
+    }
+    const int64_t start = base + lock.l_start;
+    if (start < 0) {
+        return false;
+    }
+    if (lock.l_len == 0) {
+        first = static_cast<uint64_t>(start);
+        last = file_lock::kToEnd;
+        return true;
+    }
+    if (lock.l_len > 0) {
+        if (lock.l_len - 1 > kMaxOffset - start) {
+            return false;
+        }
+        first = static_cast<uint64_t>(start);
+        last = static_cast<uint64_t>(start + lock.l_len - 1);
+        return true;
+    }
+    if (lock.l_len < -start) {
+        return false;
+    }
+    first = static_cast<uint64_t>(start + lock.l_len);
+    last = static_cast<uint64_t>(start - 1);
+    return true;
+}
+
+// F_GETLK, F_SETLK and F_SETLKW (docs/kernel/FILE_LOCKS.md). A read lock
+// needs a descriptor open for reading and a write lock one open for writing,
+// as POSIX says; only a file has locks.
+int fcntl_lock(process::Thread& self, uint64_t fd, uint64_t command, uint64_t user_lock) {
+    process::Process& proc = *self.process;
+    savanxp_flock lock = {};
+    if (!process::copy_from_user(&lock, user_lock, sizeof(lock))) {
+        return sx::negative_error(SAVANXP_EINVAL);
+    }
+    file_lock::Kind kind = file_lock::Kind::unlock;
+    uint32_t access = object::access_query;
+    switch (lock.l_type) {
+        case SAVANXP_F_RDLCK: kind = file_lock::Kind::shared; access = object::access_read; break;
+        case SAVANXP_F_WRLCK: kind = file_lock::Kind::exclusive; access = object::access_write; break;
+        case SAVANXP_F_UNLCK:
+            if (command == SAVANXP_F_GETLK) {
+                return sx::negative_error(SAVANXP_EINVAL);
+            }
+            break;
+        default: return sx::negative_error(SAVANXP_EINVAL);
+    }
+    if (command == SAVANXP_F_GETLK) {
+        access = object::access_query;
+    }
+    if (detail::fd_to_io_object(proc, fd, object::access_query) == nullptr) {
+        return sx::negative_error(SAVANXP_EBADF);
+    }
+    object::IoObject* file = detail::fd_to_io_object(proc, fd, access);
+    if (file == nullptr) {
+        return sx::negative_error(SAVANXP_EBADF);
+    }
+    if (file->kind != process::HandleKind::vnode || file->node == nullptr) {
+        return sx::negative_error(SAVANXP_EINVAL);
+    }
+    uint64_t first = 0;
+    uint64_t last = 0;
+    if (!flock_range(*file, lock, first, last)) {
+        return sx::negative_error(SAVANXP_EINVAL);
+    }
+
+    if (command == SAVANXP_F_GETLK) {
+        file_lock::Holder holder = {};
+        if (!file_lock::posix_query(proc, *file->node, kind, first, last, holder)) {
+            lock.l_type = SAVANXP_F_UNLCK;
+        } else {
+            lock.l_type = holder.kind == file_lock::Kind::exclusive ? SAVANXP_F_WRLCK : SAVANXP_F_RDLCK;
+            lock.l_whence = SAVANXP_SEEK_SET;
+            lock.l_start = static_cast<int64_t>(holder.first);
+            lock.l_len = holder.last == file_lock::kToEnd ? 0 : static_cast<int64_t>(holder.last - holder.first + 1);
+            lock.l_pid = static_cast<int32_t>(holder.pid);
+        }
+        return process::copy_to_user(user_lock, &lock, sizeof(lock)) ? 0 : sx::negative_error(SAVANXP_EINVAL);
+    }
+    return file_lock::posix_set(self, *file->node, kind, first, last, command == SAVANXP_F_SETLKW);
+}
+
+} // namespace
+
+int fcntl_fd(process::Thread& self, uint64_t fd, uint64_t command, uint64_t value) {
+    process::Process& proc = *self.process;
+    if (command == SAVANXP_F_GETLK || command == SAVANXP_F_SETLK || command == SAVANXP_F_SETLKW) {
+        return fcntl_lock(self, fd, command, value);
+    }
     object::IoObject* file = detail::fd_to_io_object(proc, fd, object::access_query);
     if (file == nullptr) {
         return sx::negative_error(SAVANXP_EBADF);

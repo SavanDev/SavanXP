@@ -63,5 +63,12 @@ short poll_open_file(const object::IoObject* file, short events);
 void wake_waiters_for_object(object::Header* handle_object);
 void terminate_process(Process& proc, int exit_code);
 
+// File locks (kernel/file_lock.cpp): parks `self` on `request` and returns
+// kBlockedResult; and the parked thread with the lowest ticket above
+// `ticket`, so a caller walks them in the order they parked. nullptr at the
+// end.
+int park_on_file_lock(Thread& self, const file_lock::Request& request);
+Thread* file_lock_waiter_after(uint64_t ticket);
+
 } // namespace detail
 } // namespace process

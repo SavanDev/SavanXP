@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **POSIX record locks: `fcntl` `F_GETLK`, `F_SETLK` and `F_SETLKW` with `struct flock`.** Advisory and per
+  process; `F_SETLKW` waits, `EDEADLK` refuses a cycle. Kernel table and rules in
+  [docs/kernel/FILE_LOCKS.md](docs/kernel/FILE_LOCKS.md); new guest test `locktest` in `smoke smoke`.
 - **TinyCC port: a C compiler on the system** (`ports/tinycc/build.sh`). `/bin/tcc hello.c -o hello` builds a static
   POSIX program in the guest, and `tcc -run` runs one from memory. New smoke `tinycc-smoke`
   ([ports/tinycc/README.md](ports/tinycc/README.md)).

@@ -146,4 +146,28 @@ enum savanxp_seek_whence {
 enum savanxp_fcntl_command {
     SAVANXP_F_GETFL = 1,
     SAVANXP_F_SETFL = 2,
+    /* Record locks (docs/kernel/FILE_LOCKS.md): value = struct
+     * savanxp_flock*. GETLK writes it back; SETLKW may block. */
+    SAVANXP_F_GETLK = 5,
+    SAVANXP_F_SETLK = 6,
+    SAVANXP_F_SETLKW = 7,
+};
+
+/* l_type of struct savanxp_flock. */
+enum savanxp_lock_type {
+    SAVANXP_F_RDLCK = 0,
+    SAVANXP_F_WRLCK = 1,
+    SAVANXP_F_UNLCK = 2,
+};
+
+/* POSIX's struct flock, as the kernel reads it. l_whence is a
+ * SAVANXP_SEEK_*: the range starts at l_start from there and runs l_len bytes,
+ * to the end of the file and past it when l_len is 0, and backwards from
+ * l_start when it is negative. */
+struct savanxp_flock {
+    int16_t l_type;
+    int16_t l_whence;
+    int32_t l_pid;
+    int64_t l_start;
+    int64_t l_len;
 };

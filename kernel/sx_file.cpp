@@ -10,6 +10,7 @@
 
 #include "abi/savanxp_abi.h"
 #include "kernel/credentials.hpp"
+#include "kernel/file_lock.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/object.hpp"
 #include "kernel/process.hpp"
@@ -212,6 +213,7 @@ sx_status close_handle(process::Process& proc, uint64_t handle) {
     if (handle >= process::kMaxFileHandles || proc.handles[handle].object == nullptr) {
         return SX_EBADF;
     }
+    file_lock::handle_dropped(proc, proc.handles[handle].object);
     object::release(proc.handles[handle].object);
     proc.handles[handle].granted_access = object::access_none;
     proc.handles[handle].flags = object::handle_none;

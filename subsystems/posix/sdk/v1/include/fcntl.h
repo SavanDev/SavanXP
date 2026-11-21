@@ -14,6 +14,31 @@
 #define F_SETFL 2
 #define F_GETFD 3
 #define F_SETFD 4
+/* Record locks (docs/kernel/FILE_LOCKS.md): advisory, owned by the process,
+ * released when it closes any descriptor of the file, and not inherited by
+ * fork. */
+#define F_GETLK 5
+#define F_SETLK 6
+#define F_SETLKW 7
+
+#define F_RDLCK 0
+#define F_WRLCK 1
+#define F_UNLCK 2
+
+/* l_whence, as <stdio.h> defines them. */
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+#include "sys/types.h"
+
+struct flock {
+    short l_type;
+    short l_whence;
+    off_t l_start;
+    off_t l_len;
+    pid_t l_pid;
+};
 
 /* No hay exec-on-close que aplicar -- el exec de SavanXP no hereda una tabla de
  * fds marcada --, pero el flag tiene que existir: un port lo setea y espera que

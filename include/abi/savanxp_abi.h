@@ -83,6 +83,10 @@ enum sx_status {
     SX_ECANCELED = 125,
     // A name or a path longer than the VFS, or the volume's format, takes.
     SX_ENAMETOOLONG = 36,
+    // File locks (docs/kernel/FILE_LOCKS.md): a wait that would close a
+    // cycle of owners waiting on each other, and a full lock table.
+    SX_EDEADLK = 35,
+    SX_ENOLCK = 37,
 };
 
 // El nombre de POSIX para los mismos numeros, para userland. El kernel nunca
@@ -118,6 +122,8 @@ typedef enum sx_status savanxp_error_code;
 #define SAVANXP_EINTR SX_EINTR
 #define SAVANXP_ECANCELED SX_ECANCELED
 #define SAVANXP_ENAMETOOLONG SX_ENAMETOOLONG
+#define SAVANXP_EDEADLK SX_EDEADLK
+#define SAVANXP_ENOLCK SX_ENOLCK
 
 
 struct savanxp_stat {

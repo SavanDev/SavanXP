@@ -1,6 +1,7 @@
 #include "savanxp/libc.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -2048,9 +2049,47 @@ int sx_pipe(int fds[2]) {
     return 0;
 }
 
+/* F_GETLK, F_SETLK and F_SETLKW: struct flock travels as the kernel's
+ * struct savanxp_flock, whose fields have fixed widths. */
+static int sx_fcntl_lock(int fd, int command, struct flock* lock) {
+    struct savanxp_flock raw;
+    long result;
+
+    if (lock == 0) {
+        errno = SAVANXP_EINVAL;
+        return -1;
+    }
+    raw.l_type = (int16_t)lock->l_type;
+    raw.l_whence = (int16_t)lock->l_whence;
+    raw.l_pid = 0;
+    raw.l_start = (int64_t)lock->l_start;
+    raw.l_len = (int64_t)lock->l_len;
+    result = savanxp_fcntl(fd, (unsigned long)command, (unsigned long)&raw);
+    if (result < 0) {
+        sx_set_errno_from_result(result);
+        return -1;
+    }
+    if (command == F_GETLK) {
+        lock->l_type = raw.l_type;
+        lock->l_whence = raw.l_whence;
+        lock->l_start = (off_t)raw.l_start;
+        lock->l_len = (off_t)raw.l_len;
+        lock->l_pid = (pid_t)raw.l_pid;
+    }
+    return 0;
+}
+
 int sx_fcntl(int fd, int command, ...) {
     unsigned long raw_value = 0;
     long result = 0;
+    if (command == F_GETLK || command == F_SETLK || command == F_SETLKW) {
+        struct flock* lock;
+        va_list args;
+        va_start(args, command);
+        lock = va_arg(args, struct flock*);
+        va_end(args);
+        return sx_fcntl_lock(fd, command, lock);
+    }
     if (command == F_DUPFD || command == F_SETFL) {
         va_list args;
         va_start(args, command);

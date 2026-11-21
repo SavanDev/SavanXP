@@ -55,6 +55,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   `/rescue` in memory and the `/disk` alias, the rescue system, how a request
   finds its driver, the rules the VFS enforces for all of them, and what still
   names SxFS.
+- [`FILE_LOCKS.md`](kernel/FILE_LOCKS.md) — byte-range file locks: one table, the
+  POSIX and SUN owner policies, where they are released, how a waiter is
+  granted, `EDEADLK`, and the limits.
 - [`INPUT.md`](kernel/INPUT.md) — the input layer: how drivers register, why
   registration order decides which keyboard and pointer win, and the keyboard
   core that turns set 1 key positions into keys, text and modifiers, and the

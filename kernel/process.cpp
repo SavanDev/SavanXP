@@ -13,6 +13,7 @@
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
 #include "kernel/elf.hpp"
+#include "kernel/file_lock.hpp"
 #include "kernel/fs.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
@@ -359,6 +360,7 @@ bool inherit_handle(process::Process& child, int child_fd, const process::Proces
 void release_all_handles(process::Process& proc) {
     for (process::HandleEntry& entry : proc.handles) {
         if (entry.object != nullptr) {
+            file_lock::handle_dropped(proc, entry.object);
             object::release(entry.object);
             entry.granted_access = object::access_none;
             entry.flags = object::handle_none;
@@ -905,9 +907,10 @@ void recheck_parked_threads(uint64_t current_tick, bool honour_deadline) {
         if (thread.state != process::State::blocked_wait) {
             continue;
         }
-        // Only a wake or its deadline ends an address wait; it is no
-        // subsystem's park either.
-        if (thread.wait_reason == process::WaitReason::address) {
+        // Only a wake or its deadline ends an address wait, and only a
+        // grant a file-lock wait; neither is a subsystem's park.
+        if (thread.wait_reason == process::WaitReason::address ||
+            thread.wait_reason == process::WaitReason::file_lock) {
             continue;
         }
         // An object wait that names a stream has no signal to wake it: the
@@ -1115,6 +1118,7 @@ void reset_process_slot(process::Process& proc) {
     // A creation that failed after its state was copied: free it, and what it
     // holds, instead of losing it to the memset. A no-op once freed.
     process::free_subsystem_state(proc);
+    file_lock::process_ended(proc);
     memset(&proc, 0, sizeof(proc));
     proc.idle = idle;
     proc.life = process::Lifecycle::unused;
@@ -1300,6 +1304,7 @@ int install_handle(process::Process& proc, int fd, object::Header* handle_object
     }
 
     if (proc.handles[fd].object != nullptr) {
+        file_lock::handle_dropped(proc, proc.handles[fd].object);
         object::release(proc.handles[fd].object);
     }
     object::retain(handle_object);
@@ -1580,6 +1585,9 @@ void destroy_io_object(object::Header* header) {
     if (file == nullptr) {
         return;
     }
+    if (file->kind == process::HandleKind::vnode) {
+        file_lock::open_file_destroyed(*file);
+    }
 
     if (file->kind == process::HandleKind::pipe && file->pipe != nullptr) {
         if ((file->open_flags & process::open_read) != 0) {
@@ -1609,6 +1617,27 @@ void destroy_io_object(object::Header* header) {
     if (released != nullptr) {
         vfs::release(*released);
     }
+}
+int park_on_file_lock(process::Thread& self, const file_lock::Request& request) {
+    clear_wait_state(self);
+    self.wait_reason = process::WaitReason::file_lock;
+    self.lock_request = request;
+    self.state = process::State::blocked_wait;
+    return process::kBlockedResult;
+}
+
+process::Thread* file_lock_waiter_after(uint64_t ticket) {
+    process::Thread* next = nullptr;
+    for (process::Thread& thread : used_thread_slots()) {
+        if (thread.state != process::State::blocked_wait || thread.wait_reason != process::WaitReason::file_lock ||
+            thread.lock_request.ticket <= ticket) {
+            continue;
+        }
+        if (next == nullptr || thread.lock_request.ticket < next->lock_request.ticket) {
+            next = &thread;
+        }
+    }
+    return next;
 }
 } // namespace detail
 } // namespace process
@@ -1780,6 +1809,7 @@ void clear_wait_state(process::Thread& thread) {
     thread.wait_status_address = 0;
     thread.wait_address = 0;
     thread.wait_ticket = 0;
+    memset(&thread.lock_request, 0, sizeof(thread.lock_request));
     for (size_t index = 0; index < process::kMaxWaitHandles; ++index) {
         thread.waited_objects[index] = nullptr;
         thread.wait_io_interests[index] = 0;

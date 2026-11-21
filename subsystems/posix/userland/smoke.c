@@ -273,6 +273,7 @@ int main(void) {
     const char* seltest_argv[] = {"/bin/seltest", 0};
     const char* guicliptest_argv[] = {"/system/guicliptest.sxe", 0};
     const char* mmaptest_argv[] = {"/bin/mmaptest", 0};
+    const char* locktest_argv[] = {"/bin/locktest", 0};
     const char* heaptest_argv[] = {"/bin/heaptest", 0};
     const char* sh_argv[] = {"/bin/sh", "-c", "echo shell-redirect > /smoke/sh.txt", 0};
     /* A SUN program is console.sxe on disk; the shell finds it as `console`. */
@@ -339,6 +340,7 @@ int main(void) {
         !file_exists("/bin/seltest") ||
         !file_exists("/system/guicliptest.sxe") ||
         !file_exists("/bin/mmaptest") ||
+        !file_exists("/bin/locktest") ||
         !file_exists("/bin/heaptest") ||
         !file_exists("/bin/idtest") ||
         !file_exists("/bin/sh") ||
@@ -390,6 +392,8 @@ int main(void) {
         !run_and_expect("/bin/seltest", seltest_argv, 1, 0) ||
         !run_and_expect("/system/guicliptest.sxe", guicliptest_argv, 1, 0) ||
         !run_and_expect("/bin/mmaptest", mmaptest_argv, 1, 0) ||
+        /* fcntl record locks (docs/kernel/FILE_LOCKS.md). */
+        !run_and_expect("/bin/locktest", locktest_argv, 1, 0) ||
         !run_and_expect("/bin/heaptest", heaptest_argv, 1, 0) ||
         !validate_boot_volume() ||
         !prepare_smoke_directory() ||

@@ -239,7 +239,8 @@ static_assert(SX_EPERM == 1 && SX_ENOENT == 2 && SX_EINTR == 4 && SX_EIO == 5 &&
               SX_ENOMEM == 12 && SX_EACCES == 13 && SX_EBUSY == 16 && SX_EEXIST == 17 &&
               SX_EXDEV == 18 && SX_ENODEV == 19 && SX_ENOTDIR == 20 && SX_EISDIR == 21 &&
               SX_EINVAL == 22 && SX_ENOTTY == 25 && SX_ENOSPC == 28 && SX_EROFS == 30 &&
-              SX_EPIPE == 32 && SX_ENAMETOOLONG == 36 && SX_ENOSYS == 38 && SX_ENOTEMPTY == 39 &&
+              SX_EPIPE == 32 && SX_EDEADLK == 35 && SX_ENAMETOOLONG == 36 && SX_ENOLCK == 37 &&
+              SX_ENOSYS == 38 && SX_ENOTEMPTY == 39 &&
               SX_ECONNRESET == 104 && SX_ETIMEDOUT == 110 && SX_ECONNREFUSED == 111,
               "the kernel's error numbers must stay Linux's for SSL to pass them through");
 

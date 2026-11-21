@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/credentials.hpp"
+#include "kernel/file_lock.hpp"
 #include "kernel/object.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/vfs.hpp"
@@ -112,6 +113,9 @@ enum class WaitReason : uint8_t {
     object = 2,
     // SXN_SYS_WAIT_ADDRESS: parked on (process, wait_address).
     address = 3,
+    // A file lock another owner holds (kernel/file_lock.cpp): lock_request
+    // says which, and whoever frees the range grants it.
+    file_lock = 4,
 };
 
 struct HandleEntry {
@@ -193,6 +197,9 @@ struct Thread {
     // releases the oldest waiters first.
     uint64_t wait_address;
     uint64_t wait_ticket;
+    // The range a file-lock wait asks for, valid while wait_reason is
+    // file_lock.
+    file_lock::Request lock_request;
     object::Header* waited_objects[kMaxWaitHandles];
     uint32_t wait_io_interests[kMaxWaitHandles];
     uint64_t blocked_io_fd;
@@ -347,7 +354,7 @@ Process* find_zombie_child(uint32_t parent_pid, uint32_t waited_pid);
 void reap_process(Process& proc);
 bool has_runnable_non_idle();
 SavedContext* choose_next_context(SavedContext* current_context);
-int fcntl_fd(Process& proc, uint64_t fd, uint64_t command, uint64_t value);
+int fcntl_fd(Thread& self, uint64_t fd, uint64_t command, uint64_t value);
 int poll_fds(Thread& self, uint64_t user_fds, size_t count, int timeout_ms);
 Process* fork_process(Thread& parent, const SavedContext& parent_context);
 int kill_process(Process& sender, int pid, int signal_number);

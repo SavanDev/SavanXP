@@ -719,9 +719,15 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             context->rax = 0;
             return context;
         }
-        case SAVANXP_SYS_FCNTL:
-            context->rax = static_cast<uint64_t>(fcntl_fd(caller, context->rdi, context->rsi, context->rdx));
+        case SAVANXP_SYS_FCNTL: {
+            // F_SETLKW parks the thread until the range is granted.
+            const int result = fcntl_fd(self, context->rdi, context->rsi, context->rdx);
+            if (result == kBlockedResult) {
+                return choose_next_context(context);
+            }
+            context->rax = static_cast<uint64_t>(result);
             return context;
+        }
         case SAVANXP_SYS_POLL: {
             const int result = poll_fds(
                 self,

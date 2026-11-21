@@ -611,6 +611,7 @@ savanxp_program(NAME cliptest TEST SOURCES subsystems/posix/userland/cliptest.c)
 savanxp_program(NAME seltest DEPENDS libgfx2d libsxgui libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/seltest.c)
 savanxp_program(NAME mmaptest TEST SOURCES subsystems/posix/userland/mmaptest.c)
+savanxp_program(NAME locktest TEST SOURCES subsystems/posix/userland/locktest.c)
 savanxp_program(NAME libctest TEST SOURCES subsystems/posix/userland/libctest.c)
 savanxp_program(NAME stacktest TEST SOURCES subsystems/posix/userland/stacktest.c)
 savanxp_program(NAME imagetest TEST SOURCES subsystems/posix/userland/imagetest.c)
