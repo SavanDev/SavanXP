@@ -1099,15 +1099,15 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
             return false;
         }
 
+        // A new section has no references; the view's is the clone's only one.
+        // Releasing it here as well freed the child's private pages while the
+        // child still mapped them (docs/kernel/KERNEL_SECURITY.md, F1).
         if (!map_section_view(clone, *cloned_section, view.access_mask, base_address, false)) {
             object::Header* header = &cloned_section->header;
             object::release(header);
             destroy_address_space(clone);
             return false;
         }
-
-        object::Header* header = &cloned_section->header;
-        object::release(header);
     }
 
     destination = clone;

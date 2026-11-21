@@ -154,6 +154,13 @@ in two places on purpose:
   gives for every failure. A loader that misdeclares a segment gets an error that
   says so.
 
+A section is born with no references: every holder takes its own, a handle
+(`install_handle`) or a view (`map_section_view`), and the last release
+destroys it. `fork` follows the rule too: a private view is cloned for the
+child and the child's view holds the clone's only reference. Releasing it
+after mapping, as `clone_address_space` once did, freed the child's pages
+while it still mapped them ([`KERNEL_SECURITY.md`](./KERNEL_SECURITY.md), F1).
+
 W^X therefore lives in the **view**, not the section. A section may grant read,
 write and execute together — that is the grant, not a page flag — while every
 view taken from it is either writable or executable.
