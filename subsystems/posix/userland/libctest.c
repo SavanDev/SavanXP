@@ -24,6 +24,7 @@
 #include <string.h>
 #include <sys/random.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #define LIBCTEST_PATH "/tmp/libctest.txt"
@@ -533,6 +534,21 @@ static void test_float(void) {
 
 /* getrandom(2) and getentropy(3) over the kernel generator, as a port calls
  * them (OpenSSL's seed source does). */
+/* gettimeofday and CLOCK_REALTIME are the date, as time() is, not the time
+ * since boot; CLOCK_MONOTONIC is. QEMU's RTC holds the host's date. */
+static void test_wall_clock(void) {
+    struct timeval tv;
+    struct timespec ts;
+    const time_t now = time(0);
+
+    check(now > 1700000000L, "time gives the date");
+    check(gettimeofday(&tv, 0) == 0 && tv.tv_sec >= now && tv.tv_sec - now < 3, "gettimeofday gives the date");
+    check(tv.tv_usec >= 0 && tv.tv_usec < 1000000L, "gettimeofday microseconds");
+    check(clock_gettime(CLOCK_REALTIME, &ts) == 0 && ts.tv_sec >= now && ts.tv_sec - now < 3,
+          "CLOCK_REALTIME gives the date");
+    check(clock_gettime(CLOCK_MONOTONIC, &ts) == 0 && ts.tv_sec < 1000000L, "CLOCK_MONOTONIC counts from boot");
+}
+
 static void test_random(void) {
     static unsigned char big[5000];
     unsigned char a[32];
@@ -575,6 +591,7 @@ int main(void) {
     test_error_convention();
     test_directories();
     test_random();
+    test_wall_clock();
 
     check(getpid() > 0, "getpid");
     check(strcmp(ops.remove, "campo llamado remove") == 0, "campo remove intacto");

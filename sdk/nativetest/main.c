@@ -51,6 +51,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "abi/savanxp_native_abi.h"
 #include "savanxp/syscall.h"
@@ -254,6 +257,46 @@ static void test_clock_status(void) {
     check(status.now >= status.floor && status.now >= now && status.now - now < 5u);
     check(sxn_clock_status((struct sxn_clock_status*)1) == -SAVANXP_EINVAL);
     check(sxn_log("nativetest: the date can be believed") == 0);
+}
+
+/* The C library's clocks, sleep, randomness and identity in a native
+ * program: the runtime's hooks (system/runtime/sxn_runtime.c) put them on
+ * the native calls, where POSIX's calls would be ENOSYS. */
+static void test_libc_platform(void) {
+    struct timeval tv;
+    struct timespec ts;
+    struct timespec nap = {0, 50 * 1000000L};
+    struct sxn_native_info info;
+    struct sxn_identity identity;
+    unsigned char bytes[32];
+    uint64_t before, after, date = sxn_system_time();
+    unsigned i, nonzero = 0;
+
+    check(date != 0);
+    check((uint64_t)time(0) >= date && (uint64_t)time(0) - date < 3u);
+    check(gettimeofday(&tv, 0) == 0 && (uint64_t)tv.tv_sec >= date && (uint64_t)tv.tv_sec - date < 3u);
+    check(tv.tv_usec >= 0 && tv.tv_usec < 1000000L);
+    check(clock_gettime(CLOCK_REALTIME, &ts) == 0 && (uint64_t)ts.tv_sec - date < 3u);
+    before = sxn_clock_ns();
+    check(clock_gettime(CLOCK_MONOTONIC, &ts) == 0);
+    after = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+    check(after >= before && after - before < 1000000000ull);
+
+    before = sxn_clock_ns();
+    check(nanosleep(&nap, 0) == 0);
+    after = sxn_clock_ns();
+    check(after - before >= 45ull * 1000000ull && after - before < 2000ull * 1000000ull);
+
+    memset(bytes, 0, sizeof(bytes));
+    check(getentropy(bytes, sizeof(bytes)) == 0);
+    for (i = 0; i < sizeof(bytes); ++i) nonzero += bytes[i] != 0;
+    check(nonzero > 16u);
+    check(getentropy(bytes, 257) == -1);
+
+    check(sxn_info(&info) == 0 && getpid() == (pid_t)info.pid);
+    check(sxn_query_identity(&identity) == 0 && getuid() == (uid_t)identity.uid &&
+          geteuid() == (uid_t)identity.euid && getgid() == (gid_t)identity.gid);
+    check(sxn_log("nativetest: libc clocks, sleep, entropy and identity") == 0);
 }
 
 /* The pointer speed (sxn/sxnpointer.h, docs/kernel/INPUT.md#pointer-speed):
@@ -1278,6 +1321,12 @@ static void test_syscall_trap(void) {
     check(sxn_log("nativetest: syscall trap done") == 0);
 }
 
+/* atexit-order: the second handler registered runs first; the first then
+ * ends the process with a status that says whether it did. */
+static int g_atexit_second_ran;
+static void atexit_second(void) { g_atexit_second_ran = 1; }
+static void atexit_first(void) { sxn_exit(g_atexit_second_ran ? 24 : 25); }
+
 /* The stack protector's failure path, called here directly. */
 void __stack_chk_fail(void) __attribute__((noreturn));
 
@@ -1294,6 +1343,9 @@ static void test_runtime_exit(void) {
         {"return-main", 21},
         {"libc-exit", 22},
         {"stack-check", 134},
+        /* atexit: newest first when main returns, and never on abort. */
+        {"atexit-order", 24},
+        {"atexit-abort", 1},
     };
     char* child_argv[2];
     long index;
@@ -4083,6 +4135,14 @@ int main(int argc, char** argv) {
     if (argc > 1 && streq(argv[1], "stack-check")) {
         __stack_chk_fail();
     }
+    if (argc > 1 && streq(argv[1], "atexit-order")) {
+        check(atexit(atexit_first) == 0 && atexit(atexit_second) == 0);
+        return 23;
+    }
+    if (argc > 1 && streq(argv[1], "atexit-abort")) {
+        (void)atexit(atexit_first);
+        abort();
+    }
     if (argc > 1 && streq(argv[1],"audio-writer-busy")) audio_busy_child(0);
     if (argc > 1 && streq(argv[1],"audio-capture-busy")) audio_busy_child(1);
     if (argc > 1 && streq(argv[1],"audio-preferences")) {
@@ -4899,6 +4959,7 @@ int main(int argc, char** argv) {
     test_file_locks();
     test_random();
     test_clock_status();
+    test_libc_platform();
     test_clipboard();
     test_clipboard_changes();
     test_view_at();

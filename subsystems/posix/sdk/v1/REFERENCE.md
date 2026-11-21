@@ -86,6 +86,13 @@ What changed from 1.2 to 2.0 is listed in [`README.md`](README.md#breaking-chang
   2000..2099)
 - randomness: `savanxp_getrandom`, `random_status` (the kernel CSPRNG's bytes
   and state, `docs/kernel/RANDOM.md`)
+- the C library's platform hooks: `sx_clock_epoch_seconds`,
+  `sx_clock_monotonic_ns`, `sx_clock_sleep_ms`, `sx_entropy_fill`,
+  `sx_process_id`, `sx_identity_query` -- what `time`, `gettimeofday`,
+  `clock_gettime`, `nanosleep`, `getentropy`, `getrandom`, `getpid` and
+  `getuid` stand on, POSIX here and native in SUN's runtime
+  (`docs/userland/NATIVE_HEAP.md`). `gettimeofday` and `CLOCK_REALTIME` are
+  the date; `atexit` takes up to 32 handlers
 - clock validity: `clock_status` (whether the date can be believed, where it
   came from and why not, `struct savanxp_clock_status`; `docs/kernel/TIME.md`)
 - consistency: `fscheck` (a read-only report of the volume; see

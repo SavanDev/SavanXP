@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **SDK:** `atexit`, and libc time, sleep, randomness and identity in SUN programs: `time`, `gettimeofday`,
+  `clock_gettime`, `nanosleep`, `getentropy`, `getrandom`, `getpid` and `getuid` stand on runtime hooks with native
+  definitions instead of failing on `ENOSYS` ([NATIVE_HEAP.md](docs/userland/NATIVE_HEAP.md)).
 - **Clock validity** (N5): SUN `sxn_clock_status` and POSIX `clock_status` say whether the date can be believed -- set,
   after the release floor (2026-11-01) and before 2100 -- whether it came from the RTC or was set, and why not
   ([TIME.md](docs/kernel/TIME.md#can-the-date-be-believed)).
@@ -225,6 +228,7 @@ Cut-off notes:
 
 ### Fixed
 
+- **SDK:** `gettimeofday` and `clock_gettime(CLOCK_REALTIME)` return the date, not the time since boot.
 - **A SUN program's `.sxmeta` says `SUBSYSTEM` native without a `.sxres` saying so** (`sessiond.sxe` and
   `build-user.sh --native` builds carried `posix`). A `.sxres` `subsystem=` that contradicts the build now fails it.
   New host test `sxe-resources-test`.

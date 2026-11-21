@@ -111,6 +111,20 @@ void sx_process_exit(int code) __attribute__((noreturn));
  * system log when standard error is not the console), the system log in the
  * native one. */
 void sx_loader_report(const char* text, unsigned long length);
+/* What the C library's clocks, sleeps, randomness and identity stand on, the
+ * same way: weak and POSIX in the runtime, the native calls in SUN's, so
+ * time(), gettimeofday(), clock_gettime(), nanosleep(), getentropy(),
+ * getrandom(), getpid() and getuid() mean the same in both subsystems.
+ * epoch: seconds since 1970 UTC, 0 when the machine has no date. monotonic:
+ * nanoseconds since boot. sleep: 0 or -1. entropy: the bytes written (at
+ * most 4096) or a negative SAVANXP_E* code. pid: the process id. identity:
+ * 0 or a negative code. */
+unsigned long long sx_clock_epoch_seconds(void);
+unsigned long long sx_clock_monotonic_ns(void);
+int sx_clock_sleep_ms(unsigned long milliseconds);
+long sx_entropy_fill(void* buffer, unsigned long length);
+long sx_process_id(void);
+long sx_identity_query(struct savanxp_identity* out);
 /* Deja una seccion, evento, semaforo o timer en la cola de handles del pipe;
  * `pipe_fd` es el extremo de escritura. -SAVANXP_EAGAIN con la cola llena. */
 long pipe_send_handle(int pipe_fd, int handle);

@@ -90,7 +90,7 @@ uintptr_t __stack_chk_guard = 0;
 __attribute__((noreturn)) void __stack_chk_fail(void) {
     /* Do not route this through sx_abort: that path is libc and may itself have
      * a protected frame. Exit with the conventional abort status instead. */
-    exit(134);
+    sx_process_exit(134);
     for (;;) {
         __asm__ volatile("");
     }
@@ -1892,7 +1892,7 @@ int sx_system(const char* command) {
 }
 
 void sx_abort(void) {
-    exit(1);
+    sx_process_exit(1);
 }
 
 double sx_fabs(double value) {
@@ -2465,7 +2465,7 @@ char* sx_realpath(const char* path, char* resolved) {
 }
 
 pid_t sx_getpid(void) {
-    long result = savanxp_getpid();
+    long result = sx_process_id();
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2508,7 +2508,13 @@ ssize_t sx_getrandom(void* buffer, size_t length, unsigned int flags) {
     if (length > 4096u) {
         length = 4096u; /* a short read, as Linux gives past its own limit */
     }
-    result = savanxp_getrandom(buffer, (unsigned long)length, flags);
+    /* GRND_NONBLOCK and GRND_RANDOM change nothing (docs/kernel/RANDOM.md);
+     * anything else is refused, in either subsystem. */
+    if ((flags & ~3u) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = sx_entropy_fill(buffer, (unsigned long)length);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -2522,7 +2528,7 @@ int sx_getentropy(void* buffer, size_t length) {
         errno = EINVAL;
         return -1;
     }
-    result = savanxp_getrandom(buffer, (unsigned long)length, 0);
+    result = sx_entropy_fill(buffer, (unsigned long)length);
     if (result < 0) {
         sx_set_errno_from_result(result);
         return -1;
@@ -4249,14 +4255,14 @@ int sx_execve(const char* path, char* const argv[], char* const envp[]) {
 }
 
 void sx__exit(int code) {
-    exit(code);
+    sx_process_exit(code);
 }
 
 /* Whom this process acts as (docs/kernel/USERS_AND_PERMISSIONS.md). Asked of
  * the kernel each time: setuid in another thread changes it for all. */
 static struct savanxp_identity sx_identity(void) {
     struct savanxp_identity identity = {0, 0, 0, 0};
-    (void)savanxp_get_identity(&identity);
+    (void)sx_identity_query(&identity);
     return identity;
 }
 
@@ -4334,7 +4340,7 @@ int sx_usleep(unsigned long microseconds) {
     if (microseconds % 1000UL != 0) {
         ++milliseconds;
     }
-    if (sleep_ms(milliseconds) < 0) {
+    if (sx_clock_sleep_ms(milliseconds) < 0) {
         errno = SAVANXP_EINVAL;
         return -1;
     }
@@ -4604,28 +4610,77 @@ size_t sx_strftime(char* buffer, size_t capacity, const char* format, const stru
 }
 
 clock_t sx_clock(void) {
-    return (clock_t)uptime_ms();
+    return (clock_t)(sx_clock_monotonic_ns() / 1000000ULL);
 }
 
-/* Devolvia el uptime, no la epoca Unix, teniendo el RTC del kernel a mano:
- * cualquier fecha calculada por una app daba 1970. Si el RTC no valida se cae
- * al uptime, que es lo que habia antes. */
-time_t sx_time(time_t* out_value) {
+/* The hooks of savanxp/libc.h, POSIX's way; the native runtime defines its
+ * own. */
+__attribute__((weak)) unsigned long long sx_clock_epoch_seconds(void) {
     struct savanxp_realtime now = {0};
-    time_t value = 0;
+    struct tm fields = {0};
 
-    if (realtime(&now) >= 0 && now.valid != 0) {
-        struct tm fields = {0};
-        fields.tm_year = (int)now.year - 1900;
-        fields.tm_mon = (int)now.month - 1;
-        fields.tm_mday = (int)now.day;
-        fields.tm_hour = (int)now.hour;
-        fields.tm_min = (int)now.minute;
-        fields.tm_sec = (int)now.second;
-        value = sx_timegm(&fields);
-    } else {
-        value = (time_t)(uptime_ms() / 1000UL);
+    if (realtime(&now) < 0 || now.valid == 0) {
+        return 0;
     }
+    fields.tm_year = (int)now.year - 1900;
+    fields.tm_mon = (int)now.month - 1;
+    fields.tm_mday = (int)now.day;
+    fields.tm_hour = (int)now.hour;
+    fields.tm_min = (int)now.minute;
+    fields.tm_sec = (int)now.second;
+    return (unsigned long long)sx_timegm(&fields);
+}
+
+__attribute__((weak)) unsigned long long sx_clock_monotonic_ns(void) {
+    return (unsigned long long)uptime_ms() * 1000000ULL;
+}
+
+__attribute__((weak)) int sx_clock_sleep_ms(unsigned long milliseconds) {
+    return sleep_ms(milliseconds) < 0 ? -1 : 0;
+}
+
+__attribute__((weak)) long sx_entropy_fill(void* buffer, unsigned long length) {
+    return savanxp_getrandom(buffer, length, 0);
+}
+
+__attribute__((weak)) long sx_process_id(void) {
+    return savanxp_getpid();
+}
+
+__attribute__((weak)) long sx_identity_query(struct savanxp_identity* out) {
+    return savanxp_get_identity(out);
+}
+
+/* The date in nanoseconds since 1970: the clock's second, carried by the
+ * monotonic clock so it never steps back within a second and has a sub-second
+ * part. It follows the date again when someone sets it (more than two
+ * seconds apart). 0 when the machine has no date. */
+/* <time.h>'s CLOCK_REALTIME, which this file does not include. */
+#define SX_CLOCK_REALTIME 0
+static unsigned long long g_epoch_anchor_s;
+static unsigned long long g_epoch_anchor_ns;
+
+static unsigned long long sx_epoch_ns(void) {
+    const unsigned long long now_ns = sx_clock_monotonic_ns();
+    const unsigned long long seconds = sx_clock_epoch_seconds();
+    unsigned long long carried;
+
+    if (seconds == 0) {
+        return 0;
+    }
+    carried = g_epoch_anchor_s + (now_ns - g_epoch_anchor_ns) / 1000000000ULL;
+    if (g_epoch_anchor_s == 0 || carried + 2u < seconds || carried > seconds + 2u) {
+        g_epoch_anchor_s = seconds;
+        g_epoch_anchor_ns = now_ns;
+    }
+    return g_epoch_anchor_s * 1000000000ULL + (now_ns - g_epoch_anchor_ns);
+}
+
+/* The Unix date; the uptime when the machine has none, as before there was a
+ * date to give. */
+time_t sx_time(time_t* out_value) {
+    const unsigned long long seconds = sx_clock_epoch_seconds();
+    const time_t value = seconds != 0 ? (time_t)seconds : (time_t)(sx_clock_monotonic_ns() / 1000000000ULL);
 
     if (out_value != 0) {
         *out_value = value;
@@ -4633,16 +4688,21 @@ time_t sx_time(time_t* out_value) {
     return value;
 }
 
-
+/* CLOCK_REALTIME is the date, as time() gives it with a sub-second part;
+ * every other clock is the time since boot. */
 int sx_clock_gettime(int clock_id, struct timespec* value) {
-    unsigned long milliseconds = uptime_ms();
-    (void)clock_id;
+    unsigned long long nanoseconds;
+
     if (value == 0) {
         errno = SAVANXP_EINVAL;
         return -1;
     }
-    value->tv_sec = (time_t)(milliseconds / 1000UL);
-    value->tv_nsec = (long)((milliseconds % 1000UL) * 1000000UL);
+    nanoseconds = clock_id == SX_CLOCK_REALTIME ? sx_epoch_ns() : 0;
+    if (nanoseconds == 0) {
+        nanoseconds = sx_clock_monotonic_ns();
+    }
+    value->tv_sec = (time_t)(nanoseconds / 1000000000ULL);
+    value->tv_nsec = (long)(nanoseconds % 1000000000ULL);
     return 0;
 }
 
@@ -4658,15 +4718,18 @@ int sx_nanosleep(const struct timespec* request, struct timespec* remaining) {
     return sx_usleep(milliseconds * 1000UL);
 }
 
+/* The date, as CLOCK_REALTIME; the uptime when the machine has none. */
 int sx_gettimeofday(struct timeval* value, void* timezone_ptr) {
-    unsigned long milliseconds = uptime_ms();
+    struct timespec now;
+
     (void)timezone_ptr;
     if (value == 0) {
         errno = SAVANXP_EINVAL;
         return -1;
     }
-    value->tv_sec = (long)(milliseconds / 1000UL);
-    value->tv_usec = (long)((milliseconds % 1000UL) * 1000UL);
+    (void)sx_clock_gettime(SX_CLOCK_REALTIME, &now);
+    value->tv_sec = (long)now.tv_sec;
+    value->tv_usec = now.tv_nsec / 1000L;
     return 0;
 }
 

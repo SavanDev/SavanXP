@@ -878,9 +878,27 @@ __attribute__((weak, noreturn)) void sx_process_exit(int code) {
     }
 }
 
-/* Every way the runtime ends a process comes here: crt0 when main returns,
- * _exit, abort, a failed assert and __stack_chk_fail. */
+/* atexit(): C asks for at least 32; exit() calls them newest first, once
+ * each. _exit, abort, a failed assert and __stack_chk_fail end the process
+ * without them, through sx_process_exit. */
+#define SX_ATEXIT_MAX 32
+static void (*g_atexit_handlers[SX_ATEXIT_MAX])(void);
+static int g_atexit_count;
+
+int atexit(void (*handler)(void)) {
+    if (handler == 0 || g_atexit_count >= SX_ATEXIT_MAX) {
+        return -1;
+    }
+    g_atexit_handlers[g_atexit_count++] = handler;
+    return 0;
+}
+
+/* crt0 when main returns, and exit() itself. */
 void exit(int code) {
+    while (g_atexit_count > 0) {
+        void (*handler)(void) = g_atexit_handlers[--g_atexit_count];
+        handler();
+    }
     sx_process_exit(code);
 }
 

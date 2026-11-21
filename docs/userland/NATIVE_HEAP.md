@@ -75,6 +75,29 @@ weak in the runtime with POSIX `EXIT` and strong in `sxn_runtime.c` with
 the hook the call came back, the `hlt` after it raised #GP in ring 3, and the
 process ended with status 141 whatever it had asked for. `nativetest` checks
 that returning from `main`, `exit` and `__stack_chk_fail` give their own.
+`exit()` first runs the `atexit` handlers, newest first (up to 32); `_exit`,
+`abort`, `assert` and `__stack_chk_fail` go to `sx_process_exit` without
+them.
+
+**The C library's platform is the third set of hooks.** Every libc function
+that needs the date, the time since boot, a sleep, randomness, the pid or the
+identity reaches it through six hooks (`savanxp/libc.h`):
+`sx_clock_epoch_seconds`, `sx_clock_monotonic_ns`, `sx_clock_sleep_ms`,
+`sx_entropy_fill`, `sx_process_id` and `sx_identity_query`. Weak and POSIX in
+the runtime; in `sxn_runtime.c`, `sxn_system_time`, `sxn_clock_ns`, a timed
+`sxn_wait_address`, `sxn_random_bytes`, `sxn_info` and `sxn_query_identity`.
+Before them `time()` in a native program fell back to the uptime, and
+`getentropy`, `getpid` and `nanosleep` failed, all on `ENOSYS`. They are what
+lets one shared library -- OpenSSL, which asks the program for `time`,
+`gettimeofday` and `getentropy` -- serve both subsystems. `nativetest` checks
+each against the native call; `atexit-order` and `atexit-abort` check the
+handlers.
+
+`gettimeofday` and `clock_gettime(CLOCK_REALTIME)` are the date, as POSIX
+says, not the uptime they used to return: the clock's second carried by the
+monotonic clock, so it has a sub-second part and does not step back within a
+second; it follows the date again when someone sets it more than two seconds
+away. Every other clock id is the time since boot.
 
 Not chosen:
 

@@ -20,6 +20,7 @@ char* getenv(const char* name);
 int system(const char* command);
 void abort(void);
 void exit(int code) __attribute__((noreturn));
+int atexit(void (*handler)(void));
 long strtol(const char* text, char** endptr, int base);
 unsigned long strtoul(const char* text, char** endptr, int base);
 void* bsearch(const void* key, const void* base, size_t count, size_t size,
