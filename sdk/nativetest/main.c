@@ -2453,6 +2453,111 @@ static void test_file_listing(void) {
     check(sxn_rename_path("/users/native-dir-test/old", "/users/native-dir-test") != 0);
 }
 
+/* SXN_SYS_LOCK_FILE and UNLOCK_FILE (docs/kernel/FILE_LOCKS.md). A lock belongs
+ * to the open file, so two opens of one file are two owners inside this
+ * process, and a duplicate is the same owner. A second thread waits on a held
+ * range until the main thread unlocks it. */
+static long g_lock_wait_handle = -1;
+static volatile uint32_t g_lock_wait_state;
+
+static void lock_waiter(void* argument) {
+    long result;
+
+    (void)argument;
+    __atomic_store_n(&g_lock_wait_state, 1u, __ATOMIC_SEQ_CST);
+    result = sxn_lock_file(g_lock_wait_handle, 0, 10, SXN_LOCK_EXCLUSIVE);
+    __atomic_store_n(&g_lock_wait_state, result == 0 ? 2u : 3u, __ATOMIC_SEQ_CST);
+    sxn_thread_exit(result == 0 ? 0 : 1);
+}
+
+static void test_file_locks(void) {
+    const char* path = "/users/native-lock-test";
+    long first = -1;
+    long second = -1;
+    long twin = -1;
+    long pause = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+    int32_t pipe_handles[2] = {-1, -1};
+    long waiter;
+    int32_t code = -1;
+    int tries;
+
+    check(sxn_write_file(path, "0123456789abcdefghij0123456789", 30) == 0);
+    first = sxn_open_file(path, SXN_FILE_READ);
+    second = sxn_open_file(path, SXN_FILE_READ);
+    check(first >= 0 && second >= 0 && pause >= 0);
+    if (first < 0 || second < 0 || pause < 0) {
+        return;
+    }
+
+    /* An exclusive range blocks the other open file, and its own: locks are
+     * not reentrant. */
+    check(sxn_lock_file(first, 0, 10, SXN_LOCK_EXCLUSIVE) == 0);
+    check(sxn_lock_file(second, 5, 1, SXN_LOCK_FAIL_IMMEDIATELY) == -SAVANXP_EAGAIN);
+    check(sxn_lock_file(first, 5, 1, SXN_LOCK_EXCLUSIVE | SXN_LOCK_FAIL_IMMEDIATELY) == -SAVANXP_EAGAIN);
+    /* Shared ranges share, the same open file's too. */
+    check(sxn_lock_file(first, 20, 10, SXN_LOCK_FAIL_IMMEDIATELY) == 0);
+    check(sxn_lock_file(second, 25, 10, SXN_LOCK_FAIL_IMMEDIATELY) == 0);
+    check(sxn_lock_file(first, 25, 1, SXN_LOCK_FAIL_IMMEDIATELY) == 0);
+    check(sxn_lock_file(second, 22, 1, SXN_LOCK_EXCLUSIVE | SXN_LOCK_FAIL_IMMEDIATELY) == -SAVANXP_EAGAIN);
+    /* An unlock names exactly a range that was locked. */
+    check(sxn_unlock_file(first, 0, 5) == -SAVANXP_ENOENT);
+    check(sxn_unlock_file(second, 0, 10) == -SAVANXP_ENOENT);
+    check(sxn_unlock_file(first, 0, 10) == 0);
+    check(sxn_lock_file(second, 0, 10, SXN_LOCK_EXCLUSIVE | SXN_LOCK_FAIL_IMMEDIATELY) == 0);
+
+    /* A duplicate is the same open file: it is blocked by the lock too, and
+     * may unlock it. */
+    twin = sxn_duplicate(second);
+    check(twin >= 0);
+    check(sxn_lock_file(twin, 0, 1, SXN_LOCK_FAIL_IMMEDIATELY) == -SAVANXP_EAGAIN);
+    check(sxn_unlock_file(twin, 0, 10) == 0);
+    check(sxn_lock_file(twin, 0, 10, SXN_LOCK_EXCLUSIVE | SXN_LOCK_FAIL_IMMEDIATELY) == 0);
+    /* The lock outlives one handle and goes with the open file's last. */
+    check(sxn_close(second) == 0);
+    second = -1;
+    check(sxn_lock_file(first, 0, 1, SXN_LOCK_FAIL_IMMEDIATELY) == -SAVANXP_EAGAIN);
+    check(sxn_close(twin) == 0);
+    twin = -1;
+    check(sxn_lock_file(first, 0, 10, SXN_LOCK_EXCLUSIVE | SXN_LOCK_FAIL_IMMEDIATELY) == 0);
+
+    /* Without FAIL_IMMEDIATELY the call waits until the range frees. */
+    g_lock_wait_handle = sxn_open_file(path, SXN_FILE_READ);
+    g_lock_wait_state = 0u;
+    check(g_lock_wait_handle >= 0);
+    waiter = g_lock_wait_handle >= 0 ? sxn_thread_create(lock_waiter, 0, thread_stack(), 0) : -1;
+    check(waiter >= 0);
+    if (waiter >= 0) {
+        for (tries = 0; tries < 500 && __atomic_load_n(&g_lock_wait_state, __ATOMIC_SEQ_CST) == 0u; ++tries) {
+            (void)sxn_wait_one(pause, 2);
+        }
+        (void)sxn_wait_one(pause, 300);
+        check(__atomic_load_n(&g_lock_wait_state, __ATOMIC_SEQ_CST) == 1u);
+        check(sxn_unlock_file(first, 0, 10) == 0);
+        check(sxn_wait_one(waiter, 10000) == 0);
+        check(sxn_thread_exit_code(waiter, &code) == 0 && code == 0);
+        check(__atomic_load_n(&g_lock_wait_state, __ATOMIC_SEQ_CST) == 2u);
+        (void)sxn_close(waiter);
+    }
+
+    /* Refusals. */
+    check(sxn_lock_file(first, 40, 0, 0) == -SAVANXP_EINVAL);
+    check(sxn_lock_file(first, ~0ULL, 2, 0) == -SAVANXP_EINVAL);
+    check(sxn_lock_file(first, 0, 1, 4u) == -SAVANXP_EINVAL);
+    check(sxn_lock_file(99, 0, 1, 0) == -SAVANXP_EBADF);
+    check(sxn_unlock_file(first, 0, 0) == -SAVANXP_EINVAL);
+    if (sxn_pipe_create(pipe_handles) == 0) {
+        check(sxn_lock_file(pipe_handles[0], 0, 1, SXN_LOCK_FAIL_IMMEDIATELY) == -SAVANXP_EBADF);
+        (void)sxn_close(pipe_handles[0]);
+        (void)sxn_close(pipe_handles[1]);
+    }
+
+    (void)sxn_close(g_lock_wait_handle);
+    g_lock_wait_handle = -1;
+    (void)sxn_close(first);
+    (void)sxn_close(pause);
+    check(sxn_log("nativetest: file locks done") == 0);
+}
+
 /* SXN_SYS_SECTION_OPEN_RANGE (docs/kernel/SECTIONS.md): a section over a range
  * of a file, which is what a loader maps a library's text from. The fixture is
  * on the volume and nothing else maps it, so file_sections_live moves only
@@ -4357,6 +4462,7 @@ int main(int argc, char** argv) {
     }
 
     test_files();
+    test_file_locks();
     test_clipboard();
     test_clipboard_changes();
     test_view_at();

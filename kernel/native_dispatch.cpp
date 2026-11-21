@@ -8,6 +8,7 @@
 #include "kernel/console.hpp"
 #include "kernel/device.hpp"
 #include "kernel/display.hpp"
+#include "kernel/file_lock.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/klog.hpp"
 #include "kernel/object.hpp"
@@ -438,6 +439,56 @@ int native_flush_file(Process& proc, uint64_t handle) {
     const size_t mount = fs::owner_of(path);
     if (mount != fs::kInvalidMount && !fs::sync(mount)) return sx::negative_error(SX_EIO);
     return 0;
+}
+
+// The open file behind a SUN lock call: a regular file, open for reading or
+// writing (docs/kernel/FILE_LOCKS.md).
+object::IoObject* lockable_file(Process& proc, uint64_t handle) {
+    object::IoObject* file = detail::fd_to_io_object(proc, handle, object::access_query);
+    if (file == nullptr || file->kind != HandleKind::vnode || file->node == nullptr ||
+        file->node->type != vfs::NodeType::file || (file->open_flags & (open_read | open_write)) == 0) {
+        return nullptr;
+    }
+    return file;
+}
+
+// The last byte of [offset, offset + length), or false for no length or a
+// range past 2^64.
+bool lock_range_last(uint64_t offset, uint64_t length, uint64_t& last) {
+    if (length == 0 || length - 1 > ~0ULL - offset) {
+        return false;
+    }
+    last = offset + (length - 1);
+    return true;
+}
+
+int native_lock_file(Thread& self, uint64_t handle, uint64_t offset, uint64_t length, uint64_t flags) {
+    if ((flags & ~static_cast<uint64_t>(SXN_LOCK_EXCLUSIVE | SXN_LOCK_FAIL_IMMEDIATELY)) != 0) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    object::IoObject* file = lockable_file(*self.process, handle);
+    if (file == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+    uint64_t last = 0;
+    if (!lock_range_last(offset, length, last)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const file_lock::Kind kind =
+        (flags & SXN_LOCK_EXCLUSIVE) != 0 ? file_lock::Kind::exclusive : file_lock::Kind::shared;
+    return file_lock::open_file_lock(self, *file, kind, offset, last, (flags & SXN_LOCK_FAIL_IMMEDIATELY) == 0);
+}
+
+int native_unlock_file(Process& proc, uint64_t handle, uint64_t offset, uint64_t length) {
+    object::IoObject* file = lockable_file(proc, handle);
+    if (file == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+    uint64_t last = 0;
+    if (!lock_range_last(offset, length, last)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    return file_lock::open_file_unlock(*file, offset, last);
 }
 
 /* What a path call changed is on the disk before it returns, as a whole-file
@@ -1528,6 +1579,17 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_FLUSH_FILE:
             context->rax = static_cast<uint64_t>(native_flush_file(*caller, context->rdi));
+            return context;
+        case SXN_SYS_LOCK_FILE: {
+            const int result = native_lock_file(*self, context->rdi, context->rsi, context->rdx, context->r10);
+            if (result == kBlockedResult) {
+                return choose_next_context(context);
+            }
+            context->rax = static_cast<uint64_t>(result);
+            return context;
+        }
+        case SXN_SYS_UNLOCK_FILE:
+            context->rax = static_cast<uint64_t>(native_unlock_file(*caller, context->rdi, context->rsi, context->rdx));
             return context;
         case SXN_SYS_MAKE_DIRECTORY:
             context->rax = static_cast<uint64_t>(native_make_directory(*caller, context->rdi));

@@ -269,8 +269,8 @@ reached through the standard headers. Its practical limits:
   waiting would close a cycle of processes waiting on each other. Only files
   have locks: a pipe, a device or a socket is `EINVAL`. The table holds 128
   ranges for the whole system, then `ENOLCK`
-  ([FILE_LOCKS.md](../../../../docs/kernel/FILE_LOCKS.md)).
-  **Pending:** SUN has no counterpart yet (a `LockFileEx`).
+  ([FILE_LOCKS.md](../../../../docs/kernel/FILE_LOCKS.md)). SUN has the
+  same locks as `sxn_lock_file`, owned by the open file as `LockFileEx`'s.
 - Threads (`pthread.h`): create, join, detach, exit, mutexes (normal,
   recursive, error-checking), condition variables, once and keys, plus
   `__thread` variables in the executable. No cancellation, read-write locks,

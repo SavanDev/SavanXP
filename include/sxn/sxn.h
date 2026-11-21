@@ -162,6 +162,17 @@ static inline long sxn_flush_file(long handle) {
     return sxn_trap(SXN_SYS_FLUSH_FILE, (unsigned long)handle, 0, 0);
 }
 
+/* LockFileEx and UnlockFileEx: a byte range of the open file, shared or
+ * SXN_LOCK_EXCLUSIVE, waiting unless SXN_LOCK_FAIL_IMMEDIATELY. Unlock names
+ * exactly the range that was locked. */
+static inline long sxn_lock_file(long handle, uint64_t offset, uint64_t length, unsigned flags) {
+    return sxn_trap4(SXN_SYS_LOCK_FILE, (unsigned long)handle, offset, length, flags);
+}
+
+static inline long sxn_unlock_file(long handle, uint64_t offset, uint64_t length) {
+    return sxn_trap(SXN_SYS_UNLOCK_FILE, (unsigned long)handle, offset, length);
+}
+
 /* Who this process is: the person (uid) and whom it acts as (euid). */
 static inline long sxn_query_identity(struct sxn_identity* out) {
     return sxn_trap(SXN_SYS_QUERY_IDENTITY, (unsigned long)out, 0, 0);

@@ -1,8 +1,8 @@
 # File locks
 
 Byte-range locks on files: one table in the kernel (`kernel/file_lock.cpp`),
-two owner policies over it, one per subsystem that asks. POSIX's `fcntl`
-record locks are the first consumer.
+two owner policies over it, one per subsystem that asks: POSIX's `fcntl`
+record locks and SUN's `sxn_lock_file`.
 
 ## What a lock is
 
@@ -25,7 +25,7 @@ mandatory; SavanXP does not implement that part.
 | Its own locks | never conflict: a new lock replaces, splits and merges its ranges | conflict like anyone else's: not reentrant |
 | Released | when the process closes **any** descriptor of the file, at exit, by `F_UNLCK` over any range | when the open file is destroyed (its last handle closed), or by an unlock of exactly a range it locked |
 | A child of `fork` | holds none | shares the parent's, through the shared open file |
-| Waiting | `F_SETLKW`; `EDEADLK` for a cycle | (the SUN call is still to come) |
+| Waiting | `F_SETLKW`; `EDEADLK` for a cycle | without `SXN_LOCK_FAIL_IMMEDIATELY`; no deadlock check, as on Windows |
 
 The POSIX column is POSIX's own rule, the one every Unix shares, including
 its best-known trap: a library that opens and closes the file behind the
@@ -70,7 +70,8 @@ that each hold what the other asks for, the one that asks second gets it.
   `ENOLCK` and changes nothing.
 - Every lookup walks the table. That is right for a handful of programs
   locking a few ranges each, and wrong for a database.
-- Only files have locks. A pipe, a device or a socket is `EINVAL` in POSIX.
+- Only files have locks. A pipe, a device or a socket is `EINVAL` in POSIX
+  and `EBADF` in SUN.
 
 ## POSIX
 
@@ -84,8 +85,17 @@ another owner, with `l_whence = SEEK_SET`, `l_len = 0` for one that runs to
 the end, and the owner's pid; or `l_type = F_UNLCK`. `locktest`, in
 `smoke smoke`, checks each of these rules with two processes.
 
+## SUN
+
+`sxn_lock_file(handle, offset, length, flags)` and `sxn_unlock_file(handle,
+offset, length)` (`SXN_SYS_LOCK_FILE`, `SXN_SYS_UNLOCK_FILE`,
+[KERNEL_NATIVE_API.md](KERNEL_NATIVE_API.md)) take a regular file's handle
+open for reading or writing and an offset and a length, as `LockFileEx` does;
+a length of 0 is refused instead of locking nothing. The unlock names exactly
+a range that was locked. `nativetest` checks the rules with two opens of one
+file, which are two owners inside one process, and a thread that waits.
+
 ## Pending
 
-- SUN's calls (`LockFileEx`/`UnlockFileEx`), over `Policy::open_file`.
 - The Linux subsystem's `fcntl` and the Win32 subsystem's `LockFileEx` do not
   reach the table yet.

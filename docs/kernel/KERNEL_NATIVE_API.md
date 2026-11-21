@@ -858,3 +858,22 @@ device; a listing of `/system` that finds the fixture and no dot entries; a
 3-byte one; `CREATE_NEW` over an existing file; the refusals above; and, as
 user 1001, a query through a directory it cannot search and a refused
 `CREATE_ALWAYS` that leaves the fixture's size as it was.
+
+File locks ([FILE_LOCKS.md](FILE_LOCKS.md)), owned by the open file:
+
+- `SXN_SYS_LOCK_FILE` (`0x1048`): rdi = a regular file handle open for
+  reading or writing, rsi = offset, rdx = length (not 0), r10 =
+  `SXN_LOCK_EXCLUSIVE` and `SXN_LOCK_FAIL_IMMEDIATELY`. Shared unless
+  exclusive; an exclusive range conflicts with every other lock over it, the
+  same open file's included. Waits for the range to free, or `-EAGAIN` at
+  once. `-EBADF`, `-EINVAL` (no length, past 2^64, unknown flags),
+  `-ENOLCK`. `LockFileEx`.
+- `SXN_SYS_UNLOCK_FILE` (`0x1049`): rdi = handle, rsi = offset, rdx =
+  length, exactly a range the open file locked; `-ENOENT` when it holds none
+  there. The open file's last handle releases whatever is left.
+  `UnlockFileEx`.
+
+`nativetest` asserts the conflicts between two opens of one file, shared
+ranges, the exact-range unlock, a duplicate as the same owner, the release
+with the last handle, a second thread waiting until the unlock, and the
+refusals.

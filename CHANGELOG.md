@@ -12,6 +12,8 @@ Cut-off notes:
 
 ### Added
 
+- **SUN file locks: `sxn_lock_file` and `sxn_unlock_file`** (`SXN_SYS_LOCK_FILE`/`UNLOCK_FILE`), `LockFileEx`'s
+  model over the same kernel table as POSIX's `fcntl` locks; `nativetest` covers them.
 - **POSIX record locks: `fcntl` `F_GETLK`, `F_SETLK` and `F_SETLKW` with `struct flock`.** Advisory and per
   process; `F_SETLKW` waits, `EDEADLK` refuses a cycle. Kernel table and rules in
   [docs/kernel/FILE_LOCKS.md](docs/kernel/FILE_LOCKS.md); new guest test `locktest` in `smoke smoke`.

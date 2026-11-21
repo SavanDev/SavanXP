@@ -429,6 +429,21 @@ enum sxn_syscall_number {
      * as POSIX's GET_IDENTITY reports them. 0, or -EINVAL for a bad pointer.
      * OpenProcessToken + GetTokenInformation(TokenUser). */
     SXN_SYS_QUERY_IDENTITY = 0x1047,
+    /* rdi = handle of a regular file open for reading or writing, rsi =
+     * offset, rdx = length (not 0), r10 = flags (SXN_LOCK_*). Locks that
+     * byte range for the open file: the handle, its duplicates and whoever
+     * inherited it (docs/kernel/FILE_LOCKS.md). Shared unless
+     * SXN_LOCK_EXCLUSIVE; an exclusive range conflicts with any other lock
+     * over it, the same open file's included. Waits for a conflicting range
+     * to free, or returns -EAGAIN at once with SXN_LOCK_FAIL_IMMEDIATELY.
+     * Advisory: reads and writes do not look at it. 0, -EAGAIN, -EBADF,
+     * -EINVAL (no length, a range past 2^64, unknown flags), -ENOLCK. The
+     * lock goes with the open file's last handle. LockFileEx. */
+    SXN_SYS_LOCK_FILE = 0x1048,
+    /* rdi = handle, rsi = offset, rdx = length: exactly a range the open
+     * file locked. 0, -ENOENT (it holds none there), -EBADF, -EINVAL.
+     * UnlockFileEx. */
+    SXN_SYS_UNLOCK_FILE = 0x1049,
 };
 
 /* SXN_SYS_LOG_READ. One line of the system log as it left for the serial
@@ -496,6 +511,10 @@ struct sxn_directory_entry {
 #define SXN_CREATE_NEW 1u     /* fail with -EEXIST if the file exists */
 #define SXN_CREATE_ALWAYS 2u  /* empty an existing file */
 #define SXN_CREATE_EXECUTABLE 0x100u /* or'd in: a new file is 0700, runnable */
+
+/* SXN_SYS_LOCK_FILE. */
+#define SXN_LOCK_EXCLUSIVE 1u        /* LOCKFILE_EXCLUSIVE_LOCK */
+#define SXN_LOCK_FAIL_IMMEDIATELY 2u /* LOCKFILE_FAIL_IMMEDIATELY */
 
 /* The most sectors one STORAGE_READ or STORAGE_WRITE moves (64 KiB). */
 #define SXN_STORAGE_MAX_TRANSFER 128u
