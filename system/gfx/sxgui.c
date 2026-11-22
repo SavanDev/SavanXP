@@ -1148,11 +1148,188 @@ static int sxgui_iconview_row_count(int item_count, int columns)
     return item_count > 0 ? (item_count + columns - 1) / columns : 0;
 }
 
+/* ---- icon view groups ------------------------------------------------------
+ *
+ * With group headers (SXGUI_GROUP_HEADER) the grid is no longer one
+ * arithmetic progression: a header takes a lower row of its own and the
+ * items after it start a new row. Everything below walks the items in order
+ * instead, keeping each row's top. An icon view without headers never comes
+ * here: it keeps the arithmetic above, unchanged.
+ */
+
+#define SXGUI_ICONVIEW_HEADER_GAP 6 /* above a header's title, and its rule's room */
+
+static int sxgui_iconview_is_header(const struct sxgui_widget *widget, int index)
+{
+    return widget->items != 0 && index >= 0 && index < widget->item_count && widget->items[index] != 0 &&
+           widget->items[index][0] == SXGUI_GROUP_HEADER;
+}
+
+static int sxgui_iconview_grouped(const struct sxgui_widget *widget)
+{
+    int index;
+
+    for (index = 0; index < widget->item_count; ++index)
+    {
+        if (sxgui_iconview_is_header(widget, index))
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int sxgui_iconview_header_height(void)
+{
+    return SXGUI_ICONVIEW_HEADER_GAP + gfx_text_height() + SXGUI_ICONVIEW_HEADER_GAP;
+}
+
+/* One step at a time through the items: which row and column each one
+ * takes, and where that row starts, in pixels from the first row's top. */
+struct sxgui_iconview_walk
+{
+    int index;
+    int row;
+    int column;
+    int header;
+    int y;
+    int row_height;
+    int next;     /* the column the next item takes; `columns` starts a row */
+    int columns;
+};
+
+static void sxgui_iconview_walk_begin(struct sxgui_iconview_walk *walk, int columns)
+{
+    walk->index = -1;
+    walk->row = -1;
+    walk->column = 0;
+    walk->header = 0;
+    walk->y = 0;
+    walk->row_height = 0;
+    walk->next = columns;
+    walk->columns = columns;
+}
+
+static int sxgui_iconview_walk_step(const struct sxgui_widget *widget, struct sxgui_iconview_walk *walk)
+{
+    walk->index += 1;
+    if (walk->index >= widget->item_count)
+    {
+        return 0;
+    }
+    walk->header = sxgui_iconview_is_header(widget, walk->index);
+    if (walk->header || walk->next >= walk->columns)
+    {
+        walk->y += walk->row_height;
+        walk->row += 1;
+        walk->row_height = walk->header ? sxgui_iconview_header_height() : sxgui_iconview_cell_height();
+        walk->next = walk->header ? walk->columns : 0;
+    }
+    walk->column = walk->header ? 0 : walk->next;
+    if (!walk->header)
+    {
+        walk->next += 1;
+    }
+    return 1;
+}
+
+/* The top of row `row` (the total height past the last row), the number of
+ * rows, and the total height. */
+static int sxgui_iconview_group_row_y(const struct sxgui_widget *widget, int columns, int row, int *row_count,
+                                      int *total)
+{
+    struct sxgui_iconview_walk walk;
+    int found = -1;
+
+    sxgui_iconview_walk_begin(&walk, columns);
+    while (sxgui_iconview_walk_step(widget, &walk))
+    {
+        if (walk.row == row && found < 0)
+        {
+            found = walk.y;
+        }
+    }
+    if (row_count != 0)
+    {
+        *row_count = walk.row + 1;
+    }
+    if (total != 0)
+    {
+        *total = walk.y + walk.row_height;
+    }
+    return found >= 0 ? found : walk.y + walk.row_height;
+}
+
+static int sxgui_iconview_group_avail(struct sx_rect area)
+{
+    return area.height - SXGUI_ICONVIEW_MARGIN * 2;
+}
+
+/* The first row from which every row to the end fits. */
+static int sxgui_iconview_group_max_scroll(const struct sxgui_widget *widget, struct sx_rect area)
+{
+    struct sxgui_iconview_walk walk;
+    int total;
+    int avail = sxgui_iconview_group_avail(area);
+    int columns = sxgui_iconview_columns_in(area);
+    int last_row = -1;
+
+    (void)sxgui_iconview_group_row_y(widget, columns, 0, 0, &total);
+    sxgui_iconview_walk_begin(&walk, columns);
+    while (sxgui_iconview_walk_step(widget, &walk))
+    {
+        if (walk.row != last_row)
+        {
+            last_row = walk.row;
+            if (total - walk.y <= avail)
+            {
+                return walk.row;
+            }
+        }
+    }
+    return last_row > 0 ? last_row : 0;
+}
+
+/* Rows that fit whole from row `first`; at least one. */
+static int sxgui_iconview_group_rows_from(const struct sxgui_widget *widget, struct sx_rect area, int first)
+{
+    struct sxgui_iconview_walk walk;
+    int columns = sxgui_iconview_columns_in(area);
+    int top = sxgui_iconview_group_row_y(widget, columns, first, 0, 0);
+    int avail = sxgui_iconview_group_avail(area);
+    int rows = 0;
+    int last_row = -1;
+
+    sxgui_iconview_walk_begin(&walk, columns);
+    while (sxgui_iconview_walk_step(widget, &walk))
+    {
+        if (walk.row != last_row && walk.row >= first)
+        {
+            last_row = walk.row;
+            if (walk.y + walk.row_height - top > avail)
+            {
+                break;
+            }
+            rows += 1;
+        }
+        last_row = walk.row;
+    }
+    return rows > 0 ? rows : 1;
+}
+
 /* Decided on the area WITHOUT the bar: the bar narrows the grid, which can
  * only add rows, so the answer cannot flip once the bar is there. */
 static int sxgui_iconview_has_scrollbar(const struct sxgui_widget *widget)
 {
     struct sx_rect area = sxgui_iconview_area(widget, 0);
+
+    if (sxgui_iconview_grouped(widget))
+    {
+        int total;
+
+        (void)sxgui_iconview_group_row_y(widget, sxgui_iconview_columns_in(area), 0, 0, &total);
+        return total > sxgui_iconview_group_avail(area);
+    }
     return sxgui_iconview_row_count(widget->item_count, sxgui_iconview_columns_in(area)) >
         sxgui_iconview_rows_in(area);
 }
@@ -1169,11 +1346,19 @@ static int sxgui_iconview_columns(const struct sxgui_widget *widget)
 
 static int sxgui_iconview_visible_rows(const struct sxgui_widget *widget)
 {
+    if (sxgui_iconview_grouped(widget))
+    {
+        return sxgui_iconview_group_rows_from(widget, sxgui_iconview_items_area(widget), widget->scroll);
+    }
     return sxgui_iconview_rows_in(sxgui_iconview_items_area(widget));
 }
 
 static int sxgui_iconview_max_scroll(const struct sxgui_widget *widget)
 {
+    if (sxgui_iconview_grouped(widget))
+    {
+        return sxgui_iconview_group_max_scroll(widget, sxgui_iconview_items_area(widget));
+    }
     int max_scroll = sxgui_iconview_row_count(widget->item_count, sxgui_iconview_columns(widget)) -
         sxgui_iconview_visible_rows(widget);
     return max_scroll > 0 ? max_scroll : 0;
@@ -1187,6 +1372,22 @@ static struct sx_rect sxgui_iconview_cell(const struct sxgui_widget *widget, int
     int column = index % columns;
     int row = index / columns - widget->scroll;
 
+    if (sxgui_iconview_grouped(widget))
+    {
+        struct sxgui_iconview_walk walk;
+        int top = sxgui_iconview_group_row_y(widget, columns, widget->scroll, 0, 0);
+
+        sxgui_iconview_walk_begin(&walk, columns);
+        while (sxgui_iconview_walk_step(widget, &walk) && walk.index < index)
+        {
+        }
+        /* A header's cell is its whole row. */
+        return sx_rect_make(
+            area.x + SXGUI_ICONVIEW_MARGIN + (walk.header ? 0 : walk.column * SXGUI_ICONVIEW_CELL_WIDTH),
+            area.y + SXGUI_ICONVIEW_MARGIN + walk.y - top,
+            walk.header ? area.width - SXGUI_ICONVIEW_MARGIN * 2 : SXGUI_ICONVIEW_CELL_WIDTH,
+            walk.row_height);
+    }
     return sx_rect_make(
         area.x + SXGUI_ICONVIEW_MARGIN + column * SXGUI_ICONVIEW_CELL_WIDTH,
         area.y + SXGUI_ICONVIEW_MARGIN + row * sxgui_iconview_cell_height(),
@@ -1434,8 +1635,54 @@ static void sxgui_listbox_clamp_scroll(struct sxgui_widget *widget)
     widget->scroll = sxgui_clamp_int(widget->scroll, 0, sxgui_listbox_max_scroll(widget));
 }
 
+/* The grouped icon view's: rows differ in height, so the scroll that shows
+ * the selected item's row whole is searched for. Reaching a group's first
+ * row from below brings its header into view too. */
+static void sxgui_iconview_group_ensure_visible(struct sxgui_widget *widget)
+{
+    struct sx_rect area = sxgui_iconview_items_area(widget);
+    int columns = sxgui_iconview_columns_in(area);
+    int avail = sxgui_iconview_group_avail(area);
+    struct sxgui_iconview_walk walk;
+    int row = -1;
+    int bottom = 0;
+    int header_above = 0;
+    int previous_header = 0;
+
+    sxgui_iconview_walk_begin(&walk, columns);
+    while (sxgui_iconview_walk_step(widget, &walk))
+    {
+        if (walk.index == widget->value)
+        {
+            row = walk.row;
+            bottom = walk.y + walk.row_height;
+            header_above = previous_header && walk.column == 0;
+            break;
+        }
+        previous_header = walk.header;
+    }
+    if (row < 0)
+    {
+        return;
+    }
+    if (row - header_above < widget->scroll)
+    {
+        widget->scroll = row - header_above;
+    }
+    while (widget->scroll < row && bottom - sxgui_iconview_group_row_y(widget, columns, widget->scroll, 0, 0) > avail)
+    {
+        widget->scroll += 1;
+    }
+    widget->scroll = sxgui_clamp_int(widget->scroll, 0, sxgui_iconview_group_max_scroll(widget, area));
+}
+
 static void sxgui_listbox_ensure_visible(struct sxgui_widget *widget)
 {
+    if (widget->kind == SXGUI_ICONVIEW && sxgui_iconview_grouped(widget))
+    {
+        sxgui_iconview_group_ensure_visible(widget);
+        return;
+    }
     int visible_rows = sxgui_listbox_visible_rows(widget);
     /* The row the selection is on: the item itself in a list, its grid row
      * in an icon view. */
@@ -1465,6 +1712,21 @@ static int sxgui_list_nav_key(int key, int horizontal)
 static int sxgui_list_select_from_none(struct sxgui_widget *widget, int key)
 {
     widget->value = key == SAVANXP_KEY_END ? widget->item_count - 1 : 0;
+    /* A group header is never selected: the first or last item instead. */
+    if (widget->kind == SXGUI_ICONVIEW)
+    {
+        int step = key == SAVANXP_KEY_END ? -1 : 1;
+
+        while (sxgui_iconview_is_header(widget, widget->value))
+        {
+            widget->value += step;
+        }
+        if (widget->value < 0 || widget->value >= widget->item_count)
+        {
+            widget->value = -1;
+            return 0;
+        }
+    }
     sxgui_listbox_ensure_visible(widget);
     sxgui_fire(widget, SXGUI_ACTION_CHANGE);
     return 1;
@@ -1734,6 +1996,122 @@ static struct sx_rect sxgui_iconview_label_rect(
         count * sxgui_iconview_line_height() + 2);
 }
 
+/* ---- grouped icon view keys ------------------------------------------------
+ *
+ * Left and Right step through the items, over the headers; Up and Down go to
+ * the item row above or below, to the same column or the row's last item if
+ * it is shorter; Page Up and Page Down do that a screenful of times; Home and
+ * End go to the first and last items. A header is never landed on. */
+
+/* The item at `column` of item row `row`, or its last one when the row is
+ * shorter; -1 for a header row or past the last row. */
+static int sxgui_iconview_group_item_in_row(const struct sxgui_widget *widget, int columns, int row, int column)
+{
+    struct sxgui_iconview_walk walk;
+    int found = -1;
+
+    sxgui_iconview_walk_begin(&walk, columns);
+    while (sxgui_iconview_walk_step(widget, &walk))
+    {
+        if (walk.row < row)
+        {
+            continue;
+        }
+        if (walk.row > row || walk.header)
+        {
+            break;
+        }
+        found = walk.index;
+        if (walk.column >= column)
+        {
+            break;
+        }
+    }
+    return found;
+}
+
+/* One row up (`direction` -1) or down (+1) from item `value`, over header
+ * rows; `value` itself when there is no item row that way. */
+static int sxgui_iconview_group_vertical(const struct sxgui_widget *widget, int columns, int value, int direction)
+{
+    struct sxgui_iconview_walk walk;
+    int row = -1;
+    int column = 0;
+    int rows;
+    int target;
+
+    sxgui_iconview_walk_begin(&walk, columns);
+    while (sxgui_iconview_walk_step(widget, &walk))
+    {
+        if (walk.index == value)
+        {
+            row = walk.row;
+            column = walk.column;
+        }
+    }
+    rows = walk.row + 1;
+    for (target = row + direction; row >= 0 && target >= 0 && target < rows; target += direction)
+    {
+        int index = sxgui_iconview_group_item_in_row(widget, columns, target, column);
+
+        if (index >= 0)
+        {
+            return index;
+        }
+    }
+    return value;
+}
+
+static int sxgui_iconview_group_step(const struct sxgui_widget *widget, int value, int step)
+{
+    int index = value + step;
+
+    while (index >= 0 && index < widget->item_count && sxgui_iconview_is_header(widget, index))
+    {
+        index += step;
+    }
+    return index >= 0 && index < widget->item_count ? index : value;
+}
+
+/* The item a key moves the selection to, or -1 for a key this does not take. */
+static int sxgui_iconview_group_key(const struct sxgui_widget *widget, int key)
+{
+    int columns = sxgui_iconview_columns(widget);
+    int value = widget->value;
+    int times;
+
+    switch (key)
+    {
+    case SAVANXP_KEY_LEFT:
+        return sxgui_iconview_group_step(widget, value, -1);
+    case SAVANXP_KEY_RIGHT:
+        return sxgui_iconview_group_step(widget, value, 1);
+    case SAVANXP_KEY_UP:
+        return sxgui_iconview_group_vertical(widget, columns, value, -1);
+    case SAVANXP_KEY_DOWN:
+        return sxgui_iconview_group_vertical(widget, columns, value, 1);
+    case SAVANXP_KEY_PAGE_UP:
+    case SAVANXP_KEY_PAGE_DOWN:
+        for (times = sxgui_listbox_visible_rows(widget); times > 0; --times)
+        {
+            int next = sxgui_iconview_group_vertical(widget, columns, value, key == SAVANXP_KEY_PAGE_UP ? -1 : 1);
+
+            if (next == value)
+            {
+                break;
+            }
+            value = next;
+        }
+        return value;
+    case SAVANXP_KEY_HOME:
+        return sxgui_iconview_group_step(widget, -1, 1);
+    case SAVANXP_KEY_END:
+        return sxgui_iconview_group_step(widget, widget->item_count, -1);
+    default:
+        return -1;
+    }
+}
+
 /* The item whose icon or label is under (x, y), or -1: the empty part of a
  * cell is background, as in the classic view. */
 static int sxgui_iconview_item_at(const struct sxgui_widget *widget, int x, int y)
@@ -1749,6 +2127,23 @@ static int sxgui_iconview_item_at(const struct sxgui_widget *widget, int x, int 
 
     if (!sx_rect_contains_point(area, x, y))
     {
+        return -1;
+    }
+    if (sxgui_iconview_grouped(widget))
+    {
+        for (index = 0; index < widget->item_count; ++index)
+        {
+            if (sxgui_iconview_is_header(widget, index))
+            {
+                continue;
+            }
+            cell = sxgui_iconview_cell(widget, index);
+            if (sx_rect_contains_point(sxgui_iconview_icon_rect(cell), x, y) ||
+                sx_rect_contains_point(sxgui_iconview_label_rect(widget, index, cell, lines, &count), x, y))
+            {
+                return index;
+            }
+        }
         return -1;
     }
     column = (x - area.x - SXGUI_ICONVIEW_MARGIN) / SXGUI_ICONVIEW_CELL_WIDTH;
@@ -1832,7 +2227,9 @@ static void sxgui_paint_iconview(struct sx_painter *painter, const struct sxgui_
 
     if (sx_painter_push_clip(painter, area))
     {
-        for (index = widget->scroll * columns; index < widget->item_count; ++index)
+        int grouped = sxgui_iconview_grouped(widget);
+
+        for (index = grouped ? 0 : widget->scroll * columns; index < widget->item_count; ++index)
         {
             struct sx_rect cell = sxgui_iconview_cell(widget, index);
             struct sx_rect icon = sxgui_iconview_icon_rect(cell);
@@ -1845,6 +2242,23 @@ static void sxgui_paint_iconview(struct sx_painter *painter, const struct sxgui_
             if (cell.y >= area.y + area.height)
             {
                 break;
+            }
+            if (cell.y + cell.height <= area.y)
+            {
+                continue;
+            }
+            /* A header: its title, then a rule in the selection colour
+             * across two thirds of the row, as XP underlines a group. */
+            if (grouped && sxgui_iconview_is_header(widget, index))
+            {
+                int text_y = cell.y + SXGUI_ICONVIEW_HEADER_GAP;
+                int rule_y = text_y + gfx_text_height() + 2;
+
+                sx_painter_draw_text(painter, cell.x + 4, text_y, widget->items[index] + 1, SXGUI_COLOR_TEXT);
+                sx_painter_draw_text(painter, cell.x + 5, text_y, widget->items[index] + 1, SXGUI_COLOR_TEXT);
+                sx_painter_fill_rect(
+                    painter, sx_rect_make(cell.x + 2, rule_y, cell.width * 2 / 3, 1), SXGUI_COLOR_SELECT);
+                continue;
             }
             sxgui_iconview_draw_icon(
                 painter, widget->item_icons != 0 ? widget->item_icons[index] : 0, icon.x, icon.y, selected);
@@ -5787,6 +6201,18 @@ int sxgui_handle_key(struct sxgui_context *ctx, const struct savanxp_input_event
         if (widget->value < 0 && sxgui_list_nav_key(event->key, 1))
         {
             return sxgui_list_select_from_none(widget, event->key);
+        }
+        if (sxgui_iconview_grouped(widget))
+        {
+            new_value = sxgui_iconview_group_key(widget, event->key);
+            if (new_value < 0 || new_value == widget->value)
+            {
+                return 0;
+            }
+            widget->value = new_value;
+            sxgui_listbox_ensure_visible(widget);
+            sxgui_fire(widget, SXGUI_ACTION_CHANGE);
+            return 1;
         }
         switch (event->key)
         {

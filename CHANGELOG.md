@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Grouped icon view (SDK 2.0):** an `SXGUI_ICONVIEW` item starting with `SXGUI_GROUP_HEADER` is a group header, as
+  in XP's grouped views; host test `sxgui-iconview-test`. Files' My Computer groups the user's folder ("user's
+  Documents") and the disks ([FILES.md](docs/desktop/FILES.md#groups)).
 - **Files opens on My Computer:** with no folder it lists the mounted volumes as drives (`Local Disk (/)`), with capacity
   and free space in Properties; Up from `/` goes there. `/boot` is hidden. House icons `drive-harddisk`, `drive-optical`
   and `drive-removable-media` in `/icons`. Scenario `filescomputer` ([FILES.md](docs/desktop/FILES.md#my-computer)).

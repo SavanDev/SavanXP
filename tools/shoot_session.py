@@ -1013,13 +1013,20 @@ def scenario_filestoolbar(s):
 def scenario_filescomputer(s):
     """Files' My Computer (docs/desktop/FILES.md#my-computer).
 
-    Files with no folder lists the mounted volumes as drives, with Up
-    disabled. Enter on the first opens the root; Up from the root comes back.
-    A volume's Properties give its capacity and free space.
+    Files with no folder shows My Computer in groups, as Windows XP does: the
+    user's folder under Files Stored on This Computer, the volumes under Hard
+    Disk Drives, with Up disabled. Down skips the headers: the first Down
+    selects the user's folder, the second the disk in the group below, and
+    Enter opens the root; Up from the root comes back. Enter on the user's
+    folder opens the profile. A volume's Properties give its capacity and free
+    space, and Details list the entries with no headers.
     """
     s.open_files()
     image = s.shot("computer")
     expect_text(image, (0, 0, 1280, 770), "My Computer", TEXT, FIELD, "Files opens on My Computer")
+    expect_text(image, (0, 0, 1280, 770), "Files Stored on This Computer", TEXT, FIELD,
+                "the user's folder has its group")
+    expect_text(image, (0, 0, 1280, 770), "Hard Disk Drives", TEXT, FIELD, "the volumes have their group")
     expect_text(image, (0, 0, 1280, 770), "Local Disk (/)", TEXT, FIELD, "My Computer lists the root volume")
     caption = find_text(image, (0, 0, 1280, 770), "Views", TEXT, FACE)[0]
     if caption is None:
@@ -1029,13 +1036,22 @@ def scenario_filescomputer(s):
         raise Failure("Up is enabled in My Computer")
 
     s.qmp.tap("down", pause=0.6)
+    s.qmp.tap("down", pause=0.6)
     s.qmp.tap("ret", pause=1.5)
     image = s.shot("computer-root")
-    expect_text(image, (0, 0, 1280, 770), "icons", TEXT, FIELD, "Enter on the volume opens the root")
+    expect_text(image, (0, 0, 1280, 770), "icons", TEXT, FIELD, "Down twice and Enter open the disk")
     files_click_text(s, image, "Up", "Up is not enabled at the root", toolbar)
     image = s.shot("computer-up")
     expect_text(image, (0, 0, 1280, 770), "Local Disk (/)", TEXT, FIELD, "Up from the root is My Computer")
 
+    s.qmp.tap("down", pause=0.6)
+    s.qmp.tap("ret", pause=1.5)
+    image = s.shot("computer-documents")
+    expect_text(image, (0, 0, 1280, 770), "/users/user", TEXT, FIELD, "the user's folder opens the profile")
+    s.qmp.chord("alt", "left")
+    time.sleep(1.5)
+
+    s.qmp.tap("down", pause=0.6)
     s.qmp.tap("down", pause=0.6)
     s.qmp.chord("alt", "ret")
     time.sleep(1.2)
@@ -1044,11 +1060,13 @@ def scenario_filescomputer(s):
     expect_text(image, (0, 0, 1280, 770), "Free space:", TEXT, FACE, "a volume's Properties give its free space")
     s.qmp.tap("ret", pause=1.0)
     image = files_choose_view(s, image, "Details")
+    if find_text(image, (0, 0, 1280, 770), "Hard Disk Drives", TEXT, FIELD)[0] is not None:
+        raise Failure("Details show the group headers")
     header = find_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE)[0]
     if header is None:
         raise Failure("Details in My Computer has no Type column")
     # The volume is still selected from its Properties.
-    expect_text(image, (header[0] - 4, header[1] + 8, header[0] + 160, header[1] + 40), "Local Disk",
+    expect_text(image, (header[0] - 4, header[1] + 8, header[0] + 160, header[1] + 60), "Local Disk",
                 SELECT_TEXT, SELECT, "the Type column says Local Disk")
 
 

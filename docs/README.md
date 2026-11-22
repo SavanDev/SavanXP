@@ -234,10 +234,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`IMAGE_VIEWER.md`](desktop/IMAGE_VIEWER.md) — the SUN Image Viewer: BMP/PNG/JPEG,
   fit and zoom, scrolling and folder navigation, fullscreen, decode limits and tests.
 - [`FILES.md`](desktop/FILES.md) — Files, the file browser: My Computer (the
-  mounted volumes as drives), the toolbar, address bar, history and Properties, the toolbar widgets
+  mounted volumes as drives, in groups), the toolbar, address bar, history and Properties, the toolbar widgets
   (`SXGUI_FLAG_TOOLBAR`), Cut, Copy and Paste with the shared copy engine
   (`file_copy.c`) and the progress dialog, the Large Icons and Details views
-  over one widget (`SXGUI_ICONVIEW`), the per-size icon caches and their RAM,
+  over one widget (`SXGUI_ICONVIEW`) and its group headers, the per-size icon caches and their RAM,
   and what is next.
 - [`CLIPBOARD.md`](desktop/CLIPBOARD.md) — the system clipboard (`/dev/clipboard`):
   a set of named formats replaced whole, the media-type names and the UTF-8

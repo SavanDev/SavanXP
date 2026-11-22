@@ -121,8 +121,9 @@ struct filesapp_entry
     char name[256];
     unsigned int size;
     int is_dir;
-    /* My Computer's entries are volumes: where each is mounted and its
-     * space. */
+    /* My Computer's entries: the user's folder (`documents`), and the
+     * volumes with where each is mounted and its space. */
+    int documents;
     int volume;
     char mount_point[SAVANXP_STORAGE_MOUNT_CAPACITY];
     unsigned long long total_bytes;
@@ -469,41 +470,117 @@ static void filesapp_sort_entries(int start_index)
 
 /* ---- list items and entries ------------------------------------------------
  *
- * The widget's items are g_entries, except that Large Icons leaves out "..":
- * Explorer's icon view has no parent entry (Up One Level and Backspace go
- * up). Since ".." is always entry 0 when present, the icon view's item i is
- * entry i + 1, and the widget is pointed one past the start of the arrays.
+ * The widget's items are built from g_entries for the view shown, and
+ * g_item_entry says which entry each item is (-1 for a group header). Large
+ * Icons leaves out "..": Explorer's icon view has no parent entry (Up One
+ * Level and Backspace go up). In My Computer, Large Icons groups the entries
+ * under headers, as Windows XP's My Computer does
+ * (docs/desktop/FILES.md#my-computer); Details lists them plainly.
  */
 
-static int filesapp_item_offset(void)
-{
-    return FILESAPP_LIST->kind == SXGUI_ICONVIEW && g_entry_count > 0 &&
-        strcmp(g_entries[0].name, "..") == 0 ? 1 : 0;
-}
+#define FILESAPP_MAX_ITEMS (FILESAPP_MAX_ENTRIES + 2)
 
-/* The entry behind widget item `item`, or -1 for none. */
+static const char k_group_files[] = SXGUI_GROUP_HEADER_TEXT "Files Stored on This Computer";
+static const char k_group_disks[] = SXGUI_GROUP_HEADER_TEXT "Hard Disk Drives";
+
+static const char *g_view_items[FILESAPP_MAX_ITEMS];
+static const struct sx_bitmap *g_view_icons[FILESAPP_MAX_ITEMS];
+static int g_item_entry[FILESAPP_MAX_ITEMS];
+static int g_view_count = 0;
+
+/* The entry behind widget item `item`, or -1 for none or a header. */
 static int filesapp_entry_of(int item)
 {
-    int entry = item < 0 ? -1 : item + filesapp_item_offset();
-    return entry < g_entry_count ? entry : -1;
+    return item >= 0 && item < g_view_count ? g_item_entry[item] : -1;
 }
 
 /* The widget item showing entry `entry`, or -1 when this view hides it. */
 static int filesapp_item_of(int entry)
 {
-    int item = entry < 0 ? -1 : entry - filesapp_item_offset();
-    return item >= 0 ? item : -1;
+    int item;
+
+    for (item = 0; entry >= 0 && item < g_view_count; ++item)
+    {
+        if (g_item_entry[item] == entry)
+        {
+            return item;
+        }
+    }
+    return -1;
 }
 
-/* Points the widget at the arrays of the current view, keeping the
- * selected entry selected if the view shows it. */
+static void filesapp_view_add(const char *text, int entry)
+{
+    if (g_view_count < FILESAPP_MAX_ITEMS)
+    {
+        g_view_items[g_view_count] = text;
+        g_item_entry[g_view_count] = entry;
+        g_view_count += 1;
+    }
+}
+
+/* My Computer's entries of one kind under their header; nothing, header
+ * included, when there are none. */
+static void filesapp_view_add_group(const char *header, int volumes)
+{
+    int entry;
+    int first = 1;
+
+    for (entry = 0; entry < g_entry_count; ++entry)
+    {
+        if ((g_entries[entry].volume != 0) == (volumes != 0))
+        {
+            if (first)
+            {
+                filesapp_view_add(header, -1);
+                first = 0;
+            }
+            filesapp_view_add(g_item_ptrs[entry], entry);
+        }
+    }
+}
+
+/* Each item's icon, in the size of the view: again whenever icons change. */
+static void filesapp_sync_view_icons(void)
+{
+    int item;
+
+    for (item = 0; item < g_view_count; ++item)
+    {
+        int entry = g_item_entry[item];
+
+        g_view_icons[item] =
+            entry < 0 ? 0 : (FILESAPP_LIST->kind == SXGUI_ICONVIEW ? g_item_large_icons : g_item_icons)[entry];
+    }
+}
+
+/* Points the widget at the items of the current view, keeping the selected
+ * entry selected if the view shows it. */
 static void filesapp_bind_list(int selected_entry)
 {
-    int offset = filesapp_item_offset();
+    int icons = FILESAPP_LIST->kind == SXGUI_ICONVIEW;
+    int entry;
 
-    FILESAPP_LIST->items = g_item_ptrs + offset;
-    FILESAPP_LIST->item_icons = (FILESAPP_LIST->kind == SXGUI_ICONVIEW ? g_item_large_icons : g_item_icons) + offset;
-    FILESAPP_LIST->item_count = g_entry_count - offset;
+    g_view_count = 0;
+    if (icons && filesapp_in_computer())
+    {
+        filesapp_view_add_group(k_group_files, 0);
+        filesapp_view_add_group(k_group_disks, 1);
+    }
+    else
+    {
+        for (entry = 0; entry < g_entry_count; ++entry)
+        {
+            if (!icons || strcmp(g_entries[entry].name, "..") != 0)
+            {
+                filesapp_view_add(g_item_ptrs[entry], entry);
+            }
+        }
+    }
+    filesapp_sync_view_icons();
+    FILESAPP_LIST->items = g_view_items;
+    FILESAPP_LIST->item_icons = g_view_icons;
+    FILESAPP_LIST->item_count = g_view_count;
     FILESAPP_LIST->value = filesapp_item_of(selected_entry);
     FILESAPP_LIST->scroll = 0;
 }
@@ -654,6 +731,26 @@ static void filesapp_collect_volumes(void)
     }
 }
 
+/* The user's own folder, first, as XP lists "<user>'s Documents" under
+ * Files Stored on This Computer: named after the profile folder's name. */
+static void filesapp_add_documents(void)
+{
+    const char *profile = savanxp_profile_dir();
+    const char *slash = profile != 0 ? strrchr(profile, '/') : 0;
+    struct filesapp_entry *entry = &g_entries[0];
+
+    if (profile == 0 || profile[0] != '/' || slash == 0 || slash[1] == '\0' || g_entry_count >= FILESAPP_MAX_ENTRIES)
+    {
+        return;
+    }
+    memmove(&g_entries[1], &g_entries[0], (size_t)g_entry_count * sizeof(g_entries[0]));
+    memset(entry, 0, sizeof(*entry));
+    snprintf(entry->name, sizeof(entry->name), "%s's Documents", slash + 1);
+    entry->is_dir = 1;
+    entry->documents = 1;
+    g_entry_count += 1;
+}
+
 static int filesapp_load_computer(void)
 {
     char size_cell[32];
@@ -665,12 +762,18 @@ static int filesapp_load_computer(void)
         g_mime_icons_loaded = 1;
     }
     filesapp_collect_volumes();
+    filesapp_add_documents();
     snprintf(g_current_path, sizeof(g_current_path), "%s", FILESAPP_COMPUTER);
     for (index = 0; index < g_entry_count; ++index)
     {
-        filesapp_format_capacity(g_entries[index].total_bytes, size_cell, sizeof(size_cell));
+        size_cell[0] = '\0';
+        if (g_entries[index].volume)
+        {
+            filesapp_format_capacity(g_entries[index].total_bytes, size_cell, sizeof(size_cell));
+        }
         snprintf(g_item_labels[index], sizeof(g_item_labels[index]), "%s%c%s%c%s", g_entries[index].name,
-                 SXGUI_COLUMN_SEPARATOR, size_cell, SXGUI_COLUMN_SEPARATOR, FILESAPP_DRIVE_TYPE);
+                 SXGUI_COLUMN_SEPARATOR, size_cell, SXGUI_COLUMN_SEPARATOR,
+                 g_entries[index].volume ? FILESAPP_DRIVE_TYPE : "File Folder");
         g_item_ptrs[index] = g_item_labels[index];
         filesapp_set_entry_icons(index, &g_entries[index], 0);
     }
@@ -899,6 +1002,11 @@ static void filesapp_activate_selected(void)
     if (g_entries[selected].volume)
     {
         (void)filesapp_navigate(g_entries[selected].mount_point);
+        return;
+    }
+    if (g_entries[selected].documents)
+    {
+        (void)filesapp_navigate(savanxp_profile_dir());
         return;
     }
     if (!filesapp_join_path(g_current_path, g_entries[selected].name, full_path, sizeof(full_path)))
@@ -1351,8 +1459,8 @@ static const struct sxgui_menu k_entry_menu = {
     (int)(sizeof(k_entry_items) / sizeof(k_entry_items[0])),
 };
 
-/* A volume in My Computer: it opens and has properties; it is not cut,
- * copied, renamed or deleted. */
+/* A volume or the user's folder in My Computer: it opens and has
+ * properties; it is not cut, copied, renamed or deleted from there. */
 static const struct sxgui_menu_item k_volume_items[] = {
     {"Open", FILESAPP_CMD_OPEN, 0},
     {0, 0, 0},
@@ -1730,7 +1838,7 @@ static void filesapp_show_properties(void)
     int is_folder;
     int launchable = 0;
 
-    if (filesapp_in_computer())
+    if (filesapp_in_computer() && (row < 0 || g_entries[row].volume))
     {
         if (row >= 0)
         {
@@ -1739,7 +1847,17 @@ static void filesapp_show_properties(void)
         return;
     }
     filesapp_set_properties_captions(k_properties_captions);
-    if (row >= 0)
+    /* The user's folder from My Computer: the folder's own properties. */
+    if (filesapp_in_computer())
+    {
+        const char *slash;
+
+        snprintf(path, sizeof(path), "%s", savanxp_profile_dir());
+        slash = strrchr(path, '/');
+        snprintf(name, sizeof(name), "%s", slash != 0 && slash[1] != '\0' ? slash + 1 : path);
+        filesapp_parent_path(path, g_properties_values[2], FILESAPP_PATH_CAPACITY);
+    }
+    else if (row >= 0)
     {
         snprintf(name, sizeof(name), "%s", g_entries[row].name);
         if (!filesapp_join_path(g_current_path, name, path, sizeof(path)))
@@ -2116,6 +2234,7 @@ static void filesapp_refresh_icons(void)
         filesapp_set_entry_icons(index, entry, launchable);
     }
     filesapp_apply_cut_fade();
+    filesapp_sync_view_icons();
 }
 
 /* Notices another program's copy: Paste follows it, and a cut entry that
@@ -2591,7 +2710,8 @@ static void filesapp_show_menu(int item, int x, int y)
     int row = filesapp_entry_of(item);
 
     g_subject[0] = '\0';
-    if (row >= 0 && row < g_entry_count && g_entries[row].volume)
+    /* What My Computer lists opens and has properties, nothing more. */
+    if (row >= 0 && row < g_entry_count && filesapp_in_computer())
     {
         FILESAPP_LIST->value = item;
         filesapp_update_commands();
@@ -3215,8 +3335,53 @@ static int filesapp_computer_selftest(void)
                                 g_entries[0].free_bytes <= g_entries[0].total_bytes,
                             "the root has its space");
     FILESAPP_COMPUTER_CHECK(!boot_listed, "/boot is not listed");
+
+    /* Large Icons groups My Computer: the user's folder under Files Stored on
+     * This Computer when the profile is there, then the disks under Hard
+     * Disk Drives. Details list the same entries with no headers. */
+    (void)filesapp_load_computer();
+    FILESAPP_LIST->kind = SXGUI_ICONVIEW;
+    filesapp_bind_list(-1);
+    {
+        int disks_header = -1;
+        int documents_item = -1;
+
+        for (index = 0; index < g_view_count; ++index)
+        {
+            int entry = g_item_entry[index];
+
+            if (entry < 0 && strcmp(g_view_items[index], k_group_disks) == 0)
+            {
+                disks_header = index;
+            }
+            if (entry >= 0 && g_entries[entry].documents)
+            {
+                documents_item = index;
+            }
+            if (entry >= 0)
+            {
+                FILESAPP_COMPUTER_CHECK(filesapp_item_of(entry) == index, "an item maps back to its entry");
+                FILESAPP_COMPUTER_CHECK(g_entries[entry].volume ? disks_header >= 0 && index > disks_header
+                                                                : index < disks_header || disks_header < 0,
+                                        "each entry is under its group");
+            }
+        }
+        printf("FILESAPP SMOKE computer groups items=%d entries=%d documents=%d\n", g_view_count, g_entry_count,
+               documents_item);
+        FILESAPP_COMPUTER_CHECK(disks_header >= 0, "Large Icons has the Hard Disk Drives group");
+        FILESAPP_COMPUTER_CHECK(documents_item < 0 || (documents_item == 1 && g_item_entry[0] < 0 &&
+                                                       strcmp(g_view_items[0], k_group_files) == 0),
+                                "the user's folder comes first, under Files Stored on This Computer");
+        FILESAPP_COMPUTER_CHECK(filesapp_entry_of(disks_header) == -1, "a header is no entry");
+    }
+    FILESAPP_LIST->kind = SXGUI_LISTBOX;
+    filesapp_bind_list(-1);
+    FILESAPP_COMPUTER_CHECK(g_view_count == g_entry_count && g_item_entry[0] == 0, "Details have no headers");
 #undef FILESAPP_COMPUTER_CHECK
     g_entry_count = 0;
+    g_view_count = 0;
+    g_current_path[0] = '/';
+    g_current_path[1] = '\0';
     return failures;
 }
 

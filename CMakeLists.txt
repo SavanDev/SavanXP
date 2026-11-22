@@ -849,6 +849,17 @@ target_compile_options(savanxp-sxgui-propgrid-test PRIVATE -Wall -Wextra -ffunct
 target_link_options(savanxp-sxgui-propgrid-test PRIVATE -Wl,--gc-sections)
 add_test(NAME sxgui-propgrid-test COMMAND savanxp-sxgui-propgrid-test)
 
+# The icon view's groups: rows, hits, keys and scrolling with headers.
+add_executable(savanxp-sxgui-iconview-test
+    system/gfx/sxgui.c system/gfx/gfx2d.c system/gfx/pixels.c system/gfx/sxchrome.c
+    tests/host/sxgui_iconview_test.c)
+target_include_directories(savanxp-sxgui-iconview-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+target_compile_options(savanxp-sxgui-iconview-test PRIVATE -Wall -Wextra -ffunction-sections -fdata-sections)
+target_link_options(savanxp-sxgui-iconview-test PRIVATE -Wl,--gc-sections)
+add_test(NAME sxgui-iconview-test COMMAND savanxp-sxgui-iconview-test)
+
 # SXGUI's design surface: inert widgets, grab handles, the snap grid.
 add_executable(savanxp-sxgui-design-test
     system/gfx/sxgui.c system/gfx/gfx2d.c system/gfx/pixels.c system/gfx/sxchrome.c
@@ -1303,7 +1314,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-iconview-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

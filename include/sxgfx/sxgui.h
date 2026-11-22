@@ -612,7 +612,19 @@ struct sxgui_widget sxgui_listbox(struct sx_rect rect, const char *const *items,
  * program switches between both views by changing `kind`. `scroll` counts
  * grid rows, not items. sxgui_listbox_row_at answers the item under a point
  * for both kinds.
+ *
+ * Groups, as Windows XP's My Computer shows them: an item whose text starts
+ * with SXGUI_GROUP_HEADER is a group's header, the rest of the text its
+ * title. A header takes a row of its own, lower than a row of icons, with
+ * its title over a rule; the items after it start a new row. It is never
+ * selected, hit or reached by the keys. With headers, `scroll` counts the
+ * rows of both kinds. A listbox does not draw headers: a program gives them
+ * to the icon view only.
  */
+#define SXGUI_GROUP_HEADER '\x1e'
+/* The same as a string, to start a header's text: SXGUI_GROUP_HEADER_TEXT "Title". */
+#define SXGUI_GROUP_HEADER_TEXT "\x1e"
+
 struct sxgui_widget sxgui_iconview(struct sx_rect rect, const char *const *items, int item_count);
 /* Where item `index` of an icon view sits now (its whole cell), for a
  * program that opens something next to it, such as the keyboard's context

@@ -77,10 +77,20 @@ long on a big tree, and the window would hang meanwhile.
 ## My Computer
 
 Files opened with no folder (the Start menu's Files) shows **My Computer**:
-one icon per mounted volume, as Windows 2000's My Computer shows the drives,
-without the web-view panel. A folder given on the command line still opens
-that folder.
+the user's folder and one icon per mounted volume, grouped as Windows XP's
+My Computer shows them, without the web-view panel. A folder given on the
+command line still opens that folder.
 
+- **Groups.** Large Icons puts the user's folder under *Files Stored on This
+  Computer* and the volumes under *Hard Disk Drives*, each group under a
+  header ([below](#groups)); a group with nothing in it is not shown.
+  Details list the same entries with no headers, the user's folder first.
+  Removable storage gets its group when the kernel can tell a removable
+  volume (removable media roadmap, O1).
+- **The user's folder.** "<name>'s Documents", named after the profile
+  folder (`/users/user` gives "user's Documents"), as XP lists "Documents of
+  <user>". It opens the profile; its Properties are the folder's. It is
+  missing when there is no profile folder, as for the system.
 - **Where the list comes from.** POSIX `storage_snapshot`
   ([DISK_MANAGEMENT.md](../userland/DISK_MANAGEMENT.md#why-calls-not-devdiskn)),
   read on every load and Refresh: each device with a mount point. The EFI
@@ -97,8 +107,9 @@ that folder.
   in the address bar (any case) goes there. Up from `/` goes to My Computer,
   as Up from `C:\` does; in My Computer, Up is disabled.
 - **What a volume takes.** Open (Enter, double click) goes to its mount
-  point. Its context menu has only Open and Properties, which give its name,
-  type, mount point, capacity and free space. Cut, Copy, Paste, Delete,
+  point. Its context menu (and the user's folder's) has only Open and
+  Properties; a volume's give its name, type, mount point, capacity and free
+  space. Cut, Copy, Paste, Delete,
   Rename and New Folder are disabled there: a volume is not a file, and
   nothing is pasted into My Computer. The folder menu keeps only Refresh.
 - **Icons.** `drive-harddisk` from `/icons`, house art next to
@@ -238,12 +249,14 @@ The selection may be empty (`value` -1) because Files sets
 `SXGUI_FLAG_EMPTY_SELECTION` on the widget. The flag is opt-in so that the
 other listboxes (Task Manager's, for one) keep a selection always.
 
-The widget's items are `g_entries`, except that Large Icons leaves out
-"..". Since ".." is always entry 0 when present, the icon view's item *i*
-is entry *i* + 1: Files points `items` and `item_icons` one past the start
-of its arrays and converts with `filesapp_entry_of` / `filesapp_item_of`.
-Everything keyed on an entry (Open, the context menu, Rename, Delete) goes
-through that conversion, so it does not depend on the view. On a switch the
+The widget's items are built from `g_entries` for the view shown
+(`filesapp_bind_list`): Large Icons leaves out "..", and in My Computer it
+adds the group headers. `g_item_entry` says which entry each item is (-1 for
+a header), and `filesapp_entry_of` / `filesapp_item_of` convert. Everything
+keyed on an entry (Open, the context menu, Rename, Delete) goes through that
+conversion, so it does not depend on the view. The item icons are copied
+from the entry's of the view's size, again whenever they change (the cut
+fade). On a switch the
 selected entry stays selected if the new view shows it (a selected ".."
 ends with nothing selected in Large Icons), and `scroll` is reset to 0
 because its unit changes.
@@ -287,6 +300,33 @@ label lines).
 `sxgui_listbox_row_at` answers the item under a point for both kinds, and
 `sxgui_iconview_item_rect` gives an item's cell, which Files uses to open
 the keyboard's context menu (Shift+F10, Menu key) under the selected icon.
+
+### Groups
+
+An item whose text starts with `SXGUI_GROUP_HEADER` (byte `0x1E`, the
+record separator; `SXGUI_GROUP_HEADER_TEXT "Title"` in C) is a group's
+header in the icon view, as in Windows XP's grouped views:
+
+- It takes a row of its own, lower than a row of icons: its title (drawn
+  bold, by drawing it twice a pixel apart) over a rule in the selection
+  colour across two thirds of the row. The items after it start a new row.
+- It is never selected or hit, and the keys go over it: Left and Right step
+  through the items, Up and Down go to the item row above or below, to the
+  same column or that row's last item when it is shorter, Page Up/Down do
+  that a screenful of times, Home/End go to the first and last items.
+- `scroll` counts the rows of both kinds. The scroll that shows the
+  selected row whole is searched for, since rows differ in height, and
+  reaching a group's first row from below brings its header into view.
+- The listbox does not draw headers; a program gives them to the icon view
+  only, as Files does.
+
+The marker is in the item's text rather than in a flag because
+`struct sxgui_widget` must not change, and no file name starts with that
+byte in practice. An icon view without headers keeps the arithmetic grid
+above, untouched; the grouped one walks the items in order, which costs
+O(n) per question and is meant for short lists like My Computer.
+`tests/host/sxgui_iconview_test.c` (`sxgui-iconview-test`) checks the rows,
+hits, keys and scrolling with headers, and the plain grid without them.
 
 ## Icons by size and their RAM
 
@@ -333,12 +373,16 @@ programs that draw large icons list `mime_icon_large.c` in their sources.
   Esc, then cuts an entry and pastes it into its own folder.
 
 - `filesapp --selftest` also checks My Computer: volume names, capacities
-  past 32 bits, and the live list (the root first, with its space; `/boot`
-  absent), printing each volume (`FILESAPP SMOKE computer volume ...`).
+  past 32 bits, the live list (the root first, with its space; `/boot`
+  absent), printing each volume (`FILESAPP SMOKE computer volume ...`), and
+  the groups (each entry under its header, items mapped back to entries, no
+  headers in Details).
 - `./tools/shoot.sh --scenario filescomputer` opens Files with no folder,
-  asserts My Computer and `Local Disk (/)` with Up disabled, opens the root
-  with Enter, comes back with Up, opens the volume's Properties (Capacity,
-  Free space) and checks the Type column in Details. The other Files
+  asserts My Computer, both group headers and `Local Disk (/)` with Up
+  disabled, reaches the disk past a header with Down and opens the root,
+  comes back with Up, opens the profile from the user's folder, opens the
+  volume's Properties (Capacity, Free space) and checks Details: no headers,
+  and the Type column. The other Files
   scenarios start in the profile by name (`filesapp /users/user`).
 
 The visual scenarios assume a 1280x800 session: their pointer mapping and
@@ -370,10 +414,10 @@ is out of scope for now.
 
 ### Pending
 
-- **My Computer's groups and removable drives.** Windows XP's grouped view
-  (hard disks apart from removable storage) needs group headers in the icon
-  view. Discs and sticks, with the `drive-optical` and
-  `drive-removable-media` icons already drawn, appear once the
+- **Removable drives in My Computer.** The *Devices with Removable
+  Storage* group, and groups in Details. Discs and sticks, with the
+  `drive-optical` and `drive-removable-media` icons already drawn, appear
+  once the
   [removable media roadmap](../roadmaps/open/REMOVABLE_MEDIA_ROADMAP.md) mounts
   them.
 
