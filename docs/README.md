@@ -397,6 +397,11 @@ all its phases have landed; the links to it move with it.
   for BMP, PNG and JPEG and the decoders under it in `libsximg`: what exists, the
   decisions (memory-only decoders, caller-owned pixels, JPEG written from T.81,
   size limits, who opens an image by default) and phases I1-I7.
+- [`REMOVABLE_MEDIA_ROADMAP.md`](roadmaps/open/REMOVABLE_MEDIA_ROADMAP.md) — CD and DVD
+  drives, USB first: 2048-byte media over `umass`, discs that come and go, an
+  ISO9660/Joliet driver written from ECMA-119, automount by a SUN service (discs
+  read-only, USB sticks writable as the session's user), eject in both
+  subsystems, the volume as a desktop icon, and phases O1-O8.
 
 ## Third-party code — `third-party/`
 
