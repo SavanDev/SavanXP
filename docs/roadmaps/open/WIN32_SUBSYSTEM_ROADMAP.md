@@ -720,6 +720,15 @@ here, OLE is kept to what start-up needs, and exceptions, a second thread,
   the cheapest next step.
 - PE32+ on the same host, where the gate becomes an ordinary call.
 
+**The long-term target: a modern browser** (decided 2026-11-21). The modern
+web is a compatibility goal, shared with SSL: an unmodified Firefox or
+Chromium for Windows running under SSW, with the native Web Viewer left to
+grow at its own pace ([WEBVIEWER_ROADMAP.md](WEBVIEWER_ROADMAP.md#direction)).
+It needs far more of Win32 and NT than any profile so far -- threads,
+synchronization, virtual memory, sockets, PE32+, and the browser's own
+sandbox -- so it is approached by applications of growing size, each with its
+own inventory first. Whichever subsystem gets there first serves the goal.
+
 Not promised without a separate decision: general Windows compatibility,
 16-bit and DOS programs, kernel drivers, .NET, DirectX, COM at large,
 installers.

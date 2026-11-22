@@ -3,8 +3,9 @@
 The official SavanXP port of OpenSSL 3.5.3 and the Mozilla CA store: the
 TLS library HTTPS stands on (N5 of
 [WEBVIEWER_ROADMAP.md](../../docs/roadmaps/open/WEBVIEWER_ROADMAP.md)). 3.5.3
-is the version the pinned Ladybird (commit `37ec6a08`) overrides to in its
-`vcpkg.json`, so the browser port later finds the library it expects.
+was chosen to match the Ladybird engine Web Viewer then planned on (commit
+`37ec6a08` overrides to it in its `vcpkg.json`); that plan was retired the same
+day, and 3.5 stays as a long-term-support release.
 
 It builds two shared libraries and installs three files:
 

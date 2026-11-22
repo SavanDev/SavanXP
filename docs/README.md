@@ -365,9 +365,10 @@ all its phases have landed; the links to it move with it.
   here and OLE kept to the minimum, real fonts from a system rasterizer,
   comdlg32's own file dialogs, no printer, what the clipboard and drag and
   drop gain, and phases WP1-WP11.
-- [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer's network-first
-  SUN migration and HTTP/HTTPS plan, implementation checkpoint and verification;
-  later integration of the pinned Ladybird engine and its acceptance gates.
+- [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer, the native
+  browser: its direction (downloads first, its own layout over NetSurf's MIT
+  libraries, the modern web left to SSL and SSW), the completed network stages
+  N1–N5 with their checkpoints, and the stages D1 and E1–E7.
 - [`FAT_ROADMAP.md`](roadmaps/open/FAT_ROADMAP.md) — the planned FAT driver: FatFs adopted
   under `vendor/`, how it maps onto `fs::Driver`, why the root stays SxFS, the
   ESP at `/boot`, and the phases.

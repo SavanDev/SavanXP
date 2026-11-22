@@ -179,9 +179,10 @@ which is why both go into the registry.
 
 ### OpenSSL
 
-- Origin: https://github.com/openssl/openssl, release `openssl-3.5.3`: the
-  version the pinned Ladybird (commit `37ec6a08`) overrides to in its
-  `vcpkg.json` (`openssl` `3.5.3#0`)
+- Origin: https://github.com/openssl/openssl, release `openssl-3.5.3`, a 3.5
+  long-term-support release; chosen to match the Ladybird engine planned at
+  the time (commit `37ec6a08`, `vcpkg.json` override `openssl` `3.5.3#0`),
+  a plan since retired
 - Versioned: no source vendored; `ports/openssl/UPSTREAM` pins the release
   archive, SHA-256
   `c9489d2abcf943cdc8329a57092331c598a402938054dc3a22218aea8a8ec3bf`

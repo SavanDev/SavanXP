@@ -2,8 +2,9 @@
 
 > Web Viewer runs on SUN as `/system/webview.sxe` (N1), loads remote pages on a
 > network worker with Stop (N3) through SUN's HTTP loader (N4), over validated
-> HTTPS (N5). Next is replacing this renderer with the pinned Ladybird engine.
-> See the [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
+> HTTPS (N5). Next are downloads (D1), then an engine grown on NetSurf's MIT
+> libraries with Web Viewer's own layout (E1–E7). See the
+> [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 >
 > It is built only when the OpenSSL port is (`ports/openssl/build.sh`, then
 > `./build.sh build`); without it the image has no Web Viewer and the registry

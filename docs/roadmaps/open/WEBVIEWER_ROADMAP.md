@@ -1,81 +1,102 @@
-# Web Viewer with Ladybird
+# Web Viewer: the native browser
 
-> **Status as of 2026-11-21: N1–N4 complete — shared DNS, a loading worker and shared HTTP.**
-> Web Viewer runs as `/system/webview.sxe`, resolves through SUN's `sxndns` and
-> loads remote pages on a per-window network worker through SUN's `sxnhttp`.
-> N5 (validated HTTPS) is next. N5 and all Ladybird stages remain pending; no
-> Ladybird code has been imported or built.
+> **Status as of 2026-11-21: the network stages N1–N5 are complete.** Web
+> Viewer runs as `/system/webview.sxe`, resolves through SUN's `sxndns`, loads
+> on a per-window network worker through SUN's `sxnhttp`, and opens validated
+> `https://`. Next is **D1, downloads**; the engine stages E1–E7 follow. No
+> NetSurf library has been vendored yet.
 
 ## Direction
 
-Develop Web Viewer as a native SUN browser using Ladybird's engine and a
-SavanXP frontend. Retire the NetSurf plan in full: no NetSurf library adoption,
-reference-browser port, or separate in-house CSS layout engine is planned.
-The current `/system/webview.sxe` prototype remains available with the capabilities
-recorded in [WEBVIEWER.md](../../desktop/WEBVIEWER.md).
+Decided 2026-11-21. Web Viewer is the system's **native browser**, written
+against SUN, and it grows towards the modern web at its own pace. Two roles,
+in this order:
 
-The native application is `/system/webview.sxe`, with SUN helpers.
-The existing POSIX application was migrated to SUN in a separate change with
-its own changelog entry and behavior checks. New platform gaps are delivered as
-SUN slices with `nativetest` assertions, following [SUN.md](../../userland/SUN.md).
-Running the upstream browser through a compatibility subsystem is not the
-native browser milestone.
+1. **The browser that fetches another one.** Like Internet Explorer on a
+   fresh Windows, its first job is to download installers and archives
+   reliably over HTTP and validated HTTPS. That needs downloads (D1), not a
+   modern renderer.
+2. **A document browser that keeps improving.** Its engine grows by stages
+   (E1–E7): NetSurf's **MIT libraries** read HTML into a DOM and resolve CSS
+   into computed styles, and Web Viewer writes its own layout, paint and,
+   later, scripting on top.
+
+**The modern web is a compatibility goal, not Web Viewer's.** Pages that need
+a current engine are for an unmodified Firefox or Chromium running under SSL
+([LINUX_SUBSYSTEM_ROADMAP.md](LINUX_SUBSYSTEM_ROADMAP.md#l7--later-profiles))
+or SSW ([WIN32_SUBSYSTEM_ROADMAP.md](WIN32_SUBSYSTEM_ROADMAP.md#w7--later-profiles)).
+That is a long road -- a modern browser is among the most demanding programs
+there are -- but every system call and API it pulls in serves every other
+program of its subsystem, where an engine port serves one.
+
+### How this was decided
+
+The plan changed twice; the reasons matter for the next time it is weighed.
+
+- **2026-11-03:** Web Viewer adopts NetSurf's MIT libraries and writes its own
+  layout, with a clean-room rule for NetSurf's GPL core (commit `f4db268b`).
+- **2026-11-09:** that plan is retired for integrating the Ladybird engine at a
+  pinned C++ commit (`37ec6a08`), so that the native browser itself would reach
+  the modern web (commit `5a0c626d`). The network stages N1–N5 were built
+  under this plan and serve any engine.
+- **2026-11-21:** Ladybird is retired, before W0 measured anything. Its cost,
+  weighed against the system as it is: no C++ runtime in userland at all, Skia, ICU, HarfBuzz/FreeType,
+  curl and media codecs to port, and a multi-process design whose IPC, shared
+  memory and isolation SUN would have to grow first -- several times all the
+  work before it, for one program. With the modern web assigned to the
+  compatibility subsystems instead, the native browser does not need it, and
+  the November 3 plan applies again, updated: Web Viewer is now SUN, its
+  loading is asynchronous, and HTTPS goes through the OpenSSL port rather than
+  BearSSL. The NetSurf browser is no longer a reference port; the comparison
+  basis is below.
+
+Nothing of N1–N5 is lost: DNS, HTTP, TLS, the worker and the CSPRNG are
+engine-independent. OpenSSL 3.5.3 was pinned to match the Ladybird plan; it
+stays, as a long-term-support release.
 
 ## Target architecture
 
-The SUN frontend retains Web Viewer's chrome, history, local-file support and
-renderer. A reusable SUN loading library separates URL
-resolution, DNS, transport and HTTP from rendering. Its result contract must
-carry the final URL, HTTP status, content type and body, or a structured error.
+The SUN frontend keeps Web Viewer's chrome, history, local files and identity.
+Loading is `sxnhttp` on one network worker per window, with at most one active
+navigation; the worker publishes results through synchronized mailboxes and
+SUN events and never touches widgets or renderer data. Navigation IDs discard
+obsolete results; Back, Forward, Reload, Stop and closing the window cancel;
+a failed load keeps the page on screen.
 
-Each window has one network worker and at most one active navigation. The worker
-owns network operations and publishes results through synchronized queues and
-SUN events; it never changes widgets or renderer data. A new navigation cancels
-the previous one, and navigation IDs prevent obsolete results from replacing
-newer content. Back, Forward, Reload, Stop and window close participate in that
-cancellation protocol. Failed loads keep the previous page visible.
+The engine, from E2 on: HTML through libhubbub into a libdom document;
+libcss, with Web Viewer's own selection handler and user-agent stylesheet,
+computing styles; Web Viewer's box tree, layout and paint over SXGFX, in the
+UI process. The libraries are built neutral, as the OpenSSL port is: they ask
+the program only for C functions that both runtimes define, so the same
+objects serve SUN and the host tests.
 
-Use native shared OpenSSL as a reusable SUN dependency, aligned with the pinned
-Ladybird baseline. Do not introduce curl or upstream RequestServer in this
-stage. The later engine integration adapts requests to this infrastructure;
-compatibility with Ladybird's internal interfaces is not assumed. Show validated
-HTTPS in the UI without implying that the current renderer is sandboxed.
+Scripting (E7) does not run remote code in the UI process without a decision
+about isolation recorded in this document first.
 
-## Network-first delivery
+## Network delivery (N1–N5, complete)
 
-Complete networking in the existing Web Viewer before replacing its renderer.
-Keep its interface, navigation, history, local files and identity; Ladybird is
-an integrated engine at the pin below, never a separate installed browser.
-The existing renderer remains until its replacement has its own acceptance gate.
+The record of what was delivered; the checkpoints below hold the evidence.
 
-1. Add SUN IPv4 TCP/UDP handles, pending connection/error queries and cancellable
-   readiness without changing `sxn_wait_many`; then migrate Web Viewer in a
-   separate change to `/system/webview.sxe`, retiring only `/bin/webview`.
-2. Give TCP bounded independent servicing, correct asynchronous errors, FIN
-   retransmission and TIME_WAIT. Keep POSIX on the same core and retain the
-   single outstanding segment initially.
-3. Extract a shared SUN DNS resolver (numeric IPv4, A/CNAME, bounded TTL cache,
-   source validation, TCP fallback for truncated UDP). Preserve `--dns` and
-   `dns://`; changing servers invalidates the cache. One worker per window owns
-   remote loading; synchronized queues/events and navigation IDs keep widgets
-   on the UI thread and discard stale results. Stop, navigation and close cancel
-   work; failures preserve the displayed document.
-4. Extract URL and HTTP/1.1 loading from rendering. Support explicit ports,
-   relative redirects, Content-Length, chunked and close-delimited bodies;
-   reject malformed or contradictory framing and incomplete responses. Use
-   `Host`, `Connection: close`, `Accept-Encoding: identity`, a 32 KiB decoded
-   body cap, 16 KiB header cap and five redirects. Reject remote-to-file and
-   HTTPS-to-HTTP redirects. Budgets: DNS two 2-second attempts, connect 5 seconds,
-   TLS 10, read idle 10 and navigation total 30, all cancelable and monotonic.
-5. Add a system CSPRNG seeded from real entropy (virtio-rng for QEMU), SUN random
-   bytes and civil-clock validity. Pin and audit native shared OpenSSL and the
-   CA store in the provenance registry before enabling HTTPS. TLS 1.2/1.3 must
-   validate chain, hostname/IP and dates, send SNI and offer only HTTP/1.1.
-   Fail explicitly for missing entropy or clock validity; never offer a
-   certificate bypass. Distinguish trust, name, date, clock, entropy and
-   transport errors. Test CAs belong only in test images.
-
-### Network acceptance gates
+1. SUN IPv4 TCP/UDP handles, pending connection/error queries and cancellable
+   readiness without changing `sxn_wait_many`; Web Viewer migrated to
+   `/system/webview.sxe`, retiring only `/bin/webview`.
+2. TCP with bounded independent servicing, correct asynchronous errors, FIN
+   retransmission and TIME_WAIT, POSIX on the same core.
+3. A shared SUN DNS resolver (numeric IPv4, A/CNAME, bounded TTL cache, source
+   validation, TCP fallback for truncated UDP), `--dns` and `dns://` kept, and
+   one network worker per window with cancellation and stale-result handling.
+4. URL and HTTP/1.1 loading out of the renderer: explicit ports, relative
+   redirects, Content-Length, chunked and close-delimited bodies, refusal of
+   malformed, contradictory or incomplete responses; `Host`, `Connection:
+   close`, `Accept-Encoding: identity`, a 32 KiB body cap, 16 KiB head cap,
+   five redirects, no remote-to-file or HTTPS-to-HTTP redirect; monotonic,
+   cancellable budgets (DNS 2×2 s, connect 5 s, TLS 10 s, idle 10 s, total
+   30 s).
+5. A kernel CSPRNG from real entropy, clock validity, the pinned and audited
+   OpenSSL with the Mozilla CA store, and validated TLS 1.2/1.3 (chain,
+   name/IP, dates, SNI, `http/1.1` only) with distinct trust, name, date,
+   clock, entropy and transport errors, no bypass, and test CAs never
+   installed.
 
 | Stage | Completion gate |
 |---|---|
@@ -85,31 +106,182 @@ The existing renderer remains until its replacement has its own acceptance gate.
 | N4 — Shared HTTP | Correct responses render independently of header, chunk and TCP fragmentation; contradictory framing and truncated bodies fail explicitly. |
 | N5 — Validated HTTPS | Valid certificates work; expired, self-signed, wrong-name and invalid-chain certificates are rejected, without a bypass. |
 
-Acceptance includes `nativetest` checks for sockets, readiness, pending
-connections, errors, close, waits, clocks and entropy. DNS/HTTP protocol tests
-must cover fragmented, truncated and malformed inputs, limits and bounds safety.
-Local QEMU DNS/HTTP/TLS fixtures must cover timeout, cancellation, redirects,
-chunked bodies, invalid certificates and obsolete responses after navigation.
-Extend `tcp-smoke` for progress without consumer polling, lost FIN, simultaneous
-connections and close during operations, while retaining `net-smoke`.
+## Next: D1 — downloads
 
-Extend Web Viewer's visual scenario and run `./build.sh smoke sxgui-smoke` when
-touching a drawing program, the loader or SxGUI. Verify that a successful build
-installed the rebuilt binary before trusting visual results. Run
-`./tools/verify_doom_persistence.sh` for kernel/build/SDK/image-flow changes;
-normal builds must preserve external `/bin` binaries and `/games` assets.
+The IE role. Anything Web Viewer does not show, and anything the server marks
+as an attachment, is saved to disk instead of failing or being cut at 32 KiB.
 
-DHCP, IPv6, TCP servers, HTTP/2–3, WebSockets, persistent cookies,
-authentication, compression and HTTP caching are outside this delivery.
-Renderer replacement and its sandbox remain separate later milestones.
-The network delivery is complete only when the SUN Web Viewer retains its
-existing workflows and browses HTTP/validated HTTPS with cancellation and a
-responsive UI.
+- **`sxnhttp` streams.** A body sink in the request (a callback taking each
+  decoded piece), beside today's buffer, so a response of any length passes
+  through without being held; the progress callback learns the expected
+  length when `Content-Length` gives one. The framing rules do not change: a
+  download cut short is `TRUNCATED`, never a short file.
+- **Show or save.** `text/html` and `text/plain` render (images after E6);
+  anything else, or `Content-Disposition: attachment`, is a download. The
+  name comes from `Content-Disposition`'s `filename`, else the URL's last
+  segment, sanitized (no separators, no control characters, no leading dot);
+  the person confirms it in the Save As dialog (`sxnfiledlg`).
+- **Writing.** Into `<name>.part` beside the destination, renamed on
+  completion; deleted on failure, cancellation or window close. An existing
+  file is never replaced without confirming it in the dialog.
+- **The window.** A download dialog owned by the browser, after IE5's: the
+  name, the source host, received and total size, the rate, and Cancel; on
+  completion, Open Folder (Files) and Close. The page window stays usable,
+  and its worker can load pages while a download runs.
+- **Budgets.** The idle budget applies between reads; the 30-second
+  navigation total does not apply to a download's body.
+
+**Done when:** a multi-megabyte binary, with and without `Content-Length`,
+chunked, and as an attachment, arrives byte-exact over HTTP and validated
+HTTPS (`native-network`, `https-smoke` and a host-checked SHA-256);
+cancellation, a truncated body and a closed window leave no partial file; the
+visual scenario downloads a file through the dialog while the page window
+keeps repainting; and, with a network, Web Viewer downloads a real
+browser's Linux or Windows package. POSIX parity: the pending POSIX HTTP
+library (HTTP.md) gains the same streaming when it exists.
+
+## The engine stages
+
+Each stage names its acceptance condition; each ends with the page corpus
+(below) opened in Web Viewer.
+
+### E1 — the libraries build
+
+`vendor/netsurf/` with libparserutils, libwapcaplet, libhubbub, libdom (with
+its hubbub binding, not the XML one) and libcss, pinned to releases chosen in
+this stage, unmodified, each in the provenance registry. CMake builds them as
+static libraries for SUN programs and for the host. A host test parses every
+page of the corpus into a DOM and computes the style of every element.
+
+Two facts measured in the upstream trees on 2026-11-03, to confirm at the
+pinned releases: libparserutils builds without `iconv`
+(`WITHOUT_ICONV_FILTER`: its own ASCII, ISO-8859-x, Windows-125x, UTF-8 and
+UTF-16 codecs), and libcss generates part of its parser at build time from a
+small host program (`css_property_parser_gen.c`), which CMake builds and runs.
+The libraries must ask the program only for C functions both runtimes define,
+checked the way `ports/openssl/link.sh` checks OpenSSL's.
+
+**Done when:** `./build.sh test` runs the host test, and the same libraries
+link into a SUN program that `nativetest` or its own scenario exercises.
+
+### E2 — HTML through hubbub and libdom
+
+Web Viewer builds its paragraphs and runs from the DOM instead of its own
+parser. The rendering does not change yet. The 32 KiB, 256-paragraph and
+64-link caps go: the limit becomes memory.
+
+**Done when:** the `webview` shoot scenario passes unchanged, and a page
+larger than 32 KiB opens whole.
+
+### E3 — styles through libcss
+
+Web Viewer's own selection handler over libdom (libcss's
+`css_select_handler`), its own user-agent stylesheet written from CSS 2.1's
+Appendix D and HTML's rendering section, and stylesheets from `<style>`,
+`style=""` and `<link rel=stylesheet>` fetched through `sxnhttp`. The current
+renderer reads computed styles instead of its own cascade.
+
+**Done when:** classes, ids, descendant and child selectors, pseudo-classes
+such as `:link` and `:first-child`, and external stylesheets render in the
+corpus, and WEBVIEWER.md describes the new contract.
+
+### E4 — the box tree and normal flow
+
+Boxes from the DOM and computed `display`, then block and inline layout:
+widths, margins with collapsing, padding, borders, line boxes,
+`vertical-align` for text, `white-space`, list items. The largest stage: it
+replaces "paragraphs that wrap" with a layout engine.
+
+**Done when:** a page of nested blocks with margins, padding, borders and
+lists lays out as its corpus expectation says, box for box, up to font
+metrics.
+
+### E5 — floats and positioning
+
+`float` and `clear`, then `position: relative` and `absolute`, then `overflow`
+on blocks.
+
+**Done when:** a float-based two-column page and a page of absolutely
+positioned boxes match their expectations.
+
+### E6 — tables and images
+
+Automatic table layout, replacing "tables degrade to stacked lines". Images
+through the system's decoders (`libsximg`), with libnsgif and libnsbmp where
+they add formats, replacing the `[image]` marker and taking part in layout.
+
+**Done when:** a table-based page with images matches its expectation, and
+images arrive over HTTP and HTTPS without blocking the window.
+
+### E7 — scripting
+
+A JavaScript engine in C under the MIT license -- QuickJS, or the QuickJS-ng
+fork, chosen and pinned in this stage -- with bindings to libdom for the DOM
+subset the corpus needs (document and element access, events, timers), run on
+the UI thread's loop. Before it runs remote scripts, this document records the
+isolation decision: a separate content process, or scripts limited to local
+and explicitly trusted pages until there is one.
+
+**Done when:** corpus pages that change the DOM from a script, on load and on
+an event, render the result, and a script that loops forever is stopped
+without hanging the window.
+
+### Later
+
+Forms and POST, cookies, keep-alive and caching, fragment navigation inside a
+page, `flex` and `grid`, web fonts, printing. Each one gets its own stage here
+when it is next.
+
+## The clean-room rule
+
+NetSurf's core (the browser itself, its box construction, layout, redraw, the
+libcss select handler and its default stylesheet) is GPL-2.0-only; Web Viewer
+is MIT. That code does not enter Web Viewer and is not its model either. Each
+piece is written from its specification: CSS 2.1's visual formatting model
+and Appendix D, HTML's rendering section, and the libraries' own MIT headers
+and documentation.
+
+## Acceptance and comparing
+
+The corpus is `tools/webview-test-www/`, one page or more per stage. Each
+layout page carries its expected box geometry as data, written from the
+specification (with a reference browser's rendering on the host as a check
+when one helps); Web Viewer dumps its box tree in a test mode, and the
+comparison tolerates the difference in font metrics. The visual scenario
+keeps asserting glyphs on screen. Run `./build.sh smoke sxgui-smoke` when a
+stage touches a drawing program, the loader or SXGUI, and
+`./tools/verify_doom_persistence.sh` for build, SDK or image-flow changes.
+
+## What not to do
+
+- **Do not read NetSurf's core to write Web Viewer.** See the clean-room rule.
+- **Do not patch the vendored libraries in place.** A needed change goes
+  upstream or into a documented glue file beside them.
+- **Do not start layout before E3.** A layout engine without computed styles
+  grows a second cascade inside it.
+- **Do not grow the old parser or cascade** while E2 and E3 are pending; they
+  are about to be replaced.
+- **Do not chase the modern web here.** A page that needs a current engine is
+  the compatibility subsystems' target, not a reason to widen a stage.
+
+## Adoption and maintenance
+
+The NetSurf libraries are `Adopt`: pristine pinned sources under
+`vendor/netsurf/<library>/`, each in the
+[provenance registry](../../third-party/THIRD_PARTY_PROVENANCE.md) in the commit
+that vendors it, with its notice in the image. The JavaScript engine, when E7
+chooses it, follows the same rule. Updates are explicit changes with their own
+corpus run; security fixes in the parsers are taken when published.
+
+## Implementation checkpoints
+
+The network stages as they landed, newest first. Their "next step" lists and
+mentions of the Ladybird plan are history; the stages above are current.
 
 ## N5 implementation checkpoint — 2026-11-21
 
 **N5 is complete, and with it the network-first stages.** Web Viewer opens
-validated `https://`; the next stage is the Ladybird engine (W0 below). N5
+validated `https://`; the next stage is D1, downloads (above). N5
 landed in four slices, each with its own commit:
 
 - **N5a**, the kernel CSPRNG ([RANDOM.md](../../kernel/RANDOM.md)): seeded only
@@ -475,125 +647,3 @@ Verification for this intermediate step:
 The remaining transport work listed above is not part of this completed step.
 No asynchronous ARP, independent TCP servicing, Web Viewer migration or browser
 loading changes have been started by this step.
-
-## Upstream baseline and constraints
-
-The fixed upstream baseline is
-[`37ec6a08a8aaff5808e5b570430001594692fde3`](https://github.com/LadybirdBrowser/ladybird/commit/37ec6a08a8aaff5808e5b570430001594692fde3),
-selected to stay on the C++ codebase before the Rust transition. Do not track
-`master` or advance this baseline automatically. No source has been imported;
-W0 must reproduce this exact revision and audit its complete dependency closure.
-
-- [README](https://github.com/LadybirdBrowser/ladybird/blob/37ec6a08a8aaff5808e5b570430001594692fde3/README.md):
-  pre-alpha browser with LibWeb and LibJS, under a top-level BSD-2-Clause
-  license. Dependencies and assets still require individual review.
-- [Build instructions](https://github.com/LadybirdBrowser/ladybird/blob/37ec6a08a8aaff5808e5b570430001594692fde3/Documentation/BuildInstructionsLadybird.md):
-  C++23, CMake 3.30+, Qt6, nasm and additional host tools; CI uses GCC 14 and
-  Clang 21. These instructions do not list Rust as a prerequisite. A native
-  SUN frontend is SavanXP work; no stable embedding API is assumed. Host Qt
-  requirements do not imply that Qt must run on SavanXP.
-- The pinned README describes UI, WebContent, ImageDecoder and RequestServer
-  processes. Audit this revision's actual process/IPC graph; do not import
-  assumptions about Hub or a separate Compositor from later upstream designs.
-  Process launch, shared buffers and isolation remain platform audit areas.
-- [Dependency manifest](https://github.com/LadybirdBrowser/ladybird/blob/37ec6a08a8aaff5808e5b570430001594692fde3/vcpkg.json):
-  includes Skia, font/shaping libraries, ICU, curl, OpenSSL and media codecs.
-  Reproduce its vcpkg baseline and overrides as well as Ladybird's commit.
-  Reusing only LibWeb does not establish that these dependencies disappear.
-
-Rust toolchain/runtime support is not a planned prerequisite for this baseline.
-W0 still audits transitive dependencies and build generators before claiming
-that the complete build is Rust-free.
-
-This is a platform port with substantial runtime work, not a replacement HTML
-parser. No completion date or memory budget is claimed before measurement.
-
-## Later Ladybird engine stages and acceptance gates
-
-### W0 — Reproduce and measure the pinned baseline
-
-Reproduce the selected commit's host build and run local HTML/CSS/JavaScript
-fixtures. Record tool versions, dependency closure, resource licenses, process
-count, peak memory and rendering behavior. Separate build-time generators from
-target libraries. Audit the selected source for OS and runtime calls.
-
-**Done when:** a reproducible host baseline and a gap matrix identify each
-required facility, its current SavanXP support, owner and verification gate.
-Explicitly decide which optional features can be disabled at that commit;
-unsupported dependencies remain blockers rather than silent stubs.
-
-### W1 — Runtime and SUN platform foundation
-
-Use the gap matrix to sequence C++ runtime and ABI support, allocation,
-threading and synchronization, virtual memory, timers/event waiting, files,
-process lifecycle, IPC, shared memory and handle transfer. These are audit
-areas, not claims that every facility is absent. Keep platform adaptation
-separate from pristine upstream code, with a reproducible patch series.
-
-**Done when:** minimal target probes exercise every facility required by the
-first renderer, and each added SUN contract has a `nativetest` assertion.
-Host generators run on the host; target binaries contain no host paths.
-
-### W2 — Local rendering without a desktop frontend
-
-Cross-build the smallest viable rendering configuration and render controlled
-local pages to images on SavanXP. Establish fonts, resource discovery, shaping,
-image decoding and a viable raster backend. Investigate software rasterization
-first; do not assume SxGL satisfies Skia's GPU requirements. Keep LibJS in the
-plan and verify DOM changes driven by a local script.
-
-**Done when:** target-produced images pass text, CSS, image and scripted-DOM
-fixtures against the pinned host baseline, with time and memory measurements.
-Any temporary reduction of process isolation is local-test-only and documented.
-
-### W3 — Native Web Viewer frontend
-
-Adapt the existing SUN/SxGUI chrome for address entry, navigation, status and errors; connect
-rendered surfaces, resize, scrolling, mouse, keyboard and focus through the
-selected engine interfaces. Keep page execution out of the UI process.
-
-**Done when:** the native application renders and navigates the local corpus,
-handles renderer failure visibly, and passes input and screenshot checks.
-Run `./build.sh smoke sxgui-smoke` as well as browser-specific visual checks;
-verify that the rebuilt application is the binary installed and exercised.
-
-### W4 — Network services and security
-
-Adapt engine requests to the shared SUN loading infrastructure delivered above.
-Do not assume compatibility with upstream RequestServer interfaces.
-Audit entropy, clock accuracy, trust-store provenance, certificate validation,
-redirects, cancellation, cookies and origin boundaries. Implement and test
-renderer/helper confinement before enabling arbitrary remote content in the
-Ladybird engine. This is separate from validated HTTPS in the current renderer.
-
-**Done when:** controlled HTTP/TLS fixtures cover success, invalid certificates,
-redirects and failures; UI remains responsive; a compromised renderer cannot
-read arbitrary files or open arbitrary network connections. Missing security
-primitives block general browsing rather than being bypassed.
-
-### W5 — Replacement and ongoing compatibility
-
-Switch Web Viewer to the integrated engine only after it covers the existing
-SUN application's local-file, HTTP/HTTPS, history and link workflows. Preserve
-the application identity and retire the old renderer in an explicit change. Add a selected upstream conformance corpus,
-crash/restart and resource-pressure checks; measure budgets in documented QEMU
-configurations. Tabs, downloads, media, WebGL and broader web compatibility
-receive separate gates after the first usable browser.
-
-**Done when:** native installation and updates preserve external `/bin` programs
-and `/games` assets, the normal build succeeds, and
-`./tools/verify_doom_persistence.sh` passes for build/SDK/image-flow changes.
-No browser work may recreate a valid disk image as a normal build step.
-
-## Adoption and maintenance
-
-The intended category is `Adopt`, subject to W0's component/license audit.
-Before importing code, record exact revisions, notices, patches, dependency and
-asset licenses, and installed outputs in the
-[provenance registry](../../third-party/THIRD_PARTY_PROVENANCE.md).
-Use `vendor/ladybird/` for pristine pinned sources and separate platform glue;
-maintain this C++ baseline with explicitly reviewed fixes. Do not follow the
-Rust transition. Evaluate any backport against the same corpus and resource
-measurements, and record its origin and dependency changes separately from the
-unchanged upstream pin. Security fixes remain necessary for a frozen baseline.
-Discover additional host tools through CMake and document their requirements.

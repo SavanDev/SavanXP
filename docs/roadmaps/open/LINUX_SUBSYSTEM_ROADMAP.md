@@ -660,6 +660,16 @@ The other profiles, each still waiting for a consumer of its own:
 - Copy-on-write `fork`, shared file mappings, `/proc` beyond one entry,
   `epoll`, network sockets.
 
+**The long-term target: a modern browser** (decided 2026-11-21). The modern
+web is a compatibility goal: an unmodified Firefox or Chromium for Linux
+running under SSL, with the native Web Viewer left to grow at its own pace
+([WEBVIEWER_ROADMAP.md](WEBVIEWER_ROADMAP.md#direction)). It is not the next
+profile -- it needs most of the list above (threads, `futex`, `epoll`, shared
+memory, sockets, signals, glibc, a toolkit such as GTK over X with its
+extensions) and process isolation that this plan does not promise yet -- so it
+is approached by consumers of growing size, each with its own inventory
+first. Whichever subsystem gets there first serves the goal.
+
 Not promised without a separate decision: a distribution, a package manager,
 systemd, namespaces and containers, 32-bit programs, Wayland, direct
 rendering, kernel modules. Running Wine's Linux build is a separate question
