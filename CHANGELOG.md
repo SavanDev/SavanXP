@@ -12,6 +12,12 @@ Cut-off notes:
 
 ### Added
 
+- **Web Viewer downloads** (D1): an attachment or a type it does not show is saved instead: Save As with the server's
+  name, a download worker beside the page's, a `.part` renamed only when whole, and a modeless File Download window with
+  size, rate, Cancel and Open Folder while the page stays usable ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#downloads)).
+- **Modeless windows:** `SAVANXP_WM_WINDOW_MODELESS` owned windows stay above their owner without disabling it; SUN's
+  frame opens them with `sxngui_window_open` ([OWNED_WINDOWS.md](docs/desktop/OWNED_WINDOWS.md#modeless-windows)).
+- **SDK:** SUN `sxn_delete_path` (`SXN_SYS_DELETE_PATH`), `DeleteFile` for files, durable when it returns.
 - **Downloads in `sxnhttp`** (D1a): a request's `head` callback sees the final response before its body and may stop
   there, and its `sink` takes a body of any length piece by piece, held to the idle budget only (`SXNHTTP_ERROR_SINK`);
   `Content-Disposition` is read and `sxnhttp_file_name` makes a safe name. The progress callback gains the expected

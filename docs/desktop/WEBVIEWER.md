@@ -2,8 +2,8 @@
 
 > Web Viewer runs on SUN as `/system/webview.sxe` (N1), loads remote pages on a
 > network worker with Stop (N3) through SUN's HTTP loader (N4), over validated
-> HTTPS (N5). Next are downloads (D1), then an engine grown on NetSurf's MIT
-> libraries with Web Viewer's own layout (E1–E7). See the
+> HTTPS (N5), and saves what it does not show (D1). Next is an engine grown on
+> NetSurf's MIT libraries with Web Viewer's own layout (E1–E7). See the
 > [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 >
 > It is built only when the OpenSSL port is (`ports/openssl/build.sh`, then
@@ -109,6 +109,40 @@ thirty for the whole navigation. What Web Viewer adds:
 - Links resolve against an http page by RFC 3986 through `sxnhttp_resolve`,
   dot segments and ports included; local paths keep Web Viewer's own rules.
 
+## Downloads
+
+Web Viewer's first role is the browser that downloads another one (D1 in the
+[roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md)). `system/webview/download.c`.
+
+- **Show or save.** The page worker's `sxnhttp` request carries a head
+  callback ([HTTP.md](../net/HTTP.md#downloads-the-head-and-the-sink)): a 2xx
+  that is an attachment (`Content-Disposition`), or whose type is anything
+  but `text/html` or `text/plain`, is a file. A response without a type is
+  shown, as before; an error page is always shown. A file stops the load at
+  its head; the page on screen stays.
+- **Where.** Save As (`sxnfiledlg`) asks, in the person's profile folder,
+  with the name `sxnhttp_file_name` makes from `Content-Disposition` or the
+  URL. It asks before replacing a file.
+- **The transfer** runs on a **download worker**, a second thread with its
+  own resolver and HTTP client, so the page worker keeps loading pages. It
+  asks for the URL again -- the page worker stopped at the head -- and
+  streams the body through the loader's sink into `<name>.part`, written in
+  64 KiB pieces. Only a whole body is flushed and renamed over `<name>`; a
+  failure, a body cut short, Cancel, the download window's X or the browser
+  closing deletes the `.part` (`sxn_delete_path`). A server answering
+  anything but 2xx the second time saves nothing. The navigation's 30
+  seconds do not apply to the body; ten seconds of silence still do.
+- **The window** is a modeless window
+  ([OWNED_WINDOWS.md](OWNED_WINDOWS.md#modeless-windows)) after IE5's File
+  Download: `Saving <name> from <host>`, a bar when the length is known,
+  `<received> of <total> copied`, the transfer rate, where it goes, and
+  Cancel (or Esc). When it is done: `Download complete`, Open Folder (Files
+  on the folder) and Close; when it fails, why, and `Nothing was saved.` The
+  page window stays usable throughout.
+- **One download at a time.** A file asked for while one runs is not saved,
+  and the status bar says so. A download is a second request for the same
+  URL: a link that works only once would not survive it.
+
 ## Selectors and origins
 
 - Tag selectors from `<style>` blocks (`h1`, `p`, `h1, h2`), later rules win.
@@ -178,6 +212,16 @@ finishes, and check that the window repaints the worker's progress and enables
 load, and keeps its page when Esc stops it; Stop during the resolution of a
 name the DNS fixture never answers; a newer navigation replacing a stalled
 one; and closing the window in the middle of a load.
+
+The D1 steps download from `tools/webview_http_server.py`: a slow file in
+the download window while the page window, clicked, loads another page;
+the 3 MiB attachment from `tools/http_fixture.py` under its server-given name;
+one cancelled with Esc; one cut short, which fails; and one abandoned by
+closing the browser. At the end the scenario extracts the guest's disk
+(`sxfs-cli extract`, the disposable copy `tools/shoot.sh` passes in
+`SAVANXP_SHOOT_DISK`) and checks the two downloads byte-exact against the
+blob, the 3 MiB one by its SHA-256, and that the other three left neither a
+file nor a `.part`.
 
 The visual scenario also launches `webview --dns HOST:PORT URL`, checks F5,
 launches `/system/webview.sxe /system/samples/welcome.html`, and opens a

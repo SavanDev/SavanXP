@@ -1,14 +1,14 @@
 /*
- * Web Viewer: a minimal browser for local files and HTTP by name or IP, in
- * the spirit of IE 1.1.
+ * Web Viewer: the native browser (docs/desktop/WEBVIEWER.md), for local
+ * files, http:// and validated https://, by name or address.
  *
- * What this version does: everything before it did, plus a first CSS: tag rules
- * from <style> and style="" over colour, background, alignment, bold,
- * underline and a two-face size (see docs/desktop/WEBVIEWER.md for the subset).
+ * Pages load on a network worker of the window's; HTML and plain text are
+ * shown, with a first CSS: tag rules from <style> and style="" over colour,
+ * background, alignment, bold, underline and a two-face size. Anything else
+ * is a file, saved by download.c on a worker of its own.
  *
- * What it deliberately does NOT do: no TLS, no CSS
- * beyond that subset, no images (an [image] marker), no tables as grids, no
- * scroll-to-fragment. Fetches block the UI: there is no background loading yet.
+ * What it deliberately does NOT do yet: no CSS beyond that subset, no images
+ * (an [image] marker), no tables as grids, no scroll-to-fragment.
  */
 
 #include "sxgfx/gfx2d.h"
@@ -17,6 +17,7 @@
 #include "sxn/sxndns.h"
 #include "sxn/sxnhttp.h"
 #include "sxn/sxngui.h"
+#include "download.h"
 #include "webview.sunres.h"
 #include "icons.inc"
 #include "../gfx/toolbar_glyphs/icons.inc"
@@ -2166,6 +2167,7 @@ enum webview_load_outcome
     WEBVIEW_LOAD_PAGE,      /* the body is in the result */
     WEBVIEW_LOAD_FAILED,    /* `message` says why */
     WEBVIEW_LOAD_CANCELLED, /* the cancel event was set */
+    WEBVIEW_LOAD_DOWNLOAD,  /* a file, not a page: `location`, saved as `file_name` */
 };
 
 struct webview_request
@@ -2187,6 +2189,7 @@ struct webview_result
     int secure; /* https://, validated */
     char security[64];
     size_t length;
+    char file_name[SXNHTTP_FILENAME_CAP];
 };
 
 /* The lock: 0 free, 1 held, 2 held with waiters, a futex mutex over
@@ -2397,6 +2400,48 @@ static void webview_http_progress(void *user, enum sxnhttp_phase phase, const ch
     webview_progress(request->id, text, percent);
 }
 
+/* ASCII, ignoring case: does `type` (a Content-Type value) name the media
+ * type `name`, alone or before its parameters? */
+static int webview_type_is(const char *type, const char *name)
+{
+    size_t index = 0;
+
+    for (; name[index] != '\0'; ++index)
+    {
+        char value = type[index];
+
+        if (value >= 'A' && value <= 'Z')
+        {
+            value = (char)(value - 'A' + 'a');
+        }
+        if (value != name[index])
+        {
+            return 0;
+        }
+    }
+    return type[index] == '\0' || type[index] == ';' || type[index] == ' ' || type[index] == '\t';
+}
+
+/* The head of the page asked for: show it or save it
+ * (docs/desktop/WEBVIEWER.md#downloads)? HTML and plain text are shown, and
+ * so is a response without a type, as before; an attachment, or any other
+ * type, is a file: the load stops before its body and the download takes it
+ * from there. An error page is always shown. */
+static int webview_http_head(void *user, const struct sxnhttp_response *response)
+{
+    (void)user;
+    if (response->status < 200 || response->status > 299)
+    {
+        return 0;
+    }
+    if (response->attachment)
+    {
+        return 1;
+    }
+    return !(response->content_type[0] == '\0' || webview_type_is(response->content_type, "text/html") ||
+             webview_type_is(response->content_type, "text/plain"));
+}
+
 /* On the worker: loads the request's URL into g_load_raw and says how it
  * went in `result`. Touches nothing the UI owns. */
 static void webview_fetch_http(const struct webview_request *request, struct webview_result *result)
@@ -2410,6 +2455,7 @@ static void webview_fetch_http(const struct webview_request *request, struct web
     load.cancel = g_cancel_event;
     load.user_agent = "SavanXP-WebViewer/" SAVANXP_VERSION_STRING;
     load.progress = webview_http_progress;
+    load.head = webview_http_head;
     load.user = (void *)request;
     memset(&response, 0, sizeof(response));
     response.body = (unsigned char *)g_load_raw;
@@ -2445,6 +2491,13 @@ static void webview_fetch_http(const struct webview_request *request, struct web
     if (status != 0)
     {
         snprintf(result->message, sizeof(result->message), "%s", sxnhttp_error_text(status));
+        return;
+    }
+    if ((response.flags & SXNHTTP_RESPONSE_HEAD_ONLY) != 0)
+    {
+        result->outcome = WEBVIEW_LOAD_DOWNLOAD;
+        memcpy(result->location, response.url, sizeof(result->location));
+        (void)sxnhttp_file_name(response.filename, response.url, result->file_name, sizeof(result->file_name) - 8);
         return;
     }
     g_load_raw[response.body_length] = '\0';
@@ -2627,6 +2680,7 @@ static void on_wake(struct sxngui_app *app)
     int have_result = 0;
 
     (void)app;
+    webview_download_wake();
     webview_lock();
     if (g_progress_id != 0 && g_progress_id == nav.id)
     {
@@ -2679,6 +2733,22 @@ static void on_wake(struct sxngui_app *app)
         return;
     case WEBVIEW_LOAD_FAILED:
         memcpy(g_status, result.message, sizeof(g_status));
+        break;
+    case WEBVIEW_LOAD_DOWNLOAD:
+        /* A file: the page on screen stays, and Save As asks where. */
+        if (webview_download_busy())
+        {
+            snprintf(g_status, sizeof(g_status), "A download is already running; %s was not saved.",
+                result.file_name);
+        }
+        else if (webview_download_begin(result.location, result.file_name, &g_dns_server) != 0)
+        {
+            snprintf(g_status, sizeof(g_status), "Cannot ask where to save %s.", result.file_name);
+        }
+        else
+        {
+            snprintf(g_status, sizeof(g_status), "Saving %s...", result.file_name);
+        }
         break;
     case WEBVIEW_LOAD_CANCELLED:
     default:
@@ -4051,6 +4121,7 @@ int main(int argc, char **argv)
         g_worker = sxn_thread_create(webview_worker_main, 0,
             g_worker_stack + sizeof(g_worker_stack), 0);
     }
+    webview_download_init(&g_app);
 
     webview_show_welcome();
     /* argv carries an optional resolver override plus the location to open:
@@ -4104,6 +4175,7 @@ int main(int argc, char **argv)
         int exit_code = sxngui_app_run(&g_app);
 
         webview_stop_worker();
+        webview_download_shutdown();
         return exit_code;
     }
 }

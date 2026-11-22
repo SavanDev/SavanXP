@@ -104,8 +104,8 @@ in Windows.
 - **One filter.** The toolkit does not support a combobox inside a dialog,
   so there is no type list to pick from; the filter is shown in a sunken
   field. A program with several types passes them as one pattern list.
-- **No rename or delete** in the dialog. SUN has `sxn_rename_path` but no
-  unlink yet; each arrives with a consumer of its own. New Folder asks for
+- **No rename or delete** in the dialog. SUN has `sxn_rename_path` and
+  `sxn_delete_path`; the dialog gains them with a need of its own. New Folder asks for
   the name in a dialog of its own rather than editing it in the list, as the
   toolkit's list has no in-place editing.
 - **No icon view and no Places bar** (the Windows XP left column).

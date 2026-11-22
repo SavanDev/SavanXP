@@ -82,6 +82,11 @@ def head(status: str, headers: list[str], version: str = "HTTP/1.1") -> bytes:
     return (version + " " + status + "\r\n" + "".join(h + "\r\n" for h in headers) + "\r\n").encode("ascii")
 
 
+def blob_bytes() -> bytes:
+    """The blob itself."""
+    return _BLOB
+
+
 def blob_parts(path: str) -> Iterator[tuple[bytes, float]] | None:
     """The download at `path` as (bytes, pause after them), or None."""
     step = 64 * 1024

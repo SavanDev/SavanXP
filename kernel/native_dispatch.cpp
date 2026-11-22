@@ -598,6 +598,16 @@ int native_rename_path(Process& proc, uint64_t user_old, uint64_t user_new) {
     return renamed != 0 ? renamed : sync_volume_of(new_path);
 }
 
+int native_delete_path(Process& proc, uint64_t user_path) {
+    vfs::PathBuffer path;
+    const sx_status status = native_absolute_path(proc, user_path, path);
+    if (status != sx::kStatusOk) {
+        return sx::negative_error(status);
+    }
+    const int deleted = process::unlink_path(proc, path);
+    return deleted != 0 ? deleted : sync_volume_of(path);
+}
+
 /* Devices live under /dev; a native process names them without the
  * directory, so it cannot reach anything else through this call. */
 int native_open_device(Process& proc, uint64_t user_name, uint32_t access) {
@@ -1691,6 +1701,9 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         }
         case SXN_SYS_RENAME_PATH:
             context->rax = static_cast<uint64_t>(native_rename_path(*caller, context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_DELETE_PATH:
+            context->rax = static_cast<uint64_t>(native_delete_path(*caller, context->rdi));
             return context;
         case SXN_SYS_OPEN_DEVICE:
             context->rax = static_cast<uint64_t>(native_open_device(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));

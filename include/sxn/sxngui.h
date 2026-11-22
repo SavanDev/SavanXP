@@ -11,7 +11,8 @@
  *     (/dev/clipboard through sxn_open_device);
  *   - a window from windowd (sxnwm.h), with the toolkit painting into it;
  *   - dialogs in owned windows of their own, as POSIX programs have them
- *     (docs/desktop/OWNED_WINDOWS.md);
+ *     (docs/desktop/OWNED_WINDOWS.md), and modeless windows beside the main
+ *     one (struct sxngui_window);
  *   - a loop that sleeps on the window's events and the next tick, and
  *     repaints only what asked to be repainted.
  *
@@ -27,6 +28,10 @@
 #include "abi/savanxp_abi.h"
 #include "sxgfx/sxgui.h"
 #include "sxn/sxnwm.h"
+
+#define SXNGUI_MAX_WINDOWS 2 /* modeless windows open at once */
+
+struct sxngui_window;
 
 struct sxngui_app {
     struct sxnwm_client wm;
@@ -90,6 +95,36 @@ struct sxngui_app {
      * no harm. */
     long wake_event;
     int wake_pending;
+
+    /* Owned by the frame: the modeless windows open now. */
+    struct sxngui_window *windows[SXNGUI_MAX_WINDOWS];
+};
+
+/* A modeless window (docs/desktop/OWNED_WINDOWS.md#modeless-windows):
+ * CreateDialog's window, where a dialog is DialogBox's. Framed, fixed in
+ * size, above its owner and not a task, like a dialog; but the main window
+ * stays usable, and a modal dialog of the app leaves this window usable too.
+ * It has its own widgets in its own toolkit context, run by the app's loop
+ * on the UI thread: its input, its painting, its close button.
+ *
+ * The caller owns the struct and keeps it alive while the window is open. */
+struct sxngui_window {
+    struct sxngui_app *app;
+    struct sxnwm_client wm;
+    struct savanxp_fb_info info;
+    struct sxgui_context ui;
+    uint32_t window_id;
+    int open;
+    int needs_repaint;
+    int last_cursor_shape;
+
+    /* Optional hooks; leave NULL to skip. */
+    int (*on_key)(struct sxngui_window *window, const struct savanxp_input_event *event); /* non-zero = consumed */
+    void (*on_paint)(struct sxngui_window *window); /* after its widgets */
+    /* Its close button or Alt+F4. The window closes after the hook returns,
+     * whatever it did; NULL: it just closes. */
+    void (*on_close)(struct sxngui_window *window);
+    void *user;
 };
 
 /* The toolkit's host for SUN. sxngui_app_init installs it; a SUN program
@@ -128,6 +163,20 @@ void sxngui_app_watch_dialog(struct sxngui_app *app, struct sxgui_dialog *dialog
                              void (*closed)(struct sxngui_app *app, struct sxgui_dialog *dialog, void *user),
                              void *user);
 
+/* Open `window` beside `app`'s main window: `width` x `height` client
+ * pixels, centred over the main window, titled `title`, with `widgets` laid
+ * out in its client area. The hooks and `user` set before the call are
+ * kept. 0, -EBUSY when SXNGUI_MAX_WINDOWS are already open, or the WM's
+ * -errno (no room on screen, no free slot). */
+int sxngui_window_open(struct sxngui_app *app, struct sxngui_window *window, const char *title, int width,
+                       int height, struct sxgui_widget *widgets, int widget_count);
+
+/* Close it. Closing one that is not open does nothing. */
+void sxngui_window_close(struct sxngui_window *window);
+
+/* Repaint it on the loop's next pass. */
+void sxngui_window_request_repaint(struct sxngui_window *window);
+
 /* Run until sxngui_app_quit or the window is closed; returns the exit code.
- * Closes the window on the way out. */
+ * Closes the window, and any modeless window still open, on the way out. */
 int sxngui_app_run(struct sxngui_app *app);

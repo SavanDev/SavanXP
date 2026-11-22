@@ -203,7 +203,9 @@ session_args=(
     --boot-wait "$BOOT_WAIT"
 )
 if ((VIRTIO)) || [[ "$SCENARIO" == linux-xeyes ]]; then session_args+=(--abs-pointer); fi
-"${session_args[@]}"
+# A scenario may read back what the guest wrote to its disk (Web Viewer's
+# downloads): the disposable copy, and the tool that extracts it.
+SAVANXP_SHOOT_DISK="$run_disk" SAVANXP_SXFS_CLI="$SXFS_CLI" "${session_args[@]}"
 if ((KEEP_RUNNING)); then
     trap - EXIT
     echo "shoot.sh: QEMU still running (pid $qemu_pid); press Ctrl-C to stop it" >&2

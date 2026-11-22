@@ -8,6 +8,11 @@ out. It is the page Stop and background loading are tried on. Three more
 answer the N4 steps: /chunked.html, a page sent chunked in small pieces with
 pauses; /contradictory, a Content-Length and chunking together; and
 /truncated, a Content-Length the body never reaches before the close.
+The D1 steps download: /blob-attachment (tools/http_fixture.py's 3 MiB blob,
+as an attachment, its SHA-256 known to the scenario); /slow.bin, /cancel.bin
+and /close.bin, DOWNLOAD_SLOW_SIZE bytes of it in forty pieces a second
+apart, as application/octet-stream; and /short.bin, which announces the
+blob and closes after half of it.
 Each request has its own thread, so a stalled one does not hold the others. Binds an ephemeral port on loopback and prints READY <port>: the
 guest reaches the host at 10.0.2.2 through QEMU slirp, so the scenario types
 http://10.0.2.2:<port>/... into the address bar.
@@ -22,6 +27,11 @@ import sys
 import time
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from http_fixture import BLOB_SIZE, blob_bytes, blob_parts  # noqa: E402
+
+DOWNLOAD_SLOW_SIZE = 200 * 1024
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -69,6 +79,30 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(data[start:start + 11])
                     self.wfile.flush()
                     time.sleep(0.01)
+            except OSError:
+                pass
+            return
+        if target == "/blob-attachment":
+            try:
+                for data, _ in blob_parts(target):
+                    self.wfile.write(data)
+            except OSError:
+                pass
+            return
+        if target in ("/slow.bin", "/cancel.bin", "/close.bin", "/short.bin"):
+            short = target == "/short.bin"
+            size = BLOB_SIZE if short else DOWNLOAD_SLOW_SIZE
+            body = blob_bytes()[:BLOB_SIZE // 2 if short else size]
+            pieces = 1 if short else 40
+            step = (len(body) + pieces - 1) // pieces
+            try:
+                self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                                 b"Content-Length: %d\r\nConnection: close\r\n\r\n" % size)
+                for start in range(0, len(body), step):
+                    self.wfile.write(body[start:start + step])
+                    self.wfile.flush()
+                    if not short:
+                        time.sleep(1.0)
             except OSError:
                 pass
             return

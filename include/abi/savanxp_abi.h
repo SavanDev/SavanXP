@@ -1375,6 +1375,12 @@ enum savanxp_wm_window_role {
     SAVANXP_WM_WINDOW_ROLE_POPUP = 2,
 };
 
+/* role_flags for SAVANXP_WM_WINDOW_ROLE_NORMAL. A modeless window
+ * (CreateDialog's, not DialogBox's): framed and above its owner like a
+ * dialog, but the owner stays enabled and a click on the owner makes the
+ * owner active (docs/desktop/OWNED_WINDOWS.md#modeless-windows). */
+#define SAVANXP_WM_WINDOW_MODELESS 0x00000001u
+
 /* role_flags for SAVANXP_WM_WINDOW_ROLE_PANEL: the edge it sits on. */
 #define SAVANXP_WM_PANEL_EDGE_BOTTOM 0x00000000u
 #define SAVANXP_WM_PANEL_EDGE_TOP 0x00000001u

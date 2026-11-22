@@ -1,11 +1,12 @@
 # Web Viewer: the native browser
 
-> **Status as of 2026-11-22: the network stages N1–N5 are complete, and D1,
-> downloads, is under way.** Web Viewer runs as `/system/webview.sxe`,
-> resolves through SUN's `sxndns`, loads on a per-window network worker
-> through SUN's `sxnhttp`, and opens validated `https://`. `sxnhttp` streams
-> bodies of any length (D1a); Web Viewer's side of downloads (D1b) is next,
-> then the engine stages E1–E7. No NetSurf library has been vendored yet.
+> **Status as of 2026-11-22: the network stages N1–N5 and D1, downloads,
+> have landed.** Web Viewer runs as `/system/webview.sxe`, resolves through
+> SUN's `sxndns`, loads on a per-window network worker through SUN's
+> `sxnhttp`, opens validated `https://`, and saves what it does not show in
+> a download window of its own. One D1 check waits for a machine with a
+> network (below); next are the engine stages E1–E7. No NetSurf library has
+> been vendored yet.
 
 ## Direction
 
@@ -140,11 +141,18 @@ as an attachment, is saved to disk instead of failing or being cut at 32 KiB.
   body ([HTTP.md](../../net/HTTP.md#downloads-the-head-and-the-sink)). The
   fixtures serve a 3 MiB blob five ways with its SHA-256; `native-network` and
   `https-smoke` check it byte-exact.
-- **D1b, Web Viewer** -- next. Show or save, the Save As dialog, the `.part`
-  file, the download window and its own worker. The window must leave the
-  page usable, and the toolkit's dialogs are modal: an owned window that does
-  not disable its owner (a modeless window, in windowd and the SUN frame) is
-  the first gap to close.
+- **D1b, Web Viewer** -- landed 2026-11-22. Show or save, Save As, the
+  `.part` file, the download worker and the download window
+  ([WEBVIEWER.md](../../desktop/WEBVIEWER.md#downloads)). Two gaps closed on
+  the way: **modeless windows** (`SAVANXP_WM_WINDOW_MODELESS` in windowd,
+  `struct sxngui_window` in the SUN frame;
+  [OWNED_WINDOWS.md](../../desktop/OWNED_WINDOWS.md#modeless-windows)), and
+  SUN's `sxn_delete_path`. The visual scenario checks it, the disk read back
+  on the host.
+
+**Still open:** downloading a real browser's package needs a machine with a
+network, which the development host does not have. The POSIX frame's modeless
+windows and the POSIX HTTP library's streaming are pending parity work.
 
 **Done when:** a multi-megabyte binary, with and without `Content-Length`,
 chunked, and as an attachment, arrives byte-exact over HTTP and validated

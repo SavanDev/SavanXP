@@ -165,7 +165,7 @@ savanxp_program(NAME win32test TEST NATIVE SOURCES subsystems/win32/tests/win32t
 # registry drops it otherwise.
 if(SAVANXP_HAVE_OPENSSL)
     savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libssl libcrypto
-        SOURCES webview.c SHARED_SOURCES system/runtime/sxnhttp_tls.c)
+        SOURCES webview.c download.c SHARED_SOURCES system/runtime/sxnhttp_tls.c)
 endif()
 
 # Native image viewer over the common memory-only decoder.

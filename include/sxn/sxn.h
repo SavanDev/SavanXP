@@ -207,6 +207,11 @@ static inline long sxn_rename_path(const char* old_path, const char* new_path) {
     return sxn_trap(SXN_SYS_RENAME_PATH, (unsigned long)old_path, (unsigned long)new_path, 0);
 }
 
+/* Delete a file (not a directory); durable when it returns. 0 or -errno. */
+static inline long sxn_delete_path(const char* path) {
+    return sxn_trap(SXN_SYS_DELETE_PATH, (unsigned long)path, 0, 0);
+}
+
 static inline long sxn_open_device(const char* name, unsigned access) {
     return sxn_trap(SXN_SYS_OPEN_DEVICE, (unsigned long)name, (unsigned long)access, 0);
 }

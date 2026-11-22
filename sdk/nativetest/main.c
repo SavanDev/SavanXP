@@ -2524,6 +2524,15 @@ static void test_file_listing(void) {
     check(sxn_rename_path("/users/native-dir-test/new.tmp", "/users/native-dir-test/x") == -SAVANXP_ENOENT);
     check(sxn_rename_path("old", "/users/native-dir-test/x") == -SAVANXP_EINVAL);
     check(sxn_rename_path("/users/native-dir-test/old", "/users/native-dir-test") != 0);
+    /* Deleting: a file goes, durably; a directory, a missing file and a
+     * relative path do not. */
+    check(sxn_write_file("/users/native-dir-test/gone", "x", 1) == 0);
+    check(sxn_delete_path("/users/native-dir-test/gone") == 0);
+    check(sxn_query_path("/users/native-dir-test/gone", &info) == -SAVANXP_ENOENT);
+    check(sxn_delete_path("/users/native-dir-test/gone") == -SAVANXP_ENOENT);
+    check(sxn_delete_path("/users/native-dir-test") == -SAVANXP_EISDIR);
+    check(sxn_query_path("/users/native-dir-test", &info) == 0 && info.type == SXN_FILE_TYPE_DIRECTORY);
+    check(sxn_delete_path("gone") == -SAVANXP_EINVAL);
 }
 
 /* SXN_SYS_LOCK_FILE and UNLOCK_FILE (docs/kernel/FILE_LOCKS.md). A lock belongs

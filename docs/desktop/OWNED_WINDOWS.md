@@ -183,7 +183,45 @@ Two consequences worth remembering:
   runtime, and asserts the family rules, the dialog frame, the task count, the
   descriptor cost, Alt+F4 closing it (and then closing a main window with its
   process), and both windows disappearing when the owner is terminated with a
-  dialog open.
+  dialog open. A modeless window opened beside it leaves the owner enabled and
+  not a task; raising the owner activates the owner under it, raising the
+  window activates the window, and closing it hands the focus back.
+- `./tools/shoot.sh --scenario webview`: Web Viewer's download window, a
+  modeless window, while the page window loads another page.
+
+## Modeless windows
+
+A dialog disables its owner; a **modeless window** does not. It is Win32's
+`CreateDialog` beside `DialogBox`: a download's progress, a Find box, any
+window that has to stay up while the person keeps working in the main one.
+
+- **The protocol:** an ordinary `OPEN` with role `NORMAL` and
+  `SAVANXP_WM_WINDOW_MODELESS` in `role_flags`. Nothing else is new.
+- **The WM:** it is a member of the family like a dialog -- framed with the
+  dialog frame, fixed size, centred over its owner when it opens, above its
+  owner in the z-order, minimized with it, not a task, gone with the
+  process -- with two differences. The owner is **not disabled**: it keeps
+  the pointer and the keyboard. And **raising the owner activates the owner**:
+  a click on the main window makes it active while the modeless window stays
+  above it; a click on the modeless window activates that. A dialog of the
+  same owner still wins: with both open, raising the owner activates the
+  dialog, and the modeless window, which a dialog does not disable, stays
+  usable, as in Windows.
+- **Its close button and Alt+F4** set the shutdown flag, as a dialog's; the
+  process decides what closing means.
+- **The SUN frame:** `struct sxngui_window` (`include/sxn/sxngui.h`) is a
+  modeless window with its own widgets in its own toolkit context, run by
+  the app's loop: `sxngui_window_open`, `sxngui_window_close`,
+  `sxngui_window_request_repaint`, and hooks for its keys, its painting and
+  its close button. Up to two at once (`SXNGUI_MAX_WINDOWS`), on window ids
+  3 and 4, after the dialog's 1 and the popup's 2. Its input arrives on the
+  owner's event pipe like the dialog's and is routed by `window_id`.
+- **First consumer:** Web Viewer's download window
+  ([WEBVIEWER.md](WEBVIEWER.md#downloads)).
+- **Pending, POSIX parity:** the POSIX frame (`sxgui_app_run`) does not offer
+  modeless windows yet; the protocol and the WM rules already serve it. It
+  gains them with its first consumer
+  ([AGENTS.md](../../AGENTS.md#feature-parity-between-subsystems)).
 
 ## Native clients
 

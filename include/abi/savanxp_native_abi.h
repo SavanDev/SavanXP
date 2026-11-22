@@ -461,6 +461,11 @@ enum sxn_syscall_number {
      * came from, and why not when it is not (docs/kernel/TIME.md). 0, or
      * -EINVAL for a bad pointer. */
     SXN_SYS_CLOCK_STATUS = 0x104C,
+    /* rdi = absolute path. Deletes a file -- not a directory -- and syncs its
+     * volume; a handle still open to it keeps reading and writing what it
+     * had. 0, -ENOENT, -EISDIR, -EINVAL (a relative path), -EACCES, -EROFS,
+     * -EBUSY (FAT, the file open). DeleteFile. */
+    SXN_SYS_DELETE_PATH = 0x104D,
 };
 
 /* Where the date came from (sxn_clock_status.source). */

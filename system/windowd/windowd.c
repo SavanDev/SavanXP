@@ -358,8 +358,9 @@ static const struct savanxp_fb_info *layout_display(const struct windowd_session
  * EnableWindow(owner, FALSE), decided by the WM.
  *
  * Whether `owner_slot` has an owned window that disables it: a dialog. An
- * application's popup (a context menu) does not; the owner keeps the
- * keyboard and the pointer while it is open. */
+ * application's popup (a context menu) does not, nor does a modeless window
+ * (SAVANXP_WM_WINDOW_MODELESS); the owner keeps the keyboard and the pointer
+ * while they are open. */
 static int owned_dialog_open(const struct windowd_session *session, int owner_slot)
 {
     int slot;
@@ -368,7 +369,8 @@ static int owned_dialog_open(const struct windowd_session *session, int owner_sl
     {
         const struct windowd_client *client = &session->overlay_clients[slot];
 
-        if (client->pid > 0 && client->owner_slot == owner_slot && client->role != WINDOWD_ROLE_POPUP)
+        if (client->pid > 0 && client->owner_slot == owner_slot && client->role != WINDOWD_ROLE_POPUP &&
+            (client->role_flags & SAVANXP_WM_WINDOW_MODELESS) == 0)
         {
             return 1;
         }
@@ -411,8 +413,10 @@ static void raise_overlay(struct windowd_session *session, int slot)
         }
         owned->minimized = 0;
         append_overlay_to_order(session, child);
-        /* A popup stacks on top but never takes the focus from its owner. */
-        if (owned->role != WINDOWD_ROLE_POPUP)
+        /* A popup stacks on top but never takes the focus from its owner,
+         * and neither does a modeless window when the owner is raised: only
+         * a dialog does. */
+        if (owned->role != WINDOWD_ROLE_POPUP && (owned->role_flags & SAVANXP_WM_WINDOW_MODELESS) == 0)
         {
             session->active_overlay_slot = child;
         }
@@ -3397,6 +3401,7 @@ static int open_owned_window(
     client->pid = owner->pid;
     client->owner_slot = owner_slot;
     client->window_id = request->window_id;
+    client->role_flags = request->role_flags & SAVANXP_WM_WINDOW_MODELESS;
     memcpy(client->path, owner->path, sizeof(client->path));
     /* Presentacion del dueno (accent, icono) con el titulo del dialogo, y de
      * tamano fijo: el tamano lo decide el layout del dialogo. */
@@ -5413,6 +5418,48 @@ static int windowd_owned_window_selftest(struct windowd_session *session, struct
     {
         printf("DESKTOP SMOKE FAIL owned: tras cerrar el dialogo activo=%d fds=%u (esperados %u)\n",
             session->active_overlay_slot, (unsigned)handles_after, (unsigned)handles_launched);
+        return 1;
+    }
+
+    /* A modeless window (SAVANXP_WM_WINDOW_MODELESS): above its owner like a
+     * dialog, not a task, but the owner stays enabled, and raising the owner
+     * makes the owner active while the window stays above it. */
+    memset(&request, 0, sizeof(request));
+    request.action = SAVANXP_WM_WINDOW_ACTION_OPEN;
+    request.window_id = 3u;
+    request.width = 160u;
+    request.height = 80u;
+    request.role_flags = SAVANXP_WM_WINDOW_MODELESS;
+    memcpy(request.title, "Modeless", sizeof("Modeless"));
+    if (open_owned_window(session, dirty, owner_slot, &request) != 0 ||
+        (second_slot = owned_window_slot(session, owner_slot, 3u)) < 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: the modeless window did not open\n");
+        return 1;
+    }
+    if (overlay_client_disabled(session, owner) || session->active_overlay_slot != second_slot ||
+        windowd_task_count(session) != tasks_before + 1)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: a modeless window disabled its owner or became a task\n");
+        return 1;
+    }
+    raise_overlay(session, owner_slot);
+    if (session->active_overlay_slot != owner_slot ||
+        selftest_order_index(session, second_slot) <= selftest_order_index(session, owner_slot))
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: raising the owner did not activate it under its modeless window\n");
+        return 1;
+    }
+    raise_overlay(session, second_slot);
+    if (session->active_overlay_slot != second_slot)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: the modeless window could not be activated\n");
+        return 1;
+    }
+    close_owned_window(session, dirty, owner_slot, 3u);
+    if (owned_window_slot(session, owner_slot, 3u) >= 0 || session->active_overlay_slot != owner_slot)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL owned: closing the modeless window did not give the owner back the focus\n");
         return 1;
     }
 

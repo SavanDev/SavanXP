@@ -897,3 +897,9 @@ runs on one with no source (`smoke random-unseeded`).
   certificate dates against ([TIME.md](TIME.md#can-the-date-be-believed)).
   `nativetest` checks it on QEMU's RTC; `date-smoke` checks it through POSIX
   as the date is set, set stale and restored.
+- `SXN_SYS_DELETE_PATH` (`0x104D`): rdi = absolute path. Deletes a file, not
+  a directory, and syncs its volume; a handle still open to it keeps what it
+  had. `0`, `-ENOENT`, `-EISDIR`, `-EINVAL` (relative), `-EACCES`, `-EROFS`,
+  `-EBUSY`. `DeleteFile`; the POSIX `unlink` underneath. Web Viewer deletes a
+  download's `.part` with it; `nativetest` checks a file, a missing one, a
+  directory and a relative path.

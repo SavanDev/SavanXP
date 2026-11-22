@@ -449,6 +449,175 @@ static void sxngui_popup_close(struct sxgui_popup_host *host)
     app->needs_repaint = 1;
 }
 
+/* ---- modeless windows ----------------------------------------------------------------
+ *
+ * Owned windows with SAVANXP_WM_WINDOW_MODELESS, each with a toolkit context
+ * of its own. The ids after the dialog's and the popup's are theirs. */
+#define SXNGUI_FIRST_WINDOW_ID 3u
+
+int sxngui_window_open(struct sxngui_app *app, struct sxngui_window *window, const char *title, int width,
+                       int height, struct sxgui_widget *widgets, int widget_count)
+{
+    int index;
+    long result;
+
+    if (app == 0 || window == 0 || app->wm.header == 0 || width <= 0 || height <= 0 || window->open)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    for (index = 0; index < SXNGUI_MAX_WINDOWS && app->windows[index] != 0; ++index)
+    {
+    }
+    if (index == SXNGUI_MAX_WINDOWS)
+    {
+        return -SAVANXP_EBUSY;
+    }
+    window->app = app;
+    window->window_id = SXNGUI_FIRST_WINDOW_ID + (uint32_t)index;
+    result = sxnwm_window_open_ex(&app->wm, &window->wm, window->window_id, (uint32_t)width, (uint32_t)height,
+                                  title, SAVANXP_WM_WINDOW_ROLE_NORMAL, SAVANXP_WM_WINDOW_MODELESS, 0, 0);
+    if (result < 0)
+    {
+        return (int)result;
+    }
+    sxngui_fill_info(&window->info, &window->wm);
+    sxgui_context_init(&window->ui, window->wm.pixels, &window->info, widgets, widget_count);
+    window->open = 1;
+    window->needs_repaint = 1;
+    window->last_cursor_shape = 0;
+    app->windows[index] = window;
+    return 0;
+}
+
+void sxngui_window_close(struct sxngui_window *window)
+{
+    struct sxngui_app *app;
+    int index;
+
+    if (window == 0 || !window->open)
+    {
+        return;
+    }
+    app = window->app;
+    window->open = 0;
+    for (index = 0; index < SXNGUI_MAX_WINDOWS; ++index)
+    {
+        if (app->windows[index] == window)
+        {
+            app->windows[index] = 0;
+        }
+    }
+    (void)sxnwm_window_close(&app->wm, &window->wm, window->window_id);
+    app->needs_repaint = 1;
+}
+
+void sxngui_window_request_repaint(struct sxngui_window *window)
+{
+    if (window != 0)
+    {
+        window->needs_repaint = 1;
+    }
+}
+
+static struct sxngui_window *sxngui_window_by_id(struct sxngui_app *app, uint32_t window_id)
+{
+    for (int index = 0; index < SXNGUI_MAX_WINDOWS; ++index)
+    {
+        if (app->windows[index] != 0 && app->windows[index]->window_id == window_id)
+        {
+            return app->windows[index];
+        }
+    }
+    return 0;
+}
+
+static int sxngui_any_window(const struct sxngui_app *app)
+{
+    for (int index = 0; index < SXNGUI_MAX_WINDOWS; ++index)
+    {
+        if (app->windows[index] != 0)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void sxngui_window_input(struct sxngui_window *window, const struct savanxp_wm_event *record)
+{
+    if (record->kind == SAVANXP_WM_EVENT_KEY)
+    {
+        const struct savanxp_input_event *key = &record->payload.key;
+
+        if (key->type == SAVANXP_INPUT_EVENT_RESIZED)
+        {
+            return;
+        }
+        if ((window->on_key != 0 && window->on_key(window, key)) || sxgui_handle_key(&window->ui, key))
+        {
+            window->needs_repaint = 1;
+        }
+    }
+    else if (record->kind == SAVANXP_WM_EVENT_POINTER)
+    {
+        int shape;
+
+        if (sxgui_handle_pointer(&window->ui, &record->payload.pointer))
+        {
+            window->needs_repaint = 1;
+        }
+        shape = sxgui_cursor_shape(&window->ui);
+        if (window->open && shape != window->last_cursor_shape &&
+            sxnwm_set_cursor_shape(&window->wm, (uint32_t)shape) == 0)
+        {
+            window->last_cursor_shape = shape;
+        }
+    }
+}
+
+static void sxngui_window_paint(struct sxngui_window *window)
+{
+    window->needs_repaint = 0;
+    sxgui_paint_content(&window->ui);
+    if (window->on_paint != 0)
+    {
+        window->on_paint(window);
+    }
+    sxgui_paint_overlay(&window->ui);
+    /* One that cannot be presented is not left open and blank. */
+    if (sxngui_present(&window->wm) < 0)
+    {
+        sxngui_window_close(window);
+    }
+}
+
+/* Each window's close button, then its painting. */
+static void sxngui_service_windows(struct sxngui_app *app)
+{
+    for (int index = 0; index < SXNGUI_MAX_WINDOWS; ++index)
+    {
+        struct sxngui_window *window = app->windows[index];
+
+        if (window != 0 && sxnwm_close_requested(&window->wm))
+        {
+            if (window->on_close != 0)
+            {
+                window->on_close(window);
+            }
+            sxngui_window_close(window);
+        }
+    }
+    for (int index = 0; index < SXNGUI_MAX_WINDOWS; ++index)
+    {
+        struct sxngui_window *window = app->windows[index];
+
+        if (window != 0 && window->needs_repaint)
+        {
+            sxngui_window_paint(window);
+        }
+    }
+}
+
 /* ---- input ---------------------------------------------------------------------- */
 
 static void sxngui_update_cursor(struct sxngui_app *app, struct sxnwm_client *window, int *last)
@@ -538,8 +707,16 @@ static void sxngui_drain_owned(struct sxngui_app *app)
 {
     struct savanxp_wm_event record;
 
-    while ((app->dialog_window_open || app->popup_window_open) && sxnwm_poll_owned_input(&app->wm, &record) == 0)
+    while ((app->dialog_window_open || app->popup_window_open || sxngui_any_window(app)) &&
+           sxnwm_poll_owned_input(&app->wm, &record) == 0)
     {
+        struct sxngui_window *window = sxngui_window_by_id(app, record.window_id);
+
+        if (window != 0)
+        {
+            sxngui_window_input(window, &record);
+            continue;
+        }
         if (record.window_id == SXNGUI_POPUP_WINDOW_ID)
         {
             if (app->popup_window_open && record.kind == SAVANXP_WM_EVENT_POINTER &&
@@ -628,7 +805,7 @@ static void sxngui_wait(struct sxngui_app *app, unsigned long next_tick_ms)
     }
     handles[count++] = (int32_t)app->wm.wake_fd;
     handles[count++] = (int32_t)app->wake_event;
-    if (app->dialog_window_open || app->popup_window_open)
+    if (app->dialog_window_open || app->popup_window_open || sxngui_any_window(app))
     {
         handles[count++] = (int32_t)app->wm.events_fd;
     }
@@ -759,6 +936,7 @@ int sxngui_app_run(struct sxngui_app *app)
         {
             break;
         }
+        sxngui_service_windows(app);
 
         if (app->needs_repaint)
         {
@@ -777,5 +955,9 @@ int sxngui_app_run(struct sxngui_app *app)
         sxgui_dialog_end(&app->ui, 0);
     }
     app->ui.dialog_host = 0;
+    for (int index = 0; index < SXNGUI_MAX_WINDOWS; ++index)
+    {
+        sxngui_window_close(app->windows[index]);
+    }
     return app->exit_code;
 }

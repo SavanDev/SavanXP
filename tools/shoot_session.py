@@ -3401,6 +3401,7 @@ def scenario_webview_http(s):
                     "a test root the system does not trust", solid_only=True)
         expect_text(untrusted, (0, 0, *untrusted.size), "Chunked page", TEXT, FIELD,
                     "the page kept after a refused certificate", which="title", solid_only=True)
+        webview_downloads(s, hostport)
         # Home, clicked on the toolbar, opens the home page.
         home_at = expect_text(replaced, (0, 0, *replaced.size), "Home", TEXT, FACE,
                               "the Home button", solid_only=True)
@@ -3410,6 +3411,15 @@ def scenario_webview_http(s):
         home = s.shot("webview-ui-home")
         expect_text(home, (0, 0, *home.size), "Welcome to SavanXP", TEXT, FIELD,
                     "Home opens the home page", which="title")
+        # D1: a download still running when the browser closes leaves no
+        # file behind (checked on the disk below). The page window is
+        # clicked, so the next step's Alt+F4 closes it, not the download's.
+        start_download(s, hostport, "/close.bin", "close.bin")
+        address = expect_text(s.shot("webview-d1-close-running"), (0, 0, 1280, 800), "Address", TEXT, FACE,
+                              "the address label", solid_only=True)
+        s.qmp.move_to(address[0] + 10, address[1] + 6)  # a label: it activates, it takes no focus
+        s.qmp.click()
+        time.sleep(1.0)
         # Closing the window in the middle of a load (the next step's Alt+F4).
         s.qmp.tap("tab", pause=1.0)
         s.qmp.chord("ctrl", "a")
@@ -3439,6 +3449,7 @@ def scenario_webview_http(s):
         file_url = s.shot("webview-sun-file-url")
         expect_text(file_url, (0, 0, *file_url.size), "Going further", TEXT, FIELD,
                     "SUN file URL", which="title")
+        check_downloads_on_disk()
     finally:
         if tls is not None:
             tls.pki.close()
@@ -3448,11 +3459,126 @@ def scenario_webview_http(s):
         dns.wait()
 
 
+def wait_for_text(s, name, text, label, timeout, colour=None, background=None):
+    """Shots until `text` is drawn (TEXT on FACE unless told), or fails."""
+    deadline = time.time() + timeout
+    while True:
+        image = s.shot(name)
+        origin = find_text(image, (0, 0, *image.size), text, colour or TEXT, background or FACE,
+                           solid_only=True)[0]
+        if origin is not None:
+            return image, origin
+        if time.time() >= deadline:
+            expect_text(image, (0, 0, *image.size), text, colour or TEXT, background or FACE, label,
+                        solid_only=True)
+        time.sleep(3.0)
+
+
+def start_download(s, hostport, path, name):
+    """Asks the page window for `path`; Save As offers `name`; Enter saves it."""
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, path)
+    s.qmp.tap("ret", pause=4.0)
+    ask = s.shot("webview-d1-save-as")
+    expect_text(ask, (0, 0, *ask.size), name, TEXT, FIELD, "Save As suggesting %s" % name, solid_only=True)
+    s.qmp.tap("ret", pause=3.0)
+
+
+def webview_downloads(s, hostport):
+    """D1 (docs/desktop/WEBVIEWER.md#downloads): files are saved, not shown.
+
+    A slow file downloads in the modeless download window while the page
+    window, clicked, loads another page; the 3 MiB attachment arrives under
+    the server's name; Esc cancels a download; one cut short fails. What is
+    on the disk is checked at the end of the scenario (check_downloads_on_disk).
+    """
+    full = (0, 0, 1280, 800)
+    start_download(s, hostport, "/slow.bin", "slow.bin")
+    running = s.shot("webview-d1-running")
+    expect_text(running, full, "Saving slow.bin from 10.0.2.2", TEXT, FACE, "the download window",
+                solid_only=True)
+    expect_text(running, full, "Cancel", TEXT, FACE, "the download's Cancel", solid_only=True)
+    address = expect_text(running, full, "Address", TEXT, FACE, "the address label", solid_only=True)
+    s.qmp.move_to(address[0] + 160, address[1] + 6)
+    s.qmp.click()
+    time.sleep(1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, "/second.html")
+    s.qmp.tap("ret", pause=5.0)
+    both = s.shot("webview-d1-page-while-downloading")
+    expect_text(both, full, "Second page", TEXT, FIELD, "a page loaded while the download runs",
+                which="title", solid_only=True)
+    expect_text(both, full, "copied", TEXT, FACE, "the download still running beside it", solid_only=True)
+    done, _ = wait_for_text(s, "webview-d1-complete", "Download complete: slow.bin",
+                            "the slow download completing", 60.0)
+    expect_text(done, full, "Open Folder", TEXT, FACE, "Open Folder once complete", solid_only=True)
+    close = expect_text(done, full, "Close", TEXT, FACE, "the download window's Close", solid_only=True)
+    s.qmp.move_to(close[0] + 8, close[1] + 6)
+    s.qmp.click()
+    time.sleep(1.5)
+
+    start_download(s, hostport, "/blob-attachment", "savanxp blob.bin")
+    wait_for_text(s, "webview-d1-blob", "Download complete: savanxp blob.bin",
+                  "the 3 MiB attachment completing", 120.0)
+    s.qmp.tap("esc", pause=1.5)
+
+    start_download(s, hostport, "/cancel.bin", "cancel.bin")
+    s.qmp.tap("esc", pause=3.0)
+    cancelled = s.shot("webview-d1-cancelled")
+    if find_text(cancelled, full, "Saving cancel.bin from", TEXT, FACE, solid_only=True)[0] is not None:
+        raise Failure("Esc did not cancel the download and close its window")
+
+    start_download(s, hostport, "/short.bin", "short.bin")
+    failed, _ = wait_for_text(s, "webview-d1-truncated", "Download failed: short.bin",
+                              "a download cut short failing", 40.0)
+    expect_text(failed, full, "dropped before the page ended", TEXT, FACE, "why it failed", solid_only=True)
+    s.qmp.tap("esc", pause=1.5)
+
+
+def check_downloads_on_disk():
+    """Reads the guest's disk back: the downloads are byte-exact, and nothing
+    cancelled, cut short or abandoned left a file or a .part behind."""
+    import hashlib
+    import shutil
+    import subprocess
+    import tempfile
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from http_fixture import BLOB_SHA256, blob_bytes
+    from webview_http_server import DOWNLOAD_SLOW_SIZE
+
+    disk = os.environ.get("SAVANXP_SHOOT_DISK")
+    cli = os.environ.get("SAVANXP_SXFS_CLI")
+    if not disk or not cli:
+        raise Failure("the downloads cannot be checked: no SAVANXP_SHOOT_DISK/SAVANXP_SXFS_CLI (run tools/shoot.sh)")
+    root = tempfile.mkdtemp(prefix="savanxp-downloads-")
+    try:
+        subprocess.run([cli, "extract", disk, root], check=True, stdout=subprocess.DEVNULL)
+        found = {}
+        for directory, _, names in os.walk(os.path.join(root, "users")):
+            for name in names:
+                found.setdefault(name, os.path.join(directory, name))
+        blob = found.get("savanxp blob.bin")
+        if blob is None or hashlib.sha256(open(blob, "rb").read()).hexdigest() != BLOB_SHA256:
+            raise Failure("the 3 MiB download is missing or not byte-exact: %s" % blob)
+        slow = found.get("slow.bin")
+        if slow is None or open(slow, "rb").read() != blob_bytes()[:DOWNLOAD_SLOW_SIZE]:
+            raise Failure("the slow download is missing or not byte-exact: %s" % slow)
+        for name in ("cancel.bin", "short.bin", "close.bin"):
+            for left in (name, name + ".part"):
+                if left in found:
+                    raise Failure("a download that did not finish left %s behind" % found[left])
+        print("  downloads on disk: byte-exact, nothing left behind")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def type_http_url(s, hostport, path, scheme="http"):
     """Types scheme://hostport/path with the guest's Spanish layout.
 
     Symbols go through their combination in the active layout (see
-    type_text): "/" is Shift+7 and ":" is Shift+period.
+    type_text): "/" is Shift+7, ":" is Shift+period, and "-" is the key US
+    keyboards have "/" on.
     """
     s.qmp.type_text(scheme)
     s.qmp.chord("shift", "dot")
@@ -3465,6 +3591,8 @@ def type_http_url(s, hostport, path, scheme="http"):
             s.qmp.chord("shift", "dot")
         elif ch == "/":
             s.qmp.chord("shift", "7")
+        elif ch == "-":
+            s.qmp.tap("slash", pause=0.12)
         else:
             s.qmp.tap(ch, pause=0.12)
 
