@@ -233,8 +233,8 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   (the session's largest mode, the layout after a change, `display.cfg`).
 - [`IMAGE_VIEWER.md`](desktop/IMAGE_VIEWER.md) — the SUN Image Viewer: BMP/PNG/JPEG,
   fit and zoom, scrolling and folder navigation, fullscreen, decode limits and tests.
-- [`FILES.md`](desktop/FILES.md) — Files, the file browser: the toolbar,
-  address bar, history and Properties, the toolbar widgets
+- [`FILES.md`](desktop/FILES.md) — Files, the file browser: My Computer (the
+  mounted volumes as drives), the toolbar, address bar, history and Properties, the toolbar widgets
   (`SXGUI_FLAG_TOOLBAR`), Cut, Copy and Paste with the shared copy engine
   (`file_copy.c`) and the progress dialog, the Large Icons and Details views
   over one widget (`SXGUI_ICONVIEW`), the per-size icon caches and their RAM,

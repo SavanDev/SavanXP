@@ -361,6 +361,11 @@ class Session(object):
     def open_files(self):
         self.run("filesapp")
 
+    # Files with no folder opens My Computer; the scenarios that work in the
+    # user's folders start there by name.
+    def open_files_profile(self):
+        self.run("filesapp /users/user")
+
     def open_notepad(self):
         self.run("notepad")
 
@@ -855,7 +860,7 @@ def scenario_files(s):
     first arrow selects the first icon and the next one moves right, so the
     highlighted item is in view too.
     """
-    s.open_files()
+    s.open_files_profile()
     image = s.shot("files-raiz")
     if find_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE)[0] is not None:
         raise Failure("Files does not open as Large Icons")
@@ -888,7 +893,7 @@ def scenario_filesmenu(s):
     folder.
     """
     WHITE = (255, 255, 255)
-    s.open_files()
+    s.open_files_profile()
     image = s.shot("files")
     origin = find_text(image, (0, 0, 1280, 770), "Desktop", TEXT, FIELD)[0]
     if origin is None:
@@ -957,7 +962,7 @@ def scenario_filestoolbar(s):
     root. With nothing selected, Properties describes the folder itself, and
     the Views button drops down the view menu.
     """
-    s.open_files()
+    s.open_files_profile()
     image = s.shot("toolbar")
     # Properties is always enabled: its caption gives the toolbar's row.
     caption = find_text(image, (0, 0, 1280, 770), "Properties", TEXT, FACE)[0]
@@ -1003,6 +1008,48 @@ def scenario_filestoolbar(s):
     files_click_text(s, image, "Details", "the Views button does not drop down the views")
     image = s.shot("views-details")
     expect_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE, "Views > Details shows the column headers")
+
+
+def scenario_filescomputer(s):
+    """Files' My Computer (docs/desktop/FILES.md#my-computer).
+
+    Files with no folder lists the mounted volumes as drives, with Up
+    disabled. Enter on the first opens the root; Up from the root comes back.
+    A volume's Properties give its capacity and free space.
+    """
+    s.open_files()
+    image = s.shot("computer")
+    expect_text(image, (0, 0, 1280, 770), "My Computer", TEXT, FIELD, "Files opens on My Computer")
+    expect_text(image, (0, 0, 1280, 770), "Local Disk (/)", TEXT, FIELD, "My Computer lists the root volume")
+    caption = find_text(image, (0, 0, 1280, 770), "Views", TEXT, FACE)[0]
+    if caption is None:
+        raise Failure("the toolbar has no Views")
+    toolbar = (0, caption[1] - 4, 1280, caption[1] + 20)
+    if find_text(image, toolbar, "Up", TEXT, FACE)[0] is not None:
+        raise Failure("Up is enabled in My Computer")
+
+    s.qmp.tap("down", pause=0.6)
+    s.qmp.tap("ret", pause=1.5)
+    image = s.shot("computer-root")
+    expect_text(image, (0, 0, 1280, 770), "icons", TEXT, FIELD, "Enter on the volume opens the root")
+    files_click_text(s, image, "Up", "Up is not enabled at the root", toolbar)
+    image = s.shot("computer-up")
+    expect_text(image, (0, 0, 1280, 770), "Local Disk (/)", TEXT, FIELD, "Up from the root is My Computer")
+
+    s.qmp.tap("down", pause=0.6)
+    s.qmp.chord("alt", "ret")
+    time.sleep(1.2)
+    image = s.shot("computer-properties")
+    expect_text(image, (0, 0, 1280, 770), "Capacity:", TEXT, FACE, "a volume's Properties give its capacity")
+    expect_text(image, (0, 0, 1280, 770), "Free space:", TEXT, FACE, "a volume's Properties give its free space")
+    s.qmp.tap("ret", pause=1.0)
+    image = files_choose_view(s, image, "Details")
+    header = find_text(image, (0, 0, 1280, 770), "Type", TEXT, FACE)[0]
+    if header is None:
+        raise Failure("Details in My Computer has no Type column")
+    # The volume is still selected from its Properties.
+    expect_text(image, (header[0] - 4, header[1] + 8, header[0] + 160, header[1] + 40), "Local Disk",
+                SELECT_TEXT, SELECT, "the Type column says Local Disk")
 
 
 def scenario_filesclipboard(s):
@@ -4445,6 +4492,7 @@ SCENARIOS = {
     "filesmenu": scenario_filesmenu,
     "filestoolbar": scenario_filestoolbar,
     "filesclipboard": scenario_filesclipboard,
+    "filescomputer": scenario_filescomputer,
     "taskmgrmenu": scenario_taskmgrmenu,
     "diskmgmt": scenario_diskmgmt,
     "bench": scenario_bench,

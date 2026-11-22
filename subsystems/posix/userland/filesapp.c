@@ -16,6 +16,7 @@
 #include "start_pins.h"
 
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 /*
@@ -37,6 +38,7 @@
  * and creates the folder in the one shown.
  * Cut, Copy and Paste go through the system clipboard, and a paste runs a
  * piece at a time behind a progress dialog (docs/desktop/FILES.md).
+ * Opened with no folder it shows My Computer: the mounted volumes, as drives.
  */
 
 /* ---- toolbar glyphs ----------------------------------------------------------
@@ -107,11 +109,24 @@ static void filesapp_build_toolbar_glyphs(void)
 /* Back and Forward each remember this many folders; the oldest goes first. */
 #define FILESAPP_HISTORY_DEPTH 16
 
+/* My Computer is not a folder but the list of mounted volumes
+ * (docs/desktop/FILES.md#my-computer). It stands where a path would, in the
+ * address bar and the history; a real path starts with '/', so none is it. */
+#define FILESAPP_COMPUTER "My Computer"
+#define FILESAPP_DRIVE_TYPE "Local Disk"
+#define FILESAPP_DRIVE_ICON "drive-harddisk"
+
 struct filesapp_entry
 {
     char name[256];
     unsigned int size;
     int is_dir;
+    /* My Computer's entries are volumes: where each is mounted and its
+     * space. */
+    int volume;
+    char mount_point[SAVANXP_STORAGE_MOUNT_CAPACITY];
+    unsigned long long total_bytes;
+    unsigned long long free_bytes;
 };
 
 /* The window's widgets, in painting and Tab order: the toolbar band, the
@@ -211,6 +226,16 @@ static int filesapp_is_root_path(const char *path)
     return path != 0 && path[0] == '/' && path[1] == '\0';
 }
 
+static int filesapp_is_computer_path(const char *path)
+{
+    return path != 0 && strcmp(path, FILESAPP_COMPUTER) == 0;
+}
+
+static int filesapp_in_computer(void)
+{
+    return filesapp_is_computer_path(g_current_path);
+}
+
 static int filesapp_path_is_launchable(const char *path)
 {
     return path != 0 &&
@@ -237,6 +262,18 @@ static void filesapp_set_entry_icons(int index, const struct filesapp_entry *ent
     char full_path[FILESAPP_PATH_CAPACITY];
 
     g_item_icons[index] = 0;
+    /* A volume is a drive; a folder until the drive's icon is installed. */
+    if (entry->volume)
+    {
+        g_item_icons[index] = mime_icon_small(FILESAPP_DRIVE_ICON);
+        g_item_large_icons[index] = mime_icon_large(FILESAPP_DRIVE_ICON);
+        if (g_item_icons[index] == 0 || g_item_large_icons[index] == 0)
+        {
+            g_item_icons[index] = mime_icon_for_file(entry->name, 1, 0);
+            g_item_large_icons[index] = mime_icon_large_for_file(entry->name, 1, 0);
+        }
+        return;
+    }
     if (!entry->is_dir && strncmp(g_current_path, "/system/linux/", 14) == 0 &&
         filesapp_join_path(g_current_path, entry->name, full_path, sizeof(full_path)) &&
         shortcut_is_linux_program(full_path))
@@ -376,6 +413,27 @@ static void filesapp_format_total(unsigned int bytes, char *buffer, size_t capac
         "%u.%u MB",
         bytes / (1024u * 1024u),
         (bytes % (1024u * 1024u)) * 10u / (1024u * 1024u));
+}
+
+/* A volume's space: one decimal from KB up, by integer arithmetic, since a
+ * disk does not fit filesapp_format_total's 32 bits. */
+static void filesapp_format_capacity(unsigned long long bytes, char *buffer, size_t capacity)
+{
+    static const char *const k_units[] = {"KB", "MB", "GB", "TB"};
+    unsigned long long scale = 1024ull;
+    int unit = 0;
+
+    if (bytes < 1024ull)
+    {
+        snprintf(buffer, capacity, "%llu bytes", bytes);
+        return;
+    }
+    while (unit < 3 && bytes >= scale * 1024ull)
+    {
+        scale *= 1024ull;
+        unit += 1;
+    }
+    snprintf(buffer, capacity, "%llu.%llu %s", bytes / scale, (bytes % scale) * 10ull / scale, k_units[unit]);
 }
 
 /* ---- listado -------------------------------------------------------------- */
@@ -532,6 +590,102 @@ static void filesapp_update_status(void)
     filesapp_format_total(total, g_size_pane, sizeof(g_size_pane));
 }
 
+/* ---- My Computer ---------------------------------------------------------------
+ *
+ * One entry per mounted volume, from the storage list (storage_snapshot):
+ * named by its label, else "Local Disk", with where it is mounted in
+ * brackets, as Windows writes "Local Disk (C:)". The EFI System Partition
+ * mounted at /boot is the firmware's and is left out, as Windows hides it.
+ */
+
+static void filesapp_volume_name(const char *label, const char *mount_point, char *buffer, size_t capacity)
+{
+    snprintf(buffer, capacity, "%s (%s)", label != 0 && label[0] != '\0' ? label : FILESAPP_DRIVE_TYPE,
+             mount_point);
+}
+
+static int filesapp_volume_listed(const struct savanxp_storage_device *device)
+{
+    return (device->flags & SAVANXP_STORAGE_MOUNTED) != 0 && device->mount_point[0] == '/' &&
+           (device->flags & SAVANXP_STORAGE_ESP) == 0 && strcmp(device->mount_point, "/boot") != 0;
+}
+
+/* Fills g_entries with the volumes, sorted by where they are mounted, so
+ * the root comes first. */
+static void filesapp_collect_volumes(void)
+{
+    struct savanxp_storage_device device;
+    unsigned long index;
+    int left;
+
+    g_entry_count = 0;
+    for (index = 0; g_entry_count < FILESAPP_MAX_ENTRIES && storage_snapshot(index, &device) == 1; ++index)
+    {
+        struct filesapp_entry *entry = &g_entries[g_entry_count];
+
+        if (!filesapp_volume_listed(&device))
+        {
+            continue;
+        }
+        memset(entry, 0, sizeof(*entry));
+        device.mount_point[sizeof(device.mount_point) - 1] = '\0';
+        device.label[sizeof(device.label) - 1] = '\0';
+        filesapp_volume_name(device.label, device.mount_point, entry->name, sizeof(entry->name));
+        snprintf(entry->mount_point, sizeof(entry->mount_point), "%s", device.mount_point);
+        entry->is_dir = 1;
+        entry->volume = 1;
+        entry->total_bytes = device.total_bytes;
+        entry->free_bytes = device.free_bytes;
+        g_entry_count += 1;
+    }
+    for (left = 0; left < g_entry_count; ++left)
+    {
+        int right;
+
+        for (right = left + 1; right < g_entry_count; ++right)
+        {
+            if (strcmp(g_entries[right].mount_point, g_entries[left].mount_point) < 0)
+            {
+                struct filesapp_entry temp = g_entries[left];
+                g_entries[left] = g_entries[right];
+                g_entries[right] = temp;
+            }
+        }
+    }
+}
+
+static int filesapp_load_computer(void)
+{
+    char size_cell[32];
+    int index;
+
+    if (!g_mime_icons_loaded)
+    {
+        (void)mime_icon_load();
+        g_mime_icons_loaded = 1;
+    }
+    filesapp_collect_volumes();
+    snprintf(g_current_path, sizeof(g_current_path), "%s", FILESAPP_COMPUTER);
+    for (index = 0; index < g_entry_count; ++index)
+    {
+        filesapp_format_capacity(g_entries[index].total_bytes, size_cell, sizeof(size_cell));
+        snprintf(g_item_labels[index], sizeof(g_item_labels[index]), "%s%c%s%c%s", g_entries[index].name,
+                 SXGUI_COLUMN_SEPARATOR, size_cell, SXGUI_COLUMN_SEPARATOR, FILESAPP_DRIVE_TYPE);
+        g_item_ptrs[index] = g_item_labels[index];
+        filesapp_set_entry_icons(index, &g_entries[index], 0);
+    }
+    filesapp_bind_list(-1);
+    snprintf(g_count_pane, sizeof(g_count_pane), "%d object(s)", g_entry_count);
+    snprintf(g_size_pane, sizeof(g_size_pane), "%s", FILESAPP_COMPUTER);
+
+    snprintf(g_address, sizeof(g_address), "%s", g_current_path);
+    FILESAPP_ADDRESS->caret = (int)strlen(g_address);
+    FILESAPP_ADDRESS->sel_anchor = -1;
+    FILESAPP_ADDRESS->scroll = 0;
+    filesapp_update_commands();
+    return 0;
+}
+
 static int filesapp_load_directory(const char *path)
 {
     DIR *directory = 0;
@@ -539,6 +693,10 @@ static int filesapp_load_directory(const char *path)
     char full_path[FILESAPP_PATH_CAPACITY];
     int insert_parent = 0;
 
+    if (filesapp_is_computer_path(path))
+    {
+        return filesapp_load_computer();
+    }
     directory = opendir(path);
     if (directory == 0)
     {
@@ -671,8 +829,14 @@ static void filesapp_go_up(void)
 {
     char parent_path[FILESAPP_PATH_CAPACITY];
 
+    /* Above the root is My Computer, as above C:\ in the Explorer. */
+    if (filesapp_in_computer())
+    {
+        return;
+    }
     if (filesapp_is_root_path(g_current_path))
     {
+        (void)filesapp_navigate(FILESAPP_COMPUTER);
         return;
     }
     filesapp_parent_path(g_current_path, parent_path, sizeof(parent_path));
@@ -690,7 +854,11 @@ static void filesapp_go_to_address(void)
     {
         return;
     }
-    if (g_address[0] == '/')
+    if (strcasecmp(g_address, FILESAPP_COMPUTER) == 0)
+    {
+        snprintf(target, sizeof(target), "%s", FILESAPP_COMPUTER);
+    }
+    else if (g_address[0] == '/')
     {
         snprintf(target, sizeof(target), "%s", g_address);
     }
@@ -700,7 +868,7 @@ static void filesapp_go_to_address(void)
         return;
     }
     length = strlen(target);
-    while (length > 1 && target[length - 1] == '/')
+    while (length > 1 && target[0] == '/' && target[length - 1] == '/')
     {
         target[--length] = '\0';
     }
@@ -726,6 +894,11 @@ static void filesapp_activate_selected(void)
     if (strcmp(g_entries[selected].name, "..") == 0)
     {
         filesapp_go_up();
+        return;
+    }
+    if (g_entries[selected].volume)
+    {
+        (void)filesapp_navigate(g_entries[selected].mount_point);
         return;
     }
     if (!filesapp_join_path(g_current_path, g_entries[selected].name, full_path, sizeof(full_path)))
@@ -829,6 +1002,13 @@ static int filesapp_selected_entry(void)
     return row;
 }
 
+/* The selected entry when it is a file or a folder: what Cut, Copy, Delete
+ * and Rename take. A volume in My Computer is not one. */
+static int filesapp_selected_file(void)
+{
+    return filesapp_in_computer() ? -1 : filesapp_selected_entry();
+}
+
 static void filesapp_enable(struct sxgui_widget *widget, int enabled)
 {
     if (enabled)
@@ -851,24 +1031,30 @@ static void filesapp_enable_item(struct sxgui_menu_item *item, int enabled)
 
 static void filesapp_update_commands(void)
 {
-    int has_selection = filesapp_selected_entry() >= 0;
-    int can_go_up = !filesapp_is_root_path(g_current_path);
+    int in_computer = filesapp_in_computer();
+    int has_selection = filesapp_selected_file() >= 0;
+    int can_go_up = !in_computer;
+    /* My Computer has properties only for the volume selected. */
+    int has_properties = !in_computer || filesapp_selected_entry() >= 0;
 
     filesapp_enable(&g_widgets[W_BACK], g_back_count > 0);
     filesapp_enable(&g_widgets[W_FORWARD], g_forward_count > 0);
     filesapp_enable(&g_widgets[W_UP], can_go_up);
-    int can_paste = filesapp_can_paste();
+    int can_paste = filesapp_can_paste() && !in_computer;
 
     filesapp_enable(&g_widgets[W_CUT], has_selection);
     filesapp_enable(&g_widgets[W_COPY], has_selection);
     filesapp_enable(&g_widgets[W_PASTE], can_paste);
     filesapp_enable(&g_widgets[W_DELETE], has_selection);
+    filesapp_enable(&g_widgets[W_PROPERTIES], has_properties);
     filesapp_enable_item(&k_edit_items[0], has_selection);
     filesapp_enable_item(&k_edit_items[1], has_selection);
     filesapp_enable_item(&k_edit_items[2], can_paste);
     filesapp_enable_item(&k_file_items[2], FILESAPP_LIST->value >= 0);
     filesapp_enable_item(&k_file_items[4], has_selection);
     filesapp_enable_item(&k_file_items[5], has_selection);
+    filesapp_enable_item(&k_file_items[0], !in_computer);
+    filesapp_enable_item(&k_file_items[6], has_properties);
     filesapp_enable_item(&k_go_items[0], g_back_count > 0);
     filesapp_enable_item(&k_go_items[1], g_forward_count > 0);
     filesapp_enable_item(&k_go_items[2], can_go_up);
@@ -877,7 +1063,7 @@ static void filesapp_update_commands(void)
 /* Delete and Rename act on the selected entry, by name (g_subject). */
 static int filesapp_take_subject(void)
 {
-    int row = filesapp_selected_entry();
+    int row = filesapp_selected_file();
 
     if (row < 0)
     {
@@ -1165,6 +1351,20 @@ static const struct sxgui_menu k_entry_menu = {
     (int)(sizeof(k_entry_items) / sizeof(k_entry_items[0])),
 };
 
+/* A volume in My Computer: it opens and has properties; it is not cut,
+ * copied, renamed or deleted. */
+static const struct sxgui_menu_item k_volume_items[] = {
+    {"Open", FILESAPP_CMD_OPEN, 0},
+    {0, 0, 0},
+    {"Properties", FILESAPP_CMD_PROPERTIES, 0},
+};
+
+static const struct sxgui_menu k_volume_menu = {
+    "Volume",
+    k_volume_items,
+    (int)(sizeof(k_volume_items) / sizeof(k_volume_items[0])),
+};
+
 /* Not const: Paste is enabled only while the clipboard holds a file. */
 static struct sxgui_menu_item k_folder_items[] = {
     {"Up One Level", FILESAPP_CMD_UP, 0},
@@ -1392,6 +1592,10 @@ static void filesapp_ask_new_folder(void)
     struct stat info;
     int attempt;
 
+    if (filesapp_in_computer())
+    {
+        return;
+    }
     snprintf(g_new_folder_buffer, sizeof(g_new_folder_buffer), "New Folder");
     for (attempt = 2; attempt < 100 && filesapp_join_path(g_current_path, g_new_folder_buffer, path, sizeof(path)) &&
                       stat(path, &info) == 0;
@@ -1425,6 +1629,41 @@ static char g_properties_values[FILESAPP_PROPERTIES_ROWS][FILESAPP_PATH_CAPACITY
 static const char *const k_properties_captions[FILESAPP_PROPERTIES_ROWS] = {
     "Name:", "Type:", "Location:", "Size:", "Contains:",
 };
+/* A volume's rows: where it is mounted and its space. */
+static const char *const k_volume_captions[FILESAPP_PROPERTIES_ROWS] = {
+    "Name:", "Type:", "Mounted at:", "Capacity:", "Free space:",
+};
+
+static void filesapp_set_properties_captions(const char *const *captions)
+{
+    int index;
+
+    for (index = 0; index < FILESAPP_PROPERTIES_ROWS; ++index)
+    {
+        g_properties_widgets[index * 2].text = captions[index];
+        g_properties_widgets[index * 2].flags |= SXGUI_FLAG_VISIBLE;
+        g_properties_widgets[index * 2 + 1].flags |= SXGUI_FLAG_VISIBLE;
+    }
+}
+
+/* The selected volume's name, mount point, capacity and free space, as the
+ * Explorer's drive Properties gives them. */
+static void filesapp_show_volume_properties(const struct filesapp_entry *entry)
+{
+    char free_text[64];
+    unsigned long long percent =
+        entry->total_bytes == 0 ? 0 : entry->free_bytes * 100ull / entry->total_bytes;
+
+    filesapp_set_properties_captions(k_volume_captions);
+    snprintf(g_properties_title, sizeof(g_properties_title), "%s Properties", entry->name);
+    snprintf(g_properties_values[0], FILESAPP_PATH_CAPACITY, "%s", entry->name);
+    snprintf(g_properties_values[1], FILESAPP_PATH_CAPACITY, "%s", FILESAPP_DRIVE_TYPE);
+    snprintf(g_properties_values[2], FILESAPP_PATH_CAPACITY, "%s", entry->mount_point);
+    filesapp_format_capacity(entry->total_bytes, g_properties_values[3], FILESAPP_PATH_CAPACITY);
+    filesapp_format_capacity(entry->free_bytes, free_text, sizeof(free_text));
+    snprintf(g_properties_values[4], FILESAPP_PATH_CAPACITY, "%s (%llu%% free)", free_text, percent);
+    sxgui_dialog_begin(&g_app.ui, &g_properties_dialog, FILESAPP_PROPERTIES_WIDTH, FILESAPP_PROPERTIES_HEIGHT);
+}
 
 static void filesapp_format_bytes(unsigned int bytes, char *buffer, size_t capacity)
 {
@@ -1491,6 +1730,15 @@ static void filesapp_show_properties(void)
     int is_folder;
     int launchable = 0;
 
+    if (filesapp_in_computer())
+    {
+        if (row >= 0)
+        {
+            filesapp_show_volume_properties(&g_entries[row]);
+        }
+        return;
+    }
+    filesapp_set_properties_captions(k_properties_captions);
     if (row >= 0)
     {
         snprintf(name, sizeof(name), "%s", g_entries[row].name);
@@ -2133,7 +2381,8 @@ static void filesapp_paste(void)
     int found;
     int result;
 
-    if (file_copy_running(&g_op) || sxgui_dialog_active(&g_app.ui))
+    /* My Computer holds volumes, not files: nothing is pasted into it. */
+    if (file_copy_running(&g_op) || sxgui_dialog_active(&g_app.ui) || filesapp_in_computer())
     {
         return;
     }
@@ -2342,6 +2591,13 @@ static void filesapp_show_menu(int item, int x, int y)
     int row = filesapp_entry_of(item);
 
     g_subject[0] = '\0';
+    if (row >= 0 && row < g_entry_count && g_entries[row].volume)
+    {
+        FILESAPP_LIST->value = item;
+        filesapp_update_commands();
+        sxgui_context_menu_open(&g_app.ui, &k_volume_menu, x, y, on_context_command, 0);
+        return;
+    }
     if (row >= 0 && row < g_entry_count && strcmp(g_entries[row].name, "..") != 0)
     {
         FILESAPP_LIST->value = item;
@@ -2363,7 +2619,11 @@ static void filesapp_show_menu(int item, int x, int y)
         FILESAPP_LIST->value = -1;
         filesapp_update_commands();
     }
-    filesapp_enable_item(&k_folder_items[3], filesapp_can_paste());
+    /* My Computer's own menu keeps only Refresh. */
+    filesapp_enable_item(&k_folder_items[0], !filesapp_in_computer());
+    filesapp_enable_item(&k_folder_items[3], filesapp_can_paste() && !filesapp_in_computer());
+    filesapp_enable_item(&k_folder_items[5], !filesapp_in_computer());
+    filesapp_enable_item(&k_folder_items[7], !filesapp_in_computer());
     sxgui_context_menu_open(&g_app.ui, &k_folder_menu, x, y, on_context_command, 0);
 }
 
@@ -2909,6 +3169,57 @@ static int filesapp_copy_selftest(void)
     return g_copy_failures;
 }
 
+/* ---- selftest: My Computer ------------------------------------------------------
+ *
+ * The names and sizes a volume is shown with, and the live list: the root is
+ * there, first, with its space, and /boot is not. */
+
+static int filesapp_computer_selftest(void)
+{
+    char text[96];
+    int failures = 0;
+    int index;
+    int boot_listed = 0;
+
+#define FILESAPP_COMPUTER_CHECK(ok, label)                                 \
+    do                                                                      \
+    {                                                                       \
+        if (!(ok))                                                          \
+        {                                                                   \
+            printf("FILESAPP SMOKE FAIL computer: %s\n", label);           \
+            failures += 1;                                                  \
+        }                                                                   \
+    } while (0)
+
+    filesapp_volume_name("", "/", text, sizeof(text));
+    FILESAPP_COMPUTER_CHECK(strcmp(text, "Local Disk (/)") == 0, "an unlabelled volume is a Local Disk");
+    filesapp_volume_name("Data", "/mnt/data", text, sizeof(text));
+    FILESAPP_COMPUTER_CHECK(strcmp(text, "Data (/mnt/data)") == 0, "a label names the volume");
+    filesapp_format_capacity(512ull, text, sizeof(text));
+    FILESAPP_COMPUTER_CHECK(strcmp(text, "512 bytes") == 0, "bytes");
+    filesapp_format_capacity(1536ull * 1024ull * 1024ull, text, sizeof(text));
+    FILESAPP_COMPUTER_CHECK(strcmp(text, "1.5 GB") == 0, "gigabytes");
+    filesapp_format_capacity(5ull * 1024ull * 1024ull * 1024ull * 1024ull, text, sizeof(text));
+    FILESAPP_COMPUTER_CHECK(strcmp(text, "5.0 TB") == 0, "past 32 bits");
+
+    filesapp_collect_volumes();
+    for (index = 0; index < g_entry_count; ++index)
+    {
+        printf("FILESAPP SMOKE computer volume '%s' at %s total=%llu free=%llu\n", g_entries[index].name,
+               g_entries[index].mount_point, g_entries[index].total_bytes, g_entries[index].free_bytes);
+        boot_listed |= strcmp(g_entries[index].mount_point, "/boot") == 0;
+    }
+    FILESAPP_COMPUTER_CHECK(g_entry_count > 0 && strcmp(g_entries[0].mount_point, "/") == 0,
+                            "the root is the first volume");
+    FILESAPP_COMPUTER_CHECK(g_entry_count > 0 && g_entries[0].volume && g_entries[0].total_bytes != 0 &&
+                                g_entries[0].free_bytes <= g_entries[0].total_bytes,
+                            "the root has its space");
+    FILESAPP_COMPUTER_CHECK(!boot_listed, "/boot is not listed");
+#undef FILESAPP_COMPUTER_CHECK
+    g_entry_count = 0;
+    return failures;
+}
+
 static int filesapp_selftest(void)
 {
     int failures = 0;
@@ -2982,6 +3293,7 @@ static int filesapp_selftest(void)
     failures += mime_icon_selftest(filesapp_report_mime_failure);
     failures += shortcut_selftest();
     failures += filesapp_copy_selftest();
+    failures += filesapp_computer_selftest();
 
     if (failures != 0)
     {
@@ -3153,10 +3465,9 @@ int main(int argc, char **argv)
     filesapp_layout(&g_app);
 
     /* The folder it was asked to show (a folder opened from the desktop);
-     * else the user's profile, as NT's Explorer opens on My Documents; the
-     * root for the system, and if the profile is not there. */
+     * else My Computer, the machine's volumes. */
     if ((argc < 2 || argv == 0 || argv[1] == 0 || filesapp_load_directory(argv[1]) < 0) &&
-        filesapp_load_directory(savanxp_profile_dir()) < 0 && filesapp_load_directory("/") < 0)
+        filesapp_load_directory(FILESAPP_COMPUTER) < 0)
     {
         sxgui_app_quit(&g_app, 1);
     }

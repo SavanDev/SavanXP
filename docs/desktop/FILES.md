@@ -42,14 +42,14 @@ disagree.
 | Open / Edit | — | Item context menu | Enter opens | Open follows the selected item; Edit needs an associated editor |
 | Back | Back | Go | Alt+Left | there is a folder to go back to |
 | Forward | Forward | Go | Alt+Right | after Back |
-| Up One Level | Up | Go, folder's context menu | Backspace | not at the root |
+| Up One Level | Up | Go, folder's context menu | Backspace | not in My Computer (from the root it goes there) |
 | Cut | Cut | Edit, item's context menu | Ctrl+X | an item is selected (not "..") |
 | Copy | Copy | Edit, item's context menu | Ctrl+C | an item is selected (not "..") |
 | Paste | Paste | Edit, folder's context menu | Ctrl+V | the clipboard holds one file or folder |
 | Delete | Delete | File, item's context menu | Delete | an item is selected (not "..") |
 | Rename... | — | File, item's context menu | — | an item is selected (not "..") |
 | New Folder... | — | File, folder's context menu | — | always |
-| Properties | Properties | File, both context menus | Alt+Enter | always |
+| Properties | Properties | File, both context menus | Alt+Enter | always, except in My Computer with nothing selected |
 | Views | Views (drops down) | View | — | always |
 | Refresh | — | View, folder's context menu | F5 | always |
 
@@ -73,6 +73,36 @@ is selected, as Explorer's File > Properties does: name, type, location and
 size, and for a folder what it contains. A folder's size and contents count
 only what is directly in it, not its subfolders: a recursive walk could take
 long on a big tree, and the window would hang meanwhile.
+
+## My Computer
+
+Files opened with no folder (the Start menu's Files) shows **My Computer**:
+one icon per mounted volume, as Windows 2000's My Computer shows the drives,
+without the web-view panel. A folder given on the command line still opens
+that folder.
+
+- **Where the list comes from.** POSIX `storage_snapshot`
+  ([DISK_MANAGEMENT.md](../userland/DISK_MANAGEMENT.md#why-calls-not-devdiskn)),
+  read on every load and Refresh: each device with a mount point. The EFI
+  System Partition mounted at `/boot` is left out, as Windows hides it; it is
+  the firmware's. Volumes are sorted by mount point, so the root comes first.
+- **Names.** A volume is named by its label, else "Local Disk", with the
+  mount point in brackets where Windows puts the drive letter:
+  `Local Disk (/)`, `Data (/mnt/data)`. Details show its capacity in the Size
+  column and "Local Disk" as its type; the status bar says how many volumes
+  and "My Computer".
+- **A place, not a folder.** Its "path" is the text `My Computer`, kept in
+  `g_current_path`, the history and the address bar like any folder. A real
+  path starts with `/`, so none can be mistaken for it; typing "My Computer"
+  in the address bar (any case) goes there. Up from `/` goes to My Computer,
+  as Up from `C:\` does; in My Computer, Up is disabled.
+- **What a volume takes.** Open (Enter, double click) goes to its mount
+  point. Its context menu has only Open and Properties, which give its name,
+  type, mount point, capacity and free space. Cut, Copy, Paste, Delete,
+  Rename and New Folder are disabled there: a volume is not a file, and
+  nothing is pasted into My Computer. The folder menu keeps only Refresh.
+- **Icons.** `drive-harddisk` from `/icons`, falling back to the folder's
+  until the drive icons are drawn (pending, below).
 
 ### Toolbar widgets
 
@@ -300,6 +330,15 @@ programs that draw large icons list `mime_icon_large.c` in their sources.
   pastes it into the profile, asserts the progress dialog, cancels it with
   Esc, then cuts an entry and pastes it into its own folder.
 
+- `filesapp --selftest` also checks My Computer: volume names, capacities
+  past 32 bits, and the live list (the root first, with its space; `/boot`
+  absent), printing each volume (`FILESAPP SMOKE computer volume ...`).
+- `./tools/shoot.sh --scenario filescomputer` opens Files with no folder,
+  asserts My Computer and `Local Disk (/)` with Up disabled, opens the root
+  with Enter, comes back with Up, opens the volume's Properties (Capacity,
+  Free space) and checks the Type column in Details. The other Files
+  scenarios start in the profile by name (`filesapp /users/user`).
+
 The visual scenarios assume a 1280x800 session: their pointer mapping and
 text search are sized for it. A disk image whose profile saved another
 resolution (`display.cfg`) has to be run without that file.
@@ -328,6 +367,14 @@ is out of scope for now.
    dialog's animation, and a copy that leaves the window usable.
 
 ### Pending
+
+- **My Computer's icons and groups.** House icons for a hard disk, an
+  optical drive and removable media (`drive-harddisk`, `drive-optical`,
+  `drive-removable-media`), and, later, Windows XP's grouped view (hard disks
+  apart from removable storage), which needs group headers in the icon view.
+  Discs and sticks appear once the
+  [removable media roadmap](../roadmaps/open/REMOVABLE_MEDIA_ROADMAP.md) mounts
+  them.
 
 5. **Recycle Bin.** Delete moves to a per-user bin instead of removing:
    the item goes into a folder in the profile together with a record of its
