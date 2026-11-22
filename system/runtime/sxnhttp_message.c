@@ -16,9 +16,9 @@ enum
     STATE_FAILED,
 };
 
-/* Content-Length values past this are refused: no body this client keeps is
+/* Content-Length values past this (1 TiB) are refused: no download comes
  * near it, and it keeps the arithmetic far from overflow. */
-#define SXNHTTP_LENGTH_MAX 0x7FFFFFFFull
+#define SXNHTTP_LENGTH_MAX 0xFFFFFFFFFFull
 
 static char lower(char value)
 {
@@ -366,6 +366,149 @@ int sxnhttp_resolve(const char *base, const char *reference, char *out, size_t c
     return sxnhttp_format_url(&url, out, capacity) == 0 ? 0 : -2;
 }
 
+/* ---- file names for downloads ------------------------------------------------ */
+
+static int hex_value(char digit)
+{
+    digit = lower(digit);
+    if (digit >= '0' && digit <= '9')
+    {
+        return digit - '0';
+    }
+    if (digit >= 'a' && digit <= 'f')
+    {
+        return digit - 'a' + 10;
+    }
+    return -1;
+}
+
+/* `length` bytes of `name` cleaned into `out` (see sxnhttp_file_name): the
+ * length kept, 0 when nothing is left. */
+static size_t clean_file_name(const char *name, size_t length, char *out, size_t capacity)
+{
+    char kept[SXNHTTP_URL_CAP];
+    size_t kept_length = 0;
+    size_t start = 0;
+    size_t stem;
+    size_t extension = 0;
+
+    for (size_t index = 0; index < length; ++index)
+    {
+        if (name[index] == '/' || name[index] == '\\')
+        {
+            start = index + 1;
+        }
+    }
+    for (size_t index = start; index < length && kept_length + 1 < sizeof(kept); ++index)
+    {
+        unsigned char value = (unsigned char)name[index];
+
+        if (value < 0x20 || value == 0x7F)
+        {
+            continue;
+        }
+        kept[kept_length++] = strchr("<>:\"|?*", (char)value) != 0 ? '_' : (char)value;
+    }
+    start = 0;
+    while (start < kept_length && (kept[start] == '.' || kept[start] == ' '))
+    {
+        start += 1;
+    }
+    while (kept_length > start && (kept[kept_length - 1] == '.' || kept[kept_length - 1] == ' '))
+    {
+        kept_length -= 1;
+    }
+    length = kept_length - start;
+    if (length == 0)
+    {
+        return 0;
+    }
+    if (length < capacity)
+    {
+        memcpy(out, kept + start, length);
+        out[length] = '\0';
+        return length;
+    }
+    /* Too long: the stem gives way, the extension (a short last ".x") stays. */
+    for (size_t index = kept_length; index > start + 1; --index)
+    {
+        if (kept[index - 1] == '.')
+        {
+            if (kept_length - (index - 1) <= 16 && kept_length - (index - 1) < capacity / 2)
+            {
+                extension = kept_length - (index - 1);
+            }
+            break;
+        }
+    }
+    stem = capacity - 1 - extension;
+    while (stem > 0 && ((unsigned char)kept[start + stem] & 0xC0) == 0x80)
+    {
+        stem -= 1; /* never half a UTF-8 sequence */
+    }
+    while (stem > 0 && (kept[start + stem - 1] == '.' || kept[start + stem - 1] == ' '))
+    {
+        stem -= 1;
+    }
+    if (stem == 0)
+    {
+        return 0;
+    }
+    memcpy(out, kept + start, stem);
+    memcpy(out + stem, kept + kept_length - extension, extension);
+    out[stem + extension] = '\0';
+    return stem + extension;
+}
+
+int sxnhttp_file_name(const char *suggested, const char *url, char *out, size_t capacity)
+{
+    struct sxnhttp_url parsed;
+
+    if (out == 0 || capacity < 16)
+    {
+        return -1;
+    }
+    if (suggested != 0 && clean_file_name(suggested, strlen(suggested), out, capacity) > 0)
+    {
+        return 0;
+    }
+    if (url != 0 && sxnhttp_parse_url(url, &parsed) == 0)
+    {
+        char segment[SXNHTTP_URL_CAP];
+        size_t segment_length = 0;
+        const char *end = strchr(parsed.target, '?');
+        const char *begin;
+
+        if (end == 0)
+        {
+            end = parsed.target + strlen(parsed.target);
+        }
+        begin = end;
+        while (begin > parsed.target && begin[-1] != '/')
+        {
+            begin -= 1;
+        }
+        for (const char *cursor = begin; cursor < end; ++cursor)
+        {
+            if (*cursor == '%' && end - cursor >= 3 && hex_value(cursor[1]) >= 0 && hex_value(cursor[2]) >= 0)
+            {
+                segment[segment_length++] = (char)(hex_value(cursor[1]) * 16 + hex_value(cursor[2]));
+                cursor += 2;
+            }
+            else
+            {
+                segment[segment_length++] = *cursor;
+            }
+        }
+        if (clean_file_name(segment, segment_length, out, capacity) > 0)
+        {
+            return 0;
+        }
+    }
+    memcpy(out, "download", 9);
+    return 0;
+}
+
 /* ---- the response parser ---------------------------------------------------- */
 
 void sxnhttp_parser_init(struct sxnhttp_parser *parser, unsigned char *body, size_t body_capacity)
@@ -374,6 +517,13 @@ void sxnhttp_parser_init(struct sxnhttp_parser *parser, unsigned char *body, siz
     parser->body = body;
     parser->body_capacity = body_capacity;
     parser->state = STATE_HEAD;
+}
+
+void sxnhttp_parser_set_sink(struct sxnhttp_parser *parser,
+                             long (*sink)(void *user, const unsigned char *bytes, size_t length), void *user)
+{
+    parser->sink = sink;
+    parser->sink_user = user;
 }
 
 static long fail(struct sxnhttp_parser *parser, long error)
@@ -444,6 +594,170 @@ static long parse_length(const char *value, size_t length, uint64_t *out)
     return 0;
 }
 
+/* RFC 8187's charset'language'value, UTF-8 only, percent-decoded into `out`.
+ * 0, or -1 for another charset, a bad escape or a NUL. */
+static int decode_extended(const char *value, size_t length, char *out, size_t capacity)
+{
+    const char *first = memchr(value, '\'', length);
+    const char *second;
+    size_t written = 0;
+
+    if (first == 0 || !equals_ignoring_case(value, (size_t)(first - value), "utf-8"))
+    {
+        return -1;
+    }
+    second = memchr(first + 1, '\'', length - (size_t)(first + 1 - value));
+    if (second == 0)
+    {
+        return -1;
+    }
+    for (const char *cursor = second + 1; cursor < value + length; ++cursor)
+    {
+        char decoded = *cursor;
+
+        if (*cursor == '%')
+        {
+            if (value + length - cursor < 3 || hex_value(cursor[1]) < 0 || hex_value(cursor[2]) < 0)
+            {
+                return -1;
+            }
+            decoded = (char)(hex_value(cursor[1]) * 16 + hex_value(cursor[2]));
+            cursor += 2;
+        }
+        if (decoded == '\0' || written + 1 >= capacity)
+        {
+            return -1;
+        }
+        out[written++] = decoded;
+    }
+    out[written] = '\0';
+    return 0;
+}
+
+/* Content-Disposition (RFC 6266): a type, then ";"-separated parameters,
+ * each a token or a quoted string. A malformed parameter ends the reading;
+ * what was read before it stands. */
+static void parse_disposition(struct sxnhttp_parser *parser, const char *value, size_t length)
+{
+    char plain[SXNHTTP_FILENAME_CAP];
+    char extended[SXNHTTP_FILENAME_CAP];
+    size_t index = 0;
+    size_t stop;
+
+    plain[0] = '\0';
+    extended[0] = '\0';
+    while (index < length && value[index] != ';')
+    {
+        index += 1;
+    }
+    stop = index;
+    while (stop > 0 && ows(value[stop - 1]))
+    {
+        stop -= 1;
+    }
+    if (stop == 0)
+    {
+        return;
+    }
+    parser->attachment = !equals_ignoring_case(value, stop, "inline");
+    while (index < length)
+    {
+        char text[SXNHTTP_FILENAME_CAP];
+        size_t text_length = 0;
+        size_t name;
+        size_t name_length;
+        int usable = 1;
+
+        index += 1; /* the ';' */
+        while (index < length && ows(value[index]))
+        {
+            index += 1;
+        }
+        name = index;
+        while (index < length && token_char(value[index]))
+        {
+            index += 1;
+        }
+        name_length = index - name;
+        while (index < length && ows(value[index]))
+        {
+            index += 1;
+        }
+        if (name_length == 0 || index >= length || value[index] != '=')
+        {
+            break;
+        }
+        index += 1;
+        while (index < length && ows(value[index]))
+        {
+            index += 1;
+        }
+        if (index < length && value[index] == '"')
+        {
+            index += 1;
+            while (index < length && value[index] != '"')
+            {
+                if (value[index] == '\\' && index + 1 < length)
+                {
+                    index += 1;
+                }
+                if (text_length + 1 >= sizeof(text))
+                {
+                    usable = 0;
+                }
+                else
+                {
+                    text[text_length++] = value[index];
+                }
+                index += 1;
+            }
+            if (index >= length)
+            {
+                break; /* no closing quote */
+            }
+            index += 1;
+        }
+        else
+        {
+            while (index < length && value[index] != ';' && !ows(value[index]))
+            {
+                if (text_length + 1 >= sizeof(text))
+                {
+                    usable = 0;
+                }
+                else
+                {
+                    text[text_length++] = value[index];
+                }
+                index += 1;
+            }
+        }
+        while (index < length && ows(value[index]))
+        {
+            index += 1;
+        }
+        if (index < length && value[index] != ';')
+        {
+            break;
+        }
+        text[text_length] = '\0';
+        if (!usable)
+        {
+            continue;
+        }
+        if (equals_ignoring_case(value + name, name_length, "filename"))
+        {
+            memcpy(plain, text, text_length + 1);
+        }
+        else if (equals_ignoring_case(value + name, name_length, "filename*") &&
+                 decode_extended(text, text_length, extended, sizeof(extended)) != 0)
+        {
+            extended[0] = '\0';
+        }
+    }
+    memcpy(parser->filename, extended[0] != '\0' ? extended : plain, SXNHTTP_FILENAME_CAP);
+}
+
 /* Reads the status line and headers in parser->head. 0, 2 for an interim
  * response to skip, or an error. */
 static long parse_head(struct sxnhttp_parser *parser)
@@ -477,6 +791,10 @@ static long parse_head(struct sxnhttp_parser *parser)
     parser->content_type[0] = '\0';
     parser->location[0] = '\0';
     parser->location_too_long = 0;
+    parser->has_length = 0;
+    parser->content_length = 0;
+    parser->attachment = 0;
+    parser->filename[0] = '\0';
 
     for (cursor = line_end + 1; cursor < end; cursor = line_end + 1)
     {
@@ -598,6 +916,10 @@ static long parse_head(struct sxnhttp_parser *parser)
             memcpy(parser->content_type, value, take);
             parser->content_type[take] = '\0';
         }
+        else if (equals_ignoring_case(cursor, name_length, "content-disposition"))
+        {
+            parse_disposition(parser, value, value_length);
+        }
         else if (equals_ignoring_case(cursor, name_length, "location"))
         {
             if (value_length >= sizeof(parser->location))
@@ -641,6 +963,8 @@ static long parse_head(struct sxnhttp_parser *parser)
     }
     else if (has_length)
     {
+        parser->has_length = 1;
+        parser->content_length = length;
         parser->framing = length == 0 ? SXNHTTP_FRAMING_NONE : SXNHTTP_FRAMING_LENGTH;
         parser->remaining = length;
     }
@@ -652,10 +976,28 @@ static long parse_head(struct sxnhttp_parser *parser)
     return 0;
 }
 
-/* Keeps what fits of the body. 1 when bytes had to be dropped. */
-static int store(struct sxnhttp_parser *parser, const unsigned char *bytes, size_t length)
+/* Keeps what fits of the body, or hands it to the sink. 0, 1 when the body
+ * stops here (bytes had to be dropped, or the sink said so), or an error. */
+static long store(struct sxnhttp_parser *parser, const unsigned char *bytes, size_t length)
 {
     size_t room = parser->body_capacity - parser->body_length;
+
+    if (parser->sink != 0)
+    {
+        long result = length > 0 ? parser->sink(parser->sink_user, bytes, length) : 0;
+
+        if (result < 0)
+        {
+            return fail(parser, result);
+        }
+        if (result > 0)
+        {
+            parser->body_cut = 1;
+            return 1;
+        }
+        parser->body_length += length;
+        return 0;
+    }
     size_t take = length < room ? length : room;
 
     if (take > 0)
@@ -795,10 +1137,18 @@ long sxnhttp_parser_feed(struct sxnhttp_parser *parser, const unsigned char *byt
             {
                 take = (size_t)parser->remaining;
             }
-            if (store(parser, bytes + index, take))
             {
-                parser->state = STATE_DONE;
-                return 1;
+                long stored = store(parser, bytes + index, take);
+
+                if (stored < 0)
+                {
+                    return stored;
+                }
+                if (stored > 0)
+                {
+                    parser->state = STATE_DONE;
+                    return 1;
+                }
             }
             index += take;
             parser->remaining -= take;
@@ -812,7 +1162,7 @@ long sxnhttp_parser_feed(struct sxnhttp_parser *parser, const unsigned char *byt
                 parser->state = STATE_CHUNK_DATA_END;
                 parser->line_length = 0;
             }
-            else if (parser->body_length == parser->body_capacity)
+            else if (parser->sink == 0 && parser->body_length == parser->body_capacity)
             {
                 parser->body_cut = 1; /* more is coming and none of it fits */
                 parser->state = STATE_DONE;
@@ -821,13 +1171,21 @@ long sxnhttp_parser_feed(struct sxnhttp_parser *parser, const unsigned char *byt
             break;
         }
         case STATE_BODY_CLOSE:
-            if (store(parser, bytes + index, length - index))
+        {
+            long stored = store(parser, bytes + index, length - index);
+
+            if (stored < 0)
+            {
+                return stored;
+            }
+            if (stored > 0)
             {
                 parser->state = STATE_DONE;
                 return 1;
             }
             index = length;
             break;
+        }
         case STATE_CHUNK_DATA_END:
         {
             char value = (char)bytes[index++];

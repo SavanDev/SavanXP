@@ -154,7 +154,7 @@ static long link_read_raw(struct link *link, void *buffer, size_t capacity, uint
 /* The peer's next bytes into the TLS session: 1, 0 at the close, or an error. */
 static long link_fill(struct link *link, uint64_t deadline)
 {
-    unsigned char buffer[2048];
+    unsigned char buffer[4096];
     long got = link_read_raw(link, buffer, sizeof(buffer), deadline);
 
     if (got <= 0)
@@ -251,10 +251,80 @@ static void link_close(struct link *link)
     sxn_close(link->socket);
 }
 
+static int is_redirect(int status)
+{
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+}
+
+/* Where a hop's body goes. A redirect's is not read at all; the final
+ * response's head is told to the head callback once, and then its body goes
+ * to the sink or into the response's buffer. */
+struct delivery
+{
+    const struct sxnhttp_request *request;
+    struct sxnhttp_response *response;
+    struct sxnhttp_parser *parser;
+    const char *url;  /* this hop's, formatted */
+    int reported;     /* the head is in the response */
+    int stopped;      /* and the head callback said to stop */
+    size_t stored;    /* bytes in the response's buffer */
+};
+
+/* The final response's head into `response`. */
+static void fill_head(struct sxnhttp_response *response, const struct sxnhttp_parser *parser, const char *url)
+{
+    response->status = parser->status;
+    snprintf(response->url, sizeof(response->url), "%s", url);
+    memcpy(response->content_type, parser->content_type, sizeof(response->content_type));
+    response->content_length = parser->content_length;
+    response->flags = parser->has_length ? SXNHTTP_RESPONSE_LENGTH : 0;
+    response->attachment = parser->attachment;
+    memcpy(response->filename, parser->filename, sizeof(response->filename));
+}
+
+/* Once per final response: 1 when the head callback stops the load. */
+static int report_head(struct delivery *delivery)
+{
+    if (delivery->reported)
+    {
+        return delivery->stopped;
+    }
+    delivery->reported = 1;
+    fill_head(delivery->response, delivery->parser, delivery->url);
+    if (delivery->request->head != 0 &&
+        delivery->request->head(delivery->request->user, delivery->response) != 0)
+    {
+        delivery->stopped = 1;
+    }
+    return delivery->stopped;
+}
+
+/* The parser's sink (sxnhttp_parser_set_sink). */
+static long deliver(void *user, const unsigned char *bytes, size_t length)
+{
+    struct delivery *delivery = user;
+    size_t room;
+    size_t take;
+
+    if (is_redirect(delivery->parser->status) || report_head(delivery))
+    {
+        return 1;
+    }
+    if (delivery->request->sink != 0)
+    {
+        return delivery->request->sink(delivery->request->user, bytes, length) < 0 ? SXNHTTP_ERROR_SINK : 0;
+    }
+    room = delivery->response->body_capacity - delivery->stored;
+    take = length < room ? length : room;
+    memcpy(delivery->response->body + delivery->stored, bytes, take);
+    delivery->stored += take;
+    return take < length ? 1 : 0;
+}
+
 /* One request on one connection, the response parsed into client->parser. */
 static long exchange(struct sxnhttp_client *client, const struct sxnhttp_request *request,
                      const struct sxnhttp_url *url, uint32_t ipv4, struct sxnhttp_response *response,
-                     uint64_t total_deadline)
+                     struct delivery *delivery, uint64_t total_deadline)
 {
     struct sxn_ipv4_endpoint peer;
     struct link link;
@@ -281,7 +351,7 @@ static long exchange(struct sxnhttp_client *client, const struct sxnhttp_request
     peer.port = url->port;
     if (request->progress != 0)
     {
-        request->progress(request->user, SXNHTTP_PHASE_CONNECTING, url->host, 0);
+        request->progress(request->user, SXNHTTP_PHASE_CONNECTING, url->host, 0, 0);
     }
     deadline = earlier(sxn_clock_ns() + SXNHTTP_CONNECT_MS * MS_TO_NS, total_deadline);
     result = sxn_socket_connect(link.socket, &peer);
@@ -314,7 +384,7 @@ static long exchange(struct sxnhttp_client *client, const struct sxnhttp_request
         }
         if (request->progress != 0)
         {
-            request->progress(request->user, SXNHTTP_PHASE_SECURING, url->host, 0);
+            request->progress(request->user, SXNHTTP_PHASE_SECURING, url->host, 0, 0);
         }
         result = link_handshake(&link, response,
             earlier(sxn_clock_ns() + SXNHTTP_TLS_MS * MS_TO_NS, total_deadline));
@@ -362,14 +432,21 @@ static long exchange(struct sxnhttp_client *client, const struct sxnhttp_request
 
     if (request->progress != 0)
     {
-        request->progress(request->user, SXNHTTP_PHASE_WAITING, url->host, 0);
+        request->progress(request->user, SXNHTTP_PHASE_WAITING, url->host, 0, 0);
     }
-    sxnhttp_parser_init(&client->parser, response->body, response->body_capacity);
+    sxnhttp_parser_init(&client->parser, 0, 0);
+    sxnhttp_parser_set_sink(&client->parser, deliver, delivery);
+    delivery->parser = &client->parser;
+    delivery->reported = 0;
+    delivery->stopped = 0;
+    delivery->stored = 0;
     result = 0;
     while (result == 0)
     {
-        unsigned char buffer[1024];
-        long got = link_receive(&link, buffer, sizeof(buffer), earlier(sxn_clock_ns() + idle_ns, total_deadline));
+        unsigned char buffer[4096];
+        /* A download's body is not held to the navigation's total. */
+        const uint64_t limit = request->sink != 0 && delivery->reported ? UINT64_MAX : total_deadline;
+        long got = link_receive(&link, buffer, sizeof(buffer), earlier(sxn_clock_ns() + idle_ns, limit));
 
         if (got == 0)
         {
@@ -382,32 +459,44 @@ static long exchange(struct sxnhttp_client *client, const struct sxnhttp_request
             break;
         }
         result = sxnhttp_parser_feed(&client->parser, buffer, (size_t)got);
-        if (request->progress != 0 && client->parser.head_done)
+        if (result < 0 || !client->parser.head_done || is_redirect(client->parser.status))
+        {
+            continue;
+        }
+        /* An empty body, or a head that came without any of it: the head
+         * callback still runs, and before the next wait. */
+        if (report_head(delivery))
+        {
+            result = 1;
+            break;
+        }
+        if (request->progress != 0)
         {
             request->progress(request->user, SXNHTTP_PHASE_RECEIVING, url->host,
-                client->parser.body_length);
+                request->sink != 0 ? client->parser.body_length : delivery->stored,
+                client->parser.has_length ? client->parser.content_length : 0);
         }
     }
     link_close(&link);
     return result < 0 ? result : 0;
 }
 
-static int is_redirect(int status)
-{
-    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
-}
-
 long sxnhttp_get(struct sxnhttp_client *client, const struct sxnhttp_request *request,
                  struct sxnhttp_response *response)
 {
     struct sxnhttp_url url;
+    struct delivery delivery;
     char current[SXNHTTP_URL_CAP];
     uint64_t total_deadline;
 
     if (client == 0 || client->resolver == 0 || request == 0 || request->url == 0 ||
-        response == 0 || response->body == 0)
+        response == 0 || (response->body == 0 && request->sink == 0))
     {
         return SXNHTTP_ERROR_BAD_URL;
+    }
+    if (request->sink != 0)
+    {
+        response->body_capacity = 0;
     }
     response->status = 0;
     response->url[0] = '\0';
@@ -416,6 +505,13 @@ long sxnhttp_get(struct sxnhttp_client *client, const struct sxnhttp_request *re
     response->flags = 0;
     response->redirects = 0;
     response->dns_error = 0;
+    response->content_length = 0;
+    response->attachment = 0;
+    response->filename[0] = '\0';
+    memset(&delivery, 0, sizeof(delivery));
+    delivery.request = request;
+    delivery.response = response;
+    delivery.url = current;
     total_deadline = sxn_clock_ns() +
         (uint64_t)(request->total_ms != 0 ? request->total_ms : SXNHTTP_TOTAL_MS) * MS_TO_NS;
 
@@ -452,7 +548,7 @@ long sxnhttp_get(struct sxnhttp_client *client, const struct sxnhttp_request *re
         if (request->progress != 0)
         {
             request->progress(request->user,
-                hop == 0 ? SXNHTTP_PHASE_RESOLVING : SXNHTTP_PHASE_REDIRECTED, url.host, 0);
+                hop == 0 ? SXNHTTP_PHASE_RESOLVING : SXNHTTP_PHASE_REDIRECTED, url.host, 0, 0);
         }
         result = sxndns_resolve(client->resolver, url.host, request->cancel, &ipv4);
         if (result == SXNDNS_ERROR_CANCELLED)
@@ -478,7 +574,7 @@ long sxnhttp_get(struct sxnhttp_client *client, const struct sxnhttp_request *re
                 return result;
             }
         }
-        result = exchange(client, request, &url, ipv4, response, total_deadline);
+        result = exchange(client, request, &url, ipv4, response, &delivery, total_deadline);
         if (result != 0)
         {
             return result;
@@ -486,11 +582,17 @@ long sxnhttp_get(struct sxnhttp_client *client, const struct sxnhttp_request *re
 
         if (!is_redirect(client->parser.status))
         {
-            response->status = client->parser.status;
-            memcpy(response->url, current, sizeof(response->url));
-            memcpy(response->content_type, client->parser.content_type, sizeof(response->content_type));
-            response->body_length = client->parser.body_length;
-            response->flags = client->parser.body_cut ? SXNHTTP_RESPONSE_CUT : 0;
+            fill_head(response, &client->parser, current);
+            response->body_length = request->sink != 0 ? client->parser.body_length : delivery.stored;
+            if (delivery.stopped)
+            {
+                response->flags |= SXNHTTP_RESPONSE_HEAD_ONLY;
+                response->body_length = 0;
+            }
+            else if (client->parser.body_cut)
+            {
+                response->flags |= SXNHTTP_RESPONSE_CUT;
+            }
             response->redirects = hop;
             return 0;
         }
@@ -565,6 +667,8 @@ const char *sxnhttp_error_text(long result)
         return "The site's certificate has expired or is not yet valid.";
     case SXNHTTP_ERROR_TLS_HANDSHAKE:
         return "The secure connection failed.";
+    case SXNHTTP_ERROR_SINK:
+        return "The download could not be written.";
     default:
         return "Loading failed.";
     }

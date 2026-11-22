@@ -2350,7 +2350,7 @@ static char g_load_host[SXNHTTP_HOST_CAP];
 static size_t g_load_kib;
 
 static void webview_http_progress(void *user, enum sxnhttp_phase phase, const char *host,
-    size_t received)
+    uint64_t received, uint64_t expected)
 {
     const struct webview_request *request = (const struct webview_request *)user;
     char text[WEBVIEW_STATUS_CAPACITY];
@@ -2382,8 +2382,9 @@ static void webview_http_progress(void *user, enum sxnhttp_phase phase, const ch
         break;
     case SXNHTTP_PHASE_RECEIVING:
     default:
-        /* Told once per KiB. The length is not known yet: the bar fills
-         * against the 32 KiB a page may take. */
+        /* Told once per KiB. The bar fills against the 32 KiB a page may
+         * take; a page has no use for the length the server announced. */
+        (void)expected;
         if (received / 1024 == g_load_kib)
         {
             return;

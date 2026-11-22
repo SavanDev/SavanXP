@@ -12,6 +12,11 @@
  * A client is a plain struct the caller owns (about 17 KiB: the response head
  * is parsed inside it), used by one thread at a time.
  *
+ * A body goes into the response's buffer, cut at its capacity, or, with a
+ * sink, to the caller piece by piece, of any length: a download. A head
+ * callback sees the final response before its body and may stop there, which
+ * is how a browser tells a page from a file.
+ *
  * https:// is TLS 1.2 or 1.3 through OpenSSL, validated: the chain against
  * the trust store, the name or address, the dates against a clock that can
  * be believed, SNI sent and only http/1.1 offered. A program gets it by
@@ -56,6 +61,8 @@ enum sxnhttp_phase
     SXNHTTP_PHASE_REDIRECTED, /* `host` is the next hop's */
 };
 
+struct sxnhttp_response;
+
 struct sxnhttp_request
 {
     const char *url;      /* absolute http:// */
@@ -63,17 +70,37 @@ struct sxnhttp_request
     uint32_t total_ms;    /* 0: SXNHTTP_TOTAL_MS, for the whole navigation */
     uint32_t idle_ms;     /* 0: SXNHTTP_IDLE_MS, between two reads */
     const char *user_agent; /* 0: none sent */
-    /* Optional: called on the loading thread as the load advances. */
-    void (*progress)(void *user, enum sxnhttp_phase phase, const char *host, size_t received);
+    /* Optional: called on the loading thread as the load advances.
+     * `expected` is the body's Content-Length while RECEIVING, when the
+     * response gave one, and 0 otherwise. */
+    void (*progress)(void *user, enum sxnhttp_phase phase, const char *host, uint64_t received,
+                     uint64_t expected);
     void *user;
+    /* Optional: called once with the final response's head (after every
+     * redirect), before any of its body: status, url, content_type,
+     * content_length with SXNHTTP_RESPONSE_LENGTH, attachment and filename
+     * are set. 0 reads the body; 1 stops there, and sxnhttp_get returns 0
+     * with SXNHTTP_RESPONSE_HEAD_ONLY and no body. */
+    int (*head)(void *user, const struct sxnhttp_response *response);
+    /* Optional: the body goes here instead of response->body (which may then
+     * be 0), in the pieces it is decoded in, for as long as it runs. 0 goes
+     * on; a negative value stops the load, and sxnhttp_get returns
+     * SXNHTTP_ERROR_SINK. With a sink, total_ms counts only until the head
+     * is read: a download's body takes as long as it takes, and idle_ms
+     * still holds between two reads. A body cut short is
+     * SXNHTTP_ERROR_TRUNCATED, as without a sink: the sink has seen a
+     * prefix, which the caller must not keep. */
+    long (*sink)(void *user, const unsigned char *bytes, size_t length);
     /* Optional, https://: the roots to trust instead of SXNHTTP_TRUST_STORE,
      * as PEM in memory. For tests, whose CA must never be installed. */
     const char *trust_pem;
     size_t trust_pem_length;
 };
 
-/* The response's body flags. */
-#define SXNHTTP_RESPONSE_CUT 1u /* the body went past `body_capacity`; what fits is kept */
+/* The response's flags. */
+#define SXNHTTP_RESPONSE_CUT 1u       /* the body went past `body_capacity`; what fits is kept */
+#define SXNHTTP_RESPONSE_LENGTH 2u    /* the response gave a Content-Length: `content_length` */
+#define SXNHTTP_RESPONSE_HEAD_ONLY 4u /* the head callback stopped the load before the body */
 
 struct sxnhttp_response
 {
@@ -85,9 +112,14 @@ struct sxnhttp_response
     int status;
     char url[SXNHTTP_URL_CAP]; /* the final URL, after redirects */
     char content_type[SXNHTTP_TYPE_CAP];
-    size_t body_length;
+    size_t body_length; /* with a sink, the bytes it took */
     unsigned flags;
     int redirects;
+    uint64_t content_length;
+    /* Content-Disposition: not "inline", and its file name as the server
+     * wrote it, decoded but not cleaned (sxnhttp_file_name cleans it). */
+    int attachment;
+    char filename[SXNHTTP_FILENAME_CAP];
 
     /* Out, on SXNHTTP_ERROR_DNS: the resolver's own result. */
     long dns_error;

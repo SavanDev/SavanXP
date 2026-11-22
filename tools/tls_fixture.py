@@ -25,7 +25,8 @@ server that speaks TLS 1.1 at most (the protocol cannot change after SNI).
 
 Every successful handshake answers one HTTP/1.1 response whose body says the
 name, the protocol and the ALPN the server agreed:
-"secure <name> <TLSv1.3> <http/1.1>".
+"secure <name> <TLSv1.3> <http/1.1>". The paths of tools/http_fixture.py's
+downloads (/blob, /blob-chunked, ... /blob.sha256) are its blob instead.
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ import threading
 import time
 import warnings
 from pathlib import Path
+
+from http_fixture import blob_parts
 
 # Valid from two days ago: QEMU starts the guest's RTC at the host's local
 # time, which a UTC-only guest reads as UTC (docs/kernel/TIME.md), so a
@@ -205,6 +208,14 @@ class TlsFixture:
                         return
                     request += chunk
                 name = self.names.pop(id(connection), "10.0.2.2")
+                line = request.split(b"\r\n", 1)[0].decode("ascii", "replace").split()
+                download = blob_parts(line[1].split("?", 1)[0]) if len(line) == 3 else None
+                if download is not None:
+                    for data, pause in download:
+                        connection.sendall(data)
+                        if pause:
+                            time.sleep(pause)
+                    return
                 body = f"secure {name} {connection.version()} {connection.selected_alpn_protocol()}".encode()
                 connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
                                    + b"Content-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)

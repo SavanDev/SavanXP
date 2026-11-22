@@ -35,7 +35,8 @@ followed. A 4xx or 5xx is a success: an error page is a page. On failure the
 result is one `enum sxnhttp_error`, and `sxnhttp_error_text` turns it into a
 sentence; a DNS failure also keeps the resolver's own result in `dns_error`.
 `progress`, when set, is called on the loading thread at each phase
-(resolving, connecting, waiting, receiving with the bytes so far, redirected).
+(resolving, connecting, securing, waiting, receiving with the bytes so far and
+the `Content-Length` when there is one, redirected).
 
 ## What goes out
 
@@ -58,7 +59,7 @@ whole, split at every byte and fed one byte at a time.
 | neither, over HTTP/1.0 or 1.1 | the body up to the close |
 | 1xx before the real response (not 101), up to four | skipped |
 | 204, 304, `Content-Length: 0` | no body |
-| both a length and chunked; lengths that disagree; a negative, empty or over-2 GiB length | `BAD_FRAMING` |
+| both a length and chunked; lengths that disagree; a negative, empty or 1 TiB or longer length | `BAD_FRAMING` |
 | a coding other than chunked, chunked twice, chunked over HTTP/1.0 | `BAD_FRAMING` |
 | a chunk size that is not hex, over eight digits, or not followed by CRLF | `BAD_RESPONSE` / `BAD_FRAMING` |
 | a status line that is not `HTTP/1.0` or `HTTP/1.1` with three digits; 101; header folding; a header without a name or colon; control characters | `BAD_RESPONSE` |
@@ -74,6 +75,44 @@ ends are accepted, as old servers write them.
 that does not fit stops the read there, keeps what fits, and the response
 says `SXNHTTP_RESPONSE_CUT`. That is a deliberate limit, told apart from a
 truncation, which is the server's failure.
+
+## Downloads: the head and the sink
+
+Two optional hooks in the request make the same loader carry a file of any
+length (D1 of [WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md)):
+
+```c
+request.head = on_head;  /* int on_head(void *user, const struct sxnhttp_response *head) */
+request.sink = on_bytes; /* long on_bytes(void *user, const unsigned char *bytes, size_t length) */
+```
+
+- **`head`** runs once, with the final response's head (after every
+  redirect, never a redirect's own), before any of its body: status, final
+  URL, type, `content_length` with `SXNHTTP_RESPONSE_LENGTH`, and the
+  `Content-Disposition`. Returning 1 stops the load there: `sxnhttp_get`
+  returns 0 with `SXNHTTP_RESPONSE_HEAD_ONLY` and no body. That is how a
+  browser asks "a page or a file?" before reading either.
+- **`sink`** takes the body in the pieces it is decoded in, instead of the
+  buffer, which may then be absent. A negative return stops the load with
+  `SXNHTTP_ERROR_SINK`. The framing rules do not change: a body cut short is
+  `TRUNCATED` after the sink has seen a prefix, so a caller writing a file
+  writes it aside and keeps it only on success.
+- **Budgets.** With a sink, `total_ms` holds until the head is read and not
+  after: a download's body takes as long as it takes, and the idle budget
+  still holds between two reads. Without one, the total holds to the end.
+
+A redirect's body is never read; the next hop starts as soon as its head is.
+
+`Content-Disposition` (RFC 6266) is read, never failed on: anything but
+`inline` is an attachment, an unknown type included, and the file name is
+`filename*` (RFC 8187, UTF-8 only) or else `filename`, a token or a quoted
+string. A malformed parameter ends the reading; what came before it stands.
+The name is handed over decoded but not cleaned: `sxnhttp_file_name` turns
+it, or else the URL's last path segment, or else `download`, into something
+safe to save under -- no directory, no control characters, nothing a FAT
+volume refuses (`< > : " | ? *` become `_`), no leading dot, no trailing dot
+or space, and a long name shortened in its stem, keeping its extension and
+whole UTF-8 sequences.
 
 ## Redirects
 
@@ -152,21 +191,30 @@ the system's are.
 - `sxnhttp-message-test` (host): RFC 3986's resolution examples, URL
   refusals, every body framing at every split point and byte by byte, each
   framing and malformation error, truncation at every cut of a good response,
-  the caps, and random bytes after a valid head.
+  the caps, and random bytes after a valid head; the sink in pieces, its
+  errors and its stop; `Content-Length` up to the 1 TiB limit;
+  `Content-Disposition` well and badly formed; and `sxnhttp_file_name`.
 - `native-network` (guest): `nativetest` against `tools/http_fixture.py`, which
   the echo server starts and reports through its `HTTP` command. The fixture
   sends every response in small pieces with pauses, splitting status line,
   headers, chunk-size lines and CRLFs. One path per case: each framing, the
   request it receives, the cap, each refusal, relative and chained redirects,
   names through the DNS fixture, a refused port, the total and idle budgets,
-  and cancellation from another thread mid-body.
+  and cancellation from another thread mid-body. Then the downloads: a
+  3 MiB blob with a length, to the close, chunked in uneven chunks and as an
+  attachment, each through the sink and byte-exact against the SHA-256 the
+  fixture computed (`/blob.sha256`); cut short (`TRUNCATED`), refused by the
+  sink, stopped at the head; the head through redirects; and a slow body
+  that outlives `total_ms` as a download and not as a page.
 - `https-smoke` (guest): `httpstest` against `tools/tls_fixture.py`, whose PKI
   the host's `openssl` makes at start (3.4 or newer). It fetches the test root
   over HTTP and trusts it in memory; a valid certificate loads by name and by
   address, with TLS 1.3 and `http/1.1`; wrong name, expired, not yet valid,
   self-signed, missing intermediate, an untrusted CA and a TLS 1.1 server
   each fail with their error; the system store does not trust the test root;
-  a date set to 2005 is `TLS_CLOCK`, and the date is restored.
+  a date set to 2005 is `TLS_CLOCK`, and the date is restored; and the blob,
+  with a length, chunked and as an attachment, byte-exact through the sink,
+  and `TRUNCATED` when cut short.
 - `https-unseeded` (guest): with no entropy source, `TLS_ENTROPY`.
 
 ## Not here

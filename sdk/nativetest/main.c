@@ -3474,10 +3474,12 @@ static unsigned char g_http_body[4096];
 static struct sxnhttp_response g_http_response;
 static unsigned g_http_phases;
 
-static void http_progress(void* user, enum sxnhttp_phase phase, const char* host, size_t received) {
+static void http_progress(void* user, enum sxnhttp_phase phase, const char* host, uint64_t received,
+                          uint64_t expected) {
     (void)user;
     (void)host;
     (void)received;
+    (void)expected;
     g_http_phases |= 1u << phase;
 }
 
@@ -3508,6 +3510,235 @@ static int http_body_is(const char* text) {
 
 static int http_body_has(const char* text) {
     return strstr((const char*)g_http_body, text) != 0;
+}
+
+/* Downloads: a body of several megabytes through a sink, byte-exact against
+ * the SHA-256 the host computed (tools/http_fixture.py's blob). The digest
+ * is here because nativetest links no OpenSSL. */
+struct sha256 {
+    uint32_t state[8];
+    uint64_t length;
+    unsigned char block[64];
+    size_t used;
+};
+
+static const uint32_t g_sha256_k[64] = {
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+};
+
+static uint32_t sha256_rotr(uint32_t value, unsigned count) { return (value >> count) | (value << (32 - count)); }
+
+static void sha256_block(struct sha256* sha, const unsigned char* block) {
+    uint32_t w[64], v[8];
+    for (int i = 0; i < 16; ++i)
+        w[i] = (uint32_t)block[i * 4] << 24 | (uint32_t)block[i * 4 + 1] << 16 | (uint32_t)block[i * 4 + 2] << 8 |
+               block[i * 4 + 3];
+    for (int i = 16; i < 64; ++i) {
+        uint32_t s0 = sha256_rotr(w[i - 15], 7) ^ sha256_rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        uint32_t s1 = sha256_rotr(w[i - 2], 17) ^ sha256_rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    memcpy(v, sha->state, sizeof(v));
+    for (int i = 0; i < 64; ++i) {
+        uint32_t t1 = v[7] + (sha256_rotr(v[4], 6) ^ sha256_rotr(v[4], 11) ^ sha256_rotr(v[4], 25)) +
+                      ((v[4] & v[5]) ^ (~v[4] & v[6])) + g_sha256_k[i] + w[i];
+        uint32_t t2 = (sha256_rotr(v[0], 2) ^ sha256_rotr(v[0], 13) ^ sha256_rotr(v[0], 22)) +
+                      ((v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]));
+        memmove(v + 1, v, 7 * sizeof(v[0]));
+        v[4] += t1;
+        v[0] = t1 + t2;
+    }
+    for (int i = 0; i < 8; ++i) sha->state[i] += v[i];
+}
+
+static void sha256_init(struct sha256* sha) {
+    static const uint32_t initial[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                                        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    memset(sha, 0, sizeof(*sha));
+    memcpy(sha->state, initial, sizeof(initial));
+}
+
+static void sha256_update(struct sha256* sha, const unsigned char* bytes, size_t length) {
+    sha->length += length;
+    while (length > 0) {
+        size_t take = 64 - sha->used < length ? 64 - sha->used : length;
+        memcpy(sha->block + sha->used, bytes, take);
+        sha->used += take;
+        bytes += take;
+        length -= take;
+        if (sha->used == 64) {
+            sha256_block(sha, sha->block);
+            sha->used = 0;
+        }
+    }
+}
+
+/* The digest as 64 lowercase hex digits. */
+static void sha256_hex(struct sha256* sha, char out[65]) {
+    const uint64_t bits = sha->length * 8u;
+    unsigned char pad = 0x80, zero = 0, size[8];
+    for (int i = 0; i < 8; ++i) size[i] = (unsigned char)(bits >> (56 - 8 * i));
+    sha256_update(sha, &pad, 1);
+    while (sha->used != 56) sha256_update(sha, &zero, 1);
+    sha256_update(sha, size, 8);
+    for (int i = 0; i < 8; ++i) snprintf(out + i * 8, 9, "%08x", (unsigned)sha->state[i]);
+}
+
+#define DOWNLOAD_BLOB_SIZE (3u * 1024u * 1024u + 517u) /* tools/http_fixture.py BLOB_SIZE */
+#define DOWNLOAD_SLOW_SIZE (256u * 1024u)
+
+struct download_test {
+    struct sha256 sha;
+    uint64_t taken;
+    unsigned sink_calls;
+    unsigned heads;
+    int stop_at_head;
+    long fail_after; /* the sink fails once it has taken this many bytes; 0 never */
+    int head_status;
+    uint64_t head_length;
+    unsigned head_flags;
+    int head_attachment;
+    char head_filename[SXNHTTP_FILENAME_CAP];
+    char head_url[SXNHTTP_URL_CAP];
+    uint64_t expected_seen;
+};
+
+static struct download_test g_download;
+static unsigned char g_slow_body[DOWNLOAD_SLOW_SIZE + 1];
+
+static long download_sink(void* user, const unsigned char* bytes, size_t length) {
+    struct download_test* test = user;
+    test->sink_calls += 1;
+    if (test->fail_after != 0 && test->taken >= (uint64_t)test->fail_after) return -1;
+    sha256_update(&test->sha, bytes, length);
+    test->taken += length;
+    return 0;
+}
+
+static int download_head(void* user, const struct sxnhttp_response* response) {
+    struct download_test* test = user;
+    test->heads += 1;
+    test->head_status = response->status;
+    test->head_length = response->content_length;
+    test->head_flags = response->flags;
+    test->head_attachment = response->attachment;
+    memcpy(test->head_filename, response->filename, sizeof(test->head_filename));
+    memcpy(test->head_url, response->url, sizeof(test->head_url));
+    return test->stop_at_head;
+}
+
+static void download_progress(void* user, enum sxnhttp_phase phase, const char* host, uint64_t received,
+                              uint64_t expected) {
+    struct download_test* test = user;
+    (void)host;
+    (void)received;
+    if (phase == SXNHTTP_PHASE_RECEIVING && expected != 0) test->expected_seen = expected;
+}
+
+/* GETs `path` into the sink, or with `buffered` into g_http_body (2: into
+ * g_slow_body, which holds /blob-slow whole), with the head callback; the
+ * digest of what the sink took goes into `hex`. */
+static long download(unsigned port, const char* path, int buffered, uint32_t total_ms, char hex[65]) {
+    char url[SXNHTTP_URL_CAP];
+    struct sxnhttp_request request;
+    long result;
+    struct download_test keep = g_download;
+
+    memset(&g_download, 0, sizeof(g_download));
+    g_download.stop_at_head = keep.stop_at_head;
+    g_download.fail_after = keep.fail_after;
+    sha256_init(&g_download.sha);
+    snprintf(url, sizeof(url), "http://10.0.2.2:%u%s", port, path);
+    memset(&request, 0, sizeof(request));
+    request.url = url;
+    request.cancel = -1;
+    request.total_ms = total_ms;
+    request.user = &g_download;
+    request.head = download_head;
+    request.progress = download_progress;
+    if (!buffered) request.sink = download_sink;
+    memset(&g_http_response, 0, sizeof(g_http_response));
+    if (buffered) {
+        g_http_response.body = buffered == 2 ? g_slow_body : g_http_body;
+        g_http_response.body_capacity = buffered == 2 ? sizeof(g_slow_body) : sizeof(g_http_body) - 1;
+    }
+    result = sxnhttp_get(&g_http_client, &request, &g_http_response);
+    sha256_hex(&g_download.sha, hex);
+    return result;
+}
+
+static void test_native_download(unsigned port) {
+    char expected[65], hex[65];
+    uint64_t started;
+
+    /* The host's word for what the blob is. */
+    check(http_fetch(port, "10.0.2.2", "/blob.sha256", -1, 0, 0) == 0 && g_http_response.body_length == 64);
+    memcpy(expected, g_http_body, 64);
+    expected[64] = 0;
+    {
+        struct sha256 empty;
+        sha256_init(&empty);
+        sha256_hex(&empty, hex);
+        check(strcmp(hex, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") == 0);
+    }
+
+    /* Every framing, past any buffer, byte-exact. */
+    check(download(port, "/blob", 0, 0, hex) == 0 && strcmp(hex, expected) == 0);
+    check(g_download.taken == DOWNLOAD_BLOB_SIZE && g_http_response.body_length == DOWNLOAD_BLOB_SIZE);
+    check(g_download.heads == 1 && g_download.head_status == 200 && g_download.head_length == DOWNLOAD_BLOB_SIZE);
+    check((g_download.head_flags & SXNHTTP_RESPONSE_LENGTH) != 0 && !g_download.head_attachment);
+    check((g_http_response.flags & (SXNHTTP_RESPONSE_CUT | SXNHTTP_RESPONSE_HEAD_ONLY)) == 0);
+    check(strcmp(g_http_response.content_type, "application/octet-stream") == 0);
+    check(g_download.expected_seen == DOWNLOAD_BLOB_SIZE && g_download.sink_calls > 1);
+    check(download(port, "/blob-close", 0, 0, hex) == 0 && strcmp(hex, expected) == 0);
+    check(g_download.taken == DOWNLOAD_BLOB_SIZE && (g_download.head_flags & SXNHTTP_RESPONSE_LENGTH) == 0);
+    check(g_download.expected_seen == 0);
+    check(download(port, "/blob-chunked", 0, 0, hex) == 0 && strcmp(hex, expected) == 0);
+    check(g_download.taken == DOWNLOAD_BLOB_SIZE && (g_download.head_flags & SXNHTTP_RESPONSE_LENGTH) == 0);
+    check(download(port, "/blob-attachment", 0, 0, hex) == 0 && strcmp(hex, expected) == 0);
+    check(g_download.head_attachment && strcmp(g_download.head_filename, "savanxp blob.bin") == 0);
+    check(g_http_response.attachment && strcmp(g_http_response.filename, "savanxp blob.bin") == 0);
+    check(strcmp(g_http_response.content_type, "text/plain") == 0);
+    sxn_log("nativetest: sxnhttp streams a multi-megabyte body byte-exact: length, close, chunked, attachment");
+
+    /* Cut short: the sink saw half, and the load says it was truncated. */
+    check(download(port, "/blob-short", 0, 0, hex) == SXNHTTP_ERROR_TRUNCATED);
+    check(g_download.taken == DOWNLOAD_BLOB_SIZE / 2);
+    /* The sink's refusal stops the load. */
+    g_download.fail_after = 100000;
+    check(download(port, "/blob", 0, 0, hex) == SXNHTTP_ERROR_SINK && g_download.taken >= 100000 &&
+          g_download.taken < DOWNLOAD_BLOB_SIZE);
+    g_download.fail_after = 0;
+    /* The head callback stops before any of the body: a page or a file? */
+    g_download.stop_at_head = 1;
+    started = sxn_clock_ns();
+    check(download(port, "/blob", 0, 0, hex) == 0 && g_download.heads == 1 && g_download.sink_calls == 0);
+    check((g_http_response.flags & SXNHTTP_RESPONSE_HEAD_ONLY) != 0 && g_http_response.body_length == 0);
+    check(g_http_response.content_length == DOWNLOAD_BLOB_SIZE && g_http_response.status == 200);
+    check(sxn_clock_ns() - started < 3000000000ull);
+    g_download.stop_at_head = 0;
+    /* Through redirects, the head is the last hop's, once. */
+    check(download(port, "/redirect-relative", 1, 0, hex) == 0 && g_download.heads == 1);
+    check(g_download.head_status == 200 && strstr(g_download.head_url, "/length?from=redirect") != 0);
+    check(g_http_response.body_length == 11 && memcmp(g_http_body, "length body", 11) == 0);
+    /* An error page has a head; a redirect that leads nowhere has none. */
+    check(download(port, "/redirect-none", 1, 0, hex) == SXNHTTP_ERROR_BAD_REDIRECT && g_download.heads == 0);
+    check(download(port, "/notfound", 1, 0, hex) == 0 && g_download.heads == 1 && g_download.head_status == 404);
+    sxn_log("nativetest: sxnhttp's head callback and sink: truncation, refusal, stop at the head, redirects");
+
+    /* The navigation total holds a page, not a download's body. */
+    check(download(port, "/blob-slow", 0, 1500, hex) == 0 && g_download.taken == DOWNLOAD_SLOW_SIZE);
+    started = sxn_clock_ns();
+    check(download(port, "/blob-slow", 2, 1500, hex) == SXNHTTP_ERROR_TIMEOUT);
+    check(sxn_clock_ns() - started < 3000000000ull);
+    sxn_log("nativetest: sxnhttp holds a page to the total budget and a download only to the idle one");
 }
 
 static void test_native_http(unsigned port) {
@@ -3642,6 +3873,7 @@ static void test_native_http(unsigned port) {
         }
     }
     sxn_log("nativetest: sxnhttp cancels through a manual-reset event");
+    test_native_download(http_port);
 cleanup:
     if (control >= 0) check(sxn_close(control) == 0);
     if (cancel >= 0) check(sxn_close(cancel) == 0);

@@ -324,7 +324,7 @@ static void test_framing_errors(void)
     expect("HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\n", 0, 256, SXNHTTP_ERROR_BAD_FRAMING, 0, 0);
     expect("HTTP/1.1 200 OK\r\nContent-Length: 5x\r\n\r\n", 0, 256, SXNHTTP_ERROR_BAD_FRAMING, 0, 0);
     expect("HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n", 0, 256, SXNHTTP_ERROR_BAD_FRAMING, 0, 0);
-    expect("HTTP/1.1 200 OK\r\nContent-Length: 99999999999\r\n\r\n", 0, 256,
+    expect("HTTP/1.1 200 OK\r\nContent-Length: 99999999999999\r\n\r\n", 0, 256,
         SXNHTTP_ERROR_BAD_FRAMING, 0, 0);
     /* Codings this client does not decode, and chunked twice. */
     expect("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n", 0, 256,
@@ -446,6 +446,244 @@ static void test_noise(void)
     }
 }
 
+/* ---- the sink: a body of any length, handed over in pieces ------------------- */
+
+struct collected
+{
+    unsigned char bytes[1024];
+    size_t length;
+    size_t calls;
+    size_t stop_after; /* 0: never; else return 1 once this many bytes came */
+    long fail_with;    /* returned on the first call when non-zero */
+};
+
+static long collect(void *user, const unsigned char *bytes, size_t length)
+{
+    struct collected *collected = user;
+
+    collected->calls += 1;
+    if (collected->fail_with != 0)
+    {
+        return collected->fail_with;
+    }
+    if (collected->length + length > sizeof(collected->bytes))
+    {
+        return SXNHTTP_ERROR_SINK;
+    }
+    memcpy(collected->bytes + collected->length, bytes, length);
+    collected->length += length;
+    return collected->stop_after != 0 && collected->length >= collected->stop_after ? 1 : 0;
+}
+
+/* Feeds `response` to a parser with a sink, `piece` bytes at a time (0: all). */
+static long run_sink(const char *response, size_t piece, int close, struct collected *collected)
+{
+    size_t length = strlen(response);
+    size_t offset = 0;
+    long result = 0;
+
+    sxnhttp_parser_init(&g_parser, 0, 0);
+    sxnhttp_parser_set_sink(&g_parser, collect, collected);
+    while (offset < length && result == 0)
+    {
+        size_t take = piece == 0 || piece > length - offset ? length - offset : piece;
+
+        result = sxnhttp_parser_feed(&g_parser, (const unsigned char *)response + offset, take);
+        offset += take;
+    }
+    if (result == 0 && close)
+    {
+        result = sxnhttp_parser_finish(&g_parser);
+    }
+    return result;
+}
+
+static void expect_sink(const char *response, int close, long want_result, const char *want_body)
+{
+    static const size_t pieces[] = {0, 1, 2, 3, 7, 64};
+
+    for (size_t index = 0; index < sizeof(pieces) / sizeof(pieces[0]); ++index)
+    {
+        struct collected collected;
+        long result;
+
+        memset(&collected, 0, sizeof(collected));
+        result = run_sink(response, pieces[index], close, &collected);
+        if (result != want_result ||
+            (want_body != 0 && (collected.length != strlen(want_body) ||
+                                   memcmp(collected.bytes, want_body, collected.length) != 0 ||
+                                   g_parser.body_length != collected.length)))
+        {
+            fprintf(stderr, "sink %.40s... in pieces of %zu: result %ld, %zu bytes\n", response, pieces[index],
+                result, collected.length);
+            g_failures += 1;
+        }
+    }
+}
+
+static void test_sink(void)
+{
+    struct collected collected;
+
+    /* Every framing reaches the sink whole, however it was cut, and past
+     * any buffer: there is none. */
+    expect_sink("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789", 0, 1, "0123456789");
+    expect_sink("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n6\r\nefghij\r\n0\r\n\r\n", 0, 1,
+        "abcdefghij");
+    expect_sink("HTTP/1.0 200 OK\r\n\r\nto the end", 1, 1, "to the end");
+    expect_sink("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", 0, 1, "");
+    /* Truncation is still truncation: the sink saw a prefix, the feed says so. */
+    expect_sink("HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n0123456789", 1, SXNHTTP_ERROR_TRUNCATED, 0);
+    expect_sink("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nabc", 1, SXNHTTP_ERROR_TRUNCATED, 0);
+
+    /* The sink's error is the feed's, and stays: the parser has failed. */
+    memset(&collected, 0, sizeof(collected));
+    collected.fail_with = SXNHTTP_ERROR_SINK;
+    CHECK(run_sink("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nabcd", 0, 0, &collected) == SXNHTTP_ERROR_SINK);
+    CHECK(collected.calls == 1);
+    CHECK(sxnhttp_parser_feed(&g_parser, (const unsigned char *)"x", 1) == SXNHTTP_ERROR_SINK);
+    CHECK(sxnhttp_parser_finish(&g_parser) == SXNHTTP_ERROR_SINK);
+
+    /* A sink that says stop completes the response there, as a cut. */
+    memset(&collected, 0, sizeof(collected));
+    collected.stop_after = 2;
+    CHECK(run_sink("HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nabcdefgh", 1, 0, &collected) == 1);
+    CHECK(g_parser.body_cut && collected.length == 2);
+
+    /* Nothing of the head reaches the sink, interim responses included. */
+    expect_sink("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", 0, 1, "ok");
+}
+
+/* ---- Content-Length and Content-Disposition, as the head says them ---------- */
+
+static void head_of(const char *response)
+{
+    struct collected collected;
+
+    memset(&collected, 0, sizeof(collected));
+    (void)run_sink(response, 0, 1, &collected);
+}
+
+static void test_head_fields(void)
+{
+    head_of("HTTP/1.1 200 OK\r\nContent-Length: 1234\r\n\r\n");
+    CHECK(g_parser.head_done && g_parser.has_length && g_parser.content_length == 1234);
+    head_of("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
+    CHECK(g_parser.head_done && !g_parser.has_length && g_parser.content_length == 0);
+    head_of("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+    CHECK(g_parser.has_length && g_parser.content_length == 0);
+    /* Up to a tebibyte, minus one. */
+    head_of("HTTP/1.1 200 OK\r\nContent-Length: 1099511627775\r\n\r\n");
+    CHECK(g_parser.head_done && g_parser.content_length == 1099511627775ull);
+    expect("HTTP/1.1 200 OK\r\nContent-Length: 1099511627776\r\n\r\n", 0, 256, SXNHTTP_ERROR_BAD_FRAMING, 0, 0);
+
+    head_of("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+    CHECK(!g_parser.attachment && g_parser.filename[0] == '\0');
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: inline\r\nContent-Length: 0\r\n\r\n");
+    CHECK(!g_parser.attachment);
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: INLINE; filename=page.html\r\nContent-Length: 0\r\n\r\n");
+    CHECK(!g_parser.attachment && strcmp(g_parser.filename, "page.html") == 0);
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: attachment\r\nContent-Length: 0\r\n\r\n");
+    CHECK(g_parser.attachment && g_parser.filename[0] == '\0');
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: Attachment; filename=setup.exe\r\nContent-Length: 0\r\n\r\n");
+    CHECK(g_parser.attachment && strcmp(g_parser.filename, "setup.exe") == 0);
+    /* Quoted, with escapes, spaces and ';' inside. */
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"my \\\"big\\\" file;1.tar.gz\""
+            "\r\nContent-Length: 0\r\n\r\n");
+    CHECK(strcmp(g_parser.filename, "my \"big\" file;1.tar.gz") == 0);
+    /* filename* wins over filename, whichever comes first, UTF-8 only. */
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename*=UTF-8''na%C3%AFve%20file.txt; "
+            "filename=\"naive file.txt\"\r\nContent-Length: 0\r\n\r\n");
+    CHECK(strcmp(g_parser.filename, "na\xc3\xafve file.txt") == 0);
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=plain.txt; "
+            "filename*=utf-8'en'%E2%82%AC.txt\r\nContent-Length: 0\r\n\r\n");
+    CHECK(strcmp(g_parser.filename, "\xe2\x82\xac.txt") == 0);
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=plain.txt; "
+            "filename*=iso-8859-1''%E9.txt\r\nContent-Length: 0\r\n\r\n");
+    CHECK(strcmp(g_parser.filename, "plain.txt") == 0);
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=plain.txt; "
+            "filename*=UTF-8''bad%0.txt\r\nContent-Length: 0\r\n\r\n");
+    CHECK(strcmp(g_parser.filename, "plain.txt") == 0);
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename*=UTF-8''nul%00.txt\r\n"
+            "Content-Length: 0\r\n\r\n");
+    CHECK(g_parser.filename[0] == '\0');
+    /* An unknown type is an attachment (RFC 6266, 4.2). */
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: x-foo; filename=a.bin\r\nContent-Length: 0\r\n\r\n");
+    CHECK(g_parser.attachment && strcmp(g_parser.filename, "a.bin") == 0);
+    /* Malformed: what came before the fault stands, the response does not fail. */
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=\"unterminated\r\n"
+            "Content-Length: 0\r\n\r\n");
+    CHECK(g_parser.head_done && g_parser.attachment && g_parser.filename[0] == '\0');
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=a.txt; junk\r\n"
+            "Content-Length: 0\r\n\r\n");
+    CHECK(g_parser.head_done && strcmp(g_parser.filename, "a.txt") == 0);
+    head_of("HTTP/1.1 200 OK\r\nContent-Disposition: ; filename=a.txt\r\nContent-Length: 0\r\n\r\n");
+    CHECK(g_parser.head_done && !g_parser.attachment && g_parser.filename[0] == '\0');
+    {
+        static char response[1024];
+        char name[400];
+
+        memset(name, 'n', sizeof(name) - 1);
+        name[sizeof(name) - 1] = '\0';
+        snprintf(response, sizeof(response),
+            "HTTP/1.1 200 OK\r\nContent-Disposition: attachment; filename=%s\r\nContent-Length: 0\r\n\r\n", name);
+        head_of(response);
+        CHECK(g_parser.head_done && g_parser.attachment && g_parser.filename[0] == '\0');
+    }
+    /* Each response says its own: a redirect's disposition does not carry over. */
+    head_of("HTTP/1.1 100 Continue\r\nContent-Disposition: attachment; filename=a\r\n\r\n"
+            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+    CHECK(!g_parser.attachment && g_parser.filename[0] == '\0');
+}
+
+static void check_name(const char *suggested, const char *url, size_t capacity, const char *expected)
+{
+    char out[SXNHTTP_FILENAME_CAP];
+    int result = sxnhttp_file_name(suggested, url, out, capacity);
+
+    if (result != 0 || strcmp(out, expected) != 0)
+    {
+        fprintf(stderr, "file_name(%s, %s, %zu) = %d '%s', expected '%s'\n", suggested ? suggested : "(null)",
+            url ? url : "(null)", capacity, result, result == 0 ? out : "", expected);
+        g_failures += 1;
+    }
+}
+
+static void test_file_names(void)
+{
+    char out[64];
+
+    check_name("setup.exe", "http://h/x", 256, "setup.exe");
+    check_name(0, "http://h/dist/savanxp-1.0.iso?mirror=3#top", 256, "savanxp-1.0.iso");
+    check_name("", "http://h/a%20b%2Fc.txt", 256, "c.txt");
+    check_name(0, "http://h/files/na%C3%AFve.txt", 256, "na\xc3\xafve.txt");
+    check_name(0, "http://h/", 256, "download");
+    check_name(0, "http://h/dir/", 256, "download");
+    check_name(0, "http://h", 256, "download");
+    check_name(0, 0, 256, "download");
+    check_name(0, "not a url", 256, "download");
+    /* No directories, no control characters, nothing reserved. */
+    check_name("../../etc/passwd", "http://h/x", 256, "passwd");
+    check_name("C:\\Windows\\evil.dll", "http://h/x", 256, "evil.dll");
+    check_name("a\x01" "b\x7f" "c.txt", "http://h/x", 256, "abc.txt");
+    check_name("what?<is>:\"this\"|*.txt", "http://h/x", 256, "what__is___this___.txt");
+    /* No hidden files, no names that end in a dot or a space. */
+    check_name(".bashrc", "http://h/x", 256, "bashrc");
+    check_name(" . .hidden. . ", "http://h/x", 256, "hidden");
+    check_name("..", "http://h/fallback.bin", 256, "fallback.bin");
+    check_name("/", "http://h/fallback.bin", 256, "fallback.bin");
+    check_name(0, "http://h/%2e%2e", 256, "download");
+    check_name(0, "http://h/%00%01", 256, "download");
+    /* Long names lose their stem, keep their extension, never split UTF-8. */
+    check_name("abcdefghijklmnopqrstuvwxyz.tar", "http://h/x", 16, "abcdefghijk.tar");
+    check_name("abcdefghijklmnopqrstuvwxyz", "http://h/x", 16, "abcdefghijklmno");
+    check_name("aaaaaaaaaaaa\xc3\xa9\xc3\xa9\xc3\xa9.txt", "http://h/x", 16, "aaaaaaaaaaa.txt");
+    check_name("aaaaaaaaaa\xc3\xa9\xc3\xa9\xc3\xa9.txt", "http://h/x", 16, "aaaaaaaaaa.txt");
+    check_name("abcdefghijklmnopqrstuvwxyz.averyveryverylongextension", "http://h/x", 16, "abcdefghijklmno");
+    CHECK(sxnhttp_file_name("a", "http://h/", out, 15) == -1);
+    CHECK(sxnhttp_file_name("a", "http://h/", 0, 64) == -1);
+}
+
 int main(void)
 {
     test_urls();
@@ -455,6 +693,9 @@ int main(void)
     test_malformed();
     test_truncated();
     test_noise();
+    test_sink();
+    test_head_fields();
+    test_file_names();
     if (g_failures != 0)
     {
         fprintf(stderr, "sxnhttp-message-test: %d failure(s)\n", g_failures);

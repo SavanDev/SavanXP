@@ -22,6 +22,7 @@ extern "C" {
 #define SXNHTTP_LINE_CAP 512       /* a chunk-size line or a trailer line */
 #define SXNHTTP_TRAILER_CAP 4096   /* every trailer line together */
 #define SXNHTTP_INTERIM_MAX 4      /* 1xx responses skipped before the real one */
+#define SXNHTTP_FILENAME_CAP 256   /* Content-Disposition's file name, decoded, with its terminator */
 
 /* Parser and loader results besides 0. Shared with sxn/sxnhttp.h. */
 enum sxnhttp_error
@@ -49,6 +50,7 @@ enum sxnhttp_error
     SXNHTTP_ERROR_TLS_NAME = -19,      /* the certificate is for another name or address */
     SXNHTTP_ERROR_TLS_DATE = -20,      /* the certificate is expired or not yet valid */
     SXNHTTP_ERROR_TLS_HANDSHAKE = -21, /* TLS itself failed: version, alert, bad record */
+    SXNHTTP_ERROR_SINK = -22,          /* the caller's body sink refused a piece (a write failed) */
 };
 
 /* ---- URLs ------------------------------------------------------------------ */
@@ -77,6 +79,16 @@ int sxnhttp_format_url(const struct sxnhttp_url *url, char *out, size_t capacity
  * malformed base or reference, -2 when the result does not fit. */
 int sxnhttp_resolve(const char *base, const char *reference, char *out, size_t capacity);
 
+/* A name to save a download under, at most `capacity` - 1 bytes: `suggested`
+ * (Content-Disposition's file name, or NULL) when anything is left of it
+ * once cleaned, else the last path segment of `url`, percent-decoded, else
+ * "download". Cleaning keeps only what follows the last '/' or '\\', drops
+ * control characters, replaces < > : " | ? * with '_', strips leading dots
+ * and spaces and trailing dots and spaces, and shortens a long name inside
+ * its stem, keeping its extension and whole UTF-8 sequences. 0, or -1 when
+ * `capacity` is below 16. */
+int sxnhttp_file_name(const char *suggested, const char *url, char *out, size_t capacity);
+
 /* ---- the response parser ---------------------------------------------------- */
 
 enum sxnhttp_framing
@@ -93,6 +105,13 @@ struct sxnhttp_parser
      * and says the body was cut (`body_cut`): the caller keeps what fits. */
     unsigned char *body;
     size_t body_capacity;
+    /* In, optional (sxnhttp_parser_set_sink): the body handed over piece by
+     * piece instead, of any length. The sink returns 0 to go on, 1 to stop
+     * there as if the buffer were full (the response completes, `body_cut`
+     * set), or a negative enum sxnhttp_error the feed fails with.
+     * `body_length` counts the bytes the sink took. */
+    long (*sink)(void *user, const unsigned char *bytes, size_t length);
+    void *sink_user;
 
     /* Out, once the head is read. */
     int head_done;
@@ -102,6 +121,15 @@ struct sxnhttp_parser
     char content_type[SXNHTTP_TYPE_CAP];
     char location[SXNHTTP_URL_CAP];
     int location_too_long;
+    int has_length;          /* Content-Length was given: `content_length` */
+    uint64_t content_length;
+    /* Content-Disposition: anything but "inline" is an attachment (RFC 6266,
+     * unknown types included); `filename` is its filename* (UTF-8) or else
+     * its filename, decoded, "" when absent or unusable. Never sanitized:
+     * sxnhttp_file_name does that. A malformed header is ignored, not an
+     * error: it says nothing about the framing. */
+    int attachment;
+    char filename[SXNHTTP_FILENAME_CAP];
     size_t body_length;
     int body_cut;
 
@@ -117,6 +145,10 @@ struct sxnhttp_parser
 };
 
 void sxnhttp_parser_init(struct sxnhttp_parser *parser, unsigned char *body, size_t body_capacity);
+
+/* Sends the body to `sink` instead of the buffer; call after init. */
+void sxnhttp_parser_set_sink(struct sxnhttp_parser *parser,
+                             long (*sink)(void *user, const unsigned char *bytes, size_t length), void *user);
 
 /* Feeds the next `length` bytes of the response. 0 when more are needed,
  * 1 when the response is complete (or its body reached the capacity), or a

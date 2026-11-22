@@ -1,10 +1,11 @@
 # Web Viewer: the native browser
 
-> **Status as of 2026-11-21: the network stages N1–N5 are complete.** Web
-> Viewer runs as `/system/webview.sxe`, resolves through SUN's `sxndns`, loads
-> on a per-window network worker through SUN's `sxnhttp`, and opens validated
-> `https://`. Next is **D1, downloads**; the engine stages E1–E7 follow. No
-> NetSurf library has been vendored yet.
+> **Status as of 2026-11-22: the network stages N1–N5 are complete, and D1,
+> downloads, is under way.** Web Viewer runs as `/system/webview.sxe`,
+> resolves through SUN's `sxndns`, loads on a per-window network worker
+> through SUN's `sxnhttp`, and opens validated `https://`. `sxnhttp` streams
+> bodies of any length (D1a); Web Viewer's side of downloads (D1b) is next,
+> then the engine stages E1–E7. No NetSurf library has been vendored yet.
 
 ## Direction
 
@@ -130,6 +131,20 @@ as an attachment, is saved to disk instead of failing or being cut at 32 KiB.
   and its worker can load pages while a download runs.
 - **Budgets.** The idle budget applies between reads; the 30-second
   navigation total does not apply to a download's body.
+
+**Slices.** D1 lands in two:
+
+- **D1a, the loader** -- landed 2026-11-22. `sxnhttp`'s head callback and
+  body sink, the expected length in the progress callback, `Content-
+  Disposition` and `sxnhttp_file_name`, and the total budget off a download's
+  body ([HTTP.md](../../net/HTTP.md#downloads-the-head-and-the-sink)). The
+  fixtures serve a 3 MiB blob five ways with its SHA-256; `native-network` and
+  `https-smoke` check it byte-exact.
+- **D1b, Web Viewer** -- next. Show or save, the Save As dialog, the `.part`
+  file, the download window and its own worker. The window must leave the
+  page usable, and the toolkit's dialogs are modal: an owned window that does
+  not disable its owner (a modeless window, in windowd and the SUN frame) is
+  the first gap to close.
 
 **Done when:** a multi-megabyte binary, with and without `Content-Length`,
 chunked, and as an attachment, arrives byte-exact over HTTP and validated

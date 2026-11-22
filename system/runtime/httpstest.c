@@ -11,7 +11,10 @@
  *   an untrusted CA and a TLS 1.1 server each fail with their own error;
  * - the system store does not trust the test root;
  * - with the date set before the release floor, https:// is TLS_CLOCK before
- *   anything is sent; the date is restored.
+ *   anything is sent; the date is restored;
+ * - the fixtures' multi-megabyte blob streams through a sink byte-exact,
+ *   with a length, chunked and as an attachment, against the SHA-256 the
+ *   host computed; cut short, it is TRUNCATED.
  *
  * `httpstest unseeded`, on a machine with no entropy source: TLS_ENTROPY.
  *
@@ -20,6 +23,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+#include <openssl/evp.h>
 
 #include "sxn/sxn.h"
 #include "sxn/sxndns.h"
@@ -99,6 +104,66 @@ static void expect(const char* url, int trust_test_root, long expected, const ch
             expected);
         check(0, line);
     }
+}
+
+#define BLOB_SIZE (3u * 1024u * 1024u + 517u) /* tools/http_fixture.py BLOB_SIZE */
+
+static EVP_MD_CTX *g_digest;
+static uint64_t g_taken;
+
+static long blob_sink(void *user, const unsigned char *bytes, size_t length) {
+    (void)user;
+    g_taken += length;
+    return EVP_DigestUpdate(g_digest, bytes, length) == 1 ? 0 : -1;
+}
+
+/* `url` through the sink; its SHA-256 in hex into `hex`. */
+static long blob(const char *url, char hex[65]) {
+    struct sxnhttp_request request;
+    unsigned char digest[32];
+    unsigned length = 0;
+    long result;
+
+    memset(&request, 0, sizeof(request));
+    request.url = url;
+    request.cancel = -1;
+    request.trust_pem = g_root;
+    request.trust_pem_length = g_root_length;
+    request.sink = blob_sink;
+    memset(&g_response, 0, sizeof(g_response));
+    g_taken = 0;
+    hex[0] = '\0';
+    if (g_digest == 0 || EVP_DigestInit_ex(g_digest, EVP_sha256(), 0) != 1) return -100;
+    result = sxnhttp_get(&g_client, &request, &g_response);
+    if (EVP_DigestFinal_ex(g_digest, digest, &length) != 1 || length != 32) return -100;
+    for (unsigned index = 0; index < 32; ++index) snprintf(hex + index * 2, 3, "%02x", digest[index]);
+    return result;
+}
+
+static void test_downloads(unsigned http_port, unsigned tls_port) {
+    char url[160], expected[65], hex[65];
+    static const char *const paths[] = {"/blob", "/blob-chunked", "/blob-attachment"};
+
+    snprintf(url, sizeof(url), "http://10.0.2.2:%u/blob.sha256", http_port);
+    check(fetch(url, 0) == 0 && g_response.body_length == 64, "the blob's digest");
+    memcpy(expected, g_body, 64);
+    expected[64] = '\0';
+    g_digest = EVP_MD_CTX_new();
+    for (unsigned index = 0; index < sizeof(paths) / sizeof(paths[0]); ++index) {
+        char line[200];
+
+        snprintf(url, sizeof(url), "https://good.tls.savanxp:%u%s", tls_port, paths[index]);
+        snprintf(line, sizeof(line), "%s over https", paths[index]);
+        check(blob(url, hex) == 0 && g_taken == BLOB_SIZE && strcmp(hex, expected) == 0 &&
+                  g_response.body_length == BLOB_SIZE && strcmp(g_response.tls_protocol, "TLSv1.3") == 0,
+            line);
+    }
+    check(g_response.attachment && strcmp(g_response.filename, "savanxp blob.bin") == 0,
+        "the attachment's name over https");
+    snprintf(url, sizeof(url), "https://good.tls.savanxp:%u/blob-short", tls_port);
+    check(blob(url, hex) == SXNHTTP_ERROR_TRUNCATED && g_taken == BLOB_SIZE / 2, "a blob cut short over https");
+    EVP_MD_CTX_free(g_digest);
+    g_digest = 0;
 }
 
 /* Days since 1970 to a civil date (Howard Hinnant's civil_from_days). */
@@ -230,6 +295,7 @@ static void run(unsigned control_port) {
     test_clock(good);
     /* After the clock is back, the same page works again. */
     expect(good, 1, 0, "a valid certificate after the clock is restored");
+    test_downloads(http_port, tls_port);
 }
 
 int main(int argc, char** argv) {

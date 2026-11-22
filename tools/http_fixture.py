@@ -31,17 +31,39 @@ the client's parser meets real TCP fragmentation. One path per case:
   /silent            reads the request and answers nothing for a minute
   /tls-root.pem      the TLS fixture's test root, when one is running
 
+and the downloads (blob_parts, which tools/tls_fixture.py serves too): one
+blob of BLOB_SIZE pseudo-random bytes, its SHA-256 computed here, so the
+guest proves it received every byte:
+
+  /blob              with a Content-Length, application/octet-stream
+  /blob-close        HTTP/1.0, no length: the body ends at the close
+  /blob-chunked      chunked, in chunks of uneven sizes
+  /blob-attachment   Content-Disposition: attachment, as text/plain
+  /blob-short        the Content-Length of the blob, half of it, the close
+  /blob-slow         BLOB_SLOW_SIZE bytes in eight pieces half a second apart
+  /blob.sha256       the blob's SHA-256, in hex
+
 Only the standard library.
 """
 
 from __future__ import annotations
 
+import hashlib
+import random
 import socket
 import struct
 import threading
 import time
+from typing import Iterator
 
 PAUSE = 0.03
+
+# Several megabytes, not a round number, and the same on every run.
+BLOB_SIZE = 3 * 1024 * 1024 + 517
+BLOB_SLOW_SIZE = 256 * 1024
+BLOB_NAME = "savanxp blob.bin"
+_BLOB = random.Random(20261122).randbytes(BLOB_SIZE)
+BLOB_SHA256 = hashlib.sha256(_BLOB).hexdigest()
 
 
 def pieces(data: bytes, cuts: list[int]) -> list[bytes]:
@@ -58,6 +80,45 @@ def pieces(data: bytes, cuts: list[int]) -> list[bytes]:
 
 def head(status: str, headers: list[str], version: str = "HTTP/1.1") -> bytes:
     return (version + " " + status + "\r\n" + "".join(h + "\r\n" for h in headers) + "\r\n").encode("ascii")
+
+
+def blob_parts(path: str) -> Iterator[tuple[bytes, float]] | None:
+    """The download at `path` as (bytes, pause after them), or None."""
+    step = 64 * 1024
+    octets = "Content-Type: application/octet-stream"
+    if path == "/blob.sha256":
+        text = BLOB_SHA256.encode("ascii")
+        return iter([(head("200 OK", ["Content-Type: text/plain", "Content-Length: %d" % len(text)]) + text, 0.0)])
+    if path in ("/blob", "/blob-attachment"):
+        headers = [octets] if path == "/blob" else [
+            "Content-Type: text/plain", 'Content-Disposition: attachment; filename="%s"' % BLOB_NAME]
+        first = head("200 OK", headers + ["Content-Length: %d" % BLOB_SIZE])
+        return iter([(first, 0.0)] + [(_BLOB[at:at + step], 0.0) for at in range(0, BLOB_SIZE, step)])
+    if path == "/blob-close":
+        first = head("200 OK", [octets], "HTTP/1.0")
+        return iter([(first, 0.0)] + [(_BLOB[at:at + step], 0.0) for at in range(0, BLOB_SIZE, step)])
+    if path == "/blob-chunked":
+        def chunks() -> Iterator[tuple[bytes, float]]:
+            yield head("200 OK", [octets, "Transfer-Encoding: chunked"]), 0.0
+            sizes = (1, 4093, 65536, 777, 30000, 2, 131072)
+            at = index = 0
+            while at < BLOB_SIZE:
+                size = min(sizes[index % len(sizes)], BLOB_SIZE - at)
+                extension = b";n=%d" % index if index % 3 == 0 else b""
+                yield b"%x" % size + extension + b"\r\n" + _BLOB[at:at + size] + b"\r\n", 0.0
+                at += size
+                index += 1
+            yield b"0\r\n\r\n", 0.0
+        return chunks()
+    if path == "/blob-short":
+        half = BLOB_SIZE // 2
+        first = head("200 OK", [octets, "Content-Length: %d" % BLOB_SIZE])
+        return iter([(first, 0.0)] + [(_BLOB[at:min(at + step, half)], 0.0) for at in range(0, half, step)])
+    if path == "/blob-slow":
+        piece = BLOB_SLOW_SIZE // 8
+        first = head("200 OK", [octets, "Content-Length: %d" % BLOB_SLOW_SIZE])
+        return iter([(first, 0.0)] + [(_BLOB[at:at + piece], 0.5) for at in range(0, BLOB_SLOW_SIZE, piece)])
+    return None
 
 
 class HttpFixture:
@@ -109,7 +170,13 @@ class HttpFixture:
 
     def _respond(self, connection: socket.socket, path: str, request: bytes) -> None:
         send = lambda data, cuts=(1, 7, 13, 20, 33, 47, 61): self._send(connection, pieces(data, list(cuts)))
-        if path == "/tls-root.pem" and self.tls_root:
+        download = blob_parts(path)
+        if download is not None:
+            for data, pause in download:
+                connection.sendall(data)
+                if pause:
+                    time.sleep(pause)
+        elif path == "/tls-root.pem" and self.tls_root:
             self._send(connection, [head("200 OK", ["Content-Type: application/x-pem-file",
                                                     "Content-Length: %d" % len(self.tls_root)]) + self.tls_root])
         elif path == "/length":

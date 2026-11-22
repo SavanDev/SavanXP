@@ -62,7 +62,7 @@ the name of the layer, not a rename of its symbols.
 | Name resolution | `include/sxn/sxndns.h`, `system/runtime/sxndns.c` | host names to IPv4: a resolver with its own cache, UDP with a TCP retry, cancellable ([NETWORKING.md](../net/NETWORKING.md#name-resolution-sxndns)) | `getaddrinfo`, `DnsQuery` |
 | Randomness | `include/sxn/sxn.h` (`sxn_random_bytes`, `sxn_random_status`) | the kernel CSPRNG's bytes and state; refuses while unseeded ([RANDOM.md](../kernel/RANDOM.md)) | `BCryptGenRandom` |
 | Clock validity | `include/sxn/sxn.h` (`sxn_clock_status`) | whether the date can be believed, its source and why not ([TIME.md](../kernel/TIME.md#can-the-date-be-believed)) | -- |
-| HTTP | `include/sxn/sxnhttp.h`, `system/runtime/sxnhttp.c` | GET over HTTP/1.1: strict framing, redirects, budgets, cancellable ([HTTP.md](../net/HTTP.md)) | WinINet's `InternetOpenUrl` |
+| HTTP | `include/sxn/sxnhttp.h`, `system/runtime/sxnhttp.c` | GET over HTTP/1.1 and validated HTTPS: strict framing, redirects, budgets, cancellable; downloads of any length through a sink ([HTTP.md](../net/HTTP.md)) | WinINet's `InternetOpenUrl` |
 | Runtime | `system/runtime/sxn_runtime.c` | start-up, `malloc` over SXN sections, `exit` and returning from `main` ([NATIVE_HEAP.md](NATIVE_HEAP.md)) | the CRT |
 | Resources | `<program>.sunres.h`, generated | the program's `.sxres` compiled in: title, accent, window style, 16x16 icon | `.rsrc`, `LoadIcon` |
 | Shared rendering | SXGFX, SXCHROME, SXGUI-C (`system/gfx`, `include/sxgfx`) | 2D painting, system bevels, the Win9x toolkit; call-free code, usable from SUN | GDI, `DrawEdge`, `comctl32` |

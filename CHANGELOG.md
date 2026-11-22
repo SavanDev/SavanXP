@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **Downloads in `sxnhttp`** (D1a): a request's `head` callback sees the final response before its body and may stop
+  there, and its `sink` takes a body of any length piece by piece, held to the idle budget only (`SXNHTTP_ERROR_SINK`);
+  `Content-Disposition` is read and `sxnhttp_file_name` makes a safe name. The progress callback gains the expected
+  length (a new argument) and lengths up to 1 TiB are accepted. `native-network` and `https-smoke` check a 3 MiB blob
+  byte-exact by SHA-256 ([HTTP.md](docs/net/HTTP.md#downloads-the-head-and-the-sink)).
 - **Grouped icon view (SDK 2.0):** an `SXGUI_ICONVIEW` item starting with `SXGUI_GROUP_HEADER` is a group header, as
   in XP's grouped views; host test `sxgui-iconview-test`. Files' My Computer groups the user's folder ("user's
   Documents") and the disks ([FILES.md](docs/desktop/FILES.md#groups)).
