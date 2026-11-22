@@ -65,6 +65,13 @@ The names follow freedesktop's Icon Naming Specification (`text-x-generic`,
 `image-x-generic`, ...), which is what makes it possible to change art source
 without rewriting the mapping.
 
+A few names in `/icons` are house art rather than Tango, for what the
+catalog has no icon for: `application-x-linux` and the drives Files' My
+Computer shows (`drive-harddisk`, `drive-optical`, `drive-removable-media`).
+They are drawn to [`ICON_STYLE.md`](../docs/desktop/ICON_STYLE.md), live in
+`icons/16x16` and `icons/32x32`, and `HOUSE_ICONS` in
+`tools/gen_mime_icons.py` emits them next to the catalog.
+
 ## Cursors
 
 The default **SavanXP Classic** pack restores the eight original PNG cursors

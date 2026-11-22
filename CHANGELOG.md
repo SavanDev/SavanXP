@@ -13,8 +13,8 @@ Cut-off notes:
 ### Added
 
 - **Files opens on My Computer:** with no folder it lists the mounted volumes as drives (`Local Disk (/)`), with capacity
-  and free space in Properties; Up from `/` goes there. `/boot` is hidden. Scenario `filescomputer`
-  ([FILES.md](docs/desktop/FILES.md#my-computer)).
+  and free space in Properties; Up from `/` goes there. `/boot` is hidden. House icons `drive-harddisk`, `drive-optical`
+  and `drive-removable-media` in `/icons`. Scenario `filescomputer` ([FILES.md](docs/desktop/FILES.md#my-computer)).
 - **SDK 2.0:** POSIX `storage_snapshot` (`SAVANXP_SYS_STORAGE_SNAPSHOT`) lists disks, partitions and volumes with where
   each is mounted and its sizes, SUN's `sxn_storage_snapshot` record for POSIX programs
   ([DISK_MANAGEMENT.md](docs/userland/DISK_MANAGEMENT.md#why-calls-not-devdiskn)).

@@ -101,8 +101,10 @@ that folder.
   type, mount point, capacity and free space. Cut, Copy, Paste, Delete,
   Rename and New Folder are disabled there: a volume is not a file, and
   nothing is pasted into My Computer. The folder menu keeps only Refresh.
-- **Icons.** `drive-harddisk` from `/icons`, falling back to the folder's
-  until the drive icons are drawn (pending, below).
+- **Icons.** `drive-harddisk` from `/icons`, house art next to
+  `drive-optical` and `drive-removable-media`, which wait for discs and
+  sticks to be mounted ([`assets/README.md`](../../assets/README.md#file-type-icons)).
+  A missing icon file falls back to the folder's.
 
 ### Toolbar widgets
 
@@ -368,11 +370,10 @@ is out of scope for now.
 
 ### Pending
 
-- **My Computer's icons and groups.** House icons for a hard disk, an
-  optical drive and removable media (`drive-harddisk`, `drive-optical`,
-  `drive-removable-media`), and, later, Windows XP's grouped view (hard disks
-  apart from removable storage), which needs group headers in the icon view.
-  Discs and sticks appear once the
+- **My Computer's groups and removable drives.** Windows XP's grouped view
+  (hard disks apart from removable storage) needs group headers in the icon
+  view. Discs and sticks, with the `drive-optical` and
+  `drive-removable-media` icons already drawn, appear once the
   [removable media roadmap](../roadmaps/open/REMOVABLE_MEDIA_ROADMAP.md) mounts
   them.
 

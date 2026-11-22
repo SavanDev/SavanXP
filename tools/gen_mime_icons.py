@@ -31,7 +31,12 @@ ICON_ROOT = ("assets", "desktop", "icons", "mime")
 # icon for. They are emitted into /icons next to the catalog but read from the
 # house directories (assets/desktop/icons/<size>/), keeping "this is ours"
 # verifiable from the tree. name -> PNG basename.
-HOUSE_ICONS = {"application-x-linux": "app-linux"}
+HOUSE_ICONS = {
+    "application-x-linux": "app-linux",
+    "drive-harddisk": "drive-harddisk",
+    "drive-optical": "drive-optical",
+    "drive-removable-media": "drive-removable-media",
+}
 
 
 def collect_sizes(fmt, project_root, icon_name, root=None):
