@@ -153,6 +153,9 @@ long savanxp_getrandom(void* buffer, unsigned long length, unsigned flags);
 long random_status(struct savanxp_random_status* status);
 /* Whether the date can be believed (docs/kernel/TIME.md). 0 or -EINVAL. */
 long clock_status(struct savanxp_clock_status* status);
+/* The index-th storage device and where it is mounted
+ * (docs/userland/DISK_MANAGEMENT.md): 1 when written, 0 past the last one. */
+long storage_snapshot(unsigned long index, struct savanxp_storage_device* device);
 /* Informe de consistencia del volumen SxFS montado. Solo lectura: no repara y
  * no modifica nada. Negativo si el volumen no esta disponible. */
 long fscheck(struct savanxp_fscheck_report* report);

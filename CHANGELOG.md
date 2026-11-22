@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **SDK 2.0:** POSIX `storage_snapshot` (`SAVANXP_SYS_STORAGE_SNAPSHOT`) lists disks, partitions and volumes with where
+  each is mounted and its sizes, SUN's `sxn_storage_snapshot` record for POSIX programs
+  ([DISK_MANAGEMENT.md](docs/userland/DISK_MANAGEMENT.md#why-calls-not-devdiskn)).
 - **HTTPS** (N5): `sxnhttp` opens `https://` over TLS 1.2/1.3 through the OpenSSL port, validating chain, name or
   address and dates, with SNI and only `http/1.1`, and distinct `SXNHTTP_ERROR_TLS_*` errors and no bypass; Web Viewer
   shows a lock in its status bar. Smoke `https-smoke` (fixture `tools/tls_fixture.py`) and `https-unseeded`

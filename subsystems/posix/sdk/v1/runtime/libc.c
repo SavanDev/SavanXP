@@ -479,6 +479,10 @@ long clock_status(struct savanxp_clock_status* status) {
     return syscall1(SAVANXP_SYS_CLOCK_STATUS, (unsigned long)status);
 }
 
+long storage_snapshot(unsigned long index, struct savanxp_storage_device* device) {
+    return syscall3(SAVANXP_SYS_STORAGE_SNAPSHOT, index, (unsigned long)device, sizeof(*device));
+}
+
 long fscheck(struct savanxp_fscheck_report* report) {
     return syscall1(SAVANXP_SYS_FSCHECK, (unsigned long)report);
 }

@@ -94,6 +94,13 @@ not by their index in the block table: re-reading a disk's partitions removes
 and adds slots. Every entry carries the storage **generation**, which moves
 whenever a device or a mount changes.
 
+The list is also POSIX's: `storage_snapshot` (`SAVANXP_SYS_STORAGE_SNAPSHOT`,
+`struct savanxp_storage_device`, the same layout as SUN's record) lets any
+POSIX program see the devices and where each is mounted, which is what Files
+needs to list the volumes. Raw sectors, rescan, mount and unmount stay SUN's
+alone for now: their only consumer is Disk Management, and their POSIX faces
+are pending until a POSIX program needs them.
+
 ## The SxFS partition type
 
 GPT partitions holding SxFS use the type GUID

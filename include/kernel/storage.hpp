@@ -8,8 +8,8 @@
 
 /* The storage calls' view of block::, partition:: and fs:: together: what a
  * Disk Management program needs to show and, while elevated, to change
- * (docs/userland/DISK_MANAGEMENT.md). The native dispatcher reaches storage
- * only through here. */
+ * (docs/userland/DISK_MANAGEMENT.md). The native and POSIX dispatchers reach
+ * storage only through here. */
 namespace storage {
 
 // Bumps whenever a device, a partition table or a mount changes.

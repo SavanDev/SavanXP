@@ -408,6 +408,55 @@ struct savanxp_clock_status {
 #define SAVANXP_CLOCK_BEFORE_FLOOR 2u
 #define SAVANXP_CLOCK_AFTER_CEILING 3u
 
+/* SAVANXP_SYS_STORAGE_SNAPSHOT: one storage device (a disk, a partition, the
+ * LiveCD's memory volume), what is on it and where it is mounted. The same
+ * layout as SUN's struct sxn_storage_device; grows at the end only
+ * (docs/userland/DISK_MANAGEMENT.md). */
+#define SAVANXP_STORAGE_NAME_CAPACITY 24u
+#define SAVANXP_STORAGE_MOUNT_CAPACITY 32u
+struct savanxp_storage_device {
+    uint32_t id;               /* stable for the device's life; never reused */
+    uint32_t generation;       /* bumps whenever any device or mount changes */
+    uint32_t kind;             /* SAVANXP_STORAGE_DISK and the rest */
+    uint32_t flags;            /* SAVANXP_STORAGE_WRITABLE and the rest */
+    uint32_t parent_id;        /* partitions: the disk's id; 0 otherwise */
+    uint32_t scheme;           /* SAVANXP_STORAGE_SCHEME_* */
+    uint32_t partition_number; /* 1-based table entry; 0 for a disk */
+    uint32_t mbr_type;         /* MBR partitions only */
+    uint64_t sector_count;     /* 512-byte sectors, as reachable */
+    uint64_t start_lba;        /* partitions: offset in the parent */
+    uint64_t device_sectors;   /* the size the device reports */
+    uint8_t type_guid[16];     /* GPT partitions: as stored on disk */
+    uint8_t unique_guid[16];   /* GPT partitions; GPT disks: the disk GUID */
+    char name[SAVANXP_STORAGE_NAME_CAPACITY]; /* "ahci1", "ahci1p2" */
+    char model[48];
+    char serial[24];
+    char label[40];            /* the GPT partition name, ASCII */
+    char fs_name[16];          /* "sxfs", "fat" or "" when unknown */
+    char mount_point[SAVANXP_STORAGE_MOUNT_CAPACITY]; /* "" when not mounted */
+    uint64_t total_bytes;      /* mounted volumes only */
+    uint64_t used_bytes;
+    uint64_t free_bytes;
+    uint32_t file_count;
+    uint32_t reserved;
+};
+#define SAVANXP_STORAGE_DEVICE_V1_SIZE ((uint32_t)sizeof(struct savanxp_storage_device))
+#define SAVANXP_STORAGE_DISK 1u
+#define SAVANXP_STORAGE_PARTITION 2u
+#define SAVANXP_STORAGE_MEMORY 3u
+#define SAVANXP_STORAGE_WRITABLE (1u << 0)
+#define SAVANXP_STORAGE_MOUNTED (1u << 1)
+#define SAVANXP_STORAGE_CHILD_MOUNTED (1u << 2)
+#define SAVANXP_STORAGE_SYSTEM (1u << 3)
+#define SAVANXP_STORAGE_ESP (1u << 4)
+#define SAVANXP_STORAGE_TRUNCATED (1u << 5)
+#define SAVANXP_STORAGE_GPT_BACKUP (1u << 6)
+#define SAVANXP_STORAGE_READ_ONLY (1u << 7)
+#define SAVANXP_STORAGE_SCHEME_NONE 0u
+#define SAVANXP_STORAGE_SCHEME_MBR 1u
+#define SAVANXP_STORAGE_SCHEME_GPT 2u
+#define SAVANXP_STORAGE_SCHEME_DAMAGED 3u
+
 struct savanxp_realtime {
     uint16_t year;
     uint8_t month;

@@ -12,6 +12,39 @@ static int random_is_seeded(void) {
     return 1;
 }
 
+/* The storage devices through POSIX (docs/userland/DISK_MANAGEMENT.md), as
+ * Files lists the volumes: the root is a mounted SxFS volume with its sizes,
+ * the list ends, and a bad pointer is refused. */
+static int storage_lists_the_root(void) {
+    struct savanxp_storage_device device;
+    unsigned long index = 0;
+    int root_found = 0;
+    long result;
+
+    while (index < 64ul && (result = storage_snapshot(index, &device)) == 1) {
+        if ((device.flags & SAVANXP_STORAGE_MOUNTED) != 0 && strcmp(device.mount_point, "/") == 0) {
+            root_found = (device.flags & SAVANXP_STORAGE_SYSTEM) != 0 && strcmp(device.fs_name, "sxfs") == 0 &&
+                device.total_bytes != 0 && device.free_bytes <= device.total_bytes &&
+                device.used_bytes <= device.total_bytes;
+        }
+        ++index;
+    }
+    if (result != 0 || index == 0 || index == 64ul) {
+        printf("smoke: storage_snapshot listed %lu devices and ended with %ld\n", index, result);
+        return 0;
+    }
+    if (!root_found) {
+        puts_out("smoke: storage_snapshot has no mounted SxFS system volume at /\n");
+        return 0;
+    }
+    if (storage_snapshot(0, (struct savanxp_storage_device*)16) != -SAVANXP_EINVAL) {
+        puts_out("smoke: storage_snapshot took a bad pointer\n");
+        return 0;
+    }
+    printf("smoke: ok storage_snapshot devices=%lu\n", index);
+    return 1;
+}
+
 static int run_and_expect(const char* path, const char* const* argv, int argc, int expected_status) {
     int status = -1;
     long pid = spawn(path, argv, argc);
@@ -436,6 +469,7 @@ int main(void) {
         !run_and_expect("/bin/ps", ps_argv, 1, 0) ||
         !run_and_expect("/bin/libctest", libctest_argv, 1, 0) ||
         !random_is_seeded() ||
+        !storage_lists_the_root() ||
         !run_and_expect("/bin/stacktest", stacktest_argv, 1, 0) ||
         !run_and_expect("/rescue/bin/imagetest", imagetest_argv, 1, 0) ||
         !run_and_expect("/bin/imagetest", imagetest_disk_argv, 1, 0) ||

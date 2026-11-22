@@ -95,6 +95,9 @@ What changed from 1.2 to 2.0 is listed in [`README.md`](README.md#breaking-chang
   the date; `atexit` takes up to 32 handlers
 - clock validity: `clock_status` (whether the date can be believed, where it
   came from and why not, `struct savanxp_clock_status`; `docs/kernel/TIME.md`)
+- storage devices: `storage_snapshot` (the index-th disk, partition or memory
+  volume and where it is mounted, `struct savanxp_storage_device`;
+  `docs/userland/DISK_MANAGEMENT.md`)
 - consistency: `fscheck` (a read-only report of the volume; see
   `docs/fs/SXFS_CHECK.md`)
 

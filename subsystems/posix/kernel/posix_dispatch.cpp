@@ -29,6 +29,7 @@ static void register_posix_process_state(void) {
 #include "kernel/random_crypto.hpp"
 #include "kernel/rtc.hpp"
 #include "kernel/smp.hpp"
+#include "kernel/storage.hpp"
 #include "kernel/sx.hpp"
 #include "kernel/fs.hpp"
 #include "kernel/sxfs.hpp"
@@ -641,6 +642,35 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
             context->rax = vm::is_user_range_accessible(caller.address_space, context->rdi, sizeof(value), true) &&
                     write_to_process_memory(caller, context->rdi, &value, sizeof(value))
                 ? 0
+                : static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            return context;
+        }
+        case SAVANXP_SYS_STORAGE_SNAPSHOT: {
+            // SUN's STORAGE_SNAPSHOT for POSIX programs: the same record,
+            // one device per call, shorter than its V1 size refused.
+            static_assert(sizeof(savanxp_storage_device) == sizeof(sxn_storage_device),
+                "POSIX and SUN storage records share one layout");
+            static_assert(offsetof(savanxp_storage_device, mount_point) == offsetof(sxn_storage_device, mount_point),
+                "POSIX and SUN storage records share one layout");
+            static_assert(offsetof(savanxp_storage_device, file_count) == offsetof(sxn_storage_device, file_count),
+                "POSIX and SUN storage records share one layout");
+            const uint64_t size = context->rdx;
+            sxn_storage_device device = {};
+            if (size < SAVANXP_STORAGE_DEVICE_V1_SIZE) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            const size_t length = size < sizeof(device) ? static_cast<size_t>(size) : sizeof(device);
+            if (!vm::is_user_range_accessible(caller.address_space, context->rsi, length, true)) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            if (!storage::snapshot(static_cast<size_t>(context->rdi), device)) {
+                context->rax = 0;
+                return context;
+            }
+            context->rax = write_to_process_memory(caller, context->rsi, &device, length)
+                ? 1
                 : static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
             return context;
         }

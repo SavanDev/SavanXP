@@ -129,6 +129,11 @@ enum savanxp_syscall_number {
     /* CLOCK_STATUS(struct savanxp_clock_status*): whether the date can be
      * believed, where it came from and why not (docs/kernel/TIME.md). */
     SAVANXP_SYS_CLOCK_STATUS = 76,
+    /* STORAGE_SNAPSHOT(index, struct savanxp_storage_device*, size): the
+     * index-th storage device, as SUN's SXN_SYS_STORAGE_SNAPSHOT. 1 when
+     * written, 0 past the last, -EINVAL for a size below V1 or a bad pointer.
+     * Any process may list them. */
+    SAVANXP_SYS_STORAGE_SNAPSHOT = 77,
 };
 enum savanxp_identity_field {
     SAVANXP_IDENTITY_UID = 0,
