@@ -3095,7 +3095,12 @@ def scenario_webview_http(s):
     dns = subprocess.Popen(
         [sys.executable, str(root / "webview_dns_server.py")],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # The https:// steps need the host's openssl for the fixture's PKI; a
+    # host without it fails here rather than skipping them.
+    from tls_fixture import TlsFixture
+    tls = None
     try:
+        tls = TlsFixture().start()
         ready = server.stdout.readline().split()
         if len(ready) != 2 or ready[0] != "READY":
             raise Failure("el fixture HTTP no anuncio su puerto: %r" % ready)
@@ -3317,6 +3322,20 @@ def scenario_webview_http(s):
                     "a truncated body refused", solid_only=True)
         expect_text(truncated, (0, 0, *truncated.size), "Chunked page", TEXT, FIELD,
                     "the page kept after a truncated response", which="title", solid_only=True)
+        # N5: https:// through the TLS fixture (tools/tls_fixture.py). Web
+        # Viewer trusts the system store only, so the fixture's certificates,
+        # valid or not, all fail as untrusted -- the chain is checked before
+        # names and dates -- and there is nothing to click through: the page
+        # on screen stays. (Each failure's own error is https-smoke's.)
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, "good.tls.savanxp:%d" % tls.port, "/", "https")
+        s.qmp.tap("ret", pause=6.0)
+        untrusted = s.shot("webview-n5-untrusted")
+        expect_text(untrusted, (0, 0, *untrusted.size), "not from a trusted authority", TEXT, FACE,
+                    "a test root the system does not trust", solid_only=True)
+        expect_text(untrusted, (0, 0, *untrusted.size), "Chunked page", TEXT, FIELD,
+                    "the page kept after a refused certificate", which="title", solid_only=True)
         # Home, clicked on the toolbar, opens the home page.
         home_at = expect_text(replaced, (0, 0, *replaced.size), "Home", TEXT, FACE,
                               "the Home button", solid_only=True)
@@ -3356,19 +3375,21 @@ def scenario_webview_http(s):
         expect_text(file_url, (0, 0, *file_url.size), "Going further", TEXT, FIELD,
                     "SUN file URL", which="title")
     finally:
+        if tls is not None:
+            tls.pki.close()
         server.terminate()
         server.wait()
         dns.terminate()
         dns.wait()
 
 
-def type_http_url(s, hostport, path):
-    """Tipea http://hostport/path con el layout ES del guest.
+def type_http_url(s, hostport, path, scheme="http"):
+    """Types scheme://hostport/path with the guest's Spanish layout.
 
-    Los simbolos van por su combinacion en el layout activo (ver type_text):
-    "/" es Shift+7 y ":" es Shift+punto.
+    Symbols go through their combination in the active layout (see
+    type_text): "/" is Shift+7 and ":" is Shift+period.
     """
-    s.qmp.type_text("http")
+    s.qmp.type_text(scheme)
     s.qmp.chord("shift", "dot")
     s.qmp.chord("shift", "7")
     s.qmp.chord("shift", "7")

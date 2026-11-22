@@ -239,6 +239,9 @@ if(SAVANXP_HAVE_OPENSSL)
     savanxp_program(NAME sunssltest TEST NATIVE DEPENDS libssl libcrypto LINK_PROFILE PIE
         SOURCES system/runtime/ssltest.c)
     target_compile_definitions(sunssltest PRIVATE SSLTEST_NATIVE)
+    # sxnhttp's https:// against tools/tls_fixture.py (docs/net/HTTP.md).
+    savanxp_program(NAME httpstest TEST NATIVE DEPENDS libssl libcrypto LINK_PROFILE PIE
+        SOURCES system/runtime/httpstest.c system/runtime/sxnhttp_tls.c)
 endif()
 # How a DT_NEEDED resolves: the exact file, else the highest newer minor of the
 # same ABI (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution"). One

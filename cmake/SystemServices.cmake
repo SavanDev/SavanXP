@@ -160,7 +160,13 @@ savanxp_program(NAME linuxtest TEST NATIVE SOURCES subsystems/linux/tests/linuxt
 savanxp_program(NAME win32test TEST NATIVE SOURCES subsystems/win32/tests/win32test.c)
 
 # Web Viewer retains its renderer while moving to the native application frame.
-savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES webview.c)
+# It opens https:// through sxnhttp's TLS (system/runtime/sxnhttp_tls.c) and
+# the OpenSSL port, so it is built only when the port is (ports/openssl); the
+# registry drops it otherwise.
+if(SAVANXP_HAVE_OPENSSL)
+    savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libssl libcrypto
+        SOURCES webview.c SHARED_SOURCES system/runtime/sxnhttp_tls.c)
+endif()
 
 # Native image viewer over the common memory-only decoder.
 savanxp_system_service(NAME imgview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libsximg

@@ -106,6 +106,37 @@ The network delivery is complete only when the SUN Web Viewer retains its
 existing workflows and browses HTTP/validated HTTPS with cancellation and a
 responsive UI.
 
+## N5 implementation checkpoint — 2026-11-21
+
+**N5 is complete, and with it the network-first stages.** Web Viewer opens
+validated `https://`; the next stage is the Ladybird engine (W0 below). N5
+landed in four slices, each with its own commit:
+
+- **N5a**, the kernel CSPRNG ([RANDOM.md](../../kernel/RANDOM.md)): seeded only
+  from virtio-rng or RDSEED, refusing while unseeded, with SUN, POSIX and Linux
+  interfaces.
+- **N5b**, clock validity (`sxn_clock_status`, `clock_status`;
+  [TIME.md](../../kernel/TIME.md#can-the-date-be-believed)): whether the date
+  can be believed, its source, and why not. A prerequisite in the SDK put the
+  C library's clocks, randomness and identity on native calls in SUN programs
+  and added `atexit`.
+- **N5c**, the OpenSSL 3.5.3 port and the Mozilla CA store
+  ([ports/openssl/README.md](../../../ports/openssl/README.md)), pinned and in
+  the provenance registry: `libcrypto.so.0.4` and `libssl.so.0.4`, with no file
+  system below them, and `/system/ssl/cert.pem`.
+- **N5d**, TLS in `sxnhttp` ([HTTP.md](../../net/HTTP.md#https)) through
+  `system/runtime/sxnhttp_tls.c`, its fixture `tools/tls_fixture.py`, and Web
+  Viewer's lock. Web Viewer is now built only with the OpenSSL port.
+
+### N5 acceptance evidence
+
+| Gate | Evidence |
+|---|---|
+| Valid certificates work | `https-smoke`: a leaf with its intermediate loads by name (TLS 1.3, SNI and `http/1.1` as the server saw them) and by IPv4 address, against the fixture's root handed over in memory. |
+| Expired, self-signed, wrong-name and invalid-chain certificates are rejected, without a bypass | `https-smoke`: `TLS_DATE` for expired and not yet valid, `TLS_UNTRUSTED` for self-signed, a missing intermediate and an untrusted CA, `TLS_NAME` for another site's certificate, `TLS_HANDSHAKE` for a TLS 1.1 server; the system store rejects the test root. With verification turned off in the backend, all seven fail the scenario. Web Viewer's scenario shows the refusal and keeps the page; there is no override anywhere. |
+| Entropy and clock failures are explicit | `random-unseeded` and `https-unseeded` (`TLS_ENTROPY`, and OpenSSL itself refuses: `openssl-sun` fails without entropy); `https-smoke` sets 2005 and gets `TLS_CLOCK`; `date-smoke` checks the clock's status as it moves. |
+| Test CAs only in test images | The fixture's root is generated per run on the host and handed to the test in memory (`trust_pem`); it is never written to an image. |
+
 ## N4 implementation checkpoint — 2026-11-21
 
 **N4 is complete.** URL handling and HTTP/1.1 left Web Viewer for a SUN
@@ -132,29 +163,6 @@ reclaiming `TIME_WAIT` slots when the socket table is full, landed first.
 | Correct responses render independently of header, chunk and TCP fragmentation | `sxnhttp-message-test` feeds every response whole, split at every byte and byte by byte; `native-network` loads each framing from `tools/http_fixture.py`, which sends every response in small pieces; the webview scenario renders a chunked page sent 11 bytes at a time. |
 | Contradictory framing and truncated bodies fail explicitly | The host test covers each framing error and truncation at every cut of a good response (two parser mutations each make it fail); `native-network` gets `BAD_FRAMING`, `TRUNCATED` (close and reset), `BAD_RESPONSE`, `HEADERS_TOO_LARGE` and `UNSUPPORTED_ENCODING` from the fixture; the webview scenario shows the message and keeps the page. |
 | Redirects, timeout, cancellation | `native-network`: a relative redirect, five allowed and the sixth refused, file and https targets refused, the total and idle budgets, cancellation from a thread mid-body. |
-
-### Next implementation step — N5
-
-A system CSPRNG with real entropy, civil-clock validity, and an audited
-shared OpenSSL with its CA store, before `sxnhttp` accepts `https://`: see
-step 5 above. In order: N5a, the CSPRNG; N5b, civil-clock validity; N5c, the
-OpenSSL 3.5.3 port (the version the pinned Ladybird's `vcpkg.json` overrides
-to) and its CA store; N5d, TLS in `sxnhttp`, its fixtures and Web Viewer's
-indicator.
-
-**N5a landed 2026-11-21:** the kernel CSPRNG ([RANDOM.md](../../kernel/RANDOM.md)),
-seeded only from virtio-rng or RDSEED and refusing while unseeded, with SUN,
-POSIX and Linux interfaces.
-
-**N5b landed 2026-11-21:** clock validity (`sxn_clock_status`,
-`clock_status`; [TIME.md](../../kernel/TIME.md#can-the-date-be-believed)):
-whether the date can be believed, its source, and why not.
-
-**N5c landed 2026-11-21:** the OpenSSL 3.5.3 port and the Mozilla CA store
-([ports/openssl/README.md](../../../ports/openssl/README.md)), pinned and in the
-provenance registry: `libcrypto.so.0.4` and `libssl.so.0.4`, neutral, with
-no file system below them, and `/system/ssl/cert.pem`. `openssl-sun` and
-`openssl-posix` check them from each subsystem without a network.
 
 ## N3 implementation checkpoint — 2026-11-21
 
@@ -288,7 +296,7 @@ record earlier partial states; this checkpoint supersedes their next-step lists.
 | N2 | Pending; progress still depends on consumers or parked waiters. | Independent bounded and synchronized servicing, complete asynchronous error handling, FIN retransmission and TIME_WAIT. |
 | N3 | Pending; native DNS and loading still run synchronously in Web Viewer. | Shared resolver/cache/validation/TCP fallback, worker, cancellation, Stop and stale-result handling. |
 | N4 | Pending; URL/HTTP handling remains in the application. | Reusable result contract, strict framing, redirects, limits, deadlines and protocol tests. |
-| N5 | Pending; HTTPS is not enabled. | Entropy and valid civil clock, audited shared OpenSSL, CA store, certificate validation and TLS fixtures. |
+| N5 | Pending at this checkpoint; complete on 2026-11-21 (see the N5 checkpoint above). | Entropy and valid civil clock, audited shared OpenSSL, CA store, certificate validation and TLS fixtures. |
 
 ### Delivered for N1
 

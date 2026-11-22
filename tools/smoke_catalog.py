@@ -1278,6 +1278,28 @@ SCENARIOS: dict[str, Scenario] = {
         240.0,
         prepare=("./ports/openssl/build.sh",),
     ),
+    # N5's gate (docs/net/HTTP.md, "HTTPS"): a valid certificate loads; wrong
+    # name, expired, not yet valid, self-signed, missing intermediate, an
+    # untrusted CA and TLS 1.1 fail apart; a stale clock and no entropy refuse.
+    # The fixture makes its PKI with the host's openssl command.
+    "https-smoke": _qemu_scenario(
+        "httpstest {port}",
+        "HTTPS TEST PASS",
+        "HTTPS TEST FAIL",
+        "sxnhttp https:// against the TLS fixture: valid and rejected certificates, clock",
+        240.0,
+        host_server="tcp",
+        prepare=("./ports/openssl/build.sh",),
+    ),
+    "https-unseeded": _qemu_scenario(
+        "httpstest unseeded",
+        "HTTPS TEST PASS",
+        "HTTPS TEST FAIL",
+        "sxnhttp https:// with no entropy source refuses before connecting",
+        180.0,
+        no_rng=True,
+        prepare=("./ports/openssl/build.sh",),
+    ),
     "ffmpegload": _qemu_scenario(
         "ffmpegload",
         "FFMPEGLOAD OK",

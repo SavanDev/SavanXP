@@ -16,6 +16,7 @@ under `savanxp` exercises one path of include/sxn/sxndns.h:
   garbage.savanxp    a reply whose answer overruns the datagram, and nothing else
   servfail.savanxp   SERVFAIL
   empty.savanxp      NOERROR with no answers
+  *.tls.savanxp      A of the host: tools/tls_fixture.py's names
   slow.savanxp       A <address>, 1.5 seconds late
   silent.savanxp     no reply at all
   anything else      NXDOMAIN
@@ -147,6 +148,9 @@ class Zone:
             return [(1.5, reply(0, [a(here, 60, self.address)]), False)]
         if name == "silent.savanxp":
             return []
+        if name.endswith(".tls.savanxp"):
+            # tools/tls_fixture.py's names, all on the host.
+            return [(0.0, reply(0, [a(here, 60, self.address)]), False)]
         return [(0.0, reply(3), False)]
 
 

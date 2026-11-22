@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **HTTPS** (N5): `sxnhttp` opens `https://` over TLS 1.2/1.3 through the OpenSSL port, validating chain, name or
+  address and dates, with SNI and only `http/1.1`, and distinct `SXNHTTP_ERROR_TLS_*` errors and no bypass; Web Viewer
+  shows a lock in its status bar. Smoke `https-smoke` (fixture `tools/tls_fixture.py`) and `https-unseeded`
+  ([HTTP.md](docs/net/HTTP.md#https)).
 - **OpenSSL 3.5.3 port** (N5): `ports/openssl` builds `/lib/libcrypto.so.0.4` and `/lib/libssl.so.0.4` for SUN and
   POSIX programs alike and installs the Mozilla CA store as `/system/ssl/cert.pem`, both pinned in the provenance
   registry; smoke `openssl-sun` and `openssl-posix` ([ports/openssl/README.md](ports/openssl/README.md)).
@@ -164,6 +168,7 @@ Cut-off notes:
 
 ### Changed
 
+- **Web Viewer** is built only when the OpenSSL port is (`ports/openssl/build.sh` before `./build.sh build`).
 - **Web Viewer loads through `sxnhttp` (N4 complete):** HTTP/1.1 with chunked bodies; contradictory framing and
   truncated bodies fail with their message and keep the page; `text/plain` shows as text; a non-200 status is
   noted in the status bar; redirects to `file://` are refused and `https://` says it is not available yet.
@@ -231,6 +236,7 @@ Cut-off notes:
 
 ### Fixed
 
+- **SXGUI:** a sunken label (a status bar pane) clips its text to its border instead of drawing into the next pane.
 - **SDK:** `gettimeofday` and `clock_gettime(CLOCK_REALTIME)` return the date, not the time since boot.
 - **A SUN program's `.sxmeta` says `SUBSYSTEM` native without a `.sxres` saying so** (`sessiond.sxe` and
   `build-user.sh --native` builds carried `posix`). A `.sxres` `subsystem=` that contradicts the build now fails it.

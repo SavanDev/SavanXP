@@ -451,9 +451,26 @@ static void sxgui_paint_label(struct sx_painter *painter, const struct sxgui_wid
     }
     if ((widget->flags & SXGUI_FLAG_SUNKEN) != 0)
     {
+        /* A status bar pane: its text stays inside the border, cut where
+         * the pane ends rather than running into the next one. */
+        const struct sx_rect inside = sx_rect_make(widget->rect.x + SXGUI_BORDER_INSET,
+            widget->rect.y + SXGUI_BORDER_INSET, widget->rect.width - SXGUI_BORDER_INSET * 2,
+            widget->rect.height - SXGUI_BORDER_INSET * 2);
+
         sx_painter_fill_rect(painter, widget->rect, SXGUI_COLOR_FACE);
         sxgui_draw_inset(painter, widget->rect);
         text_x += SXGUI_BORDER_INSET + SXGUI_TEXT_PAD;
+        if (widget->text != 0 && inside.width > 0 && inside.height > 0)
+        {
+            const int clipped = sx_painter_push_clip(painter, inside);
+
+            sx_painter_draw_text(painter, text_x, text_y, widget->text, colour);
+            if (clipped)
+            {
+                sx_painter_pop_clip(painter);
+            }
+        }
+        return;
     }
     if (widget->text != 0)
     {

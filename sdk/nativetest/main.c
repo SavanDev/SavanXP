@@ -3585,7 +3585,8 @@ static void test_native_http(unsigned port) {
     sxn_log("nativetest: sxnhttp refuses contradictory, truncated and malformed responses");
 
     /* Redirects: relative, five allowed, the sixth refused; never to a file,
-     * never to https until N5, never without a Location. */
+     * never to https in a program without TLS (nativetest links no
+     * sxnhttp_tls.c; httpstest covers https), never without a Location. */
     check(http_fetch(http_port, "10.0.2.2", "/redirect-relative", -1, 0, 0) == 0);
     snprintf(expected, sizeof(expected), "http://10.0.2.2:%u/length?from=redirect", http_port);
     check(strcmp(g_http_response.url, expected) == 0 && g_http_response.redirects == 1 &&

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Small deterministic TCP echo server used by the tcp and native-network smokes.
 
-It also starts the DNS fixture of tools/dns_fixture.py and the HTTP fixture
-of tools/http_fixture.py; the DNS, DNSCOUNT and HTTP commands report their
-ports and how often a name was asked."""
+It also starts the DNS fixture of tools/dns_fixture.py, the HTTP fixture of
+tools/http_fixture.py and the TLS fixture of tools/tls_fixture.py. The DNS,
+HTTP and TLS commands report their ports, DNSCOUNT how often a name was
+asked."""
 
 from __future__ import annotations
 
@@ -18,12 +19,16 @@ from pathlib import Path
 
 from dns_fixture import DnsFixture
 from http_fixture import HttpFixture
+from tls_fixture import TlsFixture, TlsFixtureError
 
 # The resolver's fixture (tools/dns_fixture.py), started with the server: the
 # guest asks DNS for its port and DNSCOUNT <name> for the queries it received.
 DNS: DnsFixture
 # The HTTP loader's fixture (tools/http_fixture.py): HTTP gives its port.
 HTTP: HttpFixture
+# The https:// fixture (tools/tls_fixture.py): TLS gives its two ports, or
+# "0 0" when the host has no openssl command to make its certificates.
+TLS: TlsFixture | None = None
 
 SAVED: dict[str, bytes] = {}
 SAVED_LOCK = threading.Lock()
@@ -76,6 +81,9 @@ def handle_client_commands(sock: socket.socket, refused_port: int) -> None:
                 sock.sendall(f"{DNS.port}\n".encode("ascii"))
             elif command == "HTTP" and len(parts) == 1:
                 sock.sendall(f"{HTTP.port}\n".encode("ascii"))
+            elif command == "TLS" and len(parts) == 1:
+                ports = f"{TLS.port} {TLS.old_port}" if TLS is not None else "0 0"
+                sock.sendall(f"{ports}\n".encode("ascii"))
             elif command == "DNSCOUNT" and len(parts) == 2:
                 sock.sendall(f"{DNS.zone.count(parts[1])}\n".encode("ascii"))
             elif command == "REFUSE" and len(parts) == 1:
@@ -146,9 +154,14 @@ def main() -> int:
     parser.add_argument("--idle-timeout", type=float, default=0.0)
     args = parser.parse_args()
 
-    global DNS, HTTP
+    global DNS, HTTP, TLS
     DNS = DnsFixture().start()
     HTTP = HttpFixture().start()
+    try:
+        TLS = TlsFixture().start()
+        HTTP.tls_root = TLS.pki.root_pem
+    except TlsFixtureError as error:
+        print(f"tcp-echo-server: no TLS fixture: {error}", flush=True)
 
     stop = False
 
@@ -199,6 +212,8 @@ def main() -> int:
             started = time.monotonic()
     finally:
         server.close()
+        if TLS is not None:
+            TLS.pki.close()
         if args.port_file:
             args.port_file.unlink(missing_ok=True)
     return 0

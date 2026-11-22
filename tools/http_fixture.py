@@ -29,6 +29,7 @@ the client's parser meets real TCP fragmentation. One path per case:
   /redirect-none     302 without a Location
   /trickle           headers, then a byte every half second for a minute
   /silent            reads the request and answers nothing for a minute
+  /tls-root.pem      the TLS fixture's test root, when one is running
 
 Only the standard library.
 """
@@ -66,6 +67,8 @@ class HttpFixture:
         self.server.bind((bind, 0))
         self.server.listen(32)
         self.port = self.server.getsockname()[1]
+        # tools/tls_fixture.py's root, set by the server that starts both.
+        self.tls_root: bytes = b""
 
     def start(self) -> "HttpFixture":
         threading.Thread(target=self._serve, daemon=True).start()
@@ -106,7 +109,10 @@ class HttpFixture:
 
     def _respond(self, connection: socket.socket, path: str, request: bytes) -> None:
         send = lambda data, cuts=(1, 7, 13, 20, 33, 47, 61): self._send(connection, pieces(data, list(cuts)))
-        if path == "/length":
+        if path == "/tls-root.pem" and self.tls_root:
+            self._send(connection, [head("200 OK", ["Content-Type: application/x-pem-file",
+                                                    "Content-Length: %d" % len(self.tls_root)]) + self.tls_root])
+        elif path == "/length":
             send(head("200 OK", ["Content-Type: text/html", "Content-Length: 11"]) + b"length body")
         elif path == "/chunked":
             body = (b"8;ext=1\r\nchunked \r\n4\r\nbody\r\n0\r\nX-Trailer: done\r\n\r\n")

@@ -80,9 +80,10 @@ truncation, which is the server's failure.
 301, 302, 303, 307 and 308 with a `Location` are followed, up to five; the
 sixth is `TOO_MANY_REDIRECTS`. The location is resolved against the current
 URL by RFC 3986 section 5.2 (relative paths, `..`, `//host`, `?query`), and
-must resolve to another `http://` URL: a redirect to `file://`, to any other
-scheme, from https to http, or without a `Location` is `BAD_REDIRECT`. A
-redirect to `https://` is `UNSUPPORTED_SCHEME` until N5.
+must resolve to another `http://` or `https://` URL: a redirect to `file://`,
+to any other scheme, from https to http, or without a `Location` is
+`BAD_REDIRECT`. A redirect to `https://` in a program without TLS is
+`UNSUPPORTED_SCHEME`.
 
 ## URLs
 
@@ -100,11 +101,51 @@ in every wait):
 |---|---|
 | DNS | `sxndns`'s own: six seconds for the route, two attempts of two seconds |
 | connect, and writing the request | 5 seconds |
+| the TLS handshake, https:// | 10 seconds |
 | silence between two reads | 10 seconds (`idle_ms`) |
 | the whole navigation, redirects included | 30 seconds (`total_ms`) |
 
-Every step is also cut at the total deadline. TLS's ten seconds arrive with
-N5.
+Every step is also cut at the total deadline.
+
+## HTTPS
+
+`https://` is TLS 1.2 or 1.3 through the OpenSSL port
+([ports/openssl/README.md](../../ports/openssl/README.md)), validated, with
+no way to accept a certificate that failed. A program gets it by linking
+`system/runtime/sxnhttp_tls.c` and DEPENDS `libssl libcrypto`; `sxnhttp.c`
+carries a weak `sxnhttp_tls_backend()` that has none, so every other program
+answers `https://` with `UNSUPPORTED_SCHEME` and carries no OpenSSL.
+
+The split (`system/runtime/sxnhttp_tls.h`): the TLS session never touches the
+socket. `sxnhttp` moves the bytes with its own deadlines, waits and cancel
+event; the session turns them into plaintext and back through memory BIOs.
+OpenSSL is built without threads, so `sxnhttp_tls.c` holds one process lock
+around every call into it -- none blocks, the I/O is outside.
+
+What is checked, and the error for each:
+
+| Check | When | Error |
+|---|---|---|
+| the kernel generator is seeded ([RANDOM.md](../kernel/RANDOM.md)) | before connecting | `TLS_ENTROPY` |
+| the date can be believed ([TIME.md](../kernel/TIME.md#can-the-date-be-believed)) | before connecting | `TLS_CLOCK` |
+| a trust store: `/system/ssl/cert.pem`, read once per process, or `trust_pem` | opening the session | `TLS_STORE` |
+| the chain to a trusted root: self-signed, unknown issuer, missing intermediate, bad signature | handshake | `TLS_UNTRUSTED` |
+| the name (SNI sent, no partial wildcards) or the IPv4 address (no SNI, RFC 6066) | handshake | `TLS_NAME` |
+| the dates, against that clock | handshake | `TLS_DATE` |
+| TLS 1.2 or later, ALPN offering only `http/1.1` and refusing another choice, alerts, records | handshake and after | `TLS_HANDSHAKE` |
+
+The chain is checked before names and dates, as OpenSSL's verifier does: an
+expired certificate from an unknown CA is `TLS_UNTRUSTED`. `tls_detail` keeps
+the verifier's own words; `tls_protocol` and `tls_cipher` say what was
+negotiated. A connection closed without a `close_notify` ends the stream, and
+the response's framing decides: a body whose length or chunks are complete
+is complete, one that is not is `TRUNCATED`; a body delimited by the close is
+taken as browsers take it.
+
+`trust_pem` replaces the system store for one request, with roots the caller
+holds in memory. It exists for tests, whose CA must never be installed in an
+image, and is not a way around a failure: those roots are checked exactly as
+the system's are.
 
 ## Tests
 
@@ -119,10 +160,18 @@ N5.
   request it receives, the cap, each refusal, relative and chained redirects,
   names through the DNS fixture, a refused port, the total and idle budgets,
   and cancellation from another thread mid-body.
+- `https-smoke` (guest): `httpstest` against `tools/tls_fixture.py`, whose PKI
+  the host's `openssl` makes at start (3.4 or newer). It fetches the test root
+  over HTTP and trusts it in memory; a valid certificate loads by name and by
+  address, with TLS 1.3 and `http/1.1`; wrong name, expired, not yet valid,
+  self-signed, missing intermediate, an untrusted CA and a TLS 1.1 server
+  each fail with their error; the system store does not trust the test root;
+  a date set to 2005 is `TLS_CLOCK`, and the date is restored.
+- `https-unseeded` (guest): with no entropy source, `TLS_ENTROPY`.
 
 ## Not here
 
-HTTPS (N5), keep-alive, compression, caching, cookies, authentication, POST,
+Revocation (OCSP, CRLs), session resumption, keep-alive, compression, caching, cookies, authentication, POST,
 HTTP/2 and later, IPv6. **Pending, POSIX parity:** the POSIX subsystem has no
 HTTP library; ports bring their own. It is to gain one over the same pure
 module when a POSIX program needs it

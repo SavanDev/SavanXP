@@ -71,7 +71,10 @@
 #define WEBVIEW_RULE_TOOLBAR (&g_widgets[14])
 #define WEBVIEW_ADDR_LABEL (&g_widgets[15])
 #define WEBVIEW_PROGRESS (&g_widgets[16])
-#define WEBVIEW_WIDGET_COUNT 17
+/* The status bar's security pane: the lock of a page that came over
+ * validated HTTPS, drawn by on_paint. */
+#define WEBVIEW_ZONE (&g_widgets[17])
+#define WEBVIEW_WIDGET_COUNT 18
 
 /* The toolbar, left to right, as Internet Explorer 5 laid it out: history,
  * then the page, then the document. Its glyphs are the shared Back and
@@ -81,6 +84,8 @@
 #define WEBVIEW_RULE_HEIGHT 4
 #define WEBVIEW_SEPARATOR_WIDTH 8
 #define WEBVIEW_PROGRESS_WIDTH 120
+#define WEBVIEW_ZONE_WIDTH 24
+#define WEBVIEW_LOCK_SIZE 16
 /* Home, the toolbar button and Go > Home Page. */
 #define WEBVIEW_HOME_PAGE "file:///system/samples/welcome.html"
 
@@ -302,6 +307,11 @@ static int g_has_file = 0;
 /* One-shot note from the last fetch (" (connection dropped)"): cleared by
  * every load, appended to the status line while it says something. */
 static char g_fetch_note[32];
+/* The page on screen came over validated HTTPS; `g_security` names how. */
+static int g_page_secure;
+static char g_security[64];
+/* The lock glyph, wrapped by webview_init_glyphs. */
+static struct sx_bitmap g_lock;
 /* The page is text/plain: shown line by line, like the source view. */
 static int g_plain = 0;
 
@@ -1952,8 +1962,8 @@ static void webview_refresh_status(void)
 {
     char suffix[96];
 
-    snprintf(suffix, sizeof(suffix), "%s%s%s", g_truncated ? " (first 32 KB)" : "",
-        g_fetch_note, g_show_source ? " (source)" : "");
+    snprintf(suffix, sizeof(suffix), "%s%s%s%s", g_truncated ? " (first 32 KB)" : "",
+        g_fetch_note, g_show_source ? " (source)" : "", g_page_secure ? g_security : "");
     if (!g_has_file)
     {
         snprintf(g_status, sizeof(g_status), "No file loaded. File > Open (F3).");
@@ -2040,6 +2050,7 @@ static int webview_load_file(const char *path)
 
     g_truncated = read_bytes == sizeof(g_raw) - 1;
     g_fetch_note[0] = '\0';
+    g_page_secure = 0;
     g_plain = 0;
     snprintf(g_path, sizeof(g_path), "%s", path);
     g_has_file = 1;
@@ -2173,6 +2184,8 @@ struct webview_result
     char note[32];
     int truncated;
     int plain; /* text/plain: shown as text, not parsed as HTML */
+    int secure; /* https://, validated */
+    char security[64];
     size_t length;
 };
 
@@ -2358,6 +2371,10 @@ static void webview_http_progress(void *user, enum sxnhttp_phase phase, const ch
         snprintf(text, sizeof(text), "Connecting to %s...", host);
         percent = 25;
         break;
+    case SXNHTTP_PHASE_SECURING:
+        snprintf(text, sizeof(text), "Securing the connection to %s...", host);
+        percent = 32;
+        break;
     case SXNHTTP_PHASE_WAITING:
         g_load_kib = 0;
         snprintf(text, sizeof(text), "Waiting for %s...", host);
@@ -2416,6 +2433,14 @@ static void webview_fetch_http(const struct webview_request *request, struct web
             sxndns_error_text(response.dns_error));
         return;
     }
+    if (status != 0 && response.tls_detail[0] != '\0')
+    {
+        /* A certificate or handshake failure: what, and the verifier's
+         * word. There is nothing to click through. */
+        snprintf(result->message, sizeof(result->message), "%s (%s: %s)", sxnhttp_error_text(status),
+            g_load_host, response.tls_detail);
+        return;
+    }
     if (status != 0)
     {
         snprintf(result->message, sizeof(result->message), "%s", sxnhttp_error_text(status));
@@ -2427,6 +2452,8 @@ static void webview_fetch_http(const struct webview_request *request, struct web
     result->truncated = (response.flags & SXNHTTP_RESPONSE_CUT) != 0;
     result->plain = strncmp(response.content_type, "text/plain", 10) == 0;
     result->note[0] = '\0';
+    result->secure = response.tls_protocol[0] != '\0';
+    snprintf(result->security, sizeof(result->security), " (secure, %s)", response.tls_protocol);
     if (response.status != 200)
     {
         snprintf(result->note, sizeof(result->note), " (HTTP %d)", response.status);
@@ -2643,6 +2670,8 @@ static void on_wake(struct sxngui_app *app)
         g_truncated = result.truncated;
         g_plain = result.plain;
         memcpy(g_fetch_note, result.note, sizeof(g_fetch_note));
+        g_page_secure = result.secure;
+        memcpy(g_security, result.security, sizeof(g_security));
         memcpy(g_path, result.location, sizeof(g_path));
         g_has_file = 1;
         webview_finish_load(nav.push, nav.hist_target);
@@ -3244,6 +3273,13 @@ static void on_paint(struct sxngui_app *app)
     char line[WEBVIEW_LINE_BUFFER];
 
     (void)app;
+    if (g_page_secure && g_has_file)
+    {
+        const struct sx_rect zone = WEBVIEW_ZONE->rect;
+
+        sx_painter_blit_bitmap(painter, &g_lock, zone.x + (zone.width - WEBVIEW_LOCK_SIZE) / 2,
+            zone.y + (zone.height - WEBVIEW_LOCK_SIZE) / 2);
+    }
     sxgui_draw_sunken_edge(painter, g_view);
     interior = sx_rect_make(g_view.x + SXGUI_BORDER_SUNKEN, g_view.y + SXGUI_BORDER_SUNKEN,
         g_view.width - SXGUI_BORDER_SUNKEN * 2, g_view.height - SXGUI_BORDER_SUNKEN * 2);
@@ -3427,7 +3463,10 @@ static void webview_layout(struct sxngui_app *app)
     WEBVIEW_SCROLL->rect = sx_rect_make(g_view.x + g_view.width - SXGUI_SCROLLBAR_THICKNESS,
         g_view.y, SXGUI_SCROLLBAR_THICKNESS, g_view.height);
     WEBVIEW_STATUS->rect = sx_rect_make(SXGUI_MARGIN, status_y,
-        content_width - WEBVIEW_PROGRESS_WIDTH - SXGUI_GAP / 2, SXGUI_STATUS_HEIGHT);
+        content_width - WEBVIEW_PROGRESS_WIDTH - WEBVIEW_ZONE_WIDTH - SXGUI_GAP, SXGUI_STATUS_HEIGHT);
+    WEBVIEW_ZONE->rect = sx_rect_make(SXGUI_MARGIN + content_width - WEBVIEW_PROGRESS_WIDTH - WEBVIEW_ZONE_WIDTH -
+            SXGUI_GAP / 2,
+        status_y, WEBVIEW_ZONE_WIDTH, SXGUI_STATUS_HEIGHT);
     WEBVIEW_PROGRESS->rect = sx_rect_make(SXGUI_MARGIN + content_width - WEBVIEW_PROGRESS_WIDTH,
         status_y, WEBVIEW_PROGRESS_WIDTH, SXGUI_STATUS_HEIGHT);
 }
@@ -3802,6 +3841,10 @@ static void webview_init_glyphs(void)
         sx_bitmap_wrap(&g_glyphs[index], (uint32_t *)pixels[index], &info, SX_PIXEL_FORMAT_BGRA8888);
         g_glyph_refs[index] = &g_glyphs[index];
     }
+    info.width = info.height = WEBVIEW_LOCK_SIZE;
+    info.pitch = WEBVIEW_LOCK_SIZE * 4;
+    info.buffer_size = WEBVIEW_LOCK_SIZE * WEBVIEW_LOCK_SIZE * 4;
+    sx_bitmap_wrap(&g_lock, (uint32_t *)webview_glyph_security_high, &info, SX_PIXEL_FORMAT_BGRA8888);
 }
 
 static const struct sxgui_menu_item k_file_items[] = {
@@ -3932,6 +3975,8 @@ int main(int argc, char **argv)
     WEBVIEW_SCROLL->on_action = on_scroll_changed;
     *WEBVIEW_STATUS = sxgui_label(sx_rect_make(0, 0, 0, 0), g_status);
     WEBVIEW_STATUS->flags |= SXGUI_FLAG_SUNKEN;
+    *WEBVIEW_ZONE = sxgui_label(sx_rect_make(0, 0, 0, 0), "");
+    WEBVIEW_ZONE->flags |= SXGUI_FLAG_SUNKEN;
 
     g_open_widgets[0] = sxgui_label(
         sx_rect_make(WEBVIEW_DLG_MARGIN, WEBVIEW_DLG_MARGIN,

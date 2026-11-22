@@ -27,7 +27,7 @@ extern "C" {
 enum sxnhttp_error
 {
     SXNHTTP_ERROR_BAD_URL = -1,            /* not an http:// URL this client can ask */
-    SXNHTTP_ERROR_UNSUPPORTED_SCHEME = -2, /* https:// until validated TLS (N5) */
+    SXNHTTP_ERROR_UNSUPPORTED_SCHEME = -2, /* https:// in a program built without TLS */
     SXNHTTP_ERROR_DNS = -3,                /* the name did not resolve: see dns_error */
     SXNHTTP_ERROR_CONNECT = -4,            /* refused, reset or unreachable */
     SXNHTTP_ERROR_TIMEOUT = -5,            /* a step or the whole navigation ran out of time */
@@ -40,6 +40,15 @@ enum sxnhttp_error
     SXNHTTP_ERROR_BAD_REDIRECT = -12,      /* no Location, or one to file://, https->http, ... */
     SXNHTTP_ERROR_UNSUPPORTED_ENCODING = -13, /* a Content-Encoding other than identity */
     SXNHTTP_ERROR_NETWORK = -14,           /* no socket, a write or read failure */
+    /* https:// (docs/net/HTTP.md, "HTTPS"). Each says what to fix; none can
+     * be overridden. */
+    SXNHTTP_ERROR_TLS_ENTROPY = -15,   /* the kernel generator is not seeded */
+    SXNHTTP_ERROR_TLS_CLOCK = -16,     /* the date cannot be believed (sxn_clock_status) */
+    SXNHTTP_ERROR_TLS_STORE = -17,     /* no trust store to check against */
+    SXNHTTP_ERROR_TLS_UNTRUSTED = -18, /* the chain leads to no trusted root, or is broken */
+    SXNHTTP_ERROR_TLS_NAME = -19,      /* the certificate is for another name or address */
+    SXNHTTP_ERROR_TLS_DATE = -20,      /* the certificate is expired or not yet valid */
+    SXNHTTP_ERROR_TLS_HANDSHAKE = -21, /* TLS itself failed: version, alert, bad record */
 };
 
 /* ---- URLs ------------------------------------------------------------------ */

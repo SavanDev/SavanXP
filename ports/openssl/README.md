@@ -116,5 +116,5 @@ machine `random-unseeded` uses), `openssl-sun` fails at `RAND_bytes` and
 ## Not here
 
 TLS against a server -- certificate chains, names, dates and their errors
--- is `sxnhttp`'s (N5d), with its fixtures. Threads, assembly, revocation
+-- is `sxnhttp`'s ([HTTP.md](../../docs/net/HTTP.md#https)), with its fixture. Threads, assembly, revocation
 (OCSP, CRL fetching) and a CA store that updates itself are later work.

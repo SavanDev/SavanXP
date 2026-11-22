@@ -1,9 +1,13 @@
 # Web Viewer: the rendering contract
 
 > Web Viewer runs on SUN as `/system/webview.sxe` (N1), loads remote pages on a
-> network worker with Stop (N3) through SUN's HTTP loader (N4). Validated HTTPS
-> is the last network stage, before replacing this renderer with the pinned
-> Ladybird engine. See the [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
+> network worker with Stop (N3) through SUN's HTTP loader (N4), over validated
+> HTTPS (N5). Next is replacing this renderer with the pinned Ladybird engine.
+> See the [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
+>
+> It is built only when the OpenSSL port is (`ports/openssl/build.sh`, then
+> `./build.sh build`); without it the image has no Web Viewer and the registry
+> drops it.
 
 `/system/webview.sxe` ("Web Viewer", also launched as `webview`) is the in-tree
 browser prototype, in the spirit of IE 1.1: chrome (address bar, Back/Forward
@@ -91,9 +95,16 @@ thirty for the whole navigation. What Web Viewer adds:
   title in the status bar; a page past 32 KiB renders its first 32 KiB with
   `(first 32 KB)`.
 - `text/plain` is shown line by line, as the source view shows HTML.
-- Redirects go only to other `http://` URLs: one to `file://` is refused
-  (an http page could otherwise open local files). `https://`, typed or
-  redirected to, says HTTPS is not available yet (N5).
+- Redirects go only to other `http://` or `https://` URLs: one to `file://` is
+  refused (an http page could otherwise open local files), and so is one from
+  https down to http.
+- `https://` is validated against the system's trust store
+  ([HTTP.md](../net/HTTP.md#https)). A page that arrived over it shows a lock
+  in the status bar's pane between the text and the progress bar, and
+  `(secure, TLSv1.3)` after its title. A certificate or handshake failure
+  says which in the status bar -- untrusted, another site's, expired, the
+  clock, no randomness -- with the host and the verifier's words, and the
+  page on screen stays. There is nothing to click through.
 - Links resolve against an http page by RFC 3986 through `sxnhttp_resolve`,
   dot segments and ports included; local paths keep Web Viewer's own rules.
 
@@ -141,7 +152,7 @@ server empties the window's DNS cache.
 
 ## What it is not (yet)
 
-No TLS, no images (an `[image]` marker), tables
+No images (an `[image]` marker), tables
 degrade to stacked lines, fragments reload the page top, documents cap at 32 KiB / 256 paragraphs / 64 links / 256 runs / 32 rules /
 4 KiB of CSS. Errors say which of these bit.
 
@@ -156,7 +167,9 @@ while the painter blends in sequence (see the scenario comments).
 
 The window's own steps check the toolbar captions, the absolute URL of a
 hovered link in the status bar, the page's context menu, and the Home button
-clicked on the toolbar. The N4 steps check that a page sent chunked in pieces of 11 bytes renders, and
+clicked on the toolbar. The N5 step loads `https://` from
+`tools/tls_fixture.py`, whose test root the system does not trust, and checks
+that it fails as untrusted and keeps the page. The N4 steps check that a page sent chunked in pieces of 11 bytes renders, and
 that a response with contradictory framing and one cut short each fail with
 their message while the previous page stays. The N3 steps load `/stall`, a download that never
 finishes, and check that the window repaints the worker's progress and enables

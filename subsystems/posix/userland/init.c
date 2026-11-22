@@ -159,6 +159,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "linuxtest")) {
         return "LINUX TEST";
     }
+    if (spec != 0 && text_contains(spec, "httpstest")) {
+        return "HTTPS TEST";
+    }
     if (spec != 0 && text_contains(spec, "sunssltest")) {
         return "SUN SSL TEST";
     }
@@ -278,6 +281,7 @@ static int run_automation_spec(const char* spec) {
     const char* sunlibtest_argv[] = {"/system/sunlibtest.sxe", 0};
     const char* ssltest_argv[] = {"/bin/ssltest", 0};
     const char* sunssltest_argv[] = {"/system/sunssltest.sxe", 0};
+    const char* httpstest_argv[] = {"/system/httpstest.sxe", 0, 0};
     const char* sonametest_argv[] = {"/system/sonametest.sxe", 0};
     const char* ldfailtest_argv[] = {"/system/ldfailtest.sxe", 0};
     const char* ldstatictest_argv[] = {"/system/ldstatictest.sxe", 0};
@@ -544,6 +548,13 @@ static int run_automation_spec(const char* spec) {
             path = "/system/linuxtest.sxe";
             argv = linuxtest_argv;
             argc = 1;
+        } else if (text_starts_with(spec, "httpstest ")) {
+            /* sxnhttp's https:// (docs/net/HTTP.md): the echo server's port,
+             * which knows the TLS fixture's, or "unseeded". */
+            path = "/system/httpstest.sxe";
+            httpstest_argv[1] = skip_spaces(spec + strlen("httpstest"));
+            argv = httpstest_argv;
+            argc = 2;
         } else if (strcmp(spec, "ssltest") == 0 || strcmp(spec, "sunssltest") == 0) {
             /* The OpenSSL port from POSIX and from SUN (ports/openssl); the
              * scenario installs the port first. */
