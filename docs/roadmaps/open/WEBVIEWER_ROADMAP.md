@@ -1,12 +1,14 @@
 # Web Viewer: the native browser
 
-> **Status as of 2026-11-22: the network stages N1–N5 and D1, downloads,
-> have landed.** Web Viewer runs as `/system/webview.sxe`, resolves through
-> SUN's `sxndns`, loads on a per-window network worker through SUN's
-> `sxnhttp`, opens validated `https://`, and saves what it does not show in
-> a download window of its own. One D1 check waits for a machine with a
-> network (below); next are the engine stages E1–E7. No NetSurf library has
-> been vendored yet.
+> **Status as of 2026-11-22: the network stages N1–N5, D1 (downloads) and
+> E1 (the engine libraries build) have landed.** Web Viewer runs as
+> `/system/webview.sxe`, resolves through SUN's `sxndns`, loads on a
+> per-window network worker through SUN's `sxnhttp`, opens validated
+> `https://`, and saves what it does not show in a download window of its
+> own. NetSurf's MIT libraries are vendored and build for SUN and the host
+> ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md)), and Web Viewer
+> does not use them yet. One D1 check waits for a machine with a network
+> (below). The next stage is E2.
 
 ## Direction
 
@@ -176,8 +178,8 @@ this stage, unmodified, each in the provenance registry. CMake builds them as
 static libraries for SUN programs and for the host. A host test parses every
 page of the corpus into a DOM and computes the style of every element.
 
-Two facts measured in the upstream trees on 2026-11-03, to confirm at the
-pinned releases: libparserutils builds without `iconv`
+Two facts measured in the upstream trees on 2026-11-03, confirmed at the
+pinned releases on 2026-11-22: libparserutils builds without `iconv`
 (`WITHOUT_ICONV_FILTER`: its own ASCII, ISO-8859-x, Windows-125x, UTF-8 and
 UTF-16 codecs), and libcss generates part of its parser at build time from a
 small host program (`css_property_parser_gen.c`), which CMake builds and runs.
@@ -186,6 +188,8 @@ checked the way `ports/openssl/link.sh` checks OpenSSL's.
 
 **Done when:** `./build.sh test` runs the host test, and the same libraries
 link into a SUN program that `nativetest` or its own scenario exercises.
+
+**Landed 2026-11-22.** The checkpoint below has the details.
 
 ### E2 — HTML through hubbub and libdom
 
@@ -298,8 +302,40 @@ corpus run; security fixes in the parsers are taken when published.
 
 ## Implementation checkpoints
 
-The network stages as they landed, newest first. Their "next step" lists and
+The stages as they landed, newest first. Their "next step" lists and
 mentions of the Ladybird plan are history; the stages above are current.
+
+## E1 implementation checkpoint — 2026-11-22
+
+**E1 is complete.** The details are in
+[WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md).
+
+- **Vendored:** libparserutils 0.2.5, libwapcaplet 0.4.3, libhubbub 0.3.8,
+  libdom 0.4.2 and libcss 0.9.2 under `vendor/netsurf/`, unmodified and
+  pinned by tarball SHA-256, with their entry in the provenance registry and
+  notices under `/system/licenses`.
+- **Built:** `cmake/NetSurf.cmake` builds them as static archives for SUN
+  programs and for the host. It generates upstream's files with Perl, gperf
+  and libcss' own generator. gperf is a new build requirement.
+- **Checked:** the SUN archives ask the program only for C functions SUN's
+  runtime answers without a POSIX call; `tools/check_archive_symbols.py`
+  enforces it.
+- **The glue:** `system/webview/engine/` is the parse, the stylesheets, the
+  style walk with composition, and the selection handler over libdom,
+  written from the libraries' headers.
+- **Tests:** `webengine-test` on the host (the self-test and the corpus) and
+  the `webengine-test` scenario (`/system/enginetest.sxe`, a SUN PIE).
+
+Two gaps the stage found and closed:
+- **The SDK:** `<string.h>` now declares `strncasecmp` under
+  `_DEFAULT_SOURCE`, as glibc and musl do.
+- **The C runtime's allocator:** it walked every block on each `malloc`, which
+  made a DOM of 4000 elements take 100 s to style in the guest. It now walks
+  free blocks only, and the same page takes under a second.
+
+One cost left for E3: libcss' style sharing is quadratic in the number of
+same-named siblings once a sibling combinator applies to them
+([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md#known-costs)).
 
 ## N5 implementation checkpoint — 2026-11-21
 

@@ -16,8 +16,17 @@ One allocator serves every program, in `subsystems/posix/sdk/v1/runtime/posix.c`
 (`sx_malloc` and the rest, aliased to `malloc`, `free`, `realloc`, `calloc`,
 `aligned_alloc`):
 
-- First fit over a list of blocks per arena, split on allocation, coalesced on
-  free, 16-byte alignment (`max_align_t` on x86-64).
+- First fit over a list of the free blocks of every arena, the most recently
+  freed first, split on allocation, coalesced on free, 16-byte alignment
+  (`max_align_t` on x86-64). The blocks of each arena also stay in a list in
+  address order, which is what coalescing walks. A free block's two links live
+  in its own payload, so the list costs no memory.
+- `malloc` looks only at free blocks, so its cost follows fragmentation, not
+  the number of blocks in use. Until 2026-11-22 it walked every block, in use
+  or free, and a program holding many small allocations paid for all of them
+  on each call. Web Viewer's engine test, with a DOM of 4000 elements, took
+  100 s in the guest to style a page and now takes under a second
+  ([WEBVIEWER_ENGINE.md](../desktop/WEBVIEWER_ENGINE.md#known-costs)).
 - A **bootstrap arena** of 256 KiB in the BSS (`SX_HEAP_SIZE`). It needs no
   system call: the kernel maps the BSS at exec.
 - Then up to **8 arenas** (`SX_ARENA_CAPACITY`) from the **page source**,

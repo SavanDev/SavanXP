@@ -243,6 +243,18 @@ if(SAVANXP_HAVE_OPENSSL)
     savanxp_program(NAME httpstest TEST NATIVE DEPENDS libssl libcrypto LINK_PROFILE PIE
         SOURCES system/runtime/httpstest.c system/runtime/sxnhttp_tls.c)
 endif()
+# Web Viewer's engine libraries in a SUN program (docs/desktop/WEBVIEWER_ENGINE.md):
+# NetSurf's libraries as built for SUN, and the engine's self-test the host test
+# also runs; the webengine-test scenario.
+savanxp_program(NAME enginetest TEST NATIVE DEPENDS netsurf_css netsurf_dom LINK_PROFILE PIE
+    SOURCES system/webview/engine/enginetest.c
+            system/webview/engine/webengine.c
+            system/webview/engine/webengine_select.c
+            system/webview/engine/webengine_selftest.c)
+if(TARGET enginetest)
+    target_include_directories(enginetest PRIVATE "${CMAKE_SOURCE_DIR}/system/webview/engine")
+    add_dependencies(enginetest netsurf_symbols)
+endif()
 # How a DT_NEEDED resolves: the exact file, else the highest newer minor of the
 # same ABI (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution"). One
 # source, one library per version; the program links against the 0.4s, and

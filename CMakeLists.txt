@@ -670,6 +670,7 @@ add_custom_target(savanxp_build_number
 add_dependencies(savanxp_generated_headers savanxp_build_number)
 target_sources(savanxp_kernel_objects PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
 
+include("${CMAKE_SOURCE_DIR}/cmake/NetSurf.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/UserPrograms.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/SystemServices.cmake")
 
@@ -966,6 +967,36 @@ add_executable(savanxp-sxnhttp-message-test system/runtime/sxnhttp_message.c
 target_include_directories(savanxp-sxnhttp-message-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
 target_compile_options(savanxp-sxnhttp-message-test PRIVATE -O1 -Wall -Wextra)
 add_test(NAME sxnhttp-message-test COMMAND savanxp-sxnhttp-message-test)
+
+# Web Viewer's engine libraries (docs/desktop/WEBVIEWER_ENGINE.md): NetSurf's
+# MIT libraries built for the host, the engine's self-test, and every page of
+# the corpus parsed and styled.
+add_executable(savanxp-webengine-test
+    system/webview/engine/webengine.c
+    system/webview/engine/webengine_select.c
+    system/webview/engine/webengine_selftest.c
+    tests/host/webengine_test.c)
+target_include_directories(savanxp-webengine-test PRIVATE "${CMAKE_SOURCE_DIR}/system/webview/engine")
+target_link_libraries(savanxp-webengine-test PRIVATE netsurf_css_host netsurf_dom_host)
+target_compile_options(savanxp-webengine-test PRIVATE -O1 -Wall -Wextra)
+# With AddressSanitizer where the host has it: its leak checker sees every
+# malloc in the process, the libraries' too, so a reference the glue keeps by
+# mistake -- which keeps a whole document alive -- fails the test.
+include(CheckCSourceCompiles)
+# The toolchain makes try_compile build a static library; the probe must link.
+set(SAVANXP_SAVED_TRY_COMPILE_TYPE "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+set(CMAKE_TRY_COMPILE_TARGET_TYPE EXECUTABLE)
+set(CMAKE_REQUIRED_FLAGS -fsanitize=address)
+set(CMAKE_REQUIRED_LINK_OPTIONS -fsanitize=address)
+check_c_source_compiles("int main(void) { return 0; }" SAVANXP_HOST_LINKS_ASAN)
+unset(CMAKE_REQUIRED_FLAGS)
+unset(CMAKE_REQUIRED_LINK_OPTIONS)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE "${SAVANXP_SAVED_TRY_COMPILE_TYPE}")
+if(SAVANXP_HOST_LINKS_ASAN)
+    target_compile_options(savanxp-webengine-test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+    target_link_options(savanxp-webengine-test PRIVATE -fsanitize=address)
+endif()
+add_test(NAME webengine-test COMMAND savanxp-webengine-test "${CMAKE_SOURCE_DIR}/tools/webview-test-www")
 
 # The SxBASIC core (docs/userland/SXBASIC.md): programs and what they print,
 # compile and runtime errors, and the console sample against its expected output.
@@ -1314,7 +1345,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-iconview-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-iconview-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-webengine-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

@@ -282,6 +282,15 @@ struct sx_socket_state {
 __attribute__((weak)) _Alignas(SX_ALLOC_ALIGNMENT) unsigned char sx_heap_bootstrap[SX_HEAP_SIZE];
 __attribute__((weak)) const size_t sx_heap_bootstrap_size = SX_HEAP_SIZE;
 static sx_arena* g_arenas = 0;
+/* Every free block of every arena, the most recently freed first: malloc
+ * looks at these and not at the blocks in use, so its cost follows the
+ * fragmentation, not the size of the heap. A free block's links live in its
+ * payload, which it does not use (every block holds at least 16 bytes). */
+typedef struct sx_free_links {
+    struct sx_alloc_header* next;
+    struct sx_alloc_header* prev;
+} sx_free_links;
+static sx_alloc_header* g_free_blocks = 0;
 static size_t g_mapped_arena_count = 0;
 static size_t g_mapped_bytes = 0;
 static struct sx_FILE g_file_pool[SX_FILE_POOL_CAPACITY] = {};
@@ -406,8 +415,34 @@ static size_t sx_arena_initial_block_size(const sx_arena* arena) {
     return arena->size - sx_arena_overhead();
 }
 
-/* Convierte un buffer crudo (BSS o vista de seccion) en una arena con un unico
- * bloque libre, y la publica al frente de la lista. */
+static sx_free_links* sx_free_links_of(sx_alloc_header* block) {
+    return (sx_free_links*)(block + 1);
+}
+
+static void sx_free_list_push(sx_alloc_header* block) {
+    sx_free_links* links = sx_free_links_of(block);
+    links->prev = 0;
+    links->next = g_free_blocks;
+    if (g_free_blocks != 0) {
+        sx_free_links_of(g_free_blocks)->prev = block;
+    }
+    g_free_blocks = block;
+}
+
+static void sx_free_list_remove(sx_alloc_header* block) {
+    sx_free_links* links = sx_free_links_of(block);
+    if (links->prev != 0) {
+        sx_free_links_of(links->prev)->next = links->next;
+    } else {
+        g_free_blocks = links->next;
+    }
+    if (links->next != 0) {
+        sx_free_links_of(links->next)->prev = links->prev;
+    }
+}
+
+/* Turns a raw buffer (the BSS or a section's view) into an arena with a single
+ * free block, and publishes it at the head of the list. */
 static sx_arena* sx_arena_stamp(void* base, size_t size, int mapped) {
     sx_arena* arena = 0;
     sx_alloc_header* block = 0;
@@ -430,6 +465,7 @@ static sx_arena* sx_arena_stamp(void* base, size_t size, int mapped) {
     arena->first_block = block;
     arena->next = g_arenas;
     g_arenas = arena;
+    sx_free_list_push(block);
     return arena;
 }
 
@@ -543,7 +579,8 @@ static int sx_arena_is_empty(const sx_arena* arena) {
         && block->size == sx_arena_initial_block_size(arena);
 }
 
-/* Devuelve al kernel una arena que quedo entera libre. La de BSS no se toca. */
+/* Gives an arena that became entirely free back to the kernel. The BSS one is
+ * never touched. */
 static void sx_arena_release(sx_arena* arena) {
     sx_arena** link = &g_arenas;
 
@@ -559,6 +596,7 @@ static void sx_arena_release(sx_arena* arena) {
     }
 
     *link = arena->next;
+    sx_free_list_remove(arena->first_block);
     --g_mapped_arena_count;
     g_mapped_bytes -= arena->size;
     sx_heap_pages_unmap(arena, arena->size);
@@ -577,10 +615,10 @@ static int sx_blocks_are_adjacent(const sx_alloc_header* left, const sx_alloc_he
         && ((const unsigned char*)(left + 1) + left->size) == (const unsigned char*)right;
 }
 
-/* Se come el bloque libre que sigue si es adyacente. Sirve tanto sobre bloques
- * libres (coalescing) como sobre uno OCUPADO, que es como realloc crece sin
- * mover los datos. Devuelve 1 si absorbio algo: quien itera necesita ese aviso
- * para poder terminar. */
+/* Swallows the next block when it is free and adjacent. It works on free
+ * blocks (coalescing) and on one IN USE, which is how realloc grows without
+ * moving the data. Returns 1 when it absorbed something: whoever iterates
+ * needs that to know when to stop. The absorbed block leaves the free list. */
 static int sx_absorb_next(sx_alloc_header* block) {
     sx_alloc_header* next = block != 0 ? block->next : 0;
 
@@ -588,6 +626,7 @@ static int sx_absorb_next(sx_alloc_header* block) {
         return 0;
     }
 
+    sx_free_list_remove(next);
     block->size += sizeof(sx_alloc_header) + next->size;
     block->next = next->next;
     if (block->next != 0) {
@@ -630,6 +669,7 @@ static void sx_split_block(sx_alloc_header* block, size_t size) {
 
     block->size = size;
     block->next = tail;
+    sx_free_list_push(tail);
     sx_merge_with_next(tail);
 }
 
@@ -639,11 +679,9 @@ static sx_alloc_header* sx_find_free_block(size_t size) {
 
     sx_allocator_init();
 
-    for (arena = g_arenas; arena != 0; arena = arena->next) {
-        for (block = arena->first_block; block != 0; block = block->next) {
-            if (block->free && block->size >= size) {
-                return block;
-            }
+    for (block = g_free_blocks; block != 0; block = sx_free_links_of(block)->next) {
+        if (block->size >= size) {
+            return block;
         }
     }
 
@@ -1168,6 +1206,7 @@ static void* sx_malloc_unlocked(size_t size) {
     }
 
     sx_split_block(header, aligned);
+    sx_free_list_remove(header);
     header->free = 0;
     return (void*)(header + 1);
 }
@@ -1324,6 +1363,7 @@ static void sx_free_unlocked(void* pointer) {
     }
 
     header->free = 1;
+    sx_free_list_push(header);
     sx_merge_with_next(header);
     if (header->prev != 0 && header->prev->free) {
         sx_merge_with_next(header->prev);

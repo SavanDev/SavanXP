@@ -8,8 +8,12 @@ staging, and host tests.
 
 The host needs:
 
-- Clang/LLVM (`clang`, `ld.lld`, `llvm-objcopy`, `llvm-readelf`, and `llvm-ar`,
-  which assembles the SDK sysroot's archives)
+- Clang/LLVM (`clang`, `ld.lld`, `llvm-objcopy`, `llvm-readelf`, `llvm-ar`,
+  which assembles the SDK sysroot's archives, and `llvm-nm`, which checks
+  what the NetSurf libraries ask for)
+- Perl and gperf, which generate parts of the NetSurf libraries at build time
+  ([WEBVIEWER_ENGINE.md](../desktop/WEBVIEWER_ENGINE.md#what-upstream-generates);
+  `SAVANXP_PERL` and `SAVANXP_GPERF` override them)
 - `flock` (util-linux), which serializes the SDK sysroot's assembly
 - CMake and Ninja
 - Python 3 with Pillow
@@ -22,7 +26,7 @@ The host needs:
 On Arch Linux, the core set is:
 
 ```bash
-pacman -S clang lld llvm cmake ninja make python-pillow \
+pacman -S clang lld llvm cmake ninja make python-pillow perl gperf \
   qemu-system-x86 edk2-ovmf libisoburn
 ```
 

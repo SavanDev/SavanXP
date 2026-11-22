@@ -1,0 +1,8 @@
+name=NetSurf libwapcaplet
+license=MIT
+copyright=Copyright 2009 The NetSurf Browser Project
+origin=https://www.netsurf-browser.org/projects/libwapcaplet/
+version=0.4.3
+used-in=Web Viewer's engine, /system/enginetest.sxe
+provenance=NetSurf libraries
+text=vendor/netsurf/libwapcaplet/COPYING

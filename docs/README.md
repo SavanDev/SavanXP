@@ -256,6 +256,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   selftest plus visual scenario.
 - [`WEBVIEWER.md`](desktop/WEBVIEWER.md) — Web Viewer, the native SUN browser prototype:
   its frontend/I/O and rendering contracts, CSS subset, and remaining limits.
+- [`WEBVIEWER_ENGINE.md`](desktop/WEBVIEWER_ENGINE.md) — Web Viewer's engine libraries:
+  NetSurf's MIT libraries vendored and built for SUN and the host, what they
+  may ask the program for, the libdom/libcss glue and selection handler, and
+  their tests.
 
 ## Media — `media/`
 

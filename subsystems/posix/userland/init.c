@@ -168,6 +168,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "ssltest")) {
         return "SSL TEST";
     }
+    if (spec != 0 && text_contains(spec, "enginetest")) {
+        return "ENGINE TEST";
+    }
     if (spec != 0 && text_contains(spec, "sunlibtest")) {
         return "SUN LIBRARY TEST";
     }
@@ -279,6 +282,7 @@ static int run_automation_spec(const char* spec) {
     const char* win32test_argv[] = {"/system/win32test.sxe", 0};
     const char* linuxtest_argv[] = {"/system/linuxtest.sxe", 0};
     const char* sunlibtest_argv[] = {"/system/sunlibtest.sxe", 0};
+    const char* enginetest_argv[] = {"/system/enginetest.sxe", 0};
     const char* ssltest_argv[] = {"/bin/ssltest", 0};
     const char* sunssltest_argv[] = {"/system/sunssltest.sxe", 0};
     const char* httpstest_argv[] = {"/system/httpstest.sxe", 0, 0};
@@ -561,6 +565,12 @@ static int run_automation_spec(const char* spec) {
             const int native = strcmp(spec, "sunssltest") == 0;
             path = native ? "/system/sunssltest.sxe" : "/bin/ssltest";
             argv = native ? sunssltest_argv : ssltest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "enginetest") == 0) {
+            /* NetSurf's libraries in a SUN program
+             * (docs/desktop/WEBVIEWER_ENGINE.md). */
+            path = "/system/enginetest.sxe";
+            argv = enginetest_argv;
             argc = 1;
         } else if (strcmp(spec, "sunlibtest") == 0) {
             /* A SUN program mapping libmath through the shared loader

@@ -1,0 +1,10 @@
+NetSurf libraries, pinned releases (docs/desktop/WEBVIEWER_ENGINE.md).
+Source: https://download.netsurf-browser.org/libs/releases/<name>-src.tar.gz
+Each tree is the release unmodified, without its test/ directory (and, for
+libhubbub, perf/; for libdom and libcss, .github/).
+
+libparserutils 0.2.5  317ed5c718f17927b5721974bae5de32c3fd6d055db131ad31b4312a032ed139
+libwapcaplet   0.4.3  9b2aa1dd6d6645f8e992b3697fdbd87f0c0e1da5721fa54ed29b484d13160c5c
+libhubbub      0.3.8  8ac1e6f5f3d48c05141d59391719534290c59cd029efc249eb4fdbac102cd5a5
+libdom         0.4.2  d05e45af16547014c2b0a3aecf3670fa13d419f505b3f5fc7ac8a1491fc30f3c
+libcss         0.9.2  2df215bbec34d51d60c1a04b01b2df4d5d18f510f1f3a7af4b80cddb5671154e

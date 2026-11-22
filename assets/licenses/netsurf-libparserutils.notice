@@ -1,0 +1,8 @@
+name=NetSurf libparserutils
+license=MIT
+copyright=Copyright (C) 2007-8 J-M Bell
+origin=https://www.netsurf-browser.org/projects/libparserutils/
+version=0.2.5
+used-in=Web Viewer's engine, /system/enginetest.sxe
+provenance=NetSurf libraries
+text=vendor/netsurf/libparserutils/COPYING

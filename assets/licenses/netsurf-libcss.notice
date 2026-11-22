@@ -1,0 +1,8 @@
+name=NetSurf libcss
+license=MIT
+copyright=Copyright (C) 2007 J-M Bell
+origin=https://www.netsurf-browser.org/projects/libcss/
+version=0.9.2
+used-in=Web Viewer's engine, /system/enginetest.sxe
+provenance=NetSurf libraries
+text=vendor/netsurf/libcss/COPYING

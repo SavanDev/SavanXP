@@ -177,6 +177,26 @@ which is why both go into the registry.
 - Distributed in: `/lib/libffmpeg.so.0.4`, linked in as a static archive by
   `ports/ffmpeg/link.sh`. Built by `ports/ffmpeg/dav1d.sh` with Meson
 
+### NetSurf libraries
+
+- Origin: https://download.netsurf-browser.org/libs/releases/, the release
+  tarballs of libparserutils 0.2.5, libwapcaplet 0.4.3, libhubbub 0.3.8,
+  libdom 0.4.2 and libcss 0.9.2
+- Pinned version: those releases, each tarball's SHA-256 in
+  `vendor/netsurf/NETSURF_RELEASES.txt` (NetSurf publishes no checksums; the
+  hashes are of the archives as downloaded on 2026-11-22)
+- Versioned: yes, `vendor/netsurf/<library>/`, unmodified, without each
+  release's `test/` (and libhubbub's `perf/`, the `.github/` directories);
+  libdom's XML binding stays in the tree but is not built
+- License reviewed: MIT, each library's `COPYING` (J-M Bell, 2007-8; The
+  NetSurf Browser Project, 2009). NetSurf's GPL-2.0-only core is not
+  vendored and not used ([THIRD_PARTY_ADOPTION.md](THIRD_PARTY_ADOPTION.md#netsurf))
+- Decision: `Adopt`
+- Distributed in: static archives built by `cmake/NetSurf.cmake`, linked into
+  `/system/enginetest.sxe` today and into Web Viewer from stage E2
+  ([WEBVIEWER_ENGINE.md](../desktop/WEBVIEWER_ENGINE.md)); notices
+  `assets/licenses/netsurf-*.notice`
+
 ### OpenSSL
 
 - Origin: https://github.com/openssl/openssl, release `openssl-3.5.3`, a 3.5

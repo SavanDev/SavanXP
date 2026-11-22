@@ -1291,6 +1291,13 @@ SCENARIOS: dict[str, Scenario] = {
         host_server="tcp",
         prepare=("./ports/openssl/build.sh",),
     ),
+    "webengine-test": _qemu_scenario(
+        "enginetest",
+        "ENGINE TEST PASS",
+        "ENGINE TEST FAIL",
+        "NetSurf's libraries in a SUN program: HTML to a DOM, styles through libcss",
+        180.0,
+    ),
     "https-unseeded": _qemu_scenario(
         "httpstest unseeded",
         "HTTPS TEST PASS",

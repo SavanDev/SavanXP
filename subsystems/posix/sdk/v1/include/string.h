@@ -2,6 +2,11 @@
 
 #include <stddef.h>
 
+/* As in glibc and musl: a program that asks for BSD or default extensions
+ * finds <strings.h>'s functions here too, and ports rely on it (libcss). */
+#if defined(_DEFAULT_SOURCE) || defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
+#include <strings.h>
+#endif
 
 void* memcpy(void* destination, const void* source, size_t count);
 void* mempcpy(void* destination, const void* source, size_t count);

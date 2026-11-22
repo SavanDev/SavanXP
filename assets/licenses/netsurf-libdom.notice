@@ -1,0 +1,8 @@
+name=NetSurf libdom
+license=MIT
+copyright=Copyright (C) 2007 J-M Bell
+origin=https://www.netsurf-browser.org/projects/libdom/
+version=0.4.2
+used-in=Web Viewer's engine, /system/enginetest.sxe
+provenance=NetSurf libraries
+text=vendor/netsurf/libdom/COPYING

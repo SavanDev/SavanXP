@@ -12,6 +12,11 @@ Cut-off notes:
 
 ### Added
 
+- **Web Viewer's engine libraries** (E1): NetSurf's MIT libparserutils, libwapcaplet, libhubbub, libdom and libcss,
+  pinned and unmodified under `vendor/netsurf/`, built as static archives for SUN and the host, with the libdom/libcss
+  glue in `system/webview/engine/`. Host test and scenario `webengine-test`; Perl and gperf are now build requirements
+  ([WEBVIEWER_ENGINE.md](docs/desktop/WEBVIEWER_ENGINE.md)).
+- **SDK:** `<string.h>` declares `strcasecmp` and `strncasecmp` under `_DEFAULT_SOURCE`, `_BSD_SOURCE` or `_GNU_SOURCE`.
 - **Web Viewer downloads** (D1): an attachment or a type it does not show is saved instead: Save As with the server's
   name, a download worker beside the page's, a `.part` renamed only when whole, and a modeless File Download window with
   size, rate, Cancel and Open Folder while the page stays usable ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#downloads)).
@@ -265,6 +270,9 @@ Cut-off notes:
 
 ### Fixed
 
+- **`malloc` walked every block on each call:** the C runtime's allocator now keeps a list of free blocks, so a heap
+  of many small allocations stays fast; styling a 4000-element DOM in the guest went from 100 s to under a second
+  ([NATIVE_HEAP.md](docs/userland/NATIVE_HEAP.md#what-there-is)).
 - **SXGUI:** a sunken label (a status bar pane) clips its text to its border instead of drawing into the next pane.
 - **SDK:** `gettimeofday` and `clock_gettime(CLOCK_REALTIME)` return the date, not the time since boot.
 - **A SUN program's `.sxmeta` says `SUBSYSTEM` native without a `.sxres` saying so** (`sessiond.sxe` and
