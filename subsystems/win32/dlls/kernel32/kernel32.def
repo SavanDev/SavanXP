@@ -73,6 +73,7 @@ EXPORTS
     QueryPerformanceCounter
     QueryPerformanceFrequency
     RaiseException
+    RtlUnwind=ntdll.RtlUnwind
     SetErrorMode
     SetLastError
     SizeofResource

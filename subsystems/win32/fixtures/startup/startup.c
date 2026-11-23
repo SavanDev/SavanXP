@@ -396,6 +396,8 @@ static int WINAPI WinMain(HINSTANCE instance, HINSTANCE previous, LPSTR command_
 typedef struct registration {
     struct registration *next;
     void *handler;
+    const void *scopes;
+    int level;
 } registration;
 
 void WINAPI start(void) {
@@ -403,6 +405,8 @@ void WINAPI start(void) {
     registration frame;
     __asm__ volatile("movl %%fs:0, %0" : "=r"(frame.next));
     frame.handler = (void *)_except_handler3;
+    frame.scopes = 0;
+    frame.level = -1;
     __asm__ volatile("movl %0, %%fs:0" : : "r"(&frame) : "memory");
 
     __set_app_type(1); /* _CONSOLE_APP: this fixture is a console program */

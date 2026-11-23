@@ -2,6 +2,7 @@ LIBRARY msvcrt.dll
 EXPORTS
     ??1type_info@@UAE@XZ
     ?terminate@@YAXXZ
+    __CxxFrameHandler
     __dllonexit
     __getmainargs
     __p___argc
@@ -16,6 +17,7 @@ EXPORTS
     _c_exit
     _cexit
     _controlfp
+    _CxxThrowException
     _except_handler3
     _exit
     _expand

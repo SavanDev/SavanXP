@@ -1,0 +1,12 @@
+leaf destroyed
+middle destroyed
+outer destroyed
+caught by reference
+catch local destroyed
+payload copied
+caught by value
+nested catch all
+outer catch resumed
+catch copy destroyed
+thrown payload destroyed
+C++ scope resumed

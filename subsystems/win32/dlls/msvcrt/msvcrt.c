@@ -406,29 +406,6 @@ unsigned int __cdecl _controlfp(unsigned int new_value, unsigned int mask) {
     return from_x87(cw);
 }
 
-/* ---- Exceptions ------------------------------------------------------------------- */
-/*
- * The start-up code registers _except_handler3 as its frame's handler, and
- * _XcptFilter is its filter. Nothing delivers an exception to a frame until
- * the S3 slice (docs/roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md): a fault ends
- * the process in the kernel first. Both answer "keep searching", which is
- * what a frame with no matching scope does.
- */
-
-int __cdecl _except_handler3(void *record, void *frame, void *context, void *dispatcher) {
-    (void)record;
-    (void)frame;
-    (void)context;
-    (void)dispatcher;
-    return 1; /* ExceptionContinueSearch */
-}
-
-int __cdecl _XcptFilter(unsigned long code, void *pointers) {
-    (void)code;
-    (void)pointers;
-    return 0; /* EXCEPTION_CONTINUE_SEARCH */
-}
-
 /* ---- Exit ----------------------------------------------------------------------- */
 /*
  * The program's exit functions (_onexit; a C++ program's static destructors)

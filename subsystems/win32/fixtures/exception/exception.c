@@ -1,5 +1,5 @@
 /* Exercises x86 software exceptions without a C runtime. */
-#include <windows.h>
+#include "trace.h"
 
 #define HANDLED_CODE 0xe0421001u
 #define NULL_ARGUMENTS_CODE 0xe0421002u
@@ -12,16 +12,6 @@ typedef struct exception_frame {
     handler function;
 } exception_frame;
 
-/* The PE32 load configuration points at lld-link's SafeSEH table and count. */
-extern const BYTE __safe_se_handler_table[];
-extern const BYTE __safe_se_handler_count[];
-const struct {
-    DWORD size;
-    DWORD reserved[15];
-    const BYTE *handler_table;
-    const BYTE *handler_count;
-} _load_config_used = {72, {0}, __safe_se_handler_table, __safe_se_handler_count};
-
 __asm__(".safeseh _inner\n\t.safeseh _outer");
 
 static void push_frame(exception_frame *frame, handler function) {
@@ -33,15 +23,6 @@ static void push_frame(exception_frame *frame, handler function) {
 static void pop_frame(const exception_frame *frame) {
     __asm__ volatile("movl %0, %%fs:0" : : "r"(frame->next) : "memory");
 }
-
-static void say(const char *text, DWORD length) {
-    DWORD written;
-    if (!WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), text, length, &written, NULL) || written != length) {
-        ExitProcess(1);
-    }
-}
-
-#define SAY(text) say(text "\r\n", sizeof(text "\r\n") - 1u)
 
 static EXCEPTION_DISPOSITION __cdecl inner(EXCEPTION_RECORD *record, void *frame, CONTEXT *context,
                                            void *dispatcher) {
@@ -103,6 +84,7 @@ void WINAPI start(void) {
 }
 
 void WINAPI uncaught(void) {
+    SetErrorMode(SEM_NOGPFAULTERRORBOX);
     RaiseException(UNCAUGHT_CODE, EXCEPTION_NONCONTINUABLE, 0, NULL);
     ExitProcess(6);
 }

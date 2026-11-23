@@ -1,0 +1,11 @@
+inner filter searched
+outer filter entered
+inner filter searched nested exception
+nested exception continued
+outer filter resumed
+inner finally unwound
+local finally unwound
+outer handler ran
+SEH scope resumed
+explicit unwind called inner handler
+explicit unwind resumed at target registration

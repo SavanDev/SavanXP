@@ -1,7 +1,7 @@
 # Windows XP WordPad on SSW — the second Win32 profile
 
-> **Status: planned (2026-11-21); WP1 complete (2026-11-21): the user's
-> WordPad loads and starts up to its first window.** This is the plan of
+> **Status: WP1 and WP2 complete (2026-11-23). WordPad starts up to its
+> first window, and SSW handles x86 software exceptions.** This is the plan of
 > [W7](WIN32_SUBSYSTEM_ROADMAP.md#w7--later-profiles)'s first named profile.
 > Its inventory, the W0 record taken before any code, is
 > [WIN32_WORDPAD_PROFILE.md](../../userland/WIN32_WORDPAD_PROFILE.md); every
@@ -256,11 +256,12 @@ catches ends the process with Windows XP's status.
 through three frames with objects to destroy, an uncaught one) writes the
 same bytes on Windows XP, in the harness and on SavanXP.
 
-**Started.** `RaiseException` dispatches to x86 registrations with SafeSEH
-checks, and `exception.exe` and `sehfail.exe` exercise continuation and
-an uncaught software exception. The remaining work is `RtlUnwind`, filters
-and termination handlers in `_except_handler3`, nested exception dispatch,
-and the C++ exception runtime. See [WIN32.md](../../userland/WIN32.md#software-exceptions).
+**Done (2026-11-23).** `sehscope.exe` exercises nested filters, termination
+handlers and `RtlUnwind`. `cxxthrow.exe` exercises destructors across three
+frames, catches by reference and by value, `catch (...)` and a rethrow.
+Both match Windows XP byte for byte in the harness and on SavanXP.
+`sehfail.exe` preserves the exception code. `cxxfail.exe` reproduces the
+Windows XP CRT's termination status 3. See [WIN32.md](../../userland/WIN32.md#software-exceptions).
 
 ### WP3 — a second thread
 

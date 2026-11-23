@@ -6,9 +6,10 @@ the subsystem's name. Its source tree keeps the API's name
 (`subsystems/win32/`), its code the `sxw_` prefix, and its host program is
 `winhost`.
 
-> **Status: W6 complete (2026-11-13); WordPad's WP1 complete (2026-11-21):
-> the user's Windows XP WordPad and its MFC load and start up to their first
-> window ([WordPad](#wordpad)).** This document describes what exists
+> **Status: W6 complete (2026-11-13). WordPad's WP2 complete (2026-11-23).**
+> The user's Windows XP [WordPad](#wordpad) and its MFC load and start up
+> to their first window. SSW handles [software exceptions](#software-exceptions).
+> This document describes what exists
 > under `subsystems/win32/`. The plan, the phases and the reasons behind them
 > are in the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the
 > API surface of the first profile is in
@@ -303,8 +304,8 @@ debug output says which of those a run reached.
   every non-null pointer in its range. `_controlfp` maps its bits onto the
   x87 control word and back. `_adjust_fdiv` is 0.
 - **Exceptions.** [`RaiseException`](#software-exceptions) walks the guest's
-  x86 frame chain and can resume execution. `_except_handler3` and
-  `_XcptFilter` answer "continue the search".
+  x86 frame chain. `RtlUnwind`, `_except_handler3` and `__CxxFrameHandler`
+  run the termination and cleanup code compiled into those frames.
 - **The Unicode start-up.** `_wcmdln` is the command line as UTF-16, made
   with `_acmdln`; `__wgetmainargs` splits it by the same rules as
   `__getmainargs` and keeps argc and argv for `__p___argc` and `__p___wargv`,
@@ -697,6 +698,9 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `hello.exe` | An imported `GetStdHandle` and `WriteFile`; `ExitProcess` | `Hello from a PE32 executable.\r\n`, status 42 |
 | `exception.exe` | `RaiseException` visits two SafeSEH-listed registrations from inner to outer, passes the exception arguments and x86 context, and resumes when the outer handler asks to continue | `expected/exception.out`, status 0 |
 | `sehfail.exe` | An uncaught noncontinuable software exception | No output, status `0xE0421003` |
+| `sehscope.exe` | x86 `__except` filters that search, continue a nested exception, or select a handler, `__finally` in two frames, and explicit `RtlUnwind` to a target registration | `expected/sehscope.out`, status 0 |
+| `cxxthrow.exe` | A throw across three frames with destructors, catch by reference and by value, a rethrow, `catch (...)` inside another catch, and destruction of the caught copy and original exception object | `expected/cxxthrow.out`, status 0 |
+| `cxxfail.exe` | An uncaught C++ exception | No output, CRT termination status 3 |
 | `initorder.exe` | Imports from `alpha.dll` and `beta.dll`, which share a preferred base so one is relocated; `alpha.dll` imports from `beta.dll`; static TLS with two callbacks and no C runtime | The attach and detach order below, status 7 |
 | `missingdll.exe` | An import from a DLL that is not installed | No output, status `0xC0000135` |
 | `missingsym.exe` | An import `kernel32.dll` does not export | No output, status `0xC0000139` |
@@ -929,8 +933,25 @@ SafeSEH table when the image supplies one. The guest calls the handler.
 flags, instruction pointer, and stack pointer. A request to continue a
 noncontinuable exception raises `EXCEPTION_NONCONTINUABLE_EXCEPTION`.
 An uncaught software exception ends the guest with its full 32-bit status.
-Stack unwinding, nested software exceptions and the C and C++ exception
-runtimes are later work in WP2. Hardware faults stay in the kernel (S3).
+The dispatcher registers a guard for each handler call. An exception raised
+inside a handler can search the enclosing registrations with the nested
+call flag set. The unwind walk uses the same guards to identify an unwind
+interrupted by another unwind.
+
+`RtlUnwind` runs each younger handler with `EXCEPTION_UNWINDING` and
+removes its registration. The target registration stays at `fs:[0]`.
+The requested return value is in the unwind context's EAX. `_except_handler3`
+uses compiler scope tables to run filters and `__finally` blocks before
+entering a selected `__except` body. `_XcptFilter` continues the search.
+
+`_CxxThrowException` raises a noncontinuable software exception with the
+thrown object and its type descriptor. `__CxxFrameHandler` reads the classic
+Microsoft x86 exception tables used by WordPad and MFC. It finds typed
+catches, adjusts or copies their arguments, and calls cleanup funclets on
+the way to a catch. The active catch's registration keeps the exception
+object alive for `throw;` and destroys it when the last catch finishes.
+The CRT terminates an uncaught C++ exception with status 3, as on XP.
+Hardware faults stay in the kernel (S3).
 
 ## WordPad
 

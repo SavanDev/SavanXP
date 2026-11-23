@@ -93,7 +93,7 @@ set(SXW_CFLAGS
 set(SXW_LINKFLAGS /nodefaultlib /machine:x86 /Brepro)
 set(SXW_ALL_OUTPUTS "")
 
-# sxw_object(<var> <source>): compile one C file; <var> receives the object.
+# sxw_object(<var> <source> [flags...]): compile one source file.
 function(sxw_object var source)
     file(RELATIVE_PATH rel "${SAVANXP_WIN32_ROOT}" "${source}")
     string(REPLACE "/" "_" stem "${rel}")
@@ -105,8 +105,12 @@ function(sxw_object var source)
         return()
     endif()
     set_property(GLOBAL APPEND PROPERTY SXW_OBJECTS "${obj}")
+    set(compiler "${CMAKE_C_COMPILER}")
+    if(source MATCHES "\\.cpp$")
+        set(compiler "${CMAKE_CXX_COMPILER}")
+    endif()
     add_custom_command(OUTPUT "${obj}"
-        COMMAND "${CMAKE_C_COMPILER}" ${SXW_CFLAGS} -MD -MF "${obj}.d" -c "${source}" -o "${obj}"
+        COMMAND "${compiler}" ${SXW_CFLAGS} ${ARGN} -MD -MF "${obj}.d" -c "${source}" -o "${obj}"
         DEPENDS "${source}"
         DEPFILE "${obj}.d"
         COMMENT "Compiling ${rel} (PE32)"
@@ -115,12 +119,13 @@ endfunction()
 
 # sxw_image(NAME <file> KIND dll|exe DIR <dir> SOURCES ... [DEF <def>]
 #           [LIBS <names>...] [BASE <addr>] [ENTRY <symbol>] [SUBSYSTEM console|windows]
-#           [RC <script> RC_DEPENDS <files>... RC_INCLUDE <dir>])
+#           [FLAGS ...] [SAFESEH] [RC <script> RC_DEPENDS <files>... RC_INCLUDE <dir>])
 # LIBS name import libraries made by earlier sxw_image calls (without .lib).
 # RC compiles a resource script with llvm-rc, looking for the files it names
 # in RC_INCLUDE.
 function(sxw_image)
-    cmake_parse_arguments(A "" "NAME;KIND;DIR;DEF;BASE;ENTRY;SUBSYSTEM;RC;RC_INCLUDE" "SOURCES;LIBS;RC_DEPENDS"
+    cmake_parse_arguments(A "SAFESEH" "NAME;KIND;DIR;DEF;BASE;ENTRY;SUBSYSTEM;RC;RC_INCLUDE"
+        "SOURCES;LIBS;FLAGS;RC_DEPENDS"
         ${ARGN})
     set(objects "")
     if(A_RC)
@@ -134,7 +139,7 @@ function(sxw_image)
         list(APPEND objects "${res}")
     endif()
     foreach(source IN LISTS A_SOURCES)
-        sxw_object(obj "${source}")
+        sxw_object(obj "${source}" ${A_FLAGS})
         list(APPEND objects "${obj}")
     endforeach()
     set(libs "")
@@ -145,6 +150,11 @@ function(sxw_image)
         set(A_SUBSYSTEM windows)
     endif()
     set(flags ${SXW_LINKFLAGS} "/subsystem:${A_SUBSYSTEM},5.01" "/out:${A_DIR}/${A_NAME}")
+    if(A_SAFESEH)
+        sxw_object(load_config "${SAVANXP_WIN32_ROOT}/dlls/common/safeseh.c")
+        list(APPEND objects "${load_config}")
+        list(APPEND flags /safeseh)
+    endif()
     if(A_ENTRY)
         list(APPEND flags "/entry:${A_ENTRY}")
     elseif(A_KIND STREQUAL "dll")
@@ -195,8 +205,9 @@ foreach(stem kernel32 msvcrt advapi32 gdi32 user32 shell32 ole32 comdlg32 shlwap
 endforeach()
 
 # The DLL set. Bases are Windows XP's, so nothing of ours relocates.
-sxw_image(NAME ntdll.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c900000
-    SOURCES "${SXW_DLLS}/ntdll/ntdll.c" "${SXW_DLLS}/ntdll/exception.c" "${SXW_DLLS}/common/memory.c"
+sxw_image(NAME ntdll.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c900000 SAFESEH
+    SOURCES "${SXW_DLLS}/ntdll/ntdll.c" "${SXW_DLLS}/ntdll/exception.c"
+            "${SXW_DLLS}/common/memory.c"
     DEF "${SXW_DLLS}/ntdll/ntdll.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c800000
     SOURCES "${SXW_DLLS}/kernel32/kernel32.c" "${SXW_DLLS}/kernel32/memory.c" "${SXW_DLLS}/kernel32/system.c"
@@ -204,9 +215,10 @@ sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c800000
             "${SXW_DLLS}/common/resource.c"
             ${SXW_kernel32_DECLARED}
     DEF "${SXW_kernel32_DEF}" LIBS ntdll)
-sxw_image(NAME msvcrt.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77c10000 ENTRY DllMain
+sxw_image(NAME msvcrt.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77c10000 ENTRY DllMain SAFESEH
     SOURCES "${SXW_DLLS}/msvcrt/msvcrt.c" "${SXW_DLLS}/msvcrt/memory.c" "${SXW_DLLS}/msvcrt/wstring.c"
             "${SXW_DLLS}/msvcrt/math.c" "${SXW_DLLS}/msvcrt/wprintf.c" "${SXW_DLLS}/common/wformat.c"
+            "${SXW_DLLS}/msvcrt/exception.c" "${SXW_DLLS}/msvcrt/cxxexception.c"
             "${SXW_DLLS}/common/codepage.c" ${SXW_msvcrt_DECLARED}
     DEF "${SXW_msvcrt_DEF}" LIBS kernel32 ntdll)
 sxw_image(NAME advapi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77dd0000
@@ -239,10 +251,19 @@ sxw_image(NAME shlwapi.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f60000
 # share a base; missingdll.exe and missingsym.exe, whose loads must fail.
 sxw_image(NAME hello.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/hello/hello.c" LIBS kernel32)
-sxw_image(NAME exception.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+sxw_image(NAME exception.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start SAFESEH
     SOURCES "${SXW_FX}/exception/exception.c" LIBS kernel32)
-sxw_image(NAME sehfail.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY uncaught
+sxw_image(NAME sehfail.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY uncaught SAFESEH
     SOURCES "${SXW_FX}/exception/exception.c" LIBS kernel32)
+sxw_image(NAME sehscope.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start SAFESEH
+    SOURCES "${SXW_FX}/exception/sehscope.c"
+    FLAGS -fms-extensions -fexceptions -fno-omit-frame-pointer LIBS kernel32 msvcrt)
+sxw_image(NAME cxxthrow.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start SAFESEH
+    SOURCES "${SXW_FX}/exception/cxxthrow.cpp"
+    FLAGS -std=c++17 -fexceptions -fcxx-exceptions LIBS kernel32 msvcrt)
+sxw_image(NAME cxxfail.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY uncaught SAFESEH
+    SOURCES "${SXW_FX}/exception/cxxthrow.cpp"
+    FLAGS -std=c++17 -fexceptions -fcxx-exceptions LIBS kernel32 msvcrt)
 sxw_image(NAME beta.dll KIND dll DIR "${SXW_FIXTURES}" BASE 0x10000000 ENTRY DllMain
     SOURCES "${SXW_FX}/initorder/beta.c" DEF "${SXW_FX}/initorder/beta.def" LIBS kernel32)
 sxw_image(NAME alpha.dll KIND dll DIR "${SXW_FIXTURES}" BASE 0x10000000 ENTRY DllMain
@@ -312,6 +333,7 @@ if(SAVANXP_INCLUDE_TEST_APPS)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${SXW_FIXTURES}/hello.exe" "${SXW_FIXTURES}/initorder.exe"
                 "${SXW_FIXTURES}/exception.exe" "${SXW_FIXTURES}/sehfail.exe"
+                "${SXW_FIXTURES}/sehscope.exe" "${SXW_FIXTURES}/cxxthrow.exe" "${SXW_FIXTURES}/cxxfail.exe"
                 "${SXW_FIXTURES}/alpha.dll" "${SXW_FIXTURES}/beta.dll"
                 "${SXW_FIXTURES}/missingdll.exe" "${SXW_FIXTURES}/missingsym.exe"
                 "${SXW_FIXTURES}/startup.exe" "${SXW_FIXTURES}/window.exe" "${SXW_FIXTURES}/cards.exe"
