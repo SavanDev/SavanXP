@@ -4,8 +4,8 @@ NetSurf's MIT libraries are vendored, built and proven here. They read HTML
 into a DOM and compute CSS styles; Web Viewer's own layout, paint and,
 later, scripting go on top. This is stage E1 of
 [WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md#e1--the-libraries-build).
-Web Viewer itself does not use them yet: E2 moves its document onto libdom,
-and E3 moves its styles onto libcss.
+Since E2, Web Viewer links libdom and libhubbub and walks the document they
+produce. E3 will integrate libcss into the rendering path.
 
 ## What is vendored
 
@@ -102,7 +102,8 @@ library, so the same source builds into SUN programs and the host test.
 - **`webengine_parse_html`** parses a whole document through the hubbub
   binding. When a `<meta charset>` changes the encoding partway through, the
   parse starts again once in that encoding, as HTML's "change the encoding"
-  step does.
+  step does. Unlabelled documents with valid non-ASCII UTF-8 keep their UTF-8
+  text.
 - **`webengine_stylesheet`** turns one piece of CSS text into a sheet, either
   an author sheet or the body of a `style=""` attribute. `@import` is not
   followed yet. Relative URLs stay as written until E3 resolves them with

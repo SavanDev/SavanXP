@@ -12,6 +12,8 @@ Cut-off notes:
 
 ### Added
 
+- **Web Viewer opens large HTML documents** (E2). HTML is parsed through libhubbub and libdom. The old 32 KiB,
+  256-paragraph and 64-link limits are gone for local files and remote pages, including links at the end of a document.
 - **Win32 handles x86 software exceptions** (WordPad WP2). `RaiseException` checks SafeSEH and supports continuing
   execution or searching older frames. `RtlUnwind` runs `__finally` blocks and C++ destructors, and `msvcrt` supports
   typed catches, `catch (...)` and rethrows. See [WIN32.md](docs/userland/WIN32.md#software-exceptions).

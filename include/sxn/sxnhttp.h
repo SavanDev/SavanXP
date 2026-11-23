@@ -85,7 +85,7 @@ struct sxnhttp_request
     /* Optional: the body goes here instead of response->body (which may then
      * be 0), in the pieces it is decoded in, for as long as it runs. 0 goes
      * on; a negative value stops the load, and sxnhttp_get returns
-     * SXNHTTP_ERROR_SINK. With a sink, total_ms counts only until the head
+     * SXNHTTP_ERROR_SINK. By default, total_ms counts only until the head
      * is read: a download's body takes as long as it takes, and idle_ms
      * still holds between two reads. A body cut short is
      * SXNHTTP_ERROR_TRUNCATED, as without a sink: the sink has seen a
@@ -95,6 +95,8 @@ struct sxnhttp_request
      * as PEM in memory. For tests, whose CA must never be installed. */
     const char *trust_pem;
     size_t trust_pem_length;
+    /* Keep the navigation's total_ms budget for a body delivered to a sink. */
+    int sink_keep_total;
 };
 
 /* The response's flags. */

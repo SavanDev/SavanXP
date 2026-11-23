@@ -8,6 +8,7 @@ out. It is the page Stop and background loading are tried on. Three more
 answer the N4 steps: /chunked.html, a page sent chunked in small pieces with
 pauses; /contradictory, a Content-Length and chunking together; and
 /truncated, a Content-Length the body never reaches before the close.
+The E2 page has over 32 KiB and more than 1024 linked paragraphs.
 The D1 steps download: /blob-attachment (tools/http_fixture.py's 3 MiB blob,
 as an attachment, its SHA-256 known to the scenario); /slow.bin, /cancel.bin
 and /close.bin, DOWNLOAD_SLOW_SIZE bytes of it in forty pieces a second
@@ -52,6 +53,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             return
+        self._send_html(body)
+
+    def _send_html(self, body):
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(body)))
@@ -63,6 +67,11 @@ class Handler(BaseHTTPRequestHandler):
         # The viewer under test asks HTTP/1.0; answer 1.0 with close so no
         # chunked body is ever needed.
         target = self.path.split("?", 1)[0]
+        if target == "/large.html":
+            self._send_html(b"<!doctype html><h1>Large document</h1>\n" +
+                            b"<p><a href=second.html>Another linked paragraph</a>\n" * 1100 +
+                            b"<p>Last paragraph &amp; <a href=second.html>Last link</a>\n")
+            return
         if target == "/chunked.html":
             # Status line, headers, chunk sizes and CRLFs all split across
             # writes, so the page only renders if the client reassembles.

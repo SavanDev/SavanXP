@@ -71,7 +71,7 @@ Nothing is guessed: a response that could be read two ways fails, because a
 guess is how request smuggling and silently short pages happen. Bare LF line
 ends are accepted, as old servers write them.
 
-**The body cap is the caller's buffer** (Web Viewer passes its 32 KiB). A body
+**When the caller provides a fixed buffer, its size caps the body.** A body
 that does not fit stops the read there, keeps what fits, and the response
 says `SXNHTTP_RESPONSE_CUT`. That is a deliberate limit, told apart from a
 truncation, which is the server's failure.
@@ -97,9 +97,10 @@ request.sink = on_bytes; /* long on_bytes(void *user, const unsigned char *bytes
   `SXNHTTP_ERROR_SINK`. The framing rules do not change: a body cut short is
   `TRUNCATED` after the sink has seen a prefix, so a caller writing a file
   writes it aside and keeps it only on success.
-- **Budgets.** With a sink, `total_ms` holds until the head is read and not
-  after: a download's body takes as long as it takes, and the idle budget
-  still holds between two reads. Without one, the total holds to the end.
+- **Budgets.** The idle budget applies between reads. By default, a sink has
+  the total budget through the head and can keep reading the body afterward.
+  Set `sink_keep_total` to apply the total budget through the end of the body,
+  as the buffered mode does. Web Viewer sets it for pages.
 
 A redirect's body is never read; the next hop starts as soon as its head is.
 

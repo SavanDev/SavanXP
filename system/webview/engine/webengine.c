@@ -1,10 +1,9 @@
-/* Web Viewer's engine glue: parsing, stylesheets and the style walk
+/* Web Viewer's engine glue: stylesheets and the style walk
  * (webengine.h). Written from libdom's, libhubbub's and libcss' headers and
  * libcss' docs/API. */
 
 #include "webengine.h"
 
-#include <dom/bindings/hubbub/parser.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,71 +16,6 @@ int webengine_init(void) {
 
 void webengine_fini(void) {
     webengine_select_fini();
-}
-
-/* --- Parsing ------------------------------------------------------------------ */
-
-/* One pass of the parser over the whole input. ENCODINGCHANGE when a <meta
- * charset> names another encoding than the one parsing started in; `found`
- * then holds it. */
-static dom_hubbub_error parse_once(const uint8_t *data, size_t length, const char *charset,
-                                   dom_document **document, char *found, size_t found_capacity) {
-    dom_hubbub_parser_params params = {
-        .enc = charset,
-        .fix_enc = charset != NULL,
-        .enable_script = false,
-    };
-    dom_hubbub_parser *parser = NULL;
-    *document = NULL;
-    dom_hubbub_error error = dom_hubbub_parser_create(&params, &parser, document);
-    if (error != DOM_HUBBUB_OK) {
-        return error;
-    }
-    error = dom_hubbub_parser_parse_chunk(parser, data, length);
-    if (error == DOM_HUBBUB_OK) {
-        error = dom_hubbub_parser_completed(parser);
-    }
-    if ((error == DOM_HUBBUB_OK || error == DOM_HUBBUB_HUBBUB_ERR_ENCODINGCHANGE) && found != NULL &&
-        found_capacity > 0) {
-        dom_hubbub_encoding_source source;
-        const char *name = dom_hubbub_parser_get_encoding(parser, &source);
-        size_t name_length = name != NULL ? strlen(name) : 0;
-        if (name_length >= found_capacity) {
-            name_length = found_capacity - 1;
-        }
-        memcpy(found, name != NULL ? name : "", name_length);
-        found[name_length] = '\0';
-    }
-    dom_hubbub_parser_destroy(parser);
-    if (error != DOM_HUBBUB_OK) {
-        dom_node_unref(*document);
-        *document = NULL;
-    }
-    return error;
-}
-
-dom_document *webengine_parse_html(const uint8_t *data, size_t length, const char *charset,
-                                   char *encoding, size_t encoding_capacity) {
-    char found[64];
-    dom_document *document = NULL;
-    dom_hubbub_error error = parse_once(data, length, charset, &document, found, sizeof found);
-    /* HTML's "change the encoding": start again, once, in the encoding the
-     * <meta> named, and keep to it. */
-    if (error == DOM_HUBBUB_HUBBUB_ERR_ENCODINGCHANGE && charset == NULL) {
-        error = parse_once(data, length, found, &document, found, sizeof found);
-    }
-    if (error != DOM_HUBBUB_OK) {
-        return NULL;
-    }
-    if (encoding != NULL && encoding_capacity > 0) {
-        size_t found_length = strlen(found);
-        if (found_length >= encoding_capacity) {
-            found_length = encoding_capacity - 1;
-        }
-        memcpy(encoding, found, found_length);
-        encoding[found_length] = '\0';
-    }
-    return document;
 }
 
 /* --- Stylesheets ----------------------------------------------------------- */

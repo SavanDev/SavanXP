@@ -1,14 +1,12 @@
 # Web Viewer: the native browser
 
-> **Status as of 2026-11-22: the network stages N1–N5, D1 (downloads) and
-> E1 (the engine libraries build) have landed.** Web Viewer runs as
+> **Status as of 2026-11-23: N1–N5, D1, E1 and E2 are implemented.** Web Viewer runs as
 > `/system/webview.sxe`, resolves through SUN's `sxndns`, loads on a
 > per-window network worker through SUN's `sxnhttp`, opens validated
 > `https://`, and saves what it does not show in a download window of its
-> own. NetSurf's MIT libraries are vendored and build for SUN and the host
-> ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md)), and Web Viewer
-> does not use them yet. One D1 check waits for a machine with a network
-> (below). The next stage is E2.
+> own. It reads HTML through libhubbub and libdom
+> ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md)) and builds its
+> paragraphs and runs from the DOM. The next engine stage is E3.
 
 ## Direction
 
@@ -110,7 +108,7 @@ The record of what was delivered; the checkpoints below hold the evidence.
 | N4 — Shared HTTP | Correct responses render independently of header, chunk and TCP fragmentation; contradictory framing and truncated bodies fail explicitly. |
 | N5 — Validated HTTPS | Valid certificates work; expired, self-signed, wrong-name and invalid-chain certificates are rejected, without a bypass. |
 
-## Next: D1 — downloads
+## D1 — downloads
 
 The IE role. Anything Web Viewer does not show, and anything the server marks
 as an attachment, is saved to disk instead of failing or being cut at 32 KiB.
@@ -152,9 +150,12 @@ as an attachment, is saved to disk instead of failing or being cut at 32 KiB.
   SUN's `sxn_delete_path`. The visual scenario checks it, the disk read back
   on the host.
 
-**Still open:** downloading a real browser's package needs a machine with a
-network, which the development host does not have. The POSIX frame's modeless
-windows and the POSIX HTTP library's streaming are pending parity work.
+**External download check, 2026-11-23.** QEMU user networking (slirp), the
+default in `./build.sh run`, let Web Viewer save Firefox 128.0 for Linux i686
+over HTTPS. The 87,805,303-byte archive extracted from the guest disk matched
+[Mozilla's SHA-256 manifest](https://archive.mozilla.org/pub/firefox/releases/128.0/SHA256SUMS).
+The POSIX frame's modeless windows and the POSIX HTTP library's streaming are
+pending parity work.
 
 **Done when:** a multi-megabyte binary, with and without `Content-Length`,
 chunked, and as an attachment, arrives byte-exact over HTTP and validated
@@ -199,6 +200,10 @@ parser. The rendering does not change yet. The 32 KiB, 256-paragraph and
 
 **Done when:** the `webview` shoot scenario passes unchanged, and a page
 larger than 32 KiB opens whole.
+
+**Implemented 2026-11-23.** Local and remote pages grow in memory, and the
+visual scenario exercises a page larger than 32 KiB and follows its last
+link after 1100 linked paragraphs.
 
 ### E3 — styles through libcss
 

@@ -3449,6 +3449,25 @@ def scenario_webview_http(s):
         file_url = s.shot("webview-sun-file-url")
         expect_text(file_url, (0, 0, *file_url.size), "Going further", TEXT, FIELD,
                     "SUN file URL", which="title")
+        s.qmp.tap("tab", pause=1.0)
+        s.qmp.chord("ctrl", "a")
+        type_http_url(s, hostport, "/large.html")
+        s.qmp.tap("ret", pause=6.0)
+        large = s.shot("webview-e2-large")
+        expect_text(large, (0, 0, *large.size), "Large document", TEXT, FIELD,
+                    "the large HTML document opened", which="title", solid_only=True)
+        s.qmp.tap("end", pause=2.0)
+        last = s.shot("webview-e2-last-link")
+        expect_text(last, (0, 0, *last.size), "Last paragraph &", TEXT, FIELD,
+                    "the DOM decoded the entity at the end of the large document", solid_only=True)
+        target = expect_text(last, (0, 0, *last.size), "Last link", LINK, FIELD,
+                             "the link after 1100 paragraphs", solid_only=True)
+        s.qmp.move_to(target[0] + 4, target[1] + 4)
+        s.qmp.click()
+        time.sleep(5.0)
+        followed = s.shot("webview-e2-followed")
+        expect_text(followed, (0, 0, *followed.size), "Second page", TEXT, FIELD,
+                    "the last link navigated", which="title", solid_only=True)
         check_downloads_on_disk()
     finally:
         if tls is not None:

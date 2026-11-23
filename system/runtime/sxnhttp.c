@@ -444,8 +444,9 @@ static long exchange(struct sxnhttp_client *client, const struct sxnhttp_request
     while (result == 0)
     {
         unsigned char buffer[4096];
-        /* A download's body is not held to the navigation's total. */
-        const uint64_t limit = request->sink != 0 && delivery->reported ? UINT64_MAX : total_deadline;
+        /* Downloads can keep reading after the navigation's total budget. */
+        const uint64_t limit = request->sink != 0 && !request->sink_keep_total && delivery->reported
+            ? UINT64_MAX : total_deadline;
         long got = link_receive(&link, buffer, sizeof(buffer), earlier(sxn_clock_ns() + idle_ns, limit));
 
         if (got == 0)

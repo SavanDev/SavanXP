@@ -298,6 +298,12 @@ static void check_errors(struct checker *checker) {
     }
     CHECK(webengine_check_page((const uint8_t *)"", 0, "", &elements) == 0 && elements == 3,
           "an empty page is html, head and body");
+
+    static const char utf8_html[] = "<p>Espa\xc3\xb1" "a";
+    dom_document *document = webengine_parse_html((const uint8_t *)utf8_html, sizeof utf8_html - 1,
+                                                  NULL, NULL, 0);
+    CHECK(document != NULL && contains(document, "Espa\xc3\xb1" "a"), "unlabelled UTF-8 is preserved");
+    dom_node_unref(document);
 }
 
 int webengine_selftest(webengine_report report, void *user) {

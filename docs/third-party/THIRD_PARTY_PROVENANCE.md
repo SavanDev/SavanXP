@@ -193,7 +193,7 @@ which is why both go into the registry.
   vendored and not used ([THIRD_PARTY_ADOPTION.md](THIRD_PARTY_ADOPTION.md#netsurf))
 - Decision: `Adopt`
 - Distributed in: static archives built by `cmake/NetSurf.cmake`, linked into
-  `/system/enginetest.sxe` today and into Web Viewer from stage E2
+  `/system/enginetest.sxe`. Web Viewer links the HTML libraries from E2
   ([WEBVIEWER_ENGINE.md](../desktop/WEBVIEWER_ENGINE.md)); notices
   `assets/licenses/netsurf-*.notice`
 

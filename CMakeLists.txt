@@ -973,6 +973,7 @@ add_test(NAME sxnhttp-message-test COMMAND savanxp-sxnhttp-message-test)
 # the corpus parsed and styled.
 add_executable(savanxp-webengine-test
     system/webview/engine/webengine.c
+    system/webview/engine/webengine_html.c
     system/webview/engine/webengine_select.c
     system/webview/engine/webengine_selftest.c
     tests/host/webengine_test.c)

@@ -159,13 +159,14 @@ savanxp_program(NAME linuxtest TEST NATIVE SOURCES subsystems/linux/tests/linuxt
 # fixtures through winhost and compares their output with Windows XP's.
 savanxp_program(NAME win32test TEST NATIVE SOURCES subsystems/win32/tests/win32test.c)
 
-# Web Viewer retains its renderer while moving to the native application frame.
+# Web Viewer parses HTML through libdom and hubbub and paints with SXGUI.
 # It opens https:// through sxnhttp's TLS (system/runtime/sxnhttp_tls.c) and
 # the OpenSSL port, so it is built only when the port is (ports/openssl); the
 # registry drops it otherwise.
 if(SAVANXP_HAVE_OPENSSL)
-    savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libssl libcrypto
-        SOURCES webview.c download.c SHARED_SOURCES system/runtime/sxnhttp_tls.c)
+    savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libssl libcrypto netsurf_dom
+        SOURCES webview.c download.c engine/webengine_html.c SHARED_SOURCES system/runtime/sxnhttp_tls.c)
+    add_dependencies(webview netsurf_symbols)
 endif()
 
 # Native image viewer over the common memory-only decoder.

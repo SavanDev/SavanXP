@@ -2,8 +2,8 @@
 
 > Web Viewer runs on SUN as `/system/webview.sxe` (N1), loads remote pages on a
 > network worker with Stop (N3) through SUN's HTTP loader (N4), over validated
-> HTTPS (N5), and saves what it does not show (D1). Next is an engine grown on
-> NetSurf's MIT libraries with Web Viewer's own layout (E1–E7). See the
+> HTTPS (N5), and saves what it does not show (D1). It parses HTML through
+> libhubbub and libdom (E2). Computed CSS styles are next (E3). See the
 > [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 >
 > It is built only when the OpenSSL port is (`ports/openssl/build.sh`, then
@@ -11,9 +11,10 @@
 > drops it.
 
 `/system/webview.sxe` ("Web Viewer", also launched as `webview`) is the in-tree
-browser prototype, in the spirit of IE 1.1: chrome (address bar, Back/Forward
-history, menus), local files and HTTP fetching by name or IP, and the rendering
-pipeline `parse → cascade → wrap → paint` in `system/webview/webview.c`.
+browser prototype, in the spirit of IE 1.1, with an address bar, history, menus,
+local files and HTTP fetching by name or IP. libhubbub builds a libdom tree.
+Web Viewer walks it into paragraphs and inline runs, then applies its tag-rule
+cascade, wraps the text and paints it.
 
 This document pins what it renders and what it openly ignores, so later
 milestones extend a contract instead of rediscovering it.
@@ -30,8 +31,8 @@ etched lines as in Files:
   do not fit a narrow window are hidden, not squeezed.
 - **Address bar**: the `Address` label, the field and Go.
 - **The page**, and under it the **status bar**: the status line and a
-  progress pane the worker fills (resolving, connecting, waiting, then the
-  bytes received against the 32 KiB a page may take).
+  progress pane the worker fills while it resolves, connects and waits. When
+  the response has a Content-Length, the progress bar tracks the bytes received.
 
 One function (`webview_refresh_commands`) enables the toolbar and the menus,
 so a grey button and a grey menu item never disagree: Stop only while a page
@@ -76,8 +77,8 @@ resolver, its sockets and a body buffer of its own:
   the window set the worker's cancel event, which every wait of the worker
   checks first: DNS, connect, write and read. Stop is the toolbar's Stop,
   Esc, and View > Stop.
-- A failed or stopped load keeps the page on screen: the body lands in the
-  worker's buffer and is copied into the document only on success. The address
+- A failed or stopped load keeps the page on screen. The worker transfers
+  ownership of the complete body through the result mailbox. The address
   bar goes back to that page, unless the person is typing in it.
 - The status line follows the worker: `Resolving <host>...`, `Connecting to
   <host>...`, `Waiting for <host>...`. History moves (a push, or Back/Forward's
@@ -93,8 +94,8 @@ thirty for the whole navigation. What Web Viewer adds:
   contradictory framing, a body cut short or a malformed head is a failure,
   never a short page.
 - A status other than 200 renders its page with `(HTTP <status>)` after the
-  title in the status bar; a page past 32 KiB renders its first 32 KiB with
-  `(first 32 KB)`.
+  title in the status bar. Web Viewer accumulates the response through
+  `sxnhttp`'s body sink and keeps the 30-second navigation budget.
 - `text/plain` is shown line by line, as the source view shows HTML.
 - Redirects go only to other `http://` or `https://` URLs: one to `file://` is
   refused (an http page could otherwise open local files), and so is one from
@@ -187,9 +188,10 @@ server empties the window's DNS cache.
 
 ## What it is not (yet)
 
-No images (an `[image]` marker), tables
-degrade to stacked lines, fragments reload the page top, documents cap at 32 KiB / 256 paragraphs / 64 links / 256 runs / 32 rules /
-4 KiB of CSS. Errors say which of these bit.
+Images use an `[image]` marker, tables stack their cells, and fragments reload
+the page top. The tag-rule cascade holds up to 32 rules until E3. The raw
+document, paragraphs, runs and links grow with the page. View Source keeps the
+original bytes, and long lines wrap in both views.
 
 ## Verification
 
@@ -225,7 +227,8 @@ file nor a `.part`.
 
 The visual scenario also launches `webview --dns HOST:PORT URL`, checks F5,
 launches `/system/webview.sxe /system/samples/welcome.html`, and opens a
-`file://` URL.
+`file://` URL. Its E2 page exceeds 32 KiB and 1100 paragraphs. The scenario
+scrolls to the end, checks a decoded HTML entity and follows the last link.
 The SUN socket contract is checked by `smoke native-network` and
 `smoke native-network-offline`, including pending ARP, cancellation,
 initialization without a NIC, route timeout and TCP refusal/reset/retry errors.

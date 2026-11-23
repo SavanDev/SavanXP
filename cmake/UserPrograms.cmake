@@ -249,6 +249,7 @@ endif()
 savanxp_program(NAME enginetest TEST NATIVE DEPENDS netsurf_css netsurf_dom LINK_PROFILE PIE
     SOURCES system/webview/engine/enginetest.c
             system/webview/engine/webengine.c
+            system/webview/engine/webengine_html.c
             system/webview/engine/webengine_select.c
             system/webview/engine/webengine_selftest.c)
 if(TARGET enginetest)
