@@ -273,6 +273,7 @@ Cut-off notes:
 
 ### Fixed
 
+- **GitHub Actions installs `gperf` for the NetSurf build.**
 - **`malloc` walked every block on each call:** the C runtime's allocator now keeps a list of free blocks, so a heap
   of many small allocations stays fast; styling a 4000-element DOM in the guest went from 100 s to under a second
   ([NATIVE_HEAP.md](docs/userland/NATIVE_HEAP.md#what-there-is)).

@@ -24,7 +24,7 @@ jobs:
         run: |
           for attempt in 1 2 3; do
             pacman -Syu --noconfirm --needed \
-              git clang lld llvm cmake ninja make python python-pillow \
+              git clang lld llvm cmake ninja make python python-pillow gperf \
               qemu-system-x86 edk2-ovmf libisoburn && exit 0
             echo "pacman failed (attempt $attempt), retrying" >&2
             sleep 10
