@@ -196,7 +196,8 @@ endforeach()
 
 # The DLL set. Bases are Windows XP's, so nothing of ours relocates.
 sxw_image(NAME ntdll.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c900000
-    SOURCES "${SXW_DLLS}/ntdll/ntdll.c" DEF "${SXW_DLLS}/ntdll/ntdll.def")
+    SOURCES "${SXW_DLLS}/ntdll/ntdll.c" "${SXW_DLLS}/ntdll/exception.c" "${SXW_DLLS}/common/memory.c"
+    DEF "${SXW_DLLS}/ntdll/ntdll.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c800000
     SOURCES "${SXW_DLLS}/kernel32/kernel32.c" "${SXW_DLLS}/kernel32/memory.c" "${SXW_DLLS}/kernel32/system.c"
             "${SXW_DLLS}/kernel32/strings.c" "${SXW_DLLS}/kernel32/locale.c" "${SXW_DLLS}/common/codepage.c"
@@ -238,6 +239,10 @@ sxw_image(NAME shlwapi.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f60000
 # share a base; missingdll.exe and missingsym.exe, whose loads must fail.
 sxw_image(NAME hello.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/hello/hello.c" LIBS kernel32)
+sxw_image(NAME exception.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/exception/exception.c" LIBS kernel32)
+sxw_image(NAME sehfail.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY uncaught
+    SOURCES "${SXW_FX}/exception/exception.c" LIBS kernel32)
 sxw_image(NAME beta.dll KIND dll DIR "${SXW_FIXTURES}" BASE 0x10000000 ENTRY DllMain
     SOURCES "${SXW_FX}/initorder/beta.c" DEF "${SXW_FX}/initorder/beta.def" LIBS kernel32)
 sxw_image(NAME alpha.dll KIND dll DIR "${SXW_FIXTURES}" BASE 0x10000000 ENTRY DllMain
@@ -306,6 +311,7 @@ if(SAVANXP_INCLUDE_TEST_APPS)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${SXW_FIXTURES}/hello.exe" "${SXW_FIXTURES}/initorder.exe"
+                "${SXW_FIXTURES}/exception.exe" "${SXW_FIXTURES}/sehfail.exe"
                 "${SXW_FIXTURES}/alpha.dll" "${SXW_FIXTURES}/beta.dll"
                 "${SXW_FIXTURES}/missingdll.exe" "${SXW_FIXTURES}/missingsym.exe"
                 "${SXW_FIXTURES}/startup.exe" "${SXW_FIXTURES}/window.exe" "${SXW_FIXTURES}/cards.exe"

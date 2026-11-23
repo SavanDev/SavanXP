@@ -205,12 +205,12 @@ versioned with `SXW_ABI_VERSION`. It is not the NT system call table.
 - **Services.** `ntdll!SxwService(number, arguments)` calls through that
   address with a flat array of 32-bit values. The host checks every guest
   address against the regions it mapped and never calls guest code. Version
-  6 has twenty-three: version, exit, standard handle, write, debug output; the
-  clock; a new region for the heap; find, load and resolve a module, and a
-  module's Windows path (`GetModuleFileName`); open,
-  close, query and set a registry key or value; and for windows, the
-  millisecond clock, the screen's size, create, destroy, title and present
-  a top-level window, and wait for an event (pointer, key, resize, close).
+  7 has twenty-four services covering process exit, standard I/O, debug
+  output, time, heap regions, module lookup and loading, symbol lookup,
+  `GetModuleFileName`, exception handler validation, and the registry.
+  The window services provide a millisecond clock and screen dimensions.
+  They create, destroy, title and present top-level windows and wait for
+  pointer, keyboard, resize and close events.
   A window is created as the program's main window, as a window owned by
   another (a dialog, which the host places), or as a popup at a point of its
   owner's client area (a menu: no frame, never the keyboard, closed by a
@@ -302,9 +302,9 @@ debug output says which of those a run reached.
   gives an empty environment: there is no environment yet. `_initterm` calls
   every non-null pointer in its range. `_controlfp` maps its bits onto the
   x87 control word and back. `_adjust_fdiv` is 0.
-- **Exceptions.** `_except_handler3` and `_XcptFilter` answer "continue the
-  search". Nothing dispatches an exception to a frame before the S3 slice: a
-  fault ends the process in the kernel first.
+- **Exceptions.** [`RaiseException`](#software-exceptions) walks the guest's
+  x86 frame chain and can resume execution. `_except_handler3` and
+  `_XcptFilter` answer "continue the search".
 - **The Unicode start-up.** `_wcmdln` is the command line as UTF-16, made
   with `_acmdln`; `__wgetmainargs` splits it by the same rules as
   `__getmainargs` and keeps argc and argv for `__p___argc` and `__p___wargv`,
@@ -695,6 +695,8 @@ Each fixture is built here and runs unchanged on Windows XP.
 | Fixture | What it checks | Output and status on Windows XP |
 | --- | --- | --- |
 | `hello.exe` | An imported `GetStdHandle` and `WriteFile`; `ExitProcess` | `Hello from a PE32 executable.\r\n`, status 42 |
+| `exception.exe` | `RaiseException` visits two SafeSEH-listed registrations from inner to outer, passes the exception arguments and x86 context, and resumes when the outer handler asks to continue | `expected/exception.out`, status 0 |
+| `sehfail.exe` | An uncaught noncontinuable software exception | No output, status `0xE0421003` |
 | `initorder.exe` | Imports from `alpha.dll` and `beta.dll`, which share a preferred base so one is relocated; `alpha.dll` imports from `beta.dll`; static TLS with two callbacks and no C runtime | The attach and detach order below, status 7 |
 | `missingdll.exe` | An import from a DLL that is not installed | No output, status `0xC0000135` |
 | `missingsym.exe` | An import `kernel32.dll` does not export | No output, status `0xC0000139` |
@@ -912,6 +914,24 @@ ring) and the region of its pixel buffer when it is larger than a heap
 arena; an open dialog or menu adds the view of its surface. Solitaire's ten
 images need about 50.
 
+## Software exceptions
+
+`kernel32!RaiseException` builds an `EXCEPTION_RECORD` and calls
+`ntdll!RtlRaiseException`. The dispatcher captures the x86 integer and
+control context and visits the current thread's registrations at `fs:[0]`,
+youngest first. It checks that each record fits in the thread's stack and
+that the chain advances toward its top. The host checks that the handler
+points into executable guest image code, honours `NO_SEH`, and checks a
+SafeSEH table when the image supplies one. The guest calls the handler.
+
+`ExceptionContinueSearch` advances to the next frame, and
+`ExceptionContinueExecution` resumes from the saved integer registers,
+flags, instruction pointer, and stack pointer. A request to continue a
+noncontinuable exception raises `EXCEPTION_NONCONTINUABLE_EXCEPTION`.
+An uncaught software exception ends the guest with its full 32-bit status.
+Stack unwinding, nested software exceptions and the C and C++ exception
+runtimes are later work in WP2. Hardware faults stay in the kernel (S3).
+
 ## WordPad
 
 The second profile ([WIN32_WORDPAD_PROFILE.md](WIN32_WORDPAD_PROFILE.md),
@@ -923,8 +943,10 @@ initialization and the C runtime's Unicode start-up, and runs WordPad's own
 start-up through OLE's initialization and its settings in the registry. It
 stops where the plan expects: WordPad cannot load `MSFTEDIT.DLL`, the
 RichEdit control of WP7, and says so in its own message box ("No se puede
-cargar la DLL del control RichEdit..."), its first window. Closing it takes
-the path of a C++ exception, which is WP2.
+cargar la DLL del control RichEdit..."), its first window. Closing the box
+reaches MFC's delay-load lookup for `ole32!CoFreeUnusedLibraries` (WP9). The
+missing export raises a software exception, and the guest exits with
+`0xc06d007f`.
 
 What the run reaches and is only declared is on the debug output; at this
 point `SetWindowsHookExW` (MFC's message-filter hook, WP5) and

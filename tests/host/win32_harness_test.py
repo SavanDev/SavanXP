@@ -52,6 +52,8 @@ SOLITAIRE_TIME = "998621760"
 #  a line standard error must hold, uses the registry, input script or None)
 CASES = [
     ("hello.exe", [], "hello.out", 0x2A, None, False, None),
+    ("exception.exe", [], "exception.out", 0, None, False, None),
+    ("sehfail.exe", [], None, 0xE0421003, None, False, None),
     ("initorder.exe", [], "initorder.out", 0x7, None, False, None),
     ("missingdll.exe", [], None, 0xC0000135, "win32: missingdll.exe: missing DLL nosuch.dll", False, None),
     (

@@ -53,7 +53,6 @@ LockFile                        20  0
 MoveFileW                        8  0
 OutputDebugStringA               4  0
 OutputDebugStringW               4  0
-RaiseException                  16  0
 ReadFile                        20  0
 ReleaseMutex                     4  0
 ReleaseSemaphore                12  0

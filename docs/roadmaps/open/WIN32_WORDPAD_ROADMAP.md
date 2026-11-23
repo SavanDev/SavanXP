@@ -256,6 +256,12 @@ catches ends the process with Windows XP's status.
 through three frames with objects to destroy, an uncaught one) writes the
 same bytes on Windows XP, in the harness and on SavanXP.
 
+**Started.** `RaiseException` dispatches to x86 registrations with SafeSEH
+checks, and `exception.exe` and `sehfail.exe` exercise continuation and
+an uncaught software exception. The remaining work is `RtlUnwind`, filters
+and termination handlers in `_except_handler3`, nested exception dispatch,
+and the C++ exception runtime. See [WIN32.md](../../userland/WIN32.md#software-exceptions).
+
 ### WP3 — a second thread
 
 Size M to L. MFC starts one at start-up (`_beginthreadex` with

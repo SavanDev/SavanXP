@@ -63,6 +63,8 @@ typedef struct fixture {
 
 static const fixture k_fixtures[] = {
     {"hello.exe", "hello.out", 42u, 0, 0, 0},
+    {"exception.exe", "exception.out", 0u, 0, 0, 0},
+    {"sehfail.exe", 0, 0xe0421003u, 0, 0, 0},
     {"initorder.exe", "initorder.out", 7u, 0, 0, 0},
     {"missingdll.exe", 0, 0xc0000135u, 0, 0, 0},
     {"missingsym.exe", 0, 0xc0000139u, 0, 0, 0},

@@ -390,6 +390,41 @@ void test_valid_image() {
     check(pe_map(&im, &tiny, &l.error) == PE_ERR_BUFFER, "a short mapping buffer is refused");
 }
 
+void test_safe_seh() {
+    printf("SafeSEH\n");
+    constexpr uint32_t config = 0x2140;
+    constexpr uint32_t table = config + 72;
+    constexpr uint32_t relocated_base = 0x20000000u;
+    Image m = make_dll();
+    m.directory(PE_DIR_LOAD_CONFIG, config, 72);
+    m.r32(config, 72);
+    m.r32(config + 64, kBase + table);
+    m.r32(config + 68, 2);
+    m.r32(table, 0x1000);
+    m.r32(table + 4, 0x1020);
+    m.r16(0x4014, 0x3180);  // relocate the table VA at 0x2180
+    Loaded l = load(m.file);
+    if (!check(l.status == PE_OK, "SafeSEH image maps")) return;
+    if (!check(pe_relocate(&l.image, &l.mapped, relocated_base, &l.error) == PE_OK, "SafeSEH image relocates")) return;
+
+    const auto allows = [&](uint32_t rva) {
+        return pe_allows_seh_handler(&l.image, &l.mapped, relocated_base, rva);
+    };
+    check(allows(0x1000) && allows(0x1020), "listed handlers allowed at the current base");
+    check(!allows(0x1010), "unlisted code refused");
+    pe_write_u32(&l.mapped, table + 4, table);
+    check(!allows(table), "nonexecutable image data refused even when listed");
+    pe_write_u32(&l.mapped, config + 68, 0xffffffffu);
+    check(!allows(0x1000), "out-of-image table refused");
+    pe_write_u32(&l.mapped, config + 68, 1);
+    pe_write_u32(&l.mapped, config + 64, 0);
+    check(!allows(0x1000), "a missing table with a nonzero count is refused");
+    pe_write_u32(&l.mapped, config + 68, 0);
+    check(allows(0x1000), "legacy image without a table can handle exceptions");
+    l.image.dll_characteristics |= PE_DLL_NO_SEH;
+    check(!allows(0x1000), "NO_SEH forbids handlers");
+}
+
 void test_stripped_relocations() {
     printf("stripped relocations\n");
     Image m = make_dll();
@@ -796,6 +831,7 @@ int main(int argc, char **argv) {
         if (r == 77) return 77;
     } else {
         test_valid_image();
+        test_safe_seh();
         test_stripped_relocations();
         test_malformed_corpus();
         test_mutations();

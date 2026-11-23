@@ -42,6 +42,7 @@ enum {
     PE_DIR_SECURITY = 4,
     PE_DIR_BASERELOC = 5,
     PE_DIR_TLS = 9,
+    PE_DIR_LOAD_CONFIG = 10,
     PE_DIR_BOUND_IMPORT = 11,
     PE_DIR_IAT = 12,
     PE_DIR_DELAY_IMPORT = 13,
@@ -54,6 +55,8 @@ enum {
 #define PE_FILE_EXECUTABLE 0x0002u
 #define PE_FILE_32BIT_MACHINE 0x0100u
 #define PE_FILE_DLL 0x2000u
+
+#define PE_DLL_NO_SEH 0x0400u
 
 /* Section characteristics. */
 #define PE_SCN_CNT_CODE 0x00000020u
@@ -247,6 +250,10 @@ pe_status pe_write_u32(const pe_mapped *mapped, uint32_t rva, uint32_t value);
 
 /* Whether rva lies inside a section marked executable. */
 int pe_rva_is_executable(const pe_image *image, uint32_t rva);
+
+/* Checks an x86 exception handler against the relocated image's SafeSEH table. */
+int pe_allows_seh_handler(const pe_image *image, const pe_mapped *mapped, uint32_t current_base,
+                         uint32_t handler_rva);
 
 /* Formats a diagnostic, always NUL-terminated. Returns the length written. */
 size_t pe_format_error(const pe_error *error, char *buffer, size_t capacity);

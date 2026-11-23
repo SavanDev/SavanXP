@@ -12,6 +12,8 @@ Cut-off notes:
 
 ### Added
 
+- **Win32 dispatches software exceptions raised by `RaiseException`** (WordPad WP2). x86 handlers can
+  continue execution or pass the exception to an older frame. The dispatcher checks SafeSEH tables.
 - **Web Viewer's engine libraries** (E1): NetSurf's MIT libparserutils, libwapcaplet, libhubbub, libdom and libcss,
   pinned and unmodified under `vendor/netsurf/`, built as static archives for SUN and the host, with the libdom/libcss
   glue in `system/webview/engine/`. Host test and scenario `webengine-test`; Perl and gperf are now build requirements

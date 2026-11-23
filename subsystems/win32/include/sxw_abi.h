@@ -10,7 +10,7 @@
 #ifndef SAVANXP_WIN32_SXW_ABI_H
 #define SAVANXP_WIN32_SXW_ABI_H
 
-#define SXW_ABI_VERSION 6u
+#define SXW_ABI_VERSION 7u
 
 /* ---- Thread environment block (32-bit layout, the fields we fill) ------- */
 
@@ -130,7 +130,10 @@
  * buffer[capacity] units, truncated to fit; 0 when nothing is loaded there.
  * GetModuleFileName. */
 #define SXW_SVC_MODULE_PATH 22u
-#define SXW_SVC_COUNT 23u
+/* (handler) -> 1 if the address is an executable image's allowed x86 SEH
+ * handler, or 0. The guest calls the handler itself. */
+#define SXW_SVC_SEH_HANDLER 23u
+#define SXW_SVC_COUNT 24u
 
 #define SXW_INFINITE 0xffffffffu
 

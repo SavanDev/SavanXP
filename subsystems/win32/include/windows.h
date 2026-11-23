@@ -39,6 +39,47 @@ typedef DWORD *LPDWORD;
 typedef struct _OVERLAPPED OVERLAPPED, *LPOVERLAPPED;
 typedef struct _SECURITY_ATTRIBUTES SECURITY_ATTRIBUTES, *LPSECURITY_ATTRIBUTES;
 
+#define EXCEPTION_MAXIMUM_PARAMETERS 15
+#define EXCEPTION_NONCONTINUABLE 0x1u
+#define EXCEPTION_NONCONTINUABLE_EXCEPTION 0xc0000025u
+#define EXCEPTION_INVALID_DISPOSITION 0xc0000026u
+
+typedef struct _EXCEPTION_RECORD {
+    DWORD ExceptionCode;
+    DWORD ExceptionFlags;
+    struct _EXCEPTION_RECORD *ExceptionRecord;
+    void *ExceptionAddress;
+    DWORD NumberParameters;
+    ULONG_PTR ExceptionInformation[EXCEPTION_MAXIMUM_PARAMETERS];
+} EXCEPTION_RECORD;
+
+typedef enum _EXCEPTION_DISPOSITION {
+    ExceptionContinueExecution,
+    ExceptionContinueSearch,
+    ExceptionNestedException,
+    ExceptionCollidedUnwind,
+} EXCEPTION_DISPOSITION;
+
+#define CONTEXT_CONTROL 0x10001u
+#define CONTEXT_INTEGER 0x10002u
+
+typedef struct _FLOATING_SAVE_AREA {
+    DWORD ControlWord, StatusWord, TagWord;
+    DWORD ErrorOffset, ErrorSelector, DataOffset, DataSelector;
+    BYTE RegisterArea[80];
+    DWORD Cr0NpxState;
+} FLOATING_SAVE_AREA;
+
+typedef struct _CONTEXT {
+    DWORD ContextFlags;
+    DWORD Dr0, Dr1, Dr2, Dr3, Dr6, Dr7;
+    FLOATING_SAVE_AREA FloatSave;
+    DWORD SegGs, SegFs, SegEs, SegDs;
+    DWORD Edi, Esi, Ebx, Edx, Ecx, Eax;
+    DWORD Ebp, Eip, SegCs, EFlags, Esp, SegSs;
+    BYTE ExtendedRegisters[512];
+} CONTEXT;
+
 typedef struct _STARTUPINFOA {
     DWORD cb;
     LPSTR lpReserved;
@@ -852,6 +893,7 @@ SXW_KERNEL32_API int WINAPI MulDiv(int nNumber, int nNumerator, int nDenominator
 SXW_KERNEL32_API BOOL WINAPI WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite,
                                        LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped);
 SXW_KERNEL32_API __declspec(noreturn) void WINAPI ExitProcess(unsigned int uExitCode);
+SXW_KERNEL32_API void WINAPI RaiseException(DWORD code, DWORD flags, DWORD count, const ULONG_PTR *arguments);
 SXW_KERNEL32_API DWORD WINAPI GetLastError(void);
 SXW_KERNEL32_API void WINAPI SetLastError(DWORD dwErrCode);
 SXW_KERNEL32_API HGLOBAL WINAPI GlobalAlloc(UINT uFlags, SIZE_T dwBytes);

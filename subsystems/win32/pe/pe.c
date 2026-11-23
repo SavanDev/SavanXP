@@ -793,6 +793,60 @@ pe_status pe_tls_callback(const pe_image *image, const pe_mapped *mapped, uint32
     return ok(error);
 }
 
+/* ---- SafeSEH ------------------------------------------------------------ */
+
+int pe_allows_seh_handler(const pe_image *image, const pe_mapped *mapped, uint32_t current_base,
+                         uint32_t handler_rva) {
+    if ((image->dll_characteristics & PE_DLL_NO_SEH) != 0u ||
+        !pe_rva_is_executable(image, handler_rva)) {
+        return 0;
+    }
+    const pe_directory *d = &image->directories[PE_DIR_LOAD_CONFIG];
+    if (d->size == 0u) {
+        return 1;
+    }
+    if (d->size < 4u || !fits(d->rva, d->size, mapped->size)) {
+        return 0;
+    }
+
+    const uint8_t *config = mapped->base + d->rva;
+    const uint32_t config_size = rd32(config);
+    /* The x86 handler table VA and count end at byte 72. An older load
+     * configuration has no SafeSEH fields. */
+    if (config_size < 72u) {
+        return 1;
+    }
+    if (d->size < 72u) {
+        return 0;
+    }
+    const uint32_t table_va = rd32(config + 64);
+    const uint32_t count = rd32(config + 68);
+    if (table_va == 0u && count == 0u) {
+        return 1;
+    }
+    if (table_va < current_base || count == 0u ||
+        !fits(table_va - current_base, 4ull * count, mapped->size)) {
+        return 0;
+    }
+
+    const uint8_t *table = mapped->base + (table_va - current_base);
+    uint32_t first = 0;
+    uint32_t end = count;
+    while (first < end) {
+        const uint32_t mid = first + (end - first) / 2u;
+        const uint32_t entry = rd32(table + 4u * mid);
+        if (entry == handler_rva) {
+            return 1;
+        }
+        if (entry < handler_rva) {
+            first = mid + 1u;
+        } else {
+            end = mid;
+        }
+    }
+    return 0;
+}
+
 /* ---- Diagnostics -------------------------------------------------------- */
 
 typedef struct text {

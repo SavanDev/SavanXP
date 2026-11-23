@@ -23,6 +23,17 @@ static uint32_t get32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+static int allows_seh_handler(const sxw_process *p, uint32_t address) {
+    for (uint32_t i = 0; i < p->module_count; ++i) {
+        const sxw_module *m = &p->modules[i];
+        if (address >= m->base && address - m->base < m->image.size_of_image) {
+            const pe_mapped mapped = {(uint8_t *)(uintptr_t)m->base, m->image.size_of_image};
+            return pe_allows_seh_handler(&m->image, &mapped, m->base, address - m->base);
+        }
+    }
+    return 0;
+}
+
 static void set32(uint8_t *p, uint32_t value) {
     p[0] = (uint8_t)value;
     p[1] = (uint8_t)(value >> 8);
@@ -337,7 +348,7 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
     }
     const uint32_t service = frame[1];
     static const uint8_t argument_count[SXW_SVC_COUNT] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5,
-                                                           1, 5, 5, 0, 1, 8, 1, 6, 2, 2, 2, 3};
+                                                           1, 5, 5, 0, 1, 8, 1, 6, 2, 2, 2, 3, 1};
     if (service >= sizeof(argument_count)) {
         write_text(s, "win32: unknown service\n");
         end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);
@@ -387,6 +398,8 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
         return a[2] != 0u && a[2] <= 0x8000u && sxw_guest_range(p, a[1], 2u * a[2])
                    ? sxw_module_path(p, a[0], a[1], a[2])
                    : 0u;
+    case SXW_SVC_SEH_HANDLER:
+        return allows_seh_handler(p, a[0]);
     case SXW_SVC_FIND_MODULE: {
         char name[SXW_MAX_STRING];
         const sxw_module *m = read_ansi(p, a[0], name) ? sxw_find_module(p, name) : 0;

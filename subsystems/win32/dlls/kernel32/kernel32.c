@@ -16,6 +16,7 @@ typedef unsigned short u16;
 
 __declspec(dllimport) u32 WINAPI SxwService(u32 service, const u32 *arguments);
 __declspec(dllimport) __declspec(noreturn) void WINAPI RtlExitUserProcess(u32 status);
+__declspec(dllimport) void WINAPI RtlRaiseException(EXCEPTION_RECORD *record);
 __declspec(dllimport) u32 WINAPI SxwLoadLibrary(const char *name, u32 *error);
 __declspec(dllimport) u32 WINAPI SxwGetProcAddress(u32 base, const char *name, u32 *error);
 __declspec(dllimport) u32 WINAPI SxwFindModule(const char *name);
@@ -70,6 +71,24 @@ BOOL WINAPI WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrit
 
 void WINAPI ExitProcess(unsigned int uExitCode) {
     RtlExitUserProcess(uExitCode);
+}
+
+void WINAPI RaiseException(DWORD code, DWORD flags, DWORD count, const ULONG_PTR *arguments) {
+    EXCEPTION_RECORD record;
+    record.ExceptionCode = code & ~0x10000000u;
+    record.ExceptionFlags = flags & EXCEPTION_NONCONTINUABLE;
+    record.ExceptionRecord = NULL;
+    record.ExceptionAddress = NULL;
+    if (arguments == NULL) {
+        count = 0;
+    } else if (count > EXCEPTION_MAXIMUM_PARAMETERS) {
+        count = EXCEPTION_MAXIMUM_PARAMETERS;
+    }
+    record.NumberParameters = count;
+    for (DWORD i = 0; i < EXCEPTION_MAXIMUM_PARAMETERS; ++i) {
+        record.ExceptionInformation[i] = i < count ? arguments[i] : 0;
+    }
+    RtlRaiseException(&record);
 }
 
 /* ---- The process ------------------------------------------------------------- */
