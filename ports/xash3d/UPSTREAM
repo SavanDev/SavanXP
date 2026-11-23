@@ -1,0 +1,6 @@
+name=HLSDK Portable
+repository=https://github.com/FWGS/hlsdk-portable.git
+commit=b562490665c48d273f352d62228577cd003c4d92
+archive_url=https://codeload.github.com/FWGS/hlsdk-portable/tar.gz/b562490665c48d273f352d62228577cd003c4d92
+archive_sha256=cb12ce51e2c68421f4e21870ca8373b72dae5ef2b821da6bad24c17a810f801d
+license=Half-Life 1 SDK License

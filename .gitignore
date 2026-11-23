@@ -30,6 +30,8 @@ ports/*
 !ports/tinycc/**
 !ports/openssl/
 !ports/openssl/**
+!ports/xash3d/
+!ports/xash3d/**
 ports/doomgeneric/wad/*.wad
 !ports/doomgeneric/wad/
 !ports/doomgeneric/wad/README.md

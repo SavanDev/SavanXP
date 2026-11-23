@@ -1,0 +1,16 @@
+diff --git a/public/build.h b/public/build.h
+--- a/public/build.h
++++ b/public/build.h
+@@ -82,6 +82,7 @@ All XASH_* macros set by this header are guaranteed to have positive value
+ #undef XASH_RISCV_DOUBLEFP
+ #undef XASH_RISCV_SINGLEFP
+ #undef XASH_RISCV_SOFTFP
++#undef XASH_SAVANXP
+ #undef XASH_SERENITY
+ #undef XASH_SUNOS
+ #undef XASH_TERMUX
+@@ -105 +106,4 @@
++#elif defined __savanxp__
++	#define XASH_SAVANXP 1
++	#define XASH_POSIX 1
+ #else // POSIX compatible

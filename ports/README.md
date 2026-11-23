@@ -24,6 +24,9 @@ unpatched and the overlay replaces the SDL frontend entirely, so it carries no
 POSIX C programs in the guest, `-run` included. Its `tinycc-smoke` scenario
 installs the port before it boots.
 
+[`xash3d`](xash3d/README.md) is in development. Its first build supplies the
+HLSDK Portable server module and a POSIX program that verifies game initialization.
+
 ## Port layout
 
 ```text

@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **The Xash3D port can build and load Half-Life's server module.** `ports/xash3d/build.sh` builds HLSDK Portable
+  and `xash3d-module` verifies game initialization through SavanXP's POSIX loader. [Port notes](ports/xash3d/README.md).
+
 - **Web Viewer opens large HTML documents** (E2). HTML is parsed through libhubbub and libdom. The old 32 KiB,
   256-paragraph and 64-link limits are gone for local files and remote pages, including links at the end of a document.
 - **Win32 handles x86 software exceptions** (WordPad WP2). `RaiseException` checks SafeSEH and supports continuing

@@ -1359,6 +1359,13 @@ SCENARIOS: dict[str, Scenario] = {
         300.0,
         prepare=("./ports/tinycc/build.sh",),
     ),
+    "xash3d-module": _qemu_scenario(
+        "xash3d-module",
+        "XASH3D MODULE PASS",
+        "XASH3D MODULE FAIL",
+        "POSIX loads and initializes the HLSDK Portable server module",
+        prepare=("./ports/xash3d/build.sh",),
+    ),
     "ccleste-selftest": _qemu_scenario(
         "ccleste-selftest",
         "CCLESTE SELFTEST PASS",

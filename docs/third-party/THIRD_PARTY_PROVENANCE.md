@@ -279,6 +279,18 @@ which is why both go into the registry.
   `runmain.o`, and copies of the SDK's `crt0.o`, `libc.a` and headers). Built
   separately with `ports/tinycc/build.sh`, not by the main build
 
+### HLSDK Portable
+
+- Origin: [FWGS/hlsdk-portable](https://github.com/FWGS/hlsdk-portable), commit
+  `b562490665c48d273f352d62228577cd003c4d92`.
+- Versioned: the archive checksum and the SavanXP target patch are tracked under
+  `ports/xash3d/`. The source archive is fetched during the standalone port build.
+- License reviewed: Half-Life 1 SDK License, with free redistribution terms.
+  The upstream license accompanies the module.
+- Decision: `Adopt` for the optional Xash3D port.
+- Distributed in: `/games/xash3d/valve/dlls/hl_savanxp_amd64.so` when the
+  standalone port is installed. Half-Life game data is supplied separately.
+
 ### Alpine Xlib profile libraries
 
 - Origin: X.Org's [individual library releases](https://www.x.org/releases/individual/lib/)

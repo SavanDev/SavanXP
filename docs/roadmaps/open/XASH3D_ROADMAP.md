@@ -1,8 +1,8 @@
 # Xash3D FWGS — the port that pays for `dlopen` and SxGL
 
-> **Status: step 1 (`dlopen`) landed; the port itself is not started.** This
-> document is the order of work, written down before the work so that each piece
-> arrives with a consumer instead of ahead of one.
+> **Status: step 2 started with the HLSDK Portable server module.** The POSIX
+> probe loads and initializes the module in SavanXP. The dedicated engine,
+> its filesystem and network integration, and the client are pending.
 >
 > Reviewed 2026-11-14 against the rest of the system. Since it was written,
 > SxGL ([SXGL_ROADMAP.md](../done/SXGL_ROADMAP.md), batches 0–4), user-space
@@ -96,6 +96,13 @@ the port is abandoned: the next port with plugins needs exactly this.
 
 `ports/xash3d/`, following the [port layout](../../../ports/README.md): pinned
 upstream, small patches, the backend in `overlay/`.
+
+The first slice builds the pinned HLSDK Portable server library
+`hl_savanxp_amd64.so` and loads it into a SavanXP POSIX process. The
+`xash3d-module` scenario checks constructors, the game API handshake and
+game initialization. The C++ ABI support lives in the port while the server
+and client establish what they need from a shared runtime. See the
+[port notes](../../../ports/xash3d/README.md).
 
 - `engine/platform/savanxp/`: video over `gfx_open`/`gfx_present_region`, input
   from the window's key and mouse events, sound through `sx_audio_mixer` (which
