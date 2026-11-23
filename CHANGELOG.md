@@ -12,6 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **i386 runs the remaining Media Player and Haxe smoke scenarios from v0.4.0.**
+  The Media Player checks cover decoding, frame presentation and missing-library
+  feedback. The Haxe checks build and run the native GUI and SxGUI hosts.
+
+- **`smoke window-keys` checks the desktop's window shortcuts.** It drives
+  Ctrl+Esc, Alt+Tab and Alt+F4 and verifies the Task List, focus and window close.
+
 - **23 more v0.4.0 smoke scenarios run on i386,** booting the reference `/SMOKE`
   init specs: `progman-smoke`, `filesapp-smoke`, `taskmgr-smoke`, `gpu-soak`,
   `kbd-smoke`, `pointer-smoke`, the AC'97/virtio audio scenarios and others.
@@ -166,6 +173,14 @@ Cut-off notes:
   Use `master` for x86_64; unported shared modules remain as porting material.
 
 ### Fixed
+
+- **i386 accepts the v0.4.0 argument budget for `spawn`, `spawn_fd` and `exec`.**
+  These calls accept 128 arguments and 8191 bytes of string data including
+  terminators.
+
+- **i386 reclaims orphaned process slots without waiting for init.** Dead
+  children are reaped when their parent exits. Adopted children that exit
+  without a waiter release their slot immediately.
 
 - **The i386 Media Player has its icon, category and file associations again.**
   Its subdirectory manifest was not stamped, so `.mp3`, `.avi` and `.flac` had no owner.

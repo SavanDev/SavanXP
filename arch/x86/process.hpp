@@ -18,6 +18,7 @@ struct alignas(4096) Process {
     uint32_t pid, parent;
     bool native_subsystem;
     bool idle;
+    bool orphaned;
     uint32_t cpu;
     int exit_status;
     ContextFrame* frame;

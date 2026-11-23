@@ -19,8 +19,10 @@ Se consideran parte del contrato:
 
 ## Límites visibles
 
-- `SAVANXP_MAX_ARGC = 15`
-- `SAVANXP_MAX_ARG_LENGTH = 63`
+- `SAVANXP_MAX_ARGC = 128`
+- `SAVANXP_ARG_BYTES = 8192` bytes of storage
+  with one byte reserved by the copier and terminators counted in the rest
+- `SAVANXP_MAX_ARG_LENGTH = 8190` for a single argument
 - `SAVANXP_PROC_NAME_CAPACITY = 32`
 - descriptores estándar: `SAVANXP_STDIN_FILENO`, `SAVANXP_STDOUT_FILENO`, `SAVANXP_STDERR_FILENO`
 - `waitpid(SAVANXP_WAIT_ANY, &status)` está soportado

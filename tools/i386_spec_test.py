@@ -10,19 +10,25 @@ reference tokens.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import fcntl
 import io
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import time
 
 from mkinitramfs import write_entry
+import i386_graphics_test
 from qmp_client import QmpClient, send_kbd_smoke_actions, send_pointer_smoke_actions
 from run_qemu import build_qemu_args, find_qemu, sound_device
+from sxfs_sync import copy_preserving_holes
 
 ROOT = Path(__file__).resolve().parent.parent
+FFMPEG_PREPARE = ("./ports/ffmpeg/install.sh --with-test-media",)
+FFMPEG_LIBRARY = "lib/libffmpeg.so.0.4"
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,10 @@ class SpecScenario:
     requires_virtio: bool = False
     ready: str = ""
     qmp_driver: str = ""
+    isolated_disk: bool = False
+    remove_paths: tuple[str, ...] = ()
+    required_output: str = ""
+    visual_scenario: str = ""
 
 
 # Commands, tokens, timeouts and preparation follow the v0.4.0 catalog.
@@ -74,6 +84,25 @@ SPEC_SCENARIOS: dict[str, SpecScenario] = {
                                   requires_virtio=True),
     "float-smoke": SpecScenario("floatsmoke", "FLOAT SMOKE PASS", "FLOAT SMOKE FAIL", prepare=(
         "./tools/build-user.sh --source sdk/floatsmoke --name floatsmoke --sse",)),
+    "mediaplayer-selftest": SpecScenario("mediaplayer", "MEDIAPLAYER SMOKE PASS", "MEDIAPLAYER SMOKE FAIL",
+                                        300.0, prepare=FFMPEG_PREPARE, isolated_disk=True),
+    "mediaplayer-display": SpecScenario("mediaplayer-show", "MEDIAPLAYER DISPLAY PASS", "MEDIAPLAYER DISPLAY FAIL",
+                                       300.0, prepare=FFMPEG_PREPARE, isolated_disk=True,
+                                       ready="MEDIAPLAYER DISPLAY READY", qmp_driver="media"),
+    "mediaplayer-nolib": SpecScenario("mediaplayer", "MEDIAPLAYER SMOKE FAIL status=2", "MEDIAPLAYER SMOKE FAIL",
+                                     prepare=FFMPEG_PREPARE, isolated_disk=True, remove_paths=(FFMPEG_LIBRARY,),
+                                     required_output="mediaplayer: falta libffmpeg.so.0.4"),
+    "mediaplayer-noport": SpecScenario("", "", "", 300.0, prepare=FFMPEG_PREPARE,
+                                      isolated_disk=True, remove_paths=(FFMPEG_LIBRARY,),
+                                      visual_scenario="mediaplayer_unavailable"),
+    "native-guihost": SpecScenario("guihost", "NATIVEGUI HOST PASS", "NATIVEGUI HOST FAIL", prepare=(
+        "./subsystems/native/build.sh --name nativegui --source haxe-gui --install",
+        "./tools/build-user.sh --source subsystems/native/test/guihost.c --name nativeguihost",
+    ), isolated_disk=True),
+    "native-sxgui": SpecScenario("sxguihost", "SXGUI HOST PASS", "SXGUI HOST FAIL", prepare=(
+        "./subsystems/native/build.sh --name sxguiapp --source haxe-sxgui --install",
+        "./tools/build-user.sh --source subsystems/native/test/sxguihost.c --name sxguihost",
+    ), isolated_disk=True),
 }
 
 
@@ -108,21 +137,48 @@ def make_spec_iso(source: Path, destination: Path, command: str) -> Path:
     return iso
 
 
+def prepare_disk(scenario: SpecScenario, source: Path, build: Path,
+                 temporary: Path, artifacts: Path) -> Path:
+    disk = source
+    env = os.environ.copy()
+    cli = Path(env.get("SAVANXP_SXFS_CLI", build / "tools" / "sxfs-cli")).resolve()
+    with (artifacts / "prepare.log").open("w") as log:
+        if scenario.isolated_disk or scenario.remove_paths:
+            disk = temporary / "disk.img"
+            with source.with_name(source.name + ".lock").open("a+") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                copy_preserving_holes(source, disk)
+            subprocess.run([cli, "check", disk], stdout=log, stderr=subprocess.STDOUT, check=True)
+            env.update(SAVANXP_DISK_IMAGE=str(disk), SAVANXP_SXFS_CLI=str(cli),
+                       SAVANXP_OUTPUT_ROOT=str(build))
+        for command in scenario.prepare:
+            subprocess.run(command, shell=True, cwd=ROOT, env=env,
+                           stdout=log, stderr=subprocess.STDOUT, check=True)
+        for path in scenario.remove_paths:
+            subprocess.run([cli, "rm", disk, path], stdout=log, stderr=subprocess.STDOUT, check=True)
+        if scenario.remove_paths:
+            subprocess.run([cli, "check", disk], stdout=log, stderr=subprocess.STDOUT, check=True)
+    return disk
+
+
 def run(name: str, iso: Path, disk: Path, artifacts: Path, accel: str,
         timeout: float | None, virtio: bool, smp: int) -> int:
     scenario = SPEC_SCENARIOS[name]
     if scenario.requires_virtio and not virtio:
         raise ValueError(f"{name} requires --virtio, as in v0.4.0")
     artifacts.mkdir(parents=True, exist_ok=True)
-    for command in scenario.prepare:
-        with (artifacts / "prepare.log").open("a") as log:
-            subprocess.run(command, shell=True, cwd=ROOT, stdout=log, stderr=log, check=True)
     serial = artifacts / "serial.log"
     serial.write_text("")
     deadline_seconds = timeout if timeout is not None else scenario.timeout
     with tempfile.TemporaryDirectory(prefix="sx-i386-spec.") as temporary:
-        qmp = Path(temporary) / "qmp"
-        boot_iso = make_spec_iso(iso.resolve(), Path(temporary), scenario.command)
+        temporary = Path(temporary)
+        if scenario.prepare or scenario.isolated_disk or scenario.remove_paths:
+            disk = prepare_disk(scenario, disk.resolve(), iso.resolve().parent, temporary, artifacts)
+        if scenario.visual_scenario:
+            return i386_graphics_test.run(iso, disk, artifacts, scenario.visual_scenario,
+                                          accel, deadline_seconds, virtio, smp)
+        qmp = temporary / "qmp"
+        boot_iso = make_spec_iso(iso.resolve(), temporary, scenario.command)
         command = build_qemu_args(iso=boot_iso, disk_image=disk, debug_log=artifacts / "debug.log",
                                   accel=accel, smp=smp, headless=True, virtio=virtio,
                                   snapshot=True, serial_path=serial,
@@ -136,7 +192,7 @@ def run(name: str, iso: Path, disk: Path, artifacts: Path, accel: str,
             wav.unlink(missing_ok=True)
             index = command.index("-audiodev") + 1
             command[index] = f"wav,id=audio0,path={wav}"
-        pattern = re.compile(f"({re.escape(scenario.success)}|{re.escape(scenario.failure)})")
+        pattern = re.compile(rf"{re.escape(scenario.success)}(?=\s|$)|{re.escape(scenario.failure)}")
         with (artifacts / "qemu.log").open("w") as log:
             guest = subprocess.Popen(command, stdout=log, stderr=log)
             try:
@@ -144,16 +200,20 @@ def run(name: str, iso: Path, disk: Path, artifacts: Path, accel: str,
                 driven = not scenario.qmp_driver
                 while time.monotonic() < deadline:
                     text = serial.read_text(errors="replace")
-                    match = pattern.search(text)
+                    if not driven and scenario.ready in text:
+                        if scenario.qmp_driver == "media":
+                            subprocess.run([sys.executable, ROOT / "ports/ffmpeg/tests/qmp_display.py",
+                                            "--socket", qmp, "--out-dir", artifacts], check=True)
+                        else:
+                            with QmpClient(qmp) as client:
+                                if scenario.qmp_driver == "kbd":
+                                    send_kbd_smoke_actions(client)
+                                else:
+                                    send_pointer_smoke_actions(client)
+                        driven = True
+                    match = pattern.search(text[:text.rfind("\n") + 1])
                     if match:
                         break
-                    if not driven and scenario.ready in text:
-                        with QmpClient(qmp) as client:
-                            if scenario.qmp_driver == "kbd":
-                                send_kbd_smoke_actions(client)
-                            else:
-                                send_pointer_smoke_actions(client)
-                        driven = True
                     if "kernel: fatal" in text or "BOOT FAIL" in text:
                         raise RuntimeError("the kernel stopped before the spec finished; see serial.log")
                     if guest.poll() is not None:
@@ -161,8 +221,10 @@ def run(name: str, iso: Path, disk: Path, artifacts: Path, accel: str,
                     time.sleep(0.25)
                 else:
                     raise RuntimeError(f"no {scenario.success!r} within {deadline_seconds:.0f} s")
-                if match[1] == scenario.failure:
-                    raise RuntimeError(f"{scenario.failure}; see {serial}")
+                if match[0] != scenario.success:
+                    raise RuntimeError(f"{match[0]}; see {serial}")
+                if not driven or scenario.required_output not in text:
+                    raise RuntimeError(f"missing expected scenario output or QMP action; see {serial}")
                 if "user: exception #" in text:
                     raise RuntimeError("a process faulted during the spec; see serial.log")
             finally:

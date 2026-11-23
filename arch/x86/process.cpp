@@ -503,18 +503,20 @@ static void terminate(Process& child, int status) {
     child.exit_status = status;
     child.state = child.parent == 0 ? State::unused : State::zombie;
     notify_parent(child);
-    // Preserve the reference init supervision contract when windowd dies.
+    if (child.orphaned && child.state == State::zombie) child.state = State::unused;
+    // Reap dead children and let init supervise the live ones.
     Process* init = nullptr;
     for (auto& candidate : g_processes)
         if (candidate.pid == g_init_pid && &candidate != &child &&
             candidate.state != State::unused && candidate.state != State::zombie) init = &candidate;
     for (auto& orphan : g_processes) {
         if (orphan.state == State::unused || orphan.parent != child.pid) continue;
-        orphan.parent = init ? init->pid : 0;
         if (orphan.state == State::zombie) {
-            if (init) notify_parent(orphan);
-            else orphan.state = State::unused;
+            orphan.state = State::unused;
+            continue;
         }
+        orphan.parent = init ? init->pid : 0;
+        orphan.orphaned = true;
     }
 }
 

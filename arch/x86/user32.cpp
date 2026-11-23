@@ -160,11 +160,13 @@ int load(const char* path, uint32_t* directory, ContextFrame& frame, uint32_t ar
         return SAVANXP_ENOMEM;
     uint32_t pointers[SAVANXP_MAX_ARGC + 1] = {};
     uint32_t stack = kStackTop;
+    uint32_t remaining = SAVANXP_ARG_BYTES - 1;
     for (uint32_t index = 0; index < argc; ++index) {
         const uint32_t length = static_cast<uint32_t>(strlen(argv[index])) + 1;
-        if (length > SAVANXP_MAX_ARG_LENGTH + 1) {
+        if (length > remaining) {
             return SAVANXP_E2BIG;
         }
+        remaining -= length;
         stack = (stack - length) & ~3u;
         pointers[index] = stack;
         paging::copy_to_user(directory, stack, argv[index], length);

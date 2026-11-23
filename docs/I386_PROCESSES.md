@@ -108,19 +108,23 @@ next binary. `sh32` is a diagnostic child; its commands remain:
 - `desktop`: run `/disk/bin/desktop32` as a foreground child.
 - `multitest`: run the process regression, then return to the shell.
 
-`spawn` copies and validates the path, argument table and strings before loading.
-The SDK limit is 15 arguments of up to 63 characters each; the initial argv table
-uses 4-byte pointers and a null terminator. Invalid user ranges return `EFAULT`,
-excess arguments or strings return `E2BIG`, and a missing or invalid image returns
-`ENOENT` or `ENOEXEC`. The supported formats are i386 ET_EXEC and PIE ET_DYN with the embedded ELF32 loader.
+`spawn`, `spawn_fd` and `exec` copy and validate the path, argument table and
+strings before loading. The v0.4.0 budget is 128 arguments and 8191 bytes of
+string data including terminators. The copier reserves one byte in its 8 KiB
+buffer. The initial argv table uses 4-byte pointers and a null terminator.
+Invalid input to the argument copier returns `E2BIG` as in the
+reference. A missing or invalid image returns `ENOENT` or `ENOEXEC`.
+The supported formats are i386 ET_EXEC and PIE ET_DYN with the embedded ELF32
+loader.
 
 `waitpid` accepts a specific child or `SAVANXP_WAIT_ANY` (`-1`). It returns the
 child's PID and its plain integer exit status, including when the child exited
 before the call. A null status pointer is allowed. A nonexistent, unrelated or
 already-collected child returns `ECHILD`. Zombies retain their slot until
-collected. When a parent exits, its children are reparented to the recorded init, which reaps
-existing zombies and future exits. Without a surviving init, orphans are detached
-and reclaimed automatically. PIDs increase rather
+collected. When a parent exits, the kernel reaps its zombies and reparents
+live children to the recorded init. An adopted child that exits without
+a waiting init releases its slot automatically. Without a surviving init,
+live orphans are detached and reclaim their slots on exit. PIDs increase rather
 than being reused with slots, and stop allocating before the signed PID range
 would overflow.
 

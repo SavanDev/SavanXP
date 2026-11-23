@@ -191,6 +191,8 @@ changes, and record implementation/verification evidence as work lands.
    **Reference smoke scenarios.** 23 more v0.4.0 scenarios run through the
    reference `/SMOKE` init specs; restoring them also fixed the Media Player's
    stamped resources. [Evidence](I386_PORT_STUDY.md#27-reference-init-automation-specs-on-i386).
+   The remaining Media Player and optional Haxe scenarios also run on i386.
+   [Evidence](I386_PORT_STUDY.md#28-port-specific-smoke-scenarios-and-the-reference-failure-paths).
 
    **Boot and session handoff.** The GRUB framebuffer shows the reference
    splash, including the startup logo, fade, marquee and status. The compositor

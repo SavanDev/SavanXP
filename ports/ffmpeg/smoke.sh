@@ -10,7 +10,7 @@ set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$HERE/../.." && pwd)"
 OUTPUT_ROOT="${SAVANXP_OUTPUT_ROOT:-$ROOT/build}"
-BUILD_DIR="${SAVANXP_BUILD_DIR:-$ROOT/build/linux}"
+BUILD_DIR="${SAVANXP_BUILD_DIR:-$ROOT/build/linux-i386}"
 JOBS="${SAVANXP_JOBS:-}"
 ACCEL="${SAVANXP_ACCEL:-tcg}"
 SMP="${SAVANXP_SMP:-1}"

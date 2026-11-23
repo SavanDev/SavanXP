@@ -18,7 +18,12 @@ SERVICE_SCENARIOS = ("services", "device-smoke", "clock-smoke", "audio-smoke", "
 HOST_SCENARIOS = {"sxfs-smoke": "sxfs-volume-test", "sxmidi-smoke": "sxmidi-test",
                   "gfx2d-test": "gfx2d-test", "audio-test": "audio-test"}
 SPEC_SCENARIOS = tuple(i386_spec_test.SPEC_SCENARIOS)
-SCENARIOS = SPEC_SCENARIOS + tuple(HOST_SCENARIOS) + SERVICE_SCENARIOS + ("smp-boot", "smp", "idle", "kernel-preempt", "wakeup", "hardening", "smoke", "boot", "boot-screen", "processes", "memory", "desktop", "posix", "shared", "shared-memory", "sxgui-smoke", "taskbar", "calc-smoke", "windowd-smoke", "doom", "ccleste", "live-desktop")
+GRAPHICS_SCENARIOS = ("boot-screen", "desktop", "sxgui-smoke", "taskbar", "window-keys",
+                      "calc-smoke", "doom", "ccleste", "live-desktop")
+SCENARIOS = SPEC_SCENARIOS + tuple(HOST_SCENARIOS) + SERVICE_SCENARIOS + GRAPHICS_SCENARIOS + (
+    "smp-boot", "smp", "idle", "kernel-preempt", "wakeup", "hardening", "smoke", "boot",
+    "processes", "memory", "posix", "shared", "shared-memory", "windowd-smoke",
+)
 
 
 def main() -> int:
@@ -33,8 +38,7 @@ def main() -> int:
     parser.add_argument("--virtio", action="store_true")
     parser.add_argument("--smp", type=int, choices=range(1, 33), default=1)
     args = parser.parse_args()
-    graphics = ("boot-screen", "desktop", "sxgui-smoke", "taskbar", "calc-smoke", "doom", "ccleste", "live-desktop")
-    if args.virtio and args.scenario not in SERVICE_SCENARIOS + SPEC_SCENARIOS + graphics + ("smp-boot",):
+    if args.virtio and args.scenario not in SERVICE_SCENARIOS + SPEC_SCENARIOS + GRAPHICS_SCENARIOS + ("smp-boot",):
         parser.error("--virtio currently supports service and graphical scenarios; use virtio-smoke")
     if args.virtio and args.scenario in ("storage-smoke", "live-desktop"):
         parser.error("LiveCD scenarios are diskless; use virtio-smoke to check virtio storage")
@@ -55,7 +59,7 @@ def main() -> int:
     if args.scenario in SERVICE_SCENARIOS:
         iso = args.iso.with_name("SavanXP-live.iso") if args.scenario == "storage-smoke" else args.iso
         return i386_services_test.run(iso, args.disk_image, args.artifacts, args.scenario, args.timeout, args.accel, args.virtio, args.smp)
-    if args.scenario in graphics:
+    if args.scenario in GRAPHICS_SCENARIOS:
         iso = args.iso.with_name("SavanXP-live.iso") if args.scenario == "live-desktop" else args.iso
         return i386_graphics_test.run(iso, args.disk_image, args.artifacts,
             "calc" if args.scenario == "calc-smoke" else args.scenario, args.accel, args.timeout, args.virtio, args.smp)

@@ -113,13 +113,14 @@ static int worker(int argc, char** argv) {
     }
     if (strcmp(argv[1], "short") == 0) return 23;
     if (strcmp(argv[1], "args") == 0) {
-        if (argc != SAVANXP_MAX_ARGC) return 90;
-        for (int index = 2; index < argc; ++index) {
-            if (strlen(argv[index]) != SAVANXP_MAX_ARG_LENGTH) return 91;
-            for (int letter = 0; letter < SAVANXP_MAX_ARG_LENGTH; ++letter) {
-                if (argv[index][letter] != 'a' + index) return 92;
-            }
+        if (argc != SAVANXP_MAX_ARGC || argv[argc] != NULL) return 90;
+        size_t bytes = 0;
+        for (int index = 0; index < argc; ++index) bytes += strlen(argv[index]) + 1;
+        if (bytes != SAVANXP_ARG_BYTES - 1 || strlen(argv[2]) < 64) return 91;
+        for (const char* letter = argv[2]; *letter; ++letter) {
+            if (*letter != 'a') return 92;
         }
+        for (int index = 3; index < argc; ++index) if (strcmp(argv[index], "x") != 0) return 92;
         return 0;
     }
     if (strcmp(argv[1], "gpu-busy") == 0) {
@@ -138,8 +139,8 @@ static int worker(int argc, char** argv) {
 static int memory_checks(void) {
     struct savanxp_system_info before, after;
     if (system_info(&before) < 0 || before.memory_free_bytes == 0) return fail("memory accounting");
-    // Kernel destinations must be writable; bad pointers must return EFAULT,
-    // including present read-only text and ranges crossing into an absent page.
+    // Reject read-only destinations and ranges that cross absent pages.
+    // The reference spawn argument copier reports E2BIG for unreadable input.
     const char* readonly = "read only";
     if (system_info((struct savanxp_system_info*)readonly) != -SAVANXP_EFAULT ||
         savanxp_waitpid(-1, (int*)readonly) != -SAVANXP_EFAULT ||
@@ -147,7 +148,7 @@ static int memory_checks(void) {
         savanxp_write(1, (void*)0x08800000, 1) != -SAVANXP_EFAULT ||
         savanxp_write(1, (void*)0x0efffffe, 4) != -SAVANXP_EFAULT ||
         savanxp_write(1, (void*)0xfffffffe, 4) != -SAVANXP_EFAULT ||
-        spawn((const char*)0x08800000, 0, 0) != -SAVANXP_EFAULT)
+        spawn((const char*)0x08800000, 0, 0) != -SAVANXP_E2BIG)
         return fail("page-aware syscall validation");
     long fd = gpu_open();
     if (fd != 3 || gpu_get_info((int)fd, (struct savanxp_gpu_info*)readonly) != -SAVANXP_EINVAL ||
@@ -236,26 +237,36 @@ int main(int argc, char** argv) {
         savanxp_waitpid(-1, (int*)1) != -SAVANXP_EFAULT) return fail("wait validation");
     puts_out("MULTITASK contexts and waits PASS\n");
 
-    const char* args[] = {kPath};
-    char too_long[65]; memset(too_long, 'x', sizeof(too_long));
-    const char* bad_args[] = {too_long};
+    char storage[SAVANXP_ARG_BYTES];
+    const char* args[SAVANXP_MAX_ARGC + 1] = {kPath, "args", storage};
+    size_t fixed_bytes = strlen(kPath) + 1 + sizeof("args");
+    for (int index = 3; index < SAVANXP_MAX_ARGC; ++index) {
+        args[index] = "x";
+        fixed_bytes += sizeof("x");
+    }
+    const size_t length = SAVANXP_ARG_BYTES - fixed_bytes - 2;
+    memset(storage, 'a', length + 1);
+    storage[length + 1] = 0;
     const char* invalid_args[] = {(const char*)1};
-    if (spawn((const char*)1, 0, 0) != -SAVANXP_EFAULT ||
+    if (spawn((const char*)1, 0, 0) != -SAVANXP_E2BIG ||
         spawn("/disk/bin/missing32", 0, 0) != -SAVANXP_ENOENT ||
         spawn("/disk/bin", 0, 0) != -SAVANXP_ENOEXEC ||
         spawn(kPath, args, SAVANXP_MAX_ARGC + 1) != -SAVANXP_E2BIG ||
-        spawn(kPath, (const char* const*)1, 1) != -SAVANXP_EFAULT ||
-        spawn(kPath, invalid_args, 1) != -SAVANXP_EFAULT ||
-        spawn(kPath, bad_args, 1) != -SAVANXP_E2BIG) return fail("spawn validation");
-    char strings[SAVANXP_MAX_ARGC][SAVANXP_MAX_ARG_LENGTH + 1];
-    const char* many_args[SAVANXP_MAX_ARGC];
-    many_args[0] = kPath; many_args[1] = "args";
-    for (int index = 2; index < SAVANXP_MAX_ARGC; ++index) {
-        memset(strings[index], 'a' + index, SAVANXP_MAX_ARG_LENGTH);
-        strings[index][SAVANXP_MAX_ARG_LENGTH] = 0;
-        many_args[index] = strings[index];
+        spawn(kPath, (const char* const*)1, 1) != -SAVANXP_E2BIG ||
+        spawn(kPath, invalid_args, 1) != -SAVANXP_E2BIG ||
+        spawn(kPath, args, SAVANXP_MAX_ARGC) != -SAVANXP_E2BIG ||
+        exec(kPath, args, SAVANXP_MAX_ARGC + 1) != -SAVANXP_E2BIG ||
+        exec(kPath, args, SAVANXP_MAX_ARGC) != -SAVANXP_E2BIG) return fail("argument validation");
+    storage[length] = 0;
+    if (!collect(spawn(kPath, args, SAVANXP_MAX_ARGC), 0) ||
+        !collect(spawn_fd(kPath, args, SAVANXP_MAX_ARGC, 0, 1), 0))
+        return fail("spawn argument copying");
+    long exec_child = savanxp_fork();
+    if (exec_child == 0) {
+        exec(kPath, args, SAVANXP_MAX_ARGC);
+        return fail("exec argument copying");
     }
-    if (!collect(spawn(kPath, many_args, SAVANXP_MAX_ARGC), 0)) return fail("argument copying");
+    if (!collect(exec_child, 0)) return fail("exec argument copying");
     if (!collect(spawn(kPath, 0, 0), 31)) return fail("empty argv");
     puts_out("MULTITASK arguments PASS\n");
 

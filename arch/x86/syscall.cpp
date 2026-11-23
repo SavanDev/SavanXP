@@ -4,6 +4,7 @@
 #include "kernel/rtc.hpp"
 #include "kernel/cpu.hpp"
 #include "kernel/device.hpp"
+#include "kernel/heap.hpp"
 #include "kernel/net.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/pcspeaker.hpp"
@@ -108,34 +109,34 @@ void handle(ContextFrame& frame) {
         case SAVANXP_SYS_SPAWN_FD:
         case SAVANXP_SYS_EXEC: {
             char path[256];
-            int error = copy_user_string(frame.edi, path, sizeof(path));
-            if (error != 0) {
-                frame.eax = failure(error);
-                return;
-            }
-            if (frame.edx > SAVANXP_MAX_ARGC) {
+            const int error = copy_user_string(frame.edi, path, sizeof(path) - 1);
+            char resolved[256];
+            if (error || frame.edx > SAVANXP_MAX_ARGC ||
+                (frame.edx && !is_user_range(frame.esi, frame.edx * sizeof(uint32_t))) ||
+                !vfs::normalize_path(process::current()->cwd, path, resolved, sizeof(resolved))) {
                 frame.eax = failure(SAVANXP_E2BIG);
                 return;
             }
-            if (frame.edx != 0 && !is_user_range(frame.esi, frame.edx * sizeof(uint32_t))) {
-                frame.eax = failure(SAVANXP_EFAULT);
+            // Keep the reference aggregate budget off the syscall stack.
+            auto* strings = static_cast<char*>(heap::allocate(SAVANXP_ARG_BYTES));
+            if (!strings) {
+                frame.eax = failure(SAVANXP_ENOMEM);
                 return;
             }
-            char strings[SAVANXP_MAX_ARGC][SAVANXP_MAX_ARG_LENGTH + 1];
             const char* arguments[SAVANXP_MAX_ARGC];
+            size_t used = 0;
             for (uint32_t index = 0; index < frame.edx; ++index) {
                 uint32_t address;
-                memcpy(&address, reinterpret_cast<const void*>(frame.esi + index * 4), 4);
-                error = copy_user_string(address, strings[index], sizeof(strings[index]));
-                if (error != 0) {
-                    frame.eax = failure(error);
+                memcpy(&address, reinterpret_cast<const void*>(frame.esi + index * sizeof(address)), sizeof(address));
+                char* argument = strings + used;
+                // v0.4.0 reserves the copier's last byte for termination on failure.
+                if (copy_user_string(address, argument, SAVANXP_ARG_BYTES - 1 - used)) {
+                    heap::free(strings);
+                    frame.eax = failure(SAVANXP_E2BIG);
                     return;
                 }
-                arguments[index] = strings[index];
-            }
-            char resolved[256];
-            if (!vfs::normalize_path(process::current()->cwd, path, resolved, sizeof(resolved))) {
-                frame.eax = failure(SAVANXP_EINVAL); return;
+                arguments[index] = argument;
+                used += strlen(argument) + 1;
             }
             if (frame.eax == SAVANXP_SYS_EXEC) {
                 const int result = process::replace_image(resolved, arguments, frame.edx, frame);
@@ -147,6 +148,7 @@ void handle(ContextFrame& frame) {
             } else {
                 frame.eax = static_cast<uint32_t>(process::spawn(resolved, arguments, frame.edx));
             }
+            heap::free(strings);
             return;
         }
         case kSysWaitPid: {

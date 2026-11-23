@@ -535,6 +535,35 @@ def scenario_alttab(s):
     s.shot("cambiado")
 
 
+def scenario_window_keys(s):
+    s.open_notepad()
+    notepad = s.shot("notepad")
+    x, y, width, height = button_rect(notepad, 1)
+    label = (x, y, x + width, y + height)
+    expect_text(notepad, label, "Notepad", TEXT, FACE, "the active window label")
+    expect_button(notepad, 1, True, "Notepad initially has focus")
+
+    s.qmp.chord("ctrl", "esc")
+    panel = (200, 100, 1080, 700)
+    expect_text(s.shot("task-list"), panel, "Switch To", TEXT, FACE, "Ctrl+Esc opened Task List")
+    s.qmp.tap("esc", pause=0.8)
+    s.qmp.key("alt", True)
+    try:
+        s.qmp.tap("tab")
+        expect_text(s.shot("alt-tab"), panel, "Switch To", TEXT, FACE, "Alt+Tab opened Task List")
+    finally:
+        s.qmp.key("alt", False)
+    time.sleep(1)
+    expect_button(s.shot("program-manager-focused"), 0, True, "Alt+Tab focused Program Manager")
+    s.qmp.chord("alt", "tab")
+    expect_button(s.shot("notepad-focused"), 1, True, "Alt+Tab focused Notepad")
+    s.qmp.chord("alt", "f4")
+    closed = s.shot("notepad-closed")
+    if find_text(closed, label, "Notepad", TEXT, FACE)[0] is not None:
+        raise Failure("Alt+F4 left Notepad on the taskbar")
+    expect_button(closed, 0, True, "Program Manager after closing Notepad")
+
+
 def scenario_clipboard(s):
     s.open_notepad()
     s.qmp.type_text("hola mundo")
@@ -1491,6 +1520,7 @@ SCENARIOS = {
     "desktop": scenario_desktop,
     "mediaplayer_unavailable": scenario_mediaplayer_unavailable,
     "alttab": scenario_alttab,
+    "window-keys": scenario_window_keys,
     "clipboard": scenario_clipboard,
     "calc": scenario_calc,
     "mines": scenario_mines,

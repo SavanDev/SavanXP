@@ -43,11 +43,11 @@ evidence, and link the scenario, capture or measurement that supports it.
 | `windowd` compositor, WM protocol v4, 12 windows | Ported | `windowd-smoke` | Damage region and frame statistics against the reference |
 | Program Manager, auto-listed programs | Ported | `desktop`, `live-desktop`, `progman-smoke` | Layout capture |
 | Taskbar: window list, activation, minimize | Ported | `taskbar` | Capture comparison |
-| Taskbar ES/EN layout selector and popup | Partial | `kbd-smoke` covers the keyboard path | Popup interaction scenario |
+| Taskbar ES/EN layout selector and popup | Matched | `kbdlayout`, [study §30](I386_PORT_STUDY.md#30-desktop-shortcuts-and-power-in-qemu) | — |
 | Taskbar volume button, per-app sliders | Partial | `audio-smoke`, `audiod-smoke`, `volume-smoke` | Popup and slider capture |
-| Task List (Ctrl+Esc), Alt+Tab, Alt+F4 | Gap in evidence | — | Input scenario on both builds |
+| Task List (Ctrl+Esc), Alt+Tab, Alt+F4 | Matched | `window-keys`, [study §30](I386_PORT_STUDY.md#30-desktop-shortcuts-and-power-in-qemu) | — |
 | Dialogs as windows, fixed-size windows | Gap in evidence | — | Interaction scenario |
-| SxGUI: selection, clipboard, tabs, wheel/scrollbar | Partial | `sxgui-smoke` (glyphs, wheel) | Selection/Cut/Copy/Paste and tab captures |
+| SxGUI: selection, clipboard, tabs, wheel/scrollbar | Partial | `sxgui-smoke` (glyphs, wheel), matched selection, copy and paste in [study §30](I386_PORT_STUDY.md#30-desktop-shortcuts-and-power-in-qemu) | Cut and tab captures |
 | Files, with per-type icons and associations | Ported | `filesapp-smoke` | `shoot.sh files` capture |
 | Notepad | Partial | `sxgui-smoke` editor | Wheel/scrollbar and editing capture |
 | Shell window | Gap in evidence | — | Command with arguments, repaint timing |
@@ -57,7 +57,8 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Add/Remove Programs | Ported | `appwiz-smoke` with Doom restored | Capture |
 | System Properties | Gap in evidence | — | Capture (edition difference is justified above) |
 | Task Manager: live CPU/memory per process | Ported | `idle`, `taskmgr-smoke` | Capture |
-| Media Player (FFmpeg), icon and file associations | Ported | `media-smoke`, `filesapp-smoke` | `mediaplayer-display`, `-nolib`, `-noport` scenarios |
+| Media Player decode selftest, GPU frame and missing-library feedback | Matched | [Study §28](I386_PORT_STUDY.md#28-port-specific-smoke-scenarios-and-the-reference-failure-paths) | — |
+| Media Player icon, category and file associations | Ported | `filesapp-smoke`, `mediaplayer-noport` | Compare normal launch from Files and Program Manager |
 | Gfx Demo, widgets demo, diagnostics | Gap in evidence | — | Captures |
 
 ## Ports and external applications
@@ -67,7 +68,7 @@ evidence, and link the scenario, capture or measurement that supports it.
 | DoomGeneric with `GENMIDI` music | Ported | `doom`, `verify_doom_persistence.sh` | Music output and frame pacing |
 | Celeste Classic with music | Ported | `ccleste`, `media-smoke` | Capture and audio comparison |
 | FFmpeg as `libffmpeg.so.0.4` | Ported | `media-smoke` | Load time and decode throughput |
-| Optional Haxe native subsystem | Ported | `native-smoke` | `native-guihost`/`native-sxgui` counterparts |
+| Optional Haxe native subsystem | Ported | `native-smoke`, `native-guihost`, `native-sxgui` | Pinned reference's native build fails at the CRT link step |
 | External SDK apps via `build-user.sh` | Ported | `I386_SDK.md` | Static, as in v0.4.0; in-tree programs and ports keep the reference PIE profiles |
 
 ## Shell, POSIX and SDK
@@ -78,7 +79,8 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Descriptors, poll, canonical TTY, `exec` | Ported | `posix`, `wakeup` | — beyond transcripts |
 | Signals: limited reference contract, `SIGCHLD` | Ported | [I386_POSIX.md](I386_POSIX.md) | Transcript comparison |
 | libc/libm surface, `%f/%e/%g`, `strtod`, SSE | Ported | `smoke` (libctest), `float-smoke` | — |
-| 128 arguments / 8 KiB for `spawn`/`exec` | Gap in evidence | — | Explicit limit check |
+| 128 arguments and 8191 bytes of strings for `spawn`/`exec` | Matched | `processes`, [study §29](I386_PORT_STUDY.md#29-argument-budgets-and-adoption-of-orphaned-children) | — |
+| Reaping children orphaned before or after their exit | Matched | [study §29](I386_PORT_STUDY.md#29-argument-budgets-and-adoption-of-orphaned-children) | — |
 | Sockets: UDP, TCP with loss and reordering | Ported | `net-smoke`, `tcp-smoke` | Throughput comparison |
 | Persistence of guest writes across rebuilds | Ported | `verify_posix_persistence.py` | — |
 
@@ -126,9 +128,9 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Per-CPU idle and CPU accounting | Ported | `idle` | Task Manager capture |
 | 1000 Hz timer, monotonic deadlines | Ported | `clock-smoke` | — |
 | MADT/IOAPIC routing, AML `_PRT` | Ported | `net-smoke`, `power-smoke` | — |
-| xAPIC instead of x2APIC on `-cpu max` | Justified (pending) | Study §25 | Confirm the cause and the cost in interrupt delivery |
-| ACPI shutdown, reboot, power button | Ported | `power-smoke` | Same sequence on the reference |
-| Idle halt when nothing runs | Gap in evidence | — | Host CPU usage of an idle guest on both builds |
+| xAPIC instead of x2APIC on `-cpu max` | Justified (pending) | [Study §31](I386_PORT_STUDY.md#31-timing-with-the-apic-mode-controlled) | Both guests schedule four CPUs in xAPIC mode. Isolate interrupt-delivery cost. |
+| ACPI shutdown, reboot, power button | Matched | `power-smoke`, [study §30](I386_PORT_STUDY.md#30-desktop-shortcuts-and-power-in-qemu) | — |
+| Idle halt when nothing runs | Matched | QMP `HLT=1` on both builds, [study §31](I386_PORT_STUDY.md#31-timing-with-the-apic-mode-controlled) | — |
 
 ## Security
 
@@ -143,38 +145,35 @@ evidence, and link the scenario, capture or measurement that supports it.
 
 ## Performance
 
-None of these has been measured side by side yet. Use the matched boots and keep
-loader time separate from kernel and desktop time.
+Use the matched boots and keep loader time separate from kernel and desktop
+time. [Study §31](I386_PORT_STUDY.md#31-timing-with-the-apic-mode-controlled)
+records the first compositor and pipe measurements.
 
 | Measurement | Reference source |
 | --- | --- |
-| Boot: kernel entry to first composed frame | Serial timestamps |
-| Compositor compose/sync/present per frame | `windowd` statistics, [GRAPHICS_PERF.md](GRAPHICS_PERF.md) |
+| Boot: kernel entry to first composed frame | Serial timestamps. The preliminary sample starts at the boot banner and ends when Program Manager is visible. |
+| Compositor compose/sync/present per frame | Standard VGA samples from `windowd` statistics. See [GRAPHICS_PERF.md](GRAPHICS_PERF.md). |
 | Application launch: Shell, Files, Media Player | Launch-to-first-frame |
 | Doom and Celeste frame pacing | Port statistics |
 | Disk throughput on ATA and `virtio-blk` | `fscheck` commit cost, large copies |
 | TCP throughput on RTL8139 and virtio-net | `tcp-smoke` |
-| SMP scaling, 1 to 4 vCPUs | `smptest` |
+| SMP scaling, 1 to 4 vCPUs | `smptest` pipe round trips measured in common xAPIC mode |
+| Host CPU time with the guest idle | Ten-second headless and desktop samples |
 
-## Reference scenarios without an i386 counterpart
+## Reference scenarios
 
-Most v0.4.0 scenarios now run on i386. Init automation specs boot with the
-reference `/SMOKE` file and host scenarios alias the CTest targets; see
-[study §27](I386_PORT_STUDY.md#27-reference-init-automation-specs-on-i386).
-`mediaplayer-selftest` is covered by `media-smoke`, which runs the same
-`mediaplayer --selftest` command. These remain:
-
-- `mediaplayer-nolib` and `mediaplayer-noport` remove `libffmpeg.so.0.4` from a
-  disposable disk copy before boot; the i386 harness has no removal step yet.
-- `mediaplayer-display` needs the FFmpeg port's QMP display callback.
-- `native-guihost` and `native-sxgui` build the optional Haxe clients first.
+The five scenarios that were still missing now have i386 counterparts.
+`mediaplayer-display` invokes the port's frame callback, `mediaplayer-nolib`
+and `mediaplayer-noport` remove the engine from an isolated SxFS copy, and
+`native-guihost` and `native-sxgui` build their optional clients. The
+`mediaplayer-selftest` entry point also works directly. See
+[study §28](I386_PORT_STUDY.md#28-port-specific-smoke-scenarios-and-the-reference-failure-paths).
 
 ## Suggested order
 
-1. Port the five remaining scenarios above and add interaction scenarios for
-   the Task List, Alt+Tab, Alt+F4, dialogs and the taskbar popups.
+1. Exercise dialogs and the remaining taskbar popup paths with both builds.
 2. Capture both builds with the same input scripts and record the visual
    comparison per application.
-3. Run the performance table and the idle-halt check.
+3. Run the remaining performance measurements.
 4. Resolve every Justified (pending) row, then review the table as a whole
    before moving the target to v0.4.1.

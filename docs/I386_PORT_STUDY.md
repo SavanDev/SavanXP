@@ -2325,6 +2325,160 @@ v0.4.0.
 All 23 newly ported scenarios pass in QEMU: the application selftests,
 `cursor-repro`, `gpu-soak`, the AC'97 and virtio-sound stream, count and
 record scenarios, `kbd-smoke`, `pointer-smoke --virtio` and the host
-aliases. Five reference scenarios remain; the
-[parity review](I386_PARITY_REVIEW.md#reference-scenarios-without-an-i386-counterpart)
-records why.
+aliases. Five reference scenarios were still pending at this checkpoint.
+Section 28 records how they were restored.
+
+## 28. Port-specific smoke scenarios and the reference failure paths
+
+The two existing aggregate smokes could exercise the Media Player and Haxe
+clients from a diagnostic shell. The remaining reference scenarios also
+cover the regular init automation path, the graphical error window and
+preparation of the native Haxe binaries. The reference Media Player runner
+checks a held frame through its port-owned QMP callback. i386 now invokes
+that callback after `MEDIAPLAYER DISPLAY READY` and requires the init
+success token. The `mediaplayer-selftest` name also works from the
+existing two-phase FFmpeg port smoke. With the i386 build cache as its
+default, `./ports/ffmpeg/smoke.sh --skip-port` passed in an independent
+tree using the built ELF32 library.
+
+The two missing-library scenarios use the same build that can play media.
+They install the fixture library and test media on a sparse copy of the
+SxFS disk, then remove `lib/libffmpeg.so.0.4` only from that copy.
+`mediaplayer-nolib` requires both the library name on serial and the
+reference exit status 2. `mediaplayer-noport` opens the Media Player from
+Program Manager and verifies the error glyphs in the video area with
+the reference capture script. The Haxe scenarios use the same staging
+path to build and install each Haxe application and its POSIX host test
+before starting the appropriate init spec.
+
+All six scenarios passed through `tools/run_smoke.py` with disks built
+by `./build.sh iso`. The missing-library scenario drew the expected
+warning, and the display callback saw 1045 colors in the 1280x800 frame.
+The SHA-256 of the persistent disk agreed before and after the six runs.
+The same four Media Player paths then passed on both BIOS ISOs in the
+matched VGA profile. The held 1280x800 decoded frame was pixel-identical.
+For the missing-engine window, the captures differed only in the known
+edition label on the desktop wallpaper. The pinned Haxe build could not
+link either client. Its build script uses the dynamic POSIX `crt0.S`
+without the objects defining `sx_interpreter_path`, `sx_image_base` and
+`sx_start_dynamic`. The i386 tests pass with the native startup stub
+described in the device services chapter.
+
+## 29. Argument budgets and adoption of orphaned children
+
+The audit found the original fixed array of 15 strings with at most 63
+characters in the i386 syscall handler. v0.4.0 copies up to 128 arguments
+into one heap buffer. It counts string terminators against the 8 KiB
+buffer and reserves its last byte for termination on failure. The
+effective successful limit is 8191 bytes. An exact 8192-byte payload
+returned `E2BIG` on the pinned reference. The native handler now uses the
+same heap-backed budget for spawn, spawn with redirected descriptors
+and exec, retaining 4-byte user pointers and the i386 startup ABI.
+It reports `E2BIG` for invalid copier input, preserving the reference
+syscall contract. Failed exec leaves the caller's image intact.
+
+The other discrepancy was in orphan cleanup. The i386 scheduler handed
+even existing zombies to init and could retain their slots while init
+waited for a different child. The reference reaps already-dead children
+when their parent exits. It marks live children as adopted and frees
+their slots on exit unless a waiting parent consumes the status.
+The port applies the same rule to its existing process slots and
+preserves notification of a waiter for a live adopted child.
+
+`./build.sh smoke processes` exercises the argument limit, an argument
+longer than 63 characters, the terminating null pointer, byte and count
+overflow, successful exec and the existing lifecycle checks. For a direct
+comparison, the argument workload was also built with each SDK as
+`/disk/bin/smoke` on a disposable disk and booted with `/SMOKE=smoke`.
+In that run, init waits for the test process itself. The test abandons
+both a live child and an already-exited child and checks the process
+count after their slots should be free. Both guests passed the same C
+workload. The previous i386 ISO left the adopted live child in the
+process table after it exited.
+
+## 30. Desktop shortcuts and power in QEMU
+
+`./build.sh smoke window-keys` drives the graphical session on i386.
+The script opens Notepad, asserts the Task List's
+`Switch To` button after Ctrl+Esc and while Alt is held during Tab, checks
+the taskbar bevels as Alt+Tab changes focus, and verifies that Alt+F4
+removes Notepad. On the reference BIOS ISO, invoke the same
+`shoot_session.run_scenario("window-keys", ...)` after Program Manager is
+visible, with `SAVANXP_OUTPUT_ROOT` pointing at the reference build for
+the expected font glyphs. Both guests passed with standard VGA/PS/2.
+
+The same profile passed the shared `kbdlayout` and `clipboard` capture
+sequences. Each guest started with the `ES` taskbar glyphs and showed
+`EN` after English was selected in the popup. The same physical key
+then drew `[` in Notepad. Selecting and copying `hola mundo`, moving to
+the end of the line and pasting produced `hola mundohola mundo` in the
+editor on both guests.
+
+The same QEMU profile also matches the normal desktop power paths.
+Start menu Restart showed the confirmation text and produced another
+complete boot to Program Manager. Start menu Shut Down reached QEMU's
+`shutdown` state with `-no-shutdown`. On a fresh boot,
+`system_powerdown` reached the same state through the firmware button.
+The i386-specific `power-smoke` retains its extra SCI routing checks
+including PIC fallback.
+
+## 31. Timing with the APIC mode controlled
+
+The four-vCPU reference boot that timed out in section 25 completed
+with `qemu64,+smep` on the same machine. It reported xAPIC and scheduled
+four CPUs. This isolates SMEP as the change needed for that QEMU boot
+and agrees with the pinned AP initialization check in section 26.
+The branch's LAPIC driver uses the MMIO register interface. For a
+comparison with both guests using xAPIC and SMEP, use
+`-cpu max,-x2apic` with either one or four vCPUs.
+
+For the pipe workload, build the branch's `smptest.c` with both SDKs,
+using `build-user.sh --name smoke` on separate writable SxFS copies.
+Boot with `/SMOKE=smoke` as above. The test verifies the online CPUs,
+remote termination and data integrity, and measures 2000 pipe round
+trips using guest uptime. These are milliseconds from two sequential
+runs per row under QEMU 11.1.3 TCG, Debug builds, 1024 MiB and the
+default `pc` devices.
+
+| CPU configuration | v0.4.0 | i386 |
+| --- | ---: | ---: |
+| 1 vCPU, `max,-x2apic` | 307–323 ms | 514–536 ms |
+| 4 vCPUs, `max,-x2apic` | 810–893 ms | 1881–1962 ms |
+| 4 vCPUs, `max` | 742–1039 ms | — |
+
+The i386 pipe path is slower in these samples with either guest CPU
+count. The reference ranges with xAPIC and x2APIC overlap. The pipe test
+includes scheduling, system calls and data transfer, so the isolated
+cost of interrupt delivery remains open.
+
+For composition, run the shared `shoot_session` scenario `bench` on
+each BIOS ISO with one `qemu64` CPU and VGA. It moves a small box in
+Gfx Demo for 20 seconds, delivering 172 and 175 key taps per second.
+Among the nine `windowd-stats` intervals per guest with at least ten
+frames and a damage-bounds area below 100,000 pixels, the medians of
+the interval means were:
+
+| Guest | Compose (µs) | Sync (µs) | Present (µs) |
+| --- | ---: | ---: | ---: |
+| v0.4.0 | 538 | 470 | 1158 |
+| i386 | 794 | 1374 | 1495 |
+
+These are TCG workload samples. Frame counts depend on how each guest
+batches input, and the host was also running other verification work.
+Interactive desktop samples put the boot banner to visible Program
+Manager milestone at roughly 7–10 seconds on the reference and 7–14
+seconds on i386. The kernel-entry and first-composed-frame boundaries
+still need instrumentation for the formal boot measurement.
+
+For idle, boot each matched VGA guest with one `qemu64` CPU and let the
+init spec finish so that init sleeps and the desktop and audiod are
+absent. Sample QEMU user plus system CPU time from `/proc/PID/stat`
+over ten seconds and query HMP `info registers` through QMP. Both
+guests reached `HLT=1` in their interrupt-wait routine. The reference
+used 21.7% of one host CPU and i386 used 34.8% in that sample. The
+desktop sessions sampled separately used 45.6% and 46.4%. The steady
+timer windows in the headless run reported average handler times of
+62–73 µs and 156–232 µs respectively. Some native running samples
+resolved to the timer's process and I/O scans or 64-bit division.
+The sample identifies paths to profile and leaves the cost of each
+path to be measured.
