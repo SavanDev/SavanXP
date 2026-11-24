@@ -406,6 +406,23 @@ static const char* gfx_program_image(char* buffer, size_t capacity) {
     return name;
 }
 
+/* Writes the title both ways, inside the caller's presentation seqlock: whole
+ * in the header's tail and cut in the presentation (sxnwm_write_title). */
+static void gfx_write_title(struct savanxp_gpu_client_surface_header* header, const char* title) {
+    struct savanxp_wm_presentation* out = &header->requests.presentation;
+    uint32_t index = 0;
+
+    memset(header->long_title.text, 0, sizeof(header->long_title.text));
+    for (index = 0; title[index] != '\0' && index + 1u < sizeof(header->long_title.text); ++index) {
+        header->long_title.text[index] = title[index];
+    }
+    memset(out->title, 0, sizeof(out->title));
+    for (index = 0; title[index] != '\0' && index + 1u < sizeof(out->title); ++index) {
+        out->title[index] = title[index];
+    }
+    out->flags |= SAVANXP_WM_PRESENTATION_HAS_LONG_TITLE;
+}
+
 static void gfx_publish_presentation(struct savanxp_gfx_context* context) {
     _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
     _Alignas(4) static uint8_t icon_buffer[SXE_ICON_MAX_BYTES];
@@ -414,6 +431,7 @@ static void gfx_publish_presentation(struct savanxp_gfx_context* context) {
     struct sxe_meta meta;
     struct sxe_icons icons;
     static char image[128];
+    static char title[SAVANXP_WM_LONG_TITLE_CAPACITY];
     const char* path = gfx_program_image(image, sizeof(image));
     uint32_t value = 0;
     int have_any = 0;
@@ -423,9 +441,10 @@ static void gfx_publish_presentation(struct savanxp_gfx_context* context) {
     }
     out = &context->header->requests.presentation;
     memset(&staging, 0, sizeof(staging));
+    title[0] = '\0';
 
     if (sxe_load_meta(path, meta_buffer, sizeof(meta_buffer), &meta) == SXE_OK) {
-        if (sxe_meta_string(&meta, SXE_TAG_NAME, staging.title, sizeof(staging.title)) > 0u) {
+        if (sxe_meta_string(&meta, SXE_TAG_NAME, title, sizeof(title)) > 0u) {
             have_any = 1;
         }
         if (sxe_meta_u32(&meta, SXE_TAG_ACCENT, &value)) {
@@ -462,7 +481,7 @@ static void gfx_publish_presentation(struct savanxp_gfx_context* context) {
     out->accent = staging.accent;
     out->window_style = staging.window_style;
     out->icon_extent = staging.icon_extent;
-    memcpy(out->title, staging.title, sizeof(out->title));
+    gfx_write_title(context->header, title);
     memcpy(out->icon_pixels, staging.icon_pixels, sizeof(out->icon_pixels));
     __asm__ volatile("" ::: "memory");
     out->sequence = staging.sequence + 1u;
@@ -1249,7 +1268,6 @@ long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uin
 long gfx_set_title(const struct savanxp_gfx_context* context, const char* title) {
     struct savanxp_wm_presentation* out = 0;
     uint32_t sequence = 0;
-    uint32_t index = 0;
 
     if (context == 0 || context->header == 0 || title == 0) {
         return -SAVANXP_EINVAL;
@@ -1259,10 +1277,7 @@ long gfx_set_title(const struct savanxp_gfx_context* context, const char* title)
     sequence = out->sequence | 1u;
     out->sequence = sequence;
     __asm__ volatile("" ::: "memory");
-    memset(out->title, 0, sizeof(out->title));
-    for (index = 0; title[index] != '\0' && index + 1u < sizeof(out->title); ++index) {
-        out->title[index] = title[index];
-    }
+    gfx_write_title(context->header, title);
     __asm__ volatile("" ::: "memory");
     out->sequence = sequence + 1u;
     return gfx_notify_wm(context) < 0 ? -SAVANXP_EIO : 0;

@@ -476,17 +476,31 @@ static inline long sxnwm_decline_close(struct sxnwm_client* ctx) {
     return sxnwm_notify(ctx);
 }
 
-/* Copies `title` into a presentation title field, cut to fit. */
-static inline void sxnwm_copy_title(char* out, const char* title) {
+/* Copies `title` into a field of `capacity` bytes, cut to fit and padded
+ * with zeros. */
+static inline void sxnwm_copy_text(char* out, uint32_t capacity, const char* title) {
     uint32_t index = 0;
 
-    for (index = 0; index < SAVANXP_WM_PRESENTATION_TITLE_CAPACITY; index += 1) {
+    for (index = 0; index < capacity; index += 1) {
         out[index] = 0;
     }
-    for (index = 0; title != 0 && title[index] != '\0' &&
-            index + 1u < SAVANXP_WM_PRESENTATION_TITLE_CAPACITY; index += 1) {
+    for (index = 0; title != 0 && title[index] != '\0' && index + 1u < capacity; index += 1) {
         out[index] = title[index];
     }
+}
+
+/* Copies `title` into a presentation title field, cut to fit. */
+static inline void sxnwm_copy_title(char* out, const char* title) {
+    sxnwm_copy_text(out, SAVANXP_WM_PRESENTATION_TITLE_CAPACITY, title);
+}
+
+/* Writes the title both ways, inside the caller's presentation seqlock: whole
+ * in the header's tail (up to SAVANXP_WM_LONG_TITLE_CAPACITY - 1) and cut in
+ * the presentation itself. */
+static inline void sxnwm_write_title(struct savanxp_gpu_client_surface_header* header, const char* title) {
+    sxnwm_copy_text(header->long_title.text, SAVANXP_WM_LONG_TITLE_CAPACITY, title);
+    sxnwm_copy_title(header->requests.presentation.title, title);
+    header->requests.presentation.flags |= SAVANXP_WM_PRESENTATION_HAS_LONG_TITLE;
 }
 
 /* Publish what the window says about itself (see struct
@@ -511,7 +525,7 @@ static inline long sxnwm_set_presentation(struct sxnwm_client* ctx, const struct
     out->accent = source->accent;
     out->window_style = source->window_style;
     out->icon_extent = source->icon_extent;
-    sxnwm_copy_title(out->title, source->title);
+    sxnwm_write_title(ctx->header, source->title);
     pixels = source->icon_extent * source->icon_extent;
     for (index = 0; index < SAVANXP_WM_PRESENTATION_ICON_EXTENT * SAVANXP_WM_PRESENTATION_ICON_EXTENT; index += 1) {
         out->icon_pixels[index] = index < pixels ? source->icon_pixels[index] : 0u;
@@ -855,7 +869,7 @@ static inline long sxnwm_poll_owned_input(struct sxnwm_client* owner, struct sav
 }
 
 /* SetWindowText: a new title, everything else as last published. Titles
- * longer than SAVANXP_WM_PRESENTATION_TITLE_CAPACITY - 1 are cut. */
+ * longer than SAVANXP_WM_LONG_TITLE_CAPACITY - 1 are cut. */
 static inline long sxnwm_set_title(struct sxnwm_client* ctx, const char* title) {
     struct savanxp_wm_presentation* out = 0;
     uint32_t sequence = 0;
@@ -867,7 +881,7 @@ static inline long sxnwm_set_title(struct sxnwm_client* ctx, const char* title) 
     sequence = out->sequence | 1u;
     out->sequence = sequence;
     __asm__ volatile("" ::: "memory");
-    sxnwm_copy_title(out->title, title);
+    sxnwm_write_title(ctx->header, title);
     __asm__ volatile("" ::: "memory");
     out->sequence = sequence + 1u;
     return sxnwm_notify(ctx);

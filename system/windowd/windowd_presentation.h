@@ -14,7 +14,9 @@
  * generic icon.
  */
 
-#define WINDOWD_PRESENTATION_LABEL_CAPACITY 32
+/* The long title's capacity: what a window publishes whole in the header's
+ * tail, and what an owned dialog's 63-character request fits in. */
+#define WINDOWD_PRESENTATION_LABEL_CAPACITY 128
 /* The window frame and the Alt+Tab switcher draw the small icon. */
 #define WINDOWD_PRESENTATION_ICON_EXTENT 16u
 #define WINDOWD_PRESENTATION_ICON_PIXELS \
@@ -46,13 +48,15 @@ struct windowd_presentation
  * `path` as its title, the generic icon and accent, an ordinary window. */
 void windowd_presentation_default(struct windowd_presentation *presentation, const char *path);
 
-/* Adopts what the client published. Every field is validated, since the
- * header is memory another process writes: the title is cut and terminated,
- * an icon is taken only at the exact slot size. Returns 1 if anything shown
- * changed. */
+/* Adopts what the client published. `long_title` is the header's tail, read
+ * under the same seqlock, or 0; it is used only when the presentation's flags
+ * say the client wrote it. Every field is validated, since the header is
+ * memory another process writes: the title is cut and terminated, an icon is
+ * taken only at the exact slot size. Returns 1 if anything shown changed. */
 int windowd_presentation_adopt(
     struct windowd_presentation *presentation,
-    const struct savanxp_wm_presentation *published);
+    const struct savanxp_wm_presentation *published,
+    const struct savanxp_wm_long_title *long_title);
 
 /* Resolved title. `path` is the last resort when nobody gave a name. */
 const char *windowd_presentation_label(const struct windowd_presentation *presentation, const char *path);

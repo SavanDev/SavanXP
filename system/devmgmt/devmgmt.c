@@ -1705,16 +1705,10 @@ static void show_properties(void)
     g_properties_inventory.generation = g_inventory.generation;
     g_properties_index = row->device;
     device_name(&g_properties_inventory, g_properties_index, name, sizeof(name));
-    /* A window title holds SAVANXP_WM_PRESENTATION_TITLE_CAPACITY - 1
-     * characters; a name too long for it is on the General tab anyway. */
-    if (strlen(name) + sizeof(" Properties") <= SAVANXP_WM_PRESENTATION_TITLE_CAPACITY)
-    {
-        snprintf(g_properties_title, sizeof(g_properties_title), "%s Properties", name);
-    }
-    else
-    {
-        snprintf(g_properties_title, sizeof(g_properties_title), "Device Properties");
-    }
+    /* The sheet is an owned window, whose request carries
+     * SAVANXP_WM_WINDOW_TITLE_CAPACITY - 1 characters; the caption ends in
+     * "..." when the frame is narrower than the title. */
+    snprintf(g_properties_title, sizeof(g_properties_title), "%s Properties", name);
 
     *DV_PROPERTIES_TABS = sxgui_tabs(
         sx_rect_make(DV_DIALOG_MARGIN, DV_DIALOG_MARGIN, DV_PROPERTIES_WIDTH - DV_DIALOG_MARGIN * 2,

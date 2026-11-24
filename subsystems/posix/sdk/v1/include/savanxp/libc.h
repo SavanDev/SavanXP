@@ -342,7 +342,7 @@ int gfx_shell_window_list_fd(void);
 long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uint32_t shape);
 /* SetWindowText: a new window title; icon, accent and style stay as published
  * from the program's resources. Titles longer than
- * SAVANXP_WM_PRESENTATION_TITLE_CAPACITY - 1 are cut. The POSIX side of
+ * SAVANXP_WM_LONG_TITLE_CAPACITY - 1 are cut. The POSIX side of
  * sxnwm_set_title. 0, -EINVAL or -EIO. */
 /* Fullscreen at desktop resolution; restores window geometry when disabled. */
 long gfx_set_fullscreen(const struct savanxp_gfx_context* context, int enabled);

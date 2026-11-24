@@ -236,6 +236,10 @@ Cut-off notes:
 
 ### Changed
 
+- **Window titles hold 127 characters instead of 31.** `sxnwm_set_title`, `gfx_set_title` and the `.sxe` name go
+  whole through a new `long_title` tail of the surface header; owned windows keep 63. A caption narrower than its
+  title ends in "...". Device Manager's sheets are always "`<device>` Properties".
+
 - **`build.sh run` and `debug` can request `sudo` to open an SxFS device.** QEMU still runs with the invoking user's
   permissions.
 

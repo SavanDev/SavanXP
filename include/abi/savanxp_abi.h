@@ -1511,6 +1511,9 @@ struct savanxp_wm_window_request {
 #define SAVANXP_WM_PRESENTATION_TITLE_CAPACITY 32u
 #define SAVANXP_WM_PRESENTATION_ICON_EXTENT 16u
 #define SAVANXP_WM_PRESENTATION_HAS_ACCENT 0x00000001u
+/* The whole title is in the header's long_title tail; `title` holds it cut
+ * to fit, for a WM that predates the tail. Set by the client runtime. */
+#define SAVANXP_WM_PRESENTATION_HAS_LONG_TITLE 0x00000002u
 
 struct savanxp_wm_presentation {
     uint32_t sequence;     /* written only by the client */
@@ -1568,6 +1571,15 @@ struct savanxp_wm_desktop_pointer {
     uint32_t width, height;
 };
 
+/* A window title longer than the presentation's 31 characters, written under
+ * the presentation's seqlock together with SAVANXP_WM_PRESENTATION_HAS_LONG_TITLE.
+ * It lives at the end of the header because the presentation sits in the
+ * middle of the requests, where it cannot grow. */
+#define SAVANXP_WM_LONG_TITLE_CAPACITY 128u
+struct savanxp_wm_long_title {
+    char text[SAVANXP_WM_LONG_TITLE_CAPACITY];
+};
+
 struct savanxp_gpu_client_surface_header {
     uint32_t magic;
     uint32_t pixels_offset;
@@ -1587,6 +1599,10 @@ struct savanxp_gpu_client_surface_header {
     /* Optional v5 tail, identified by reserved1 == DESKTOP_POINTER_MAGIC.
      * Existing field offsets and the pixel/command offsets stay valid. */
     struct savanxp_wm_desktop_pointer desktop_pointer;
+    /* Appended after the pointer. The WM sizes the header and puts the
+     * commands after it, and a client checks command_offset >= the header it
+     * was built with, so one built before this simply never writes here. */
+    struct savanxp_wm_long_title long_title;
 };
 
 enum savanxp_mouse_button {

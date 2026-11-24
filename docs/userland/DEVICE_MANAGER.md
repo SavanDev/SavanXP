@@ -87,8 +87,7 @@ Four tabs of what the record holds; a field that was not recorded says so.
 
 The sheet shows a copy of the record taken when it opened, so it stays
 readable if the device goes away meanwhile. Its title is "`<name>`
-Properties" when that fits a window title (31 characters), "Device
-Properties" otherwise.
+Properties", ending in "..." when the frame is narrower than it.
 
 ## Icons
 

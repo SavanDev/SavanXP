@@ -15,8 +15,11 @@ _Static_assert(
     WINDOWD_PRESENTATION_ICON_EXTENT == SAVANXP_WM_PRESENTATION_ICON_EXTENT,
     "the published icon and the frame's icon must be the same size");
 _Static_assert(
-    WINDOWD_PRESENTATION_LABEL_CAPACITY == SAVANXP_WM_PRESENTATION_TITLE_CAPACITY,
-    "the published title and the window's label must have the same capacity");
+    WINDOWD_PRESENTATION_LABEL_CAPACITY == SAVANXP_WM_LONG_TITLE_CAPACITY,
+    "the published long title and the window's label must have the same capacity");
+_Static_assert(
+    WINDOWD_PRESENTATION_LABEL_CAPACITY >= SAVANXP_WM_PRESENTATION_TITLE_CAPACITY,
+    "the label must hold the short title whole");
 
 static void copy_label(char *destination, size_t capacity, const char *source, size_t source_capacity)
 {
@@ -75,7 +78,8 @@ void windowd_presentation_default(struct windowd_presentation *presentation, con
 
 int windowd_presentation_adopt(
     struct windowd_presentation *presentation,
-    const struct savanxp_wm_presentation *published)
+    const struct savanxp_wm_presentation *published,
+    const struct savanxp_wm_long_title *long_title)
 {
     struct windowd_presentation before;
 
@@ -85,7 +89,12 @@ int windowd_presentation_adopt(
     }
     before = *presentation;
 
-    if (published->title[0] != '\0')
+    if ((published->flags & SAVANXP_WM_PRESENTATION_HAS_LONG_TITLE) != 0u && long_title != 0 &&
+        long_title->text[0] != '\0')
+    {
+        copy_label(presentation->label, sizeof(presentation->label), long_title->text, sizeof(long_title->text));
+    }
+    else if (published->title[0] != '\0')
     {
         copy_label(presentation->label, sizeof(presentation->label), published->title, sizeof(published->title));
     }
@@ -178,6 +187,7 @@ int windowd_presentation_selftest(void)
 {
     static struct windowd_presentation presentation;
     static struct savanxp_wm_presentation published;
+    static struct savanxp_wm_long_title long_title;
     struct desktop_embedded_bitmap storage;
     const struct desktop_embedded_bitmap *icon = 0;
 
@@ -207,7 +217,7 @@ int windowd_presentation_selftest(void)
     published.icon_extent = WINDOWD_PRESENTATION_ICON_EXTENT;
     published.icon_pixels[0] = 0xff112233u;
     published.icon_pixels[WINDOWD_PRESENTATION_ICON_PIXELS - 1u] = 0xff445566u;
-    expect(windowd_presentation_adopt(&presentation, &published) == 1, "presentation: adopting reports a change");
+    expect(windowd_presentation_adopt(&presentation, &published, 0) == 1, "presentation: adopting reports a change");
     expect(strcmp(windowd_presentation_label(&presentation, "/bin/notepad"), "Notepad") == 0,
         "presentation: adopted title");
     expect(windowd_presentation_has_accent(&presentation) &&
@@ -216,17 +226,42 @@ int windowd_presentation_selftest(void)
     icon = windowd_presentation_icon(&presentation, &storage);
     expect(icon == &storage && icon->pixels[0] == 0xff112233u &&
         icon->pixels[WINDOWD_PRESENTATION_ICON_PIXELS - 1u] == 0xff445566u, "presentation: adopted icon pixels");
-    expect(windowd_presentation_adopt(&presentation, &published) == 0, "presentation: same values are no change");
+    expect(windowd_presentation_adopt(&presentation, &published, 0) == 0, "presentation: same values are no change");
 
     /* Hostile values: a title with no terminator, an icon at the wrong size. */
     windowd_presentation_default(&presentation, "/bin/x");
     memset(&published, 0, sizeof(published));
     memset(published.title, 'A', sizeof(published.title));
     published.icon_extent = 64u;
-    (void)windowd_presentation_adopt(&presentation, &published);
-    expect(strlen(presentation.label) == WINDOWD_PRESENTATION_LABEL_CAPACITY - 1u,
-        "presentation: an unterminated title is cut and terminated");
+    (void)windowd_presentation_adopt(&presentation, &published, 0);
+    expect(strlen(presentation.label) == SAVANXP_WM_PRESENTATION_TITLE_CAPACITY,
+        "presentation: an unterminated title is cut at its field and terminated");
     expect(presentation.icon_extent == 0u, "presentation: an icon at the wrong size is ignored");
+
+    /* The long title: used whole when the flag says it was written, never
+     * without the flag (a client built before the tail leaves it zero, but
+     * the memory is the client's), and cut and terminated when hostile. */
+    windowd_presentation_default(&presentation, "/system/devmgmt.sxe");
+    memset(&published, 0, sizeof(published));
+    memset(&long_title, 0, sizeof(long_title));
+    memcpy(published.title, "Intel 82540EM Gigabit Ethernet ", 31);
+    strcpy(long_title.text, "Intel 82540EM Gigabit Ethernet controller Properties");
+    published.flags = SAVANXP_WM_PRESENTATION_HAS_LONG_TITLE;
+    expect(windowd_presentation_adopt(&presentation, &published, &long_title) == 1 &&
+        strcmp(presentation.label, long_title.text) == 0, "presentation: a long title is shown whole");
+    published.flags = 0u;
+    (void)windowd_presentation_adopt(&presentation, &published, &long_title);
+    expect(strcmp(presentation.label, "Intel 82540EM Gigabit Ethernet ") == 0,
+        "presentation: without the flag the tail is ignored");
+    published.flags = SAVANXP_WM_PRESENTATION_HAS_LONG_TITLE;
+    long_title.text[0] = '\0';
+    (void)windowd_presentation_adopt(&presentation, &published, &long_title);
+    expect(strcmp(presentation.label, "Intel 82540EM Gigabit Ethernet ") == 0,
+        "presentation: an empty long title falls back to the short one");
+    memset(long_title.text, 'B', sizeof(long_title.text));
+    (void)windowd_presentation_adopt(&presentation, &published, &long_title);
+    expect(strlen(presentation.label) == WINDOWD_PRESENTATION_LABEL_CAPACITY - 1u && presentation.label[0] == 'B',
+        "presentation: an unterminated long title is cut and terminated");
 
     return g_presentation_failures;
 }

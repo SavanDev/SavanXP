@@ -463,6 +463,20 @@ without resources gets its basename and the generic icon.
 program") because it is read from the program's own image, by the program's
 own runtime.
 
+**Titles.** `savanxp_wm_presentation.title` holds 31 characters and cannot
+grow: the presentation sits in the middle of `savanxp_wm_client_requests`, and
+programs built before a change still write the fields after it. The whole
+title (127 characters, `SAVANXP_WM_LONG_TITLE_CAPACITY`) goes in
+`long_title`, a tail at the end of `savanxp_gpu_client_surface_header`. Both
+runtimes write the two under the presentation's seqlock and set
+`SAVANXP_WM_PRESENTATION_HAS_LONG_TITLE`; `windowd` uses the tail only with
+that flag, so a program built before the tail (which never writes it) keeps
+its short title. The tail is safe to add because `windowd` sizes the header
+and puts the command batches after it, and a client accepts any
+`command_offset` at least as large as the header it was built with. An owned
+window's title travels in its window request, 63 characters. A caption
+narrower than its title ends in "...", cut at a character boundary.
+
 ## Native from the start
 
 The kernel has a native NT-style API (see

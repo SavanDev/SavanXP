@@ -3145,6 +3145,7 @@ static void service_client_presentation(
     struct windowd_client *client)
 {
     static struct savanxp_wm_presentation copy;
+    static struct savanxp_wm_long_title long_title;
     uint32_t sequence = 0;
 
     if (session == 0 || dirty == 0 || client == 0 || client->pid <= 0 || client->header == 0)
@@ -3157,12 +3158,14 @@ static void service_client_presentation(
         return;
     }
     memcpy(&copy, &client->header->requests.presentation, sizeof(copy));
+    /* The tail is written under the same seqlock (SAVANXP_WM_PRESENTATION_HAS_LONG_TITLE). */
+    memcpy(&long_title, &client->header->long_title, sizeof(long_title));
     if (client->header->requests.presentation.sequence != sequence)
     {
         return;
     }
     client->presentation_consumed_sequence = sequence;
-    if (windowd_presentation_adopt(&client->presentation, &copy))
+    if (windowd_presentation_adopt(&client->presentation, &copy, &long_title))
     {
         /* The caption shows title, icon and accent. */
         windowd_dirty_rect_add_client(dirty, client);

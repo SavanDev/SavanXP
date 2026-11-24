@@ -146,6 +146,45 @@ int windowd_dirty_rect_at(const struct windowd_dirty_rect *dirty, size_t index, 
     return sx_region_rect_at(&dirty->region, index, out);
 }
 
+/* The title as it fits `width` pixels in the painter's font: whole, or cut
+ * at a character boundary with "..." after it, as Windows draws a caption
+ * that does not fit. Never splits a UTF-8 sequence. */
+static const char *fit_caption_title(const struct sx_painter *painter, const char *title, int width)
+{
+    static char fitted[WINDOWD_PRESENTATION_LABEL_CAPACITY + 32];
+    size_t length = 0;
+
+    if (title == 0 || sx_painter_text_width(painter, title) <= width)
+    {
+        return title;
+    }
+    length = strlen(title);
+    if (length >= sizeof(fitted) - 4u)
+    {
+        length = sizeof(fitted) - 4u;
+    }
+    while (length > 0u)
+    {
+        length -= 1u;
+        while (length > 0u && ((unsigned char)title[length] & 0xc0u) == 0x80u)
+        {
+            length -= 1u;
+        }
+        /* No space before the dots: "Intel PRO/1000..." not "Intel ...". */
+        while (length > 0u && title[length - 1u] == ' ')
+        {
+            length -= 1u;
+        }
+        memcpy(fitted, title, length);
+        memcpy(fitted + length, "...", 4u);
+        if (sx_painter_text_width(painter, fitted) <= width)
+        {
+            return fitted;
+        }
+    }
+    return "...";
+}
+
 static const char *window_title_for_client(const struct windowd_client *client)
 {
     if (client == 0)
@@ -156,7 +195,7 @@ static const char *window_title_for_client(const struct windowd_client *client)
      * asked to close that keeps running says so, as Windows does. */
     if (client->not_responding)
     {
-        static char title[96];
+        static char title[WINDOWD_PRESENTATION_LABEL_CAPACITY + 32];
 
         snprintf(title, sizeof(title), "%s (Not Responding)",
             windowd_presentation_label(&client->presentation, client->path));
@@ -441,7 +480,7 @@ static void draw_frame(struct sx_painter *painter, const struct windowd_client *
                 painter,
                 text_x,
                 text_y,
-                window_title_for_client(client),
+                fit_caption_title(painter, window_title_for_client(client), text_right - text_x),
                 windowd_caption_text_colour(client->active));
             (void)sx_painter_set_font(painter, previous_font);
             sx_painter_pop_clip(painter);
