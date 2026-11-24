@@ -17,6 +17,10 @@ IOMMU=${SAVANXP_IOMMU:-}
 BOOT_OPTIONS=${SAVANXP_BOOT_OPTIONS:-}
 HEADLESS=${SAVANXP_HEADLESS:-OFF}
 JOBS=${SAVANXP_JOBS:-}
+case "${SAVANXP_QUIET:-}" in
+    1|ON|on|true|yes) QUIET=1 ;;
+    *) QUIET=0 ;;
+esac
 QEMU_DISK_OPTION=()
 QEMU_DISK_WRITE=0
 PREPARE_DISK_OPTION=()
@@ -145,6 +149,14 @@ while [[ $# -gt 0 ]]; do
             SMOKE_LIST=1
             shift
             ;;
+        --quiet)
+            QUIET=1
+            shift
+            ;;
+        --verbose)
+            QUIET=0
+            shift
+            ;;
         -h|--help)
             cat <<'EOF'
 Usage: ./build.sh [build|configure|kernel|userland|iso|run|debug|smoke|test|clean] [options]
@@ -172,6 +184,10 @@ Options:
   --timeout SEC     smoke timeout in seconds (default: 120)
   --gpu-soak-iterations N  iterations for the gpu-soak scenario
   --list            list smoke scenarios and exit
+  --quiet           send build and test output to build/build-logs/ and print a
+                    summary: errors, warnings, failed or skipped tests
+                    (also SAVANXP_QUIET=1)
+  --verbose         print the full output even when SAVANXP_QUIET is set
 EOF
             exit 0
             ;;
@@ -181,6 +197,8 @@ EOF
             ;;
     esac
 done
+# The smoke runner and the port scripts read the same switch.
+export SAVANXP_QUIET=$QUIET
 
 # Keep the one-word smoke targets available on the native path too:
 # `./build.sh windowd-smoke` is equivalent to `./build.sh smoke windowd-smoke`.
@@ -471,9 +489,29 @@ if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]; then
     CONFIGURE_ARGS+=("-DCMAKE_TOOLCHAIN_FILE=$ROOT/cmake/toolchain-linux.cmake")
 fi
 
+# Quiet mode: a step's full output goes to build-logs/<log> and the console
+# gets one summary line, plus the warnings, errors or failed tests needed to
+# act on it. The step's exit status is kept. See docs/build/BUILD_CMAKE.md.
+LOG_DIR="$OUTPUT_ROOT/build-logs"
+run_step() {
+    local kind=$1 label=$2 log="$LOG_DIR/$3"
+    shift 3
+    if ((QUIET == 0)); then
+        "$@"
+        return
+    fi
+    mkdir -p "$LOG_DIR"
+    local start=$SECONDS status=0
+    "$@" >"$log" 2>&1 || status=$?
+    python3 "$ROOT/tools/build_log_summary.py" --kind "$kind" --label "$label" \
+        --status "$status" --seconds "$((SECONDS - start))" \
+        --root "$ROOT" --build-dir "$BUILD_DIR" "$log"
+    return "$status"
+}
+
 configure() {
-    echo "==> Configuring $BUILD_DIR ($BUILD_TYPE)"
-    cmake "${CONFIGURE_ARGS[@]}"
+    ((QUIET)) || echo "==> Configuring $BUILD_DIR ($BUILD_TYPE)"
+    run_step configure "configure ($BUILD_TYPE)" configure.log cmake "${CONFIGURE_ARGS[@]}"
 }
 
 build_target() {
@@ -481,7 +519,13 @@ build_target() {
     shift
     local args=(--build "$BUILD_DIR" --target "$target")
     [[ -z "$JOBS" ]] || args+=(--parallel "$JOBS")
-    cmake "${args[@]}" "$@"
+    run_step ninja "build $target" "build-$target.log" cmake "${args[@]}" "$@"
+}
+
+run_ctest() {
+    local label=$1 log=$2
+    shift 2
+    run_step ctest "$label" "$log" ctest --test-dir "$BUILD_DIR" --output-on-failure "$@"
 }
 
 case "$COMMAND" in
@@ -520,7 +564,7 @@ case "$COMMAND" in
         if [[ -n "$SMOKE_HOST_TEST" ]]; then
             configure
             build_target savanxp_tests
-            ctest --test-dir "$BUILD_DIR" --output-on-failure -R "^${SMOKE_HOST_TEST}$"
+            run_ctest "ctest $SMOKE_HOST_TEST" "ctest-$SMOKE_HOST_TEST.log" -R "^${SMOKE_HOST_TEST}$"
             exit $?
         fi
         configure
@@ -648,7 +692,7 @@ case "$COMMAND" in
     test)
         configure
         build_target savanxp_tests
-        ctest --test-dir "$BUILD_DIR" --output-on-failure
+        run_ctest ctest ctest.log
         ;;
     clean)
         # CMake removes generated outputs it owns, but the persistent image is

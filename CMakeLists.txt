@@ -1490,6 +1490,11 @@ add_test(NAME smoke-runner-layout-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/smoke_runner_layout_test.py"
             --root "${CMAKE_SOURCE_DIR}")
+# build.sh --quiet (docs/build/BUILD_CMAKE.md, "Quiet output").
+add_test(NAME build-log-summary-test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/host/build_log_summary_test.py"
+            --root "${CMAKE_SOURCE_DIR}")
 add_test(NAME qemu-disk-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/qemu_disk_test.py")

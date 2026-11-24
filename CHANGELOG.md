@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **`build.sh --quiet` (or `SAVANXP_QUIET=1`) prints a summary instead of the full build output.**
+  Logs go to `build/build-logs/`; failures show Ninja's errors and ctest's failed or skipped tests.
+  `--verbose` overrides it. [Quiet output](docs/build/BUILD_CMAKE.md#quiet-output).
+
 - **Device Manager and the hardware inventory.** `devmgmt` (System menu) lists the
   hardware by type or by connection, with each device's driver, state, problem
   marks and Properties; read-only. It reads `SXN_SYS_DEVICE_SNAPSHOT`

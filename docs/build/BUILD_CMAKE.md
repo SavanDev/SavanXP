@@ -91,6 +91,34 @@ is `savanxp`; `savanxp_iso` adds the hybrid BIOS/UEFI ISO. `build.sh clean`
 removes generated CMake outputs but preserves `build/disk.img` and
 `build/external/`.
 
+### Quiet output
+
+`--quiet`, or `SAVANXP_QUIET=1` in the environment, sends the output of each
+configure, `cmake --build` and `ctest` step to `build/build-logs/` (`configure.log`,
+`build-<target>.log`, `ctest.log`) and prints a summary from
+`tools/build_log_summary.py` instead:
+
+```text
+==> configure (Debug): OK, 0 warnings, 1s (log: build/build-logs/configure.log)
+==> build savanxp: OK, 1732 steps, 17 warnings, 34s (log: build/build-logs/build-savanxp.log)
+```
+
+followed by the distinct compiler warnings (up to 10). A failed build prints
+Ninja's `FAILED:` blocks with the compiler errors, a failed configure prints
+from the first `CMake Error`, and `ctest` prints its total, the output of each
+failed test and the tests that did not run, skipped ones included. The exit
+status is the step's own. The smoke runner leaves out the QEMU command line and,
+when the scenario passes, the serial tail; both are in `build/smoke-logs/`
+anyway (`*.qemu.log`, `*.serial.log`), and a failing scenario still prints the
+tail. `--verbose` prints everything
+even when `SAVANXP_QUIET` is set.
+
+It exists for AI agents, which pay for every line they read: a full Ninja build
+prints about 1,800 lines, and every commit changes the build number, which
+rebuilds everything. The repository's `.claude/settings.json` sets
+`SAVANXP_QUIET=1` for Claude Code; other agents should set it the same way.
+People and CI see the full output unless they ask for less.
+
 ### Preparing an installed disk
 
 `prepare-disk` builds a fresh GPT disk with a FAT32 EFI partition and a 1 GiB

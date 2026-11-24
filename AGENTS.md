@@ -215,6 +215,11 @@ push, plus the ones specific to each area:
 | Linux subsystem | `linux-hello`, `linux-restart` |
 | A program or driver with its own scenario | that scenario |
 
+- Agents run `build.sh` with `SAVANXP_QUIET=1` (Claude Code gets it from
+  `.claude/settings.json`): each step prints one `OK`/`FAILED` line plus the
+  errors, warnings and failed or skipped tests, and the full output is in
+  `build/build-logs/`. Read that line for every step; open the log, or pass
+  `--verbose`, when the summary is not enough.
 - `./build.sh smoke --list` prints every scenario with one line on what it
   asserts. Audio, USB, networking and most apps have their own; look there
   before deciding nothing covers the change.

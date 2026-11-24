@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import re
 import shutil
 import signal
 import socket
@@ -22,6 +23,11 @@ from shoot_session import run_scenario as run_shoot_scenario
 from taskbar_smoke import run_taskbar_actions
 from audio_wav import verify_tone, verify_duplex, verify_recording, verify_preferences
 from run_qemu import IOMMUS, USB_HOSTS, USB_POINTERS, build_qemu_args, usb_host_devices, find_qemu, prepare_image
+
+
+def quiet_output() -> bool:
+    """build.sh --quiet: leave what is already in the logs out of the console."""
+    return os.environ.get("SAVANXP_QUIET", "").lower() in ("1", "on", "true", "yes")
 
 
 def _die_with_parent() -> None:
@@ -79,11 +85,18 @@ def stop_process(process: subprocess.Popen[bytes], monitor_path: Path) -> None:
         process.wait()
 
 
-def tail(path: Path, limit: int = 120) -> str:
+ANSI_ESCAPE = re.compile(r"\x1b(\[[0-9;?=]*[ -/]*[@-~]|[@-Z\\-_])")
+
+
+def tail(path: Path, limit: int = 120, plain: bool = False) -> str:
     try:
         data = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
+    if plain:
+        # The firmware and Limine draw on the serial console with cursor
+        # escapes, one character at a time: thousands of bytes per line.
+        data = [line for line in (ANSI_ESCAPE.sub("", l) for l in data) if line.strip()]
     return "\n".join(data[-limit:])
 
 
@@ -446,7 +459,8 @@ def main() -> int:
         encoding="utf-8",
     )
     print(f"smoke: {args.scenario}: waiting for {args.success_token!r}", flush=True)
-    print("qemu:", " ".join(qemu_args), flush=True)
+    if not quiet_output():
+        print("qemu:", " ".join(qemu_args), flush=True)
 
     lock_path = run_disk.with_name(run_disk.name + ".lock")
     status = 1
@@ -625,7 +639,9 @@ def main() -> int:
             status = 1
             reason = f"recorded PCM assertion failed: {exc}"
     print(f"smoke: {args.scenario}: {reason}", flush=True)
-    excerpt = tail(log_path)
+    # A passing run's serial tail is only noise in quiet mode; a failing one
+    # always shows it.
+    excerpt = tail(log_path, plain=quiet_output()) if status != 0 or not quiet_output() else ""
     if excerpt:
         print("--- serial tail ---", flush=True)
         print(excerpt, flush=True)
