@@ -40,8 +40,10 @@ imports it, so Claude Code loads the rules when it works in the area.
   rewrites published history. If `[Unreleased]` does not exist at the top of
   the file, create it.
 - `CHANGELOG.md` holds only `[Unreleased]`; each released version is its own
-  file in `docs/changelog/`, listed under `## Previous versions`. Those files
-  are never edited, and adding an entry needs nothing from them.
+  file in `docs/changelog/`, listed under `## Previous versions`, and adding
+  an entry needs nothing from them. Their text is never edited; only a link
+  that broke is repointed, for example when a roadmap moves from
+  `roadmaps/open/` to `roadmaps/done/` and its links move with it.
 - The release commit (`release(vX.Y.Z): ...`) is the only one that renames
   `[Unreleased]` to the new version with a date.
 - Right after a release, master bumps `include/shared/version.h` to the next
