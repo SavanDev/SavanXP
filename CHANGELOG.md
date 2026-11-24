@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **POSIX windows can capture the pointer (SDK 2.0).** Use
+  `gfx_set_pointer_capture` and `gfx_poll_window_motion` to read relative mouse
+  input while the window is active. [SDK reference](subsystems/posix/sdk/v1/REFERENCE.md#graphics-runtime).
+
 - **Commit hooks check the mechanical rules of `AGENTS.md`.** `git config core.hooksPath tools/git-hooks`
   enables them: binaries, WADs and logs, machine paths in tooling, changelog entry size and released notes.
   [Commit checks](docs/build/BUILD_CMAKE.md#commit-checks).

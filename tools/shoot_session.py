@@ -4047,25 +4047,35 @@ def _wav_residue_s(path, seconds=6.0, rate=48000, window_s=0.02, min_crossings=8
     return (last_nonzero - last_active) / float(rate)
 
 
-def scenario_xash3d_renderer(s):
-    """Check the RGB swatches drawn by ref_soft on the composited desktop."""
-    s.run("/bin/xash3d-refprobe", wait=0)
-    # ref_soft quantizes RGB to five red, six green and five blue bits before blitting.
-    red, green, blue = (222, 0, 0), (0, 223, 0), (0, 0, 222)
-    row = bytes(red) * 64 + bytes(3 * 32) + bytes(green) * 64 + bytes(3 * 32) + bytes(blue) * 64
-
+def wait_xash3d_swatches(s, name, colors):
+    row = bytes(3 * 32).join(bytes(color) * 64 for color in colors)
     deadline = time.monotonic() + 25
     while time.monotonic() < deadline:
-        image = s.shot("xash3d-renderer")
+        image = s.shot(name)
         offset = image.tobytes().find(row)
         if offset >= 0 and offset % 3 == 0:
             y, x = divmod(offset // 3, image.width)
             region = image.crop((x, y, x + 256, y + 64))
             if region.tobytes() == row * 64:
-                print("  ref_soft: verified red, green and blue swatches and black spacing")
                 return
         time.sleep(1)
-    raise Failure("ref_soft did not paint the expected color swatches")
+    raise Failure("%s: ref_soft did not paint the expected color swatches" % name)
+
+
+def scenario_xash3d_renderer(s):
+    """Check ref_soft pixels and POSIX pointer capture on the composited desktop."""
+    s.run("/bin/xash3d-refprobe --capture", wait=0)
+    # ref_soft quantizes RGB to five red, six green and five blue bits before blitting.
+    red, green, blue = (222, 0, 0), (0, 223, 0), (0, 0, 222)
+    wait_xash3d_swatches(s, "xash3d-renderer", (red, green, blue))
+    print("  ref_soft: verified red, green and blue swatches and black spacing")
+
+    s.qmp._rel_step(40, -24)
+    s.qmp.click()
+    s.qmp.wheel(1)
+    s.qmp.tap("m")
+    wait_xash3d_swatches(s, "xash3d-captured-motion", (blue, green, red))
+    print("  POSIX capture: verified relative motion, button and wheel after reading keys")
 
 
 def scenario_doom(s):

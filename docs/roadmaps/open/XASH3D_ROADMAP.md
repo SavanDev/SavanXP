@@ -111,7 +111,8 @@ and PAK reads from SxFS.
 
 The `xash3d-renderer` smoke loads `ref_soft.so` through `GetRefAPI`, renders
 color swatches through the software blitter and checks the composited pixels
-in a POSIX window. It exercises the 2D drawing path without game data.
+in a POSIX window. It also checks relative pointer motion, buttons and wheel
+input after polling the keyboard on the same window.
 
 - `engine/platform/savanxp/`: video over `gfx_open`/`gfx_present_region`, input
   from the window's key and mouse events, sound through `sx_audio_mixer` (which
@@ -122,8 +123,8 @@ in a POSIX window. It exercises the 2D drawing path without game data.
 - `hlsdk-portable` built with the same SDK, producing the client and server
   libraries. The client uses FreeVGUI, whose controls need C++ RTTI. The
   client and menu modules still need a reproducible SDK build.
-- Relative mouse motion for in-game camera control needs POSIX SDK support
-  for [window pointer capture](../../desktop/WM_SUBSYSTEM.md#pointer-capture).
+- The POSIX SDK exposes [window pointer capture](../../desktop/WM_SUBSYSTEM.md#pointer-capture).
+  The client backend can use it for the in-game camera.
 - The game data (`valve/`) is the user's, installed under `/games`, like the
   Doom IWAD. Nothing proprietary is vendored or built.
 

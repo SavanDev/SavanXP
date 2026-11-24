@@ -923,8 +923,15 @@ struct gfx_pointer_stash {
     uint32_t count;
 };
 
+struct gfx_motion_stash {
+    struct savanxp_gui_pointer_motion items[GFX_EVENT_STASH_CAPACITY];
+    uint32_t head;
+    uint32_t count;
+};
+
 static struct gfx_key_stash g_gfx_key_stash[GFX_EVENT_WINDOW_SLOTS];
 static struct gfx_pointer_stash g_gfx_pointer_stash[GFX_EVENT_WINDOW_SLOTS];
+static struct gfx_motion_stash g_gfx_motion_stash;
 
 static void gfx_stash_key(uint32_t window_id, const struct savanxp_input_event* event) {
     struct gfx_key_stash* stash = 0;
@@ -957,6 +964,33 @@ static void gfx_stash_pointer(uint32_t window_id, const struct savanxp_gui_point
         int32_t wheel = last->wheel + event->wheel;
         *last = *event;
         last->wheel = wheel;
+        return;
+    }
+    stash->items[(stash->head + stash->count) % GFX_EVENT_STASH_CAPACITY] = *event;
+    stash->count += 1u;
+}
+
+static int32_t gfx_add_motion(int32_t first, int32_t second) {
+    int64_t sum = (int64_t)first + second;
+    if (sum > INT32_MAX) {
+        return INT32_MAX;
+    }
+    if (sum < INT32_MIN) {
+        return INT32_MIN;
+    }
+    return (int32_t)sum;
+}
+
+static void gfx_stash_motion(const struct savanxp_gui_pointer_motion* event) {
+    struct gfx_motion_stash* stash = &g_gfx_motion_stash;
+    if (stash->count == GFX_EVENT_STASH_CAPACITY) {
+        /* Preserve displacement and wheel motion when the consumer lags. */
+        struct savanxp_gui_pointer_motion* last = &stash->items[
+            (stash->head + stash->count - 1u) % GFX_EVENT_STASH_CAPACITY];
+        last->dx = gfx_add_motion(last->dx, event->dx);
+        last->dy = gfx_add_motion(last->dy, event->dy);
+        last->wheel = gfx_add_motion(last->wheel, event->wheel);
+        last->buttons = event->buttons;
         return;
     }
     stash->items[(stash->head + stash->count) % GFX_EVENT_STASH_CAPACITY] = *event;
@@ -1018,6 +1052,8 @@ static int gfx_drain_for(int fd, uint32_t window_id, uint32_t kind, struct savan
             gfx_stash_key(record->window_id, &record->payload.key);
         } else if (record->kind == SAVANXP_WM_EVENT_POINTER) {
             gfx_stash_pointer(record->window_id, &record->payload.pointer);
+        } else if (record->kind == SAVANXP_WM_EVENT_POINTER_MOTION && record->window_id == 0) {
+            gfx_stash_motion(&record->payload.motion);
         }
     }
     return 0;
@@ -1103,6 +1139,27 @@ int gfx_poll_window_pointer(const struct savanxp_gfx_context* context, struct sa
         return -SAVANXP_EINVAL;
     }
     return gfx_poll_pointer_for(context->input_fd, context->window_id, event);
+}
+
+int gfx_poll_window_motion(const struct savanxp_gfx_context* context, struct savanxp_gui_pointer_motion* event) {
+    struct savanxp_wm_event record;
+    struct gfx_motion_stash* stash = &g_gfx_motion_stash;
+    int result;
+
+    if (context == 0 || context->input_fd < 0 || context->window_id != 0 || event == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    if (stash->count != 0) {
+        *event = stash->items[stash->head];
+        stash->head = (stash->head + 1u) % GFX_EVENT_STASH_CAPACITY;
+        stash->count -= 1u;
+        return 1;
+    }
+    result = gfx_drain_for(context->input_fd, 0, SAVANXP_WM_EVENT_POINTER_MOTION, &record);
+    if (result > 0) {
+        *event = record.payload.motion;
+    }
+    return result;
 }
 
 int gfx_should_close(const struct savanxp_gfx_context* context) {
@@ -1410,6 +1467,15 @@ long gfx_set_fullscreen(const struct savanxp_gfx_context* context, int enabled) 
     }
     return gfx_window_request(context, SAVANXP_WM_WINDOW_ACTION_SET_FULLSCREEN,
                               0, enabled != 0, 0, 0, 0, 2000);
+}
+
+long gfx_set_pointer_capture(const struct savanxp_gfx_context* context, int enabled) {
+    if (context == 0 || context->header == 0 || context->window_id != 0) {
+        return -SAVANXP_EINVAL;
+    }
+    context->header->requests.pointer_capture = enabled != 0;
+    __asm__ volatile("" ::: "memory");
+    return gfx_notify_wm(context);
 }
 
 static long gfx_window_open_with(

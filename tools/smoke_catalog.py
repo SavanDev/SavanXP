@@ -1385,7 +1385,7 @@ SCENARIOS: dict[str, Scenario] = {
         "",
         "XASH3D RENDERER PASS",
         "XASH3D RENDERER FAIL",
-        "Xash3D ref_soft draws RGB swatches in a POSIX window",
+        "Xash3D ref_soft draws RGB swatches and verifies POSIX pointer capture",
         180.0,
         "handoff: starting /bin/init",
         "taskbar",

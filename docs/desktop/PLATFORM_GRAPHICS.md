@@ -96,10 +96,11 @@ parity:** `sxgui_app.c` has no `on_wake` yet; it is to gain one (a flag its
 Dialogs work the same way: `struct sxgui_dialog_host` gives them a window of
 their own, and each frame is the host that provides it.
 
-**Pending, POSIX parity:** the POSIX window API still needs pointer capture
-and relative-motion events for ports such as
-[Xash3D](../roadmaps/open/XASH3D_ROADMAP.md). SUN exposes both through
-`sxnwm_set_pointer_capture` and `SAVANXP_WM_EVENT_POINTER_MOTION`.
+For pointer capture, POSIX provides `gfx_set_pointer_capture` and
+`gfx_poll_window_motion` for the main window. SUN uses
+`sxnwm_set_pointer_capture` and reads `SAVANXP_WM_EVENT_POINTER_MOTION` from
+its window event ring. [Window manager pointer capture](WM_SUBSYSTEM.md#pointer-capture)
+describes how capture follows focus.
 
 ### The clipboard's formats
 

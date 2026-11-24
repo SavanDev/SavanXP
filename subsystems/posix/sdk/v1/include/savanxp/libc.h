@@ -346,6 +346,9 @@ long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uin
  * sxnwm_set_title. 0, -EINVAL or -EIO. */
 /* Fullscreen at desktop resolution; restores window geometry when disabled. */
 long gfx_set_fullscreen(const struct savanxp_gfx_context* context, int enabled);
+/* Request relative pointer input while the main window is active. The WM
+ * suspends the capture when the window loses focus. */
+long gfx_set_pointer_capture(const struct savanxp_gfx_context* context, int enabled);
 long gfx_query_pointer(const struct savanxp_gfx_context* context, struct savanxp_wm_desktop_pointer* out);
 long gfx_set_title(const struct savanxp_gfx_context* context, const char* title);
 /* Pide el tamano de area util que necesita el contenido de la ventana. Es una
@@ -396,6 +399,9 @@ long gfx_set_display_mode(const struct savanxp_gfx_context* context, uint32_t wi
 /* Puntero de la ventana de `context`, sea la principal o una con dueno. Comparte
  * el pipe y el reparto con gfx_poll_event/gfx_poll_pointer. */
 int gfx_poll_window_pointer(const struct savanxp_gfx_context* context, struct savanxp_gui_pointer_event* event);
+/* Read a captured motion record from the main window without blocking.
+ * Returns 1 for an event, 0 while empty, or a negative error. */
+int gfx_poll_window_motion(const struct savanxp_gfx_context* context, struct savanxp_gui_pointer_motion* event);
 /* Pixel and text primitives are the platform's: sxgfx/pixels.h. */
 
 int result_is_error(long result);

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <savanxp/libc.h>
 #include "xash3d_mathlib.h"
 #include "ref_api.h"
@@ -144,8 +145,52 @@ static void unlock_buffer(void)
         fail("could not present the rendered frame");
 }
 
-int main(void)
+static void draw_swatches(const ref_interface_t *renderer, qboolean captured_motion_received)
 {
+    byte red = captured_motion_received ? 0 : 224;
+    byte blue = captured_motion_received ? 224 : 0;
+    renderer->R_BeginFrame(false);
+    renderer->FillRGBA(kRenderNormal, 0, 0, globals.width, globals.height, 0, 0, 0, 255);
+    renderer->FillRGBA(kRenderNormal, 32, 32, 64, 64, red, 0, blue, 255);
+    renderer->FillRGBA(kRenderNormal, 128, 32, 64, 64, 0, 224, 0, 255);
+    renderer->FillRGBA(kRenderNormal, 224, 32, 64, 64, blue, 0, red, 255);
+    renderer->R_EndFrame();
+}
+
+static qboolean check_capture(void)
+{
+    struct savanxp_input_event key;
+    int result;
+    while ((result = gfx_poll_event(&window, &key)) > 0) {
+        if (key.type == SAVANXP_INPUT_EVENT_KEY_DOWN && key.key == 'm')
+            break;
+    }
+    if (result < 0)
+        fail("could not read the keyboard event");
+    if (result == 0)
+        return false;
+
+    /* The keyboard poll passed over the motion records in the shared channel.
+     * All captured events must still be available to the motion reader. */
+    struct savanxp_gui_pointer_motion motion;
+    int64_t dx = 0, dy = 0, wheel = 0;
+    qboolean pressed = false;
+    while ((result = gfx_poll_window_motion(&window, &motion)) > 0) {
+        dx += motion.dx;
+        dy += motion.dy;
+        wheel += motion.wheel;
+        pressed |= (motion.buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0;
+    }
+    if (result < 0 || dx <= 0 || dy >= 0 || wheel <= 0 || !pressed)
+        fail("missing captured pointer motion, wheel, or button");
+    if (gfx_set_pointer_capture(&window, 0) < 0)
+        fail("could not release pointer capture");
+    return true;
+}
+
+int main(int argc, char **argv)
+{
+    qboolean capture = argc == 2 && strcmp(argv[1], "--capture") == 0;
     void *module = dlopen("/games/xash3d/ref_soft.so", RTLD_NOW | RTLD_LOCAL);
     if (!module)
         fail("dlopen: %s", dlerror());
@@ -180,15 +225,16 @@ int main(void)
     if (!renderer.R_Init())
         fail("renderer initialization failed");
 
-    renderer.R_BeginFrame(false);
-    renderer.FillRGBA(kRenderNormal, 0, 0, globals.width, globals.height, 0, 0, 0, 255);
-    renderer.FillRGBA(kRenderNormal, 32, 32, 64, 64, 224, 0, 0, 255);
-    renderer.FillRGBA(kRenderNormal, 128, 32, 64, 64, 0, 224, 0, 255);
-    renderer.FillRGBA(kRenderNormal, 224, 32, 64, 64, 0, 0, 224, 255);
-    renderer.R_EndFrame();
-
-    while (!gfx_should_close(&window))
+    if (capture && gfx_set_pointer_capture(&window, 1) < 0)
+        fail("could not request pointer capture");
+    draw_swatches(&renderer, false);
+    while (!gfx_should_close(&window)) {
+        if (capture && check_capture()) {
+            draw_swatches(&renderer, true);
+            capture = false;
+        }
         sleep_ms(20);
+    }
     renderer.R_Shutdown();
     dlclose(module);
     return 0;

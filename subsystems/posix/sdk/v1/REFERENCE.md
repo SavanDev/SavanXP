@@ -190,7 +190,8 @@ Public helpers:
   `gfx_present`, `gfx_present_region`, `gfx_present_rects`,
   `gfx_should_close`, `gfx_set_title`
 - input: `gfx_poll_event`, `gfx_pointer_open`, `gfx_poll_pointer`,
-  `mouse_open`, `mouse_poll_event`
+  `gfx_set_pointer_capture`, `gfx_poll_window_motion`, `mouse_open`,
+  `mouse_poll_event`
 - software primitives: `gfx_rgb`, `gfx_stride_pixels`, `gfx_buffer_pixels`,
   `gfx_buffer_bytes`, `gfx_clear`, `gfx_pixel`, `gfx_hline`, `gfx_vline`,
   `gfx_rect`, `gfx_frame`, `gfx_text_width`, `gfx_text_height`,
@@ -210,6 +211,12 @@ The contract:
   descriptor from `gfx_pointer_open`) read the window manager's event channel,
   which carries both kinds. `mouse_open` and `mouse_poll_event` always read
   `/dev/mouse0`, which with `/dev/input0` is for low-level diagnostics.
+- `gfx_set_pointer_capture` requests relative mouse input for the main window.
+  The window manager hides the cursor and delivers deltas while that window
+  is active. Read them with `gfx_poll_window_motion`, which returns 1 for an
+  event, 0 when empty or a negative error. The keyboard and absolute pointer
+  readers save captured motion for this call. A full queue combines additional
+  deltas and wheel ticks into its last event and keeps the latest button state.
 - `gfx_should_close` returns 1 once the window manager asked the window to
   close.
 - Under QEMU the kernel may back `/dev/mouse0` with an absolute
