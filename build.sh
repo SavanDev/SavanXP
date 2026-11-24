@@ -514,7 +514,7 @@ case "$COMMAND" in
         exec python3 "$ROOT/tools/prepare_disk.py" "${PREPARE_DISK_OPTION[@]}" "${PREPARE_ERASE[@]}" \
             --boot "$OUTPUT_ROOT/image" --diskfs "$OUTPUT_ROOT/diskfs" --tools "$OUTPUT_ROOT/tools" \
             --config "$ROOT/boot/limine-installed.conf" --sync "$ROOT/tools/sxfs_sync.py" \
-            --python "$(command -v python3)" --sudo "$(<"$BUILD_DIR/prepare-disk-sudo")"
+            --python "$(command -v python3)" --sudo "$(<"$OUTPUT_ROOT/tools/sudo.path")"
         ;;
     smoke)
         if [[ -n "$SMOKE_HOST_TEST" ]]; then

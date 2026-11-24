@@ -17,7 +17,8 @@ pacman -S clang lld llvm cmake ninja make python-pillow \
   qemu-system-x86 edk2-ovmf libisoburn
 ```
 
-`sudo` is optional for `prepare-disk`. CMake finds it as `SAVANXP_SUDO`.
+`sudo` is optional for physical disk preparation and port installation. CMake
+finds it as `SAVANXP_SUDO`.
 
 The Win32 subsystem's DLLs and test fixtures are PE32 images: Clang compiles
 them for `i686-pc-windows-msvc` (a target every LLVM build includes) and
@@ -127,8 +128,10 @@ ROOT_VOLUME=/dev/disk/by-partuuid/YOUR_ROOT_UUID
 
 `SAVANXP_DISK_IMAGE` selects the destination for the official ports and
 `tools/build-user.sh`. It accepts an existing SxFS image file or the SxFS
-partition. Close QEMU before installing to a device and use an account with
-write access to that partition.
+partition. Close QEMU before installing to a device. If the installer needs
+more permissions, it asks for `sudo` to open the partition for writing. The
+compiler and filesystem validation run as your user, who also owns any
+recovery files. An image file uses the caller's permissions throughout.
 
 ```bash
 SAVANXP_DISK_IMAGE="$ROOT_VOLUME" ./ports/doomgeneric/build.sh --wad /path/to/doom1.wad

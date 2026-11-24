@@ -11,7 +11,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
-from block_device import claim, device_geometry, device_node, rescan, write_at
+from block_device import claim, device_geometry, device_node, disk_sequence, rescan, write_at
 
 SECTOR = 512
 MIB = 1024 * 1024
@@ -38,11 +38,7 @@ def inspect_disk(status: os.stat_result) -> DiskTarget:
     capacity, sector_size = device_geometry(node)
     if sector_size != SECTOR:
         raise ValueError("the destination must use 512-byte logical sectors")
-    try:
-        sequence = int((node / "diskseq").read_text())
-    except FileNotFoundError:
-        sequence = 0  # Linux kernels without disk sequence numbers.
-    return DiskTarget(status.st_rdev, capacity, sequence)
+    return DiskTarget(status.st_rdev, capacity, disk_sequence(node))
 
 
 def stage(capacity: int, work: Path, args: argparse.Namespace) -> str:

@@ -216,6 +216,9 @@ Cut-off notes:
 
 ### Changed
 
+- **Port installers can request `sudo` for a physical SxFS volume.** Builds, validation and recovery files stay under
+  the invoking user's permissions.
+
 - **`prepare-disk` can request `sudo` for a physical disk.** The build and staging run with the user's permissions.
 
 - **Web Viewer** is built only when the OpenSSL port is (`ports/openssl/build.sh` before `./build.sh build`).

@@ -6,13 +6,15 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import pwd
 import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 
-from block_device import claim, geometry, write_at
+from block_device import claim, device_identity, geometry, write_at
 
 VOLUME_LIMIT = 1 << 30
 TRANSFER_SIZE = 1 << 20
@@ -560,6 +562,65 @@ def sync_block_volume(args: argparse.Namespace, device: Path, fd: int, capacity:
             shutil.rmtree(work)
 
 
+def drop_sudo_privileges() -> None:
+    try:
+        uid = int(os.environ["SUDO_UID"])
+        gid = int(os.environ["SUDO_GID"])
+    except (KeyError, ValueError) as error:
+        raise ValueError("the privileged device opener must be started by sudo") from error
+    if os.geteuid() != 0 or uid <= 0 or gid < 0:
+        raise ValueError("the privileged device opener requires a non-root user invoking sudo")
+    try:
+        user = pwd.getpwuid(uid)
+    except KeyError as error:
+        raise ValueError(f"cannot look up the sudo user with UID {uid}") from error
+    os.initgroups(user.pw_name, gid)
+    os.setgid(gid)
+    os.setuid(uid)
+
+
+def sync_with_sudo(args: argparse.Namespace, image: Path, identity: str, source: Path,
+                   cli: Path, recovery: Path) -> int:
+    try:
+        sudo = (cli.parent / "sudo.path").read_text().strip()
+    except FileNotFoundError:
+        sudo = ""
+    if not sudo:
+        raise PermissionError(f"write access to {image} requires sudo or device permissions")
+    command = [sudo, "--", sys.executable, "-E", "-S", "-B", str(Path(__file__).resolve()),
+               "--target", str(image), "--source", str(source), "--cli", str(cli),
+               "--device-identity", identity, "--recovery-root", str(recovery)]
+    if args.no_compact:
+        command.append("--no-compact")
+    print(f"sxfs: requesting sudo to open {image}", flush=True)
+    return subprocess.run(command, check=False).returncode
+
+
+def sync_device(args: argparse.Namespace, image: Path, source: Path, cli: Path, recovery: Path) -> int:
+    identity = args.device_identity
+    observed = device_identity(image.stat())
+    if identity is not None and observed != identity:
+        raise ValueError(f"{image} changed since installation began")
+    with ExitStack() as resources:
+        try:
+            fd = resources.enter_context(claim(image, writable=True))
+        except PermissionError:
+            if identity is not None or os.geteuid() == 0:
+                raise
+            return sync_with_sudo(args, image, observed, source, cli, recovery)
+
+        if device_identity(os.fstat(fd)) != observed:
+            raise ValueError(f"{image} changed since installation began")
+        if identity is not None:
+            # The exclusive open file stays usable after dropping root. All
+            # reads, staging, validation and writes below run as the caller.
+            drop_sudo_privileges()
+        capacity, sector_size = geometry(fd)
+        if sector_size != 512:
+            raise ValueError("the target must use 512-byte logical sectors")
+        return sync_block_volume(args, image, fd, capacity, source, cli, recovery)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     destination = parser.add_mutually_exclusive_group(required=True)
@@ -569,6 +630,8 @@ def main() -> int:
     parser.add_argument("--cli", required=True, type=Path)
     parser.add_argument("--sectors", type=int, default=2097152)
     parser.add_argument("--no-compact", action="store_true", help="fail instead of compacting on exit 3")
+    parser.add_argument("--device-identity", help=argparse.SUPPRESS)
+    parser.add_argument("--recovery-root", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
         "--reset",
         action="store_true",
@@ -583,17 +646,16 @@ def main() -> int:
         raise SystemExit(f"sxfs: source directory does not exist: {source}")
     if not cli.is_file():
         raise SystemExit(f"sxfs: missing sxfs-cli: {cli}")
+    if args.device_identity is not None and args.target is None:
+        parser.error("the privileged device opener requires a block target")
     if args.target:
         if args.reset:
             parser.error("--reset requires --image")
-        if image.is_block_device():
+        if args.device_identity is not None or image.is_block_device():
             try:
-                with claim(image, writable=True) as fd:
-                    capacity, sector_size = geometry(fd)
-                    if sector_size != 512:
-                        raise ValueError("the target must use 512-byte logical sectors")
-                    recovery = Path(os.environ.get("SAVANXP_DEVICE_RECOVERY_DIR", cli.parent.parent / "device-recovery"))
-                    return sync_block_volume(args, image, fd, capacity, source, cli, recovery.resolve())
+                recovery = args.recovery_root or Path(
+                    os.environ.get("SAVANXP_DEVICE_RECOVERY_DIR", cli.parent.parent / "device-recovery"))
+                return sync_device(args, image, source, cli, recovery.resolve())
             except (OSError, ValueError) as error:
                 raise SystemExit(f"sxfs: {error}") from error
         if not image.is_file():

@@ -12,7 +12,7 @@ import zlib
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -126,6 +126,60 @@ def check_device_elevation(work: Path) -> None:
             raise AssertionError("a replaced disk must be rejected")
 
 
+def check_port_elevation(work: Path) -> None:
+    device = work / "port-disk"
+    device.touch()
+    source = work / "port-stage"
+    cli = work / "sxfs-cli"
+    recovery = work / "port-recovery"
+    identity = "123:456:2048:65536"
+    args = SimpleNamespace(device_identity=None, no_compact=True)
+    sudo = "/test/path/sudo"
+    (work / "sudo.path").write_text(f"{sudo}\n")
+
+    with (patch.object(sxfs_sync, "device_identity", return_value=identity),
+          patch.object(sxfs_sync, "claim", side_effect=PermissionError("denied")),
+          patch.object(os, "geteuid", return_value=1000),
+          patch.object(subprocess, "run", return_value=SimpleNamespace(returncode=3)) as run):
+        assert sxfs_sync.sync_device(args, device, source, cli, recovery) == 3
+        run.assert_called_once_with(
+            [sudo, "--", sys.executable, "-E", "-S", "-B", str(ROOT / "tools/sxfs_sync.py"),
+             "--target", str(device), "--source", str(source), "--cli", str(cli),
+             "--device-identity", identity, "--recovery-root", str(recovery), "--no-compact"], check=False)
+
+    actions = Mock()
+    actions.sync.return_value = 0
+    with (patch.object(sxfs_sync, "device_identity", return_value=identity),
+          patch.object(sxfs_sync, "claim", return_value=nullcontext(11)),
+          patch.object(sxfs_sync, "geometry", return_value=(32768 * 512, 512)),
+          patch.object(sxfs_sync, "sync_block_volume", actions.sync),
+          patch.object(os, "fstat"), patch.object(os, "geteuid", return_value=0),
+          patch.dict(os.environ, {"SUDO_UID": "1000", "SUDO_GID": "1001"}),
+          patch.object(sxfs_sync.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="installer")),
+          patch.object(os, "initgroups", actions.initgroups), patch.object(os, "setgid", actions.setgid),
+          patch.object(os, "setuid", actions.setuid), patch.object(subprocess, "run") as run):
+        assert sxfs_sync.sync_device(args, device, source, cli, recovery) == 0
+        assert actions.mock_calls == [call.sync(args, device, 11, 32768 * 512, source, cli, recovery)]
+        run.assert_not_called()
+        actions.reset_mock()
+
+        args.device_identity = identity
+        assert sxfs_sync.sync_device(args, device, source, cli, recovery) == 0
+        assert actions.mock_calls == [call.initgroups("installer", 1001), call.setgid(1001), call.setuid(1000),
+                                      call.sync(args, device, 11, 32768 * 512, source, cli, recovery)]
+
+    with (patch.object(sxfs_sync, "device_identity", side_effect=(identity, "replacement")),
+          patch.object(sxfs_sync, "claim", return_value=nullcontext(11)), patch.object(os, "fstat"),
+          patch.object(sxfs_sync, "drop_sudo_privileges") as drop):
+        try:
+            sxfs_sync.sync_device(args, device, source, cli, recovery)
+        except ValueError as error:
+            assert "changed since installation began" in str(error)
+            drop.assert_not_called()
+        else:
+            raise AssertionError("an elevated installer must reject a replaced device")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tools", type=Path, required=True)
@@ -133,6 +187,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="savanxp-install-test-") as temporary:
         work = Path(temporary)
         check_device_elevation(work)
+        check_port_elevation(work)
         boot = work / "boot-tree"
         for name in ("EFI/BOOT/BOOTX64.EFI", "boot/kernel.elf", "boot/initramfs.cpio"):
             file = boot / name

@@ -33,6 +33,25 @@ def device_node(device: int) -> Path:
     return Path(f"/sys/dev/block/{os.major(device)}:{os.minor(device)}").resolve(strict=True)
 
 
+def disk_sequence(disk: Path) -> int:
+    try:
+        return int((disk / "diskseq").read_text())
+    except FileNotFoundError:
+        return 0  # Linux kernels without disk sequence numbers.
+
+
+def device_identity(status: os.stat_result) -> str:
+    """Identify the open disk or partition across a permission prompt."""
+    if not stat.S_ISBLK(status.st_mode):
+        raise ValueError("the destination is not a block device")
+    node = device_node(status.st_rdev)
+    partition = (node / "partition").exists()
+    disk = node.parent if partition else node
+    start = int((node / "start").read_text()) if partition else 0
+    length = int((node / "size").read_text())
+    return f"{status.st_rdev}:{disk_sequence(disk)}:{start}:{length}"
+
+
 def device_geometry(node: Path) -> tuple[int, int]:
     """Return capacity in bytes and logical sector size."""
     disk = node.parent if (node / "partition").exists() else node
