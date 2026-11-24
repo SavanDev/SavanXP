@@ -1,6 +1,7 @@
 # Setup and updates — installing SavanXP and keeping it current
 
-> **Status: planned (2026-11-05). Nothing here is built.** Programs are
+> **LiveCD setup and updates are planned.** Linux can already prepare a UEFI
+> disk with [`build.sh prepare-disk`](../build/BUILD_CMAKE.md#preparing-an-installed-disk). Programs are
 > installed from the host (`tools/build-user.sh`, `tools/sxfs_sync.py`), the
 > LiveCD forgets everything on reboot, and there is no way to move from one
 > version to the next other than rebuilding `build/disk.img`. There is also no
@@ -88,9 +89,9 @@ partition 1 sector by sector. The kernel has a FAT driver and mounts the
 running system's ESP at `/boot`, writable by the system, so the updater can
 replace the kernel there as files ([FAT_ROADMAP.md](../roadmaps/open/FAT_ROADMAP.md)).
 
-**The installed `limine.conf` has no `module_path` for `disk.img`.** It is the
-development configuration (`boot/limine-dev.conf`): the root comes from the
-disk, found by `fs::mount_any`, never loaded into RAM.
+**The installed `limine.conf` loads the initramfs and selects a disk root.**
+The host workflow substitutes the SxFS partition UUID into
+`boot/limine-installed.conf`.
 
 **Legacy BIOS** needs what `limine bios-install` does to the ISO, replicated on
 the target: the stage 1 in the MBR and the stage 2 where it can find it on a GPT
@@ -111,14 +112,15 @@ prepared is an open question. UEFI comes first; BIOS may land a phase later.
 3. **Mounting from userland.** Done: `SXN_SYS_STORAGE_MOUNT` mounts at
    `/mnt/<name>`, system only, and `SXN_SYS_STORAGE_UNMOUNT` releases it
    ([FILESYSTEMS.md](../kernel/FILESYSTEMS.md#mounting-and-unmounting-at-run-time)).
-4. **Choosing the root from the command line.** `fs::mount_any` keeps the first
+4. **Choosing the live root from the command line.** The installed path supports
+   `root=PARTUUID=…`. For entries without a root option, `fs::mount_any` keeps the first
    volume a driver claims, in priority order: virtio-blk 110, AHCI and ATA 100,
    the LiveCD ramdisk 10. Booting the LiveCD on a machine that already has
    SavanXP installed mounts the installed disk as `/`, so a reinstall or an
    upgrade would run from its own target. The LiveCD's `limine.conf` has to say
    `root=livecd`, and the kernel has to honour it.
-5. **The command line reaching userland.** The kernel does not read the Limine
-   command line at all today. The *Install SavanXP* boot entry needs it
+5. **The command line reaching userland.** The kernel reads the Limine command
+   line for its own boot options. The *Install SavanXP* boot entry needs it
    (`setup=1`, or similar) so that `sessiond` starts the wizard instead of the
    desktop.
 

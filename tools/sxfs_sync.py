@@ -12,6 +12,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+from block_device import claim, geometry, write_at
+
+VOLUME_LIMIT = 1 << 30
+TRANSFER_SIZE = 1 << 20
+
 
 def run(command: list[str]) -> int:
     print("+", " ".join(command), flush=True)
@@ -485,9 +490,81 @@ def sync_image(args: argparse.Namespace, image: Path, source: Path, cli: Path) -
         manifest_path.unlink(missing_ok=True)
 
 
+def read_device(fd: int, length: int, offset: int) -> bytes:
+    data = os.pread(fd, length, offset)
+    if len(data) != length:
+        raise OSError(f"short read at offset {offset}")
+    return data
+
+
+def write_volume(fd: int, image: Path) -> None:
+    with image.open("rb") as desired:
+        offset = 0
+        while data := desired.read(TRANSFER_SIZE):
+            if read_device(fd, len(data), offset) != data:
+                write_at(fd, data, offset)
+                if read_device(fd, len(data), offset) != data:
+                    raise OSError(f"verification failed at offset {offset}")
+            offset += len(data)
+    os.fsync(fd)
+
+
+def sync_block_volume(args: argparse.Namespace, device: Path, fd: int, capacity: int,
+                      source: Path, cli: Path, recovery_root: Path) -> int:
+    recovery_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=f"{device.name}-", dir=recovery_root))
+    original = work / "before.img"
+    retain_backup = False
+    try:
+        length = min(capacity, VOLUME_LIMIT)
+        with original.open("xb") as backup:
+            for offset in range(0, length, TRANSFER_SIZE):
+                data = read_device(fd, min(length - offset, TRANSFER_SIZE), offset)
+                if data != bytes(len(data)):
+                    backup.seek(offset)
+                    backup.write(data)
+            backup.truncate(length)
+        sectors = image_total_sectors(cli, original)
+        if sectors is None:
+            print(f"sxfs: {device} must contain an existing raw SxFS volume", file=sys.stderr)
+            return 1
+        with original.open("r+b") as backup:
+            backup.truncate(sectors * 512)
+        candidate = work / "candidate.img"
+        copy_preserving_holes(original, candidate)
+        result = sync_image(args, candidate, source, cli)
+        if result != 0:
+            return result
+
+        # Retain the original on the build host before writing a physical sector.
+        fsync_file(original)
+        fsync_directory(work)
+        fsync_directory(recovery_root)
+        fsync_directory(recovery_root.parent)
+        retain_backup = True
+        print(f"sxfs: updating {device}. Recovery image: {original}", flush=True)
+        try:
+            write_volume(fd, candidate)
+        except (OSError, KeyboardInterrupt) as error:
+            print(f"sxfs: write failed on {device}: {error}. Restoring the original volume.", file=sys.stderr)
+            write_volume(fd, original)
+            retain_backup = False
+            return 1
+        retain_backup = False
+        print(f"sxfs: updated {device}", flush=True)
+        return 0
+    finally:
+        if retain_backup:
+            print(f"sxfs: recovery image retained at {original}", file=sys.stderr)
+        else:
+            shutil.rmtree(work)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image", required=True, type=Path)
+    destination = parser.add_mutually_exclusive_group(required=True)
+    destination.add_argument("--image", type=Path, help="a regular image file, created if missing")
+    destination.add_argument("--target", type=Path, help="an existing image file or raw SxFS block device")
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--cli", required=True, type=Path)
     parser.add_argument("--sectors", type=int, default=2097152)
@@ -499,13 +576,30 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    image = args.image.resolve()
+    image = (args.target or args.image).resolve()
     source = args.source.resolve()
     cli = args.cli.resolve()
     if not source.is_dir():
         raise SystemExit(f"sxfs: source directory does not exist: {source}")
     if not cli.is_file():
         raise SystemExit(f"sxfs: missing sxfs-cli: {cli}")
+    if args.target:
+        if args.reset:
+            parser.error("--reset requires --image")
+        if image.is_block_device():
+            try:
+                with claim(image, writable=True) as fd:
+                    capacity, sector_size = geometry(fd)
+                    if sector_size != 512:
+                        raise ValueError("the target must use 512-byte logical sectors")
+                    recovery = Path(os.environ.get("SAVANXP_DEVICE_RECOVERY_DIR", cli.parent.parent / "device-recovery"))
+                    return sync_block_volume(args, image, fd, capacity, source, cli, recovery.resolve())
+            except (OSError, ValueError) as error:
+                raise SystemExit(f"sxfs: {error}") from error
+        if not image.is_file():
+            raise SystemExit(f"sxfs: missing regular image or SxFS block device: {image}")
+    elif image.exists() and not image.is_file():
+        raise SystemExit(f"sxfs: --image requires a regular file: {image}")
 
     image.parent.mkdir(parents=True, exist_ok=True)
     lock_path = image.with_name(image.name + ".lock")

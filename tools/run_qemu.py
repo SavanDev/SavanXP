@@ -4,15 +4,14 @@
 from __future__ import annotations
 
 import argparse
-import errno
 import fcntl
 import os
 import shutil
-import stat
 import subprocess
 from contextlib import ExitStack
 from pathlib import Path
 
+from block_device import claim
 
 def find_qemu() -> str | None:
     override = os.environ.get("SAVANXP_QEMU")
@@ -405,15 +404,7 @@ def prepare_image(
 def open_disk_device(path: Path, writable: bool, resources: ExitStack) -> tuple[int, ...]:
     """Claim the volume until QEMU exits and pass the same device by descriptor."""
     try:
-        expected = path.stat()
-        if not stat.S_ISBLK(expected.st_mode):
-            raise SystemExit(f"QEMU disk device {path} is not a block device")
-        access = os.O_RDWR if writable else os.O_RDONLY
-        fd = os.open(path, access | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK)
-        resources.callback(os.close, fd)
-        opened = os.fstat(fd)
-        if not stat.S_ISBLK(opened.st_mode) or opened.st_rdev != expected.st_rdev:
-            raise SystemExit(f"QEMU disk device {path} changed while opening it")
+        fd = resources.enter_context(claim(path, writable=writable))
         # Match either of the two SxFS superblocks. The guest validates the volume.
         header = os.pread(fd, 2 * SXFS_SECTOR_SIZE, 0)
         if not (header.startswith(SXFS_SUPERBLOCK_MAGIC) or
@@ -426,10 +417,8 @@ def open_disk_device(path: Path, writable: bool, resources: ExitStack) -> tuple[
         read_fd = os.open(f"/proc/self/fd/{fd}", os.O_RDONLY)
         resources.callback(os.close, read_fd)
         return fd, read_fd
-    except OSError as error:
-        detail = ("device is busy; unmount it and close other users first"
-                  if error.errno == errno.EBUSY else error.strerror)
-        raise SystemExit(f"cannot open QEMU disk device {path}: {detail}") from error
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"cannot open QEMU disk device {path}: {error}") from error
 
 
 def main() -> int:

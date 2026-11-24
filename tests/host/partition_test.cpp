@@ -497,6 +497,12 @@ void case_gpt_metadata() {
     if (check(partition::info(2, info), "the data partition is there")) {
         check(info.number == 2 && strcmp(info.name, "Data") == 0, "entry 2, named Data");
     }
+    check(partition::device_by_partuuid("00000022-0000-0000-0000-000000000000", 36) == 2,
+          "a canonical PARTUUID resolves to its slice");
+    check(partition::device_by_partuuid("22000000-0000-0000-0000-000000000000", 36) == block::kInvalidDevice,
+          "an ID in on-disk byte order does not resolve");
+    check(partition::device_by_partuuid("00000022-0000-0000-0000-00000000000-", 36) == block::kInvalidDevice,
+          "a malformed PARTUUID does not resolve");
 }
 
 // A primary header that fails its CRC falls back to the backup at the end.

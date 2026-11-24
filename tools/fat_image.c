@@ -6,6 +6,7 @@
  *   fat-image create IMAGE MIB          a new image of MIB MiB, formatted as
  *                                       FAT (FatFs picks FAT12, 16 or 32 by
  *                                       size), no partition table
+ *   fat-image create-fat32 IMAGE MIB    a FAT32 image for an EFI partition
  *   fat-image put IMAGE HOST-FILE PATH  copies HOST-FILE to PATH in the image,
  *                                       making the directories on the way
  *
@@ -138,10 +139,11 @@ static int open_image(const char *path, const char *mode)
     return 1;
 }
 
-static int create(const char *path, const char *mib_text)
+static int create(const char *path, const char *mib_text, int fat32)
 {
     static BYTE work[FF_MAX_SS * 8];
-    const MKFS_PARM options = {FM_ANY | FM_SFD, 0, 0, 0, 0};
+    const MKFS_PARM options = { (fat32 ? FM_FAT32 : FM_ANY) | FM_SFD, 0, 0, 0,
+                               fat32 ? FF_MAX_SS : 0 };
     char *end = NULL;
     const unsigned long mib = strtoul(mib_text, &end, 10);
     FRESULT result;
@@ -252,7 +254,11 @@ int main(int argc, char **argv)
 {
     if (argc == 4 && strcmp(argv[1], "create") == 0)
     {
-        return create(argv[2], argv[3]);
+        return create(argv[2], argv[3], 0);
+    }
+    if (argc == 4 && strcmp(argv[1], "create-fat32") == 0)
+    {
+        return create(argv[2], argv[3], 1);
     }
     if (argc == 5 && strcmp(argv[1], "put") == 0)
     {
@@ -260,6 +266,7 @@ int main(int argc, char **argv)
     }
     fprintf(stderr,
             "usage: fat-image create IMAGE MIB\n"
+            "       fat-image create-fat32 IMAGE MIB\n"
             "       fat-image put IMAGE HOST-FILE PATH\n");
     return 2;
 }

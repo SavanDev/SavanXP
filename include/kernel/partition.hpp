@@ -55,6 +55,10 @@ struct Info {
 // chosen, and to find the ESP to put the boot loader on.
 bool info(size_t device_index, Info& out);
 
+// Resolve a canonical GPT PARTUUID. An invalid, missing or duplicate ID
+// returns block::kInvalidDevice.
+size_t device_by_partuuid(const char* text, size_t length);
+
 struct DiskInfo {
     Scheme scheme;
     // The primary GPT header failed its CRC and the backup one was used.

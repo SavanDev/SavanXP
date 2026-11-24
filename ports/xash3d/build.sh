@@ -29,7 +29,7 @@ if (($#)); then
     echo "xash3d: unknown argument '$1'" >&2
     exit 2
 fi
-if ((INSTALL)) && [[ ! -f "$IMAGE" || ! -x "$SXFS_CLI" ]]; then
+if ((INSTALL)) && [[ ( ! -f "$IMAGE" && ! -b "$IMAGE" ) || ! -x "$SXFS_CLI" ]]; then
     echo "xash3d: run ./build.sh build before installing the port" >&2
     exit 1
 fi
@@ -139,7 +139,7 @@ cp -- "$probe" "$module" "$WORK/"
 if ((INSTALL)); then
     "$PYTHON" "$ROOT/tools/stage_licenses.py" stage --root "$ROOT" --out "$stage/system/licenses" \
         "$PORT/licenses/hlsdk-portable.notice"
-    "$PYTHON" "$ROOT/tools/sxfs_sync.py" --image "$IMAGE" --source "$stage" --cli "$SXFS_CLI" \
+    "$PYTHON" "$ROOT/tools/sxfs_sync.py" --target "$IMAGE" --source "$stage" --cli "$SXFS_CLI" \
         --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"
 fi
 echo "xash3d: built $WORK/$PROGRAM and $WORK/$MODULE"

@@ -20,9 +20,11 @@ acceptance gates shared by SxFS, FAT and future drivers.
 
 ## The root is the system disk
 
-The system runs from its disk. `fs::kRootMountPoint` is `/`: the first volume a
-driver claims at boot is mounted there, and `/bin`, `/lib`, `/games` and the
-user's files are that volume's.
+The system runs from its disk. `fs::kRootMountPoint` is `/`, and `/bin`, `/lib`,
+`/games` and the user's files are that volume's. Boot entries without `root=`
+mount the first volume a root-capable driver claims. An installed boot entry
+uses `root=PARTUUID=<GPT partition UUID>`. A missing, ambiguous or unusable
+explicit root leaves the kernel in the rescue environment.
 
 | path | what it is | backed by |
 | --- | --- | --- |
@@ -271,8 +273,9 @@ The root is always mounted writable.
 Right after the root, `storage::mount_boot_volume` mounts the first FAT volume
 holding `boot/kernel.elf` at `fs::kBootMountPoint`, trying EFI System
 Partitions before anything else, and logs `storage: /boot is <device>`. On the
-development path that is the QEMU boot drive's partition (`ahci0p1`); on an
-installed system, the ESP; a LiveCD boot has none. Only the FAT driver is tried
+development path that is the QEMU boot drive's partition (`ahci0p1`). An
+installed system looks only at EFI partitions on the disk selected by
+`root=PARTUUID`. A LiveCD boot has no boot volume. Only the FAT driver is tried
 there (`fs::mount` with a driver name), so no other volume is opened, let alone
 written, to look for it. A root that carries its own `boot` keeps it and no
 boot volume is mounted. Everything on it is the system's (FAT has no owners),

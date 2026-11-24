@@ -135,4 +135,31 @@ inline bool has_option(const char* cmdline, const char* option) {
     return false;
 }
 
+// Find a name=value word and return the span of its value.
+inline const char* option_value(const char* cmdline, const char* name, size_t& length) {
+    const char* word = cmdline;
+    while (word != nullptr && *word != 0) {
+        if (*word == ' ') {
+            ++word;
+            continue;
+        }
+        const char* end = word;
+        while (*end != 0 && *end != ' ') {
+            ++end;
+        }
+        size_t index = 0;
+        while (word + index < end && name[index] != 0 && word[index] == name[index]) {
+            ++index;
+        }
+        if (name[index] == 0 && word + index < end && word[index] == '=') {
+            const char* value = word + index + 1;
+            length = static_cast<size_t>(end - value);
+            return value;
+        }
+        word = end;
+    }
+    length = 0;
+    return nullptr;
+}
+
 } // namespace boot

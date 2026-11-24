@@ -44,9 +44,10 @@ int unmount(const char* path);
 
 // At boot, after the root: mounts the boot volume at fs::kBootMountPoint, the
 // first FAT volume that holds boot/kernel.elf, EFI System Partitions first.
+// A specified system disk restricts the search to its EFI partitions.
 // Returns the mount index, or fs::kInvalidMount when there is none (a LiveCD
 // boot) or the root already has a /boot of its own.
-size_t mount_boot_volume();
+size_t mount_boot_volume(size_t system_disk);
 
 // Reads a disk's partition table again. -EBUSY if the disk or any of its
 // partitions is mounted, -EINVAL for a partition.

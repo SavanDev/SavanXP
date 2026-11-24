@@ -72,7 +72,7 @@ case "$CLI" in
     /*) ;;
     *) CLI="$REPO/$CLI" ;;
 esac
-[[ -f "$IMAGE" ]] || {
+[[ -f "$IMAGE" || -b "$IMAGE" ]] || {
     echo "ffmpeg: falta $IMAGE; ejecuta ./build.sh build primero" >&2
     exit 1
 }
@@ -82,7 +82,7 @@ esac
 }
 
 SYNC_ARGS=(
-    --image "$IMAGE"
+    --target "$IMAGE"
     --source "$STAGE"
     --cli "$CLI"
     --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"

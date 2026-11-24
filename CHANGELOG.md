@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Linux can prepare a UEFI SavanXP disk.** `build.sh prepare-disk` creates GPT, EFI and SxFS on a new image or
+  an explicitly selected whole disk. `SAVANXP_DISK_IMAGE` also accepts an existing SxFS partition for port installs.
+
 - **QEMU can use a personal SxFS volume.** `build.sh run` and `debug` accept `--disk-image` or `--disk-device`.
   Physical volumes use a temporary overlay unless `--disk-write` is given.
 

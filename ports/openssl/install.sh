@@ -37,9 +37,9 @@ fi
 
 IMAGE="${SAVANXP_DISK_IMAGE:-$OUTPUT_ROOT/disk.img}"
 CLI="${SAVANXP_SXFS_CLI:-$OUTPUT_ROOT/tools/sxfs-cli}"
-[[ -f "$IMAGE" ]] || { echo "openssl: missing $IMAGE; run ./build.sh build first" >&2; exit 1; }
+[[ -f "$IMAGE" || -b "$IMAGE" ]] || { echo "openssl: missing $IMAGE; run ./build.sh build first" >&2; exit 1; }
 [[ -x "$CLI" ]] || { echo "openssl: missing $CLI; run ./build.sh build first" >&2; exit 1; }
-SYNC_ARGS=(--image "$IMAGE" --source "$STAGE" --cli "$CLI" --sectors "${SAVANXP_SXFS_SECTORS:-2097152}")
+SYNC_ARGS=(--target "$IMAGE" --source "$STAGE" --cli "$CLI" --sectors "${SAVANXP_SXFS_SECTORS:-2097152}")
 ((NO_COMPACT == 0)) || SYNC_ARGS+=(--no-compact)
 "$PYTHON" "$REPO/tools/sxfs_sync.py" "${SYNC_ARGS[@]}"
 echo "openssl: synced the volume"

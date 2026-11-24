@@ -418,6 +418,46 @@ bool info(size_t device_index, Info& out) {
     return false;
 }
 
+size_t device_by_partuuid(const char* text, size_t length) {
+    if (length != 36 || text[8] != '-' || text[13] != '-' || text[18] != '-' || text[23] != '-') {
+        return block::kInvalidDevice;
+    }
+    const auto nibble = [](char value) -> int {
+        if (value >= '0' && value <= '9') {
+            return value - '0';
+        }
+        value |= 0x20;
+        return value >= 'a' && value <= 'f' ? value - 'a' + 10 : -1;
+    };
+    // The first three GPT GUID fields are little-endian on disk.
+    constexpr size_t order[] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
+    uint8_t guid[kGuidSize];
+    size_t offset = 0;
+    for (size_t byte : order) {
+        if (offset == 8 || offset == 13 || offset == 18 || offset == 23) {
+            ++offset;
+        }
+        const int high = nibble(text[offset]);
+        const int low = nibble(text[offset + 1]);
+        if (high < 0 || low < 0) {
+            return block::kInvalidDevice;
+        }
+        guid[byte] = static_cast<uint8_t>((high << 4) | low);
+        offset += 2;
+    }
+    size_t match = block::kInvalidDevice;
+    for (const Slice& slice : g_slices) {
+        if (slice.present && slice.info.scheme == Scheme::gpt &&
+            memcmp(guid, slice.info.unique_guid, sizeof(guid)) == 0) {
+            if (match != block::kInvalidDevice) {
+                return block::kInvalidDevice;
+            }
+            match = slice.device_index;
+        }
+    }
+    return match;
+}
+
 bool drop(size_t disk_index) {
     if (disk_index >= kMaxDisks || is_slice(disk_index)) {
         return false;

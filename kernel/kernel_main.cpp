@@ -46,6 +46,7 @@
 #include "kernel/smp.hpp"
 #include "kernel/subsystem.hpp"
 #include "kernel/storage.hpp"
+#include "kernel/string.hpp"
 #include "kernel/usb.hpp"
 #include "kernel/sxfs.hpp"
 #include "kernel/timer.hpp"
@@ -418,7 +419,33 @@ namespace
     sxfs::initialize();
     fs::register_driver(sxfs::driver());
     fs::register_driver(fat::driver());
-    const size_t root_mount = fs::mount_any(fs::kRootMountPoint);
+    size_t root_length = 0;
+    const char* root = boot::option_value(boot_info.cmdline, "root", root_length);
+    size_t root_mount = fs::kInvalidMount;
+    size_t system_disk = block::kInvalidDevice;
+    if (root == nullptr) {
+        root_mount = fs::mount_any(fs::kRootMountPoint);
+    } else {
+        constexpr char partuuid[] = "PARTUUID=";
+        constexpr size_t prefix_size = sizeof(partuuid) - 1;
+        if (root_length > prefix_size && memcmp(root, partuuid, prefix_size) == 0) {
+            const size_t device = partition::device_by_partuuid(root + prefix_size, root_length - prefix_size);
+            if (device != block::kInvalidDevice) {
+                block::DeviceInfo info = {};
+                if (block::device_info(device, info)) {
+                    console::printf("storage: root PARTUUID selects %s\n", info.name);
+                }
+                partition::Info slice = {};
+                if (partition::info(device, slice)) {
+                    system_disk = slice.parent_index;
+                }
+                root_mount = fs::mount(device, fs::kRootMountPoint);
+            }
+        }
+        if (root_mount == fs::kInvalidMount) {
+            console::write_line("storage: requested root volume unavailable");
+        }
+    }
 
     if (!vfs::ready())
     {
@@ -427,9 +454,9 @@ namespace
     // attach is separate from mount because the metadata is read before vfs::
     // is ready to receive vnodes.
     const bool disk_mounted = fs::attach(root_mount);
-    // The boot volume at /boot, read-only: what Limine loaded the kernel from.
+    // Installed systems use the EFI partition on the selected system disk.
     if (disk_mounted) {
-        (void)storage::mount_boot_volume();
+        (void)storage::mount_boot_volume(system_disk);
     }
 
     const MemorySummary memory = summarize_memory(boot_info);

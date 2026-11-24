@@ -44,6 +44,7 @@ set(SAVANXP_ISO_IMAGE "${SAVANXP_OUTPUT_ROOT}/SavanXP.iso")
 set(SAVANXP_TOOLS_ROOT "${SAVANXP_OUTPUT_ROOT}/tools")
 set(SAVANXP_SXFS_CLI "${SAVANXP_TOOLS_ROOT}/sxfs-cli")
 set(SAVANXP_FAT_IMAGE "${SAVANXP_TOOLS_ROOT}/fat-image")
+set(SAVANXP_GPT_IMAGE "${SAVANXP_TOOLS_ROOT}/gpt-image")
 
 # Prefer the `python3` command on PATH, the one a developer runs. FindPython3
 # alone walks PATH directory by directory looking for versioned names, so a
@@ -1416,6 +1417,23 @@ add_custom_command(OUTPUT "${SAVANXP_FAT_IMAGE}"
     VERBATIM
 )
 add_custom_target(savanxp_fat_image DEPENDS "${SAVANXP_FAT_IMAGE}")
+add_custom_command(OUTPUT "${SAVANXP_GPT_IMAGE}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_TOOLS_ROOT}"
+    COMMAND "${SAVANXP_HOST_CC}" -std=c11 -O2 -Wall -Wextra
+            -I "${CMAKE_SOURCE_DIR}/include"
+            "${CMAKE_SOURCE_DIR}/tools/gpt_image.c"
+            "${CMAKE_SOURCE_DIR}/libsxdisk/sxdisk.c" -o "${SAVANXP_GPT_IMAGE}"
+    DEPENDS tools/gpt_image.c libsxdisk/sxdisk.c include/sxdisk/sxdisk.h include/shared/crc32.h
+    COMMENT "Building gpt-image"
+    VERBATIM
+)
+add_custom_target(savanxp_gpt_image DEPENDS "${SAVANXP_GPT_IMAGE}")
+add_custom_target(savanxp_install_files)
+add_dependencies(savanxp_install_files savanxp_sxfs_cli savanxp_fat_image savanxp_gpt_image)
+add_dependencies(savanxp_tests savanxp_gpt_image savanxp_fat_image)
+add_test(NAME prepare-disk-test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/host/prepare_disk_test.py" --tools "${SAVANXP_TOOLS_ROOT}")
 add_test(NAME sxfs-compaction-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/sxfs_compaction_test.py"
@@ -1818,6 +1836,7 @@ add_custom_target(savanxp_sdk
 # The sysroot ships the system's shared libraries (runtime/libraries.txt) from
 # the staged disk tree, which savanxp_diskfs wipes and refills: it must be done.
 add_dependencies(savanxp_sdk savanxp_diskfs)
+add_dependencies(savanxp_install_files savanxp_image savanxp_sdk)
 
 add_custom_target(savanxp
     DEPENDS savanxp_image savanxp_disk savanxp_sdk

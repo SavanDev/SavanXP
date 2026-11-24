@@ -207,7 +207,8 @@ Points worth knowing before writing it:
 
 At boot, right after the root, `storage::mount_boot_volume` mounts at `/boot`
 the first FAT volume that holds `boot/kernel.elf`, trying the partitions
-`partition::info` flags as `esp` first. In the development run there is no ESP
+`partition::info` flags as `esp` first. An installed boot entry restricts
+the search to the ESP on its selected root disk. In the development run there is no ESP
 partition; the boot drive is QEMU's virtual FAT (`-drive file=fat:...`),
 which presents an MBR disk with one FAT16 partition (`ahci0p1`), not of type
 `0xEF`, and the boot log says `storage: /boot is ahci0p1`. Requiring

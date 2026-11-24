@@ -247,7 +247,7 @@ int unmount(const char* path) {
     return fs::release(mounted, &vfs::is_held);
 }
 
-size_t mount_boot_volume() {
+size_t mount_boot_volume(size_t system_disk) {
     // A root carrying its own /boot keeps it: mounting over it would hide it.
     if (vfs::resolve(fs::kBootMountPoint) != nullptr) {
         console::printf("storage: the root has a %s of its own; no boot volume mounted\n", fs::kBootMountPoint);
@@ -259,7 +259,9 @@ size_t mount_boot_volume() {
     }
     // Two passes: EFI System Partitions, then everything else (the
     // development boot drive is an MBR partition of another type).
-    for (int pass = 0; pass < 2; ++pass) {
+    const bool installed = system_disk != block::kInvalidDevice;
+    const int passes = installed ? 1 : 2;
+    for (int pass = 0; pass < passes; ++pass) {
         for (size_t index = 0; index < block::device_count(); ++index) {
             block::DeviceInfo info = {};
             if (!block::device_info(index, info) || !info.present || mount_of(index) != fs::kInvalidMount) {
@@ -267,7 +269,7 @@ size_t mount_boot_volume() {
             }
             partition::Info slice = {};
             const bool esp = partition::info(index, slice) && slice.esp;
-            if (esp != (pass == 0)) {
+            if (esp != (pass == 0) || (installed && slice.parent_index != system_disk)) {
                 continue;
             }
             const size_t mounted = fs::mount(index, fs::kBootMountPoint, fat::driver().name);

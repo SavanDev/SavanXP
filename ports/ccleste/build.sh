@@ -229,7 +229,7 @@ case "$SXFS_CLI" in
     /*) ;;
     *) SXFS_CLI="$REPO/$SXFS_CLI" ;;
 esac
-if [[ ! -f "$IMAGE" ]]; then
+if [[ ! -f "$IMAGE" && ! -b "$IMAGE" ]]; then
     echo "ccleste: persistent image is missing; run ./build.sh build first" >&2
     exit 1
 fi
@@ -267,7 +267,7 @@ fi
     --out "$STAGE/system/licenses" "$REPO/ports/ccleste/licenses/ccleste.notice"
 
 SYNC_ARGS=(
-    --image "$IMAGE"
+    --target "$IMAGE"
     --source "$STAGE"
     --cli "$SXFS_CLI"
     --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"

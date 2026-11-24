@@ -88,6 +88,56 @@ is `savanxp`; `savanxp_iso` adds the hybrid BIOS/UEFI ISO. `build.sh clean`
 removes generated CMake outputs but preserves `build/disk.img` and
 `build/external/`.
 
+### Preparing an installed disk
+
+`prepare-disk` builds a fresh GPT disk with a FAT32 EFI partition and a 1 GiB
+SxFS root. The EFI partition contains Limine, the kernel and the initramfs.
+The installed boot entry identifies its root by GPT partition UUID. The
+command builds the SDK and populates the root from the base system tree.
+
+```bash
+./build.sh prepare-disk --output build/savanxp-installed.img
+```
+
+The image is a standalone UEFI hard disk for QEMU with OVMF. To prepare a
+dedicated USB drive instead, select the **whole disk**, unmount all its
+volumes in Linux, and make sure your account has write access to the device.
+`--erase` authorizes replacing its partition table and the filesystems in the
+new layout. Use the stable device link, without a partition suffix.
+
+```bash
+./build.sh prepare-disk --device /dev/disk/by-id/usb-YOUR_DEVICE --erase
+```
+
+This requires 512-byte logical sectors and a disk between 1122 MiB and 2 TiB,
+exclusive of the upper bound. Boot the drive
+from the PC's 64-bit UEFI menu with Secure Boot off. For development QEMU
+sessions, use the SxFS partition path printed by `prepare-disk`.
+
+```bash
+ROOT_VOLUME=/dev/disk/by-partuuid/YOUR_ROOT_UUID
+./build.sh run --disk-device "$ROOT_VOLUME" --disk-write
+```
+
+### Installing ports to a personal volume
+
+`SAVANXP_DISK_IMAGE` selects the destination for the official ports and
+`tools/build-user.sh`. It accepts an existing SxFS image file or the SxFS
+partition. Close QEMU before installing to a device and use an account with
+write access to that partition.
+
+```bash
+SAVANXP_DISK_IMAGE="$ROOT_VOLUME" ./ports/doomgeneric/build.sh --wad /path/to/doom1.wad
+```
+
+The port installer stages and validates its update before writing the
+partition. It holds the partition exclusively and keeps a recovery image on
+the build host during the write, under `build/device-recovery/` by default.
+On an I/O failure it attempts to restore the old volume. If restoration fails
+or the installer is interrupted, the recovery image is available for offline
+restoration. `SAVANXP_DEVICE_RECOVERY_DIR` can place it on another persistent
+host filesystem. The port destination defaults to the usual `build/disk.img`.
+
 ### Personal volumes in QEMU
 
 `run` and `debug` can build the local kernel and initramfs and boot with an

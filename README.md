@@ -174,6 +174,10 @@ on the drive and run `./build.sh run --disk-image /path/to/personal.img`.
 An existing raw SxFS volume can also be attached with `--disk-device`.
 See [Personal volumes in QEMU](docs/build/BUILD_CMAKE.md#personal-volumes-in-qemu).
 
+`./build.sh prepare-disk` can make a fresh UEFI disk image or prepare a
+dedicated USB drive. See [Preparing an installed disk](docs/build/BUILD_CMAKE.md#preparing-an-installed-disk)
+for the device and port installation commands.
+
 The QEMU machine is assembled with "base" hardware by default: standard VGA,
 PS/2 mouse and keyboard, AC'97 audio, an AHCI (SATA) disk and an rtl8139 NIC —
 the same set VirtualBox emulates. This way the kernel exercises the fallback

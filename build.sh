@@ -19,6 +19,8 @@ HEADLESS=${SAVANXP_HEADLESS:-OFF}
 JOBS=${SAVANXP_JOBS:-}
 QEMU_DISK_OPTION=()
 QEMU_DISK_WRITE=0
+PREPARE_DISK_OPTION=()
+PREPARE_ERASE=()
 SMOKE_SCENARIO=""
 SMOKE_TIMEOUT=120
 SMOKE_TIMEOUT_SET=0
@@ -95,6 +97,19 @@ while [[ $# -gt 0 ]]; do
             QEMU_DISK_WRITE=1
             shift
             ;;
+        --output|--device)
+            [[ "$COMMAND" == prepare-disk && $# -ge 2 && ${#PREPARE_DISK_OPTION[@]} -eq 0 ]] || {
+                echo "build.sh: prepare-disk takes one --output or --device path" >&2
+                exit 2
+            }
+            PREPARE_DISK_OPTION=("$1" "$2")
+            shift 2
+            ;;
+        --erase)
+            [[ "$COMMAND" == prepare-disk ]] || { echo "build.sh: --erase requires prepare-disk" >&2; exit 2; }
+            PREPARE_ERASE=(--erase)
+            shift
+            ;;
         --iommu)
             [[ $# -ge 2 ]] || { echo "build.sh: --iommu requires none, amd or intel" >&2; exit 2; }
             IOMMU=$2
@@ -133,6 +148,7 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             cat <<'EOF'
 Usage: ./build.sh [build|configure|kernel|userland|iso|run|debug|smoke|test|clean] [options]
+       ./build.sh prepare-disk (--output IMAGE | --device DISK --erase) [options]
 
 Options:
   --no-test-apps   omit diagnostic and test applications
@@ -306,12 +322,21 @@ if [[ "$COMMAND" != smoke && -n "$SMOKE_GPU_SOAK_ITERATIONS" ]]; then
 fi
 
 case "$COMMAND" in
-    build|configure|kernel|userland|iso|run|debug|smoke|test|clean) ;;
+    build|configure|kernel|userland|iso|prepare-disk|run|debug|smoke|test|clean) ;;
     *)
         echo "build.sh: unknown command '$COMMAND'" >&2
         exit 2
         ;;
 esac
+
+if [[ "$COMMAND" == prepare-disk ]]; then
+    if [[ ${#PREPARE_DISK_OPTION[@]} -eq 0 ||
+          "${PREPARE_DISK_OPTION[0]}" == --device && ${#PREPARE_ERASE[@]} -eq 0 ||
+          "${PREPARE_DISK_OPTION[0]}" == --output && ${#PREPARE_ERASE[@]} -ne 0 ]]; then
+        echo "build.sh: use prepare-disk --output IMAGE or --device DISK --erase" >&2
+        exit 2
+    fi
+fi
 
 if [[ "$COMMAND" != run && "$COMMAND" != debug ]] &&
     (( ${#QEMU_DISK_OPTION[@]} || QEMU_DISK_WRITE )); then
@@ -482,6 +507,14 @@ case "$COMMAND" in
     iso)
         configure
         build_target savanxp_iso
+        ;;
+    prepare-disk)
+        configure
+        build_target savanxp_install_files
+        exec python3 "$ROOT/tools/prepare_disk.py" "${PREPARE_DISK_OPTION[@]}" "${PREPARE_ERASE[@]}" \
+            --boot "$OUTPUT_ROOT/image" --diskfs "$OUTPUT_ROOT/diskfs" --tools "$OUTPUT_ROOT/tools" \
+            --config "$ROOT/boot/limine-installed.conf" --sync "$ROOT/tools/sxfs_sync.py" \
+            --python "$(command -v python3)"
         ;;
     smoke)
         if [[ -n "$SMOKE_HOST_TEST" ]]; then

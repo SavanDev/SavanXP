@@ -138,9 +138,9 @@ if ((NO_INSTALL)); then
     exit 0
 fi
 
-[[ -f "$IMAGE" && -x "$SXFS_CLI" ]] || {
-    echo "tinycc: build/disk.img or sxfs-cli is missing; run ./build.sh build first" >&2
+[[ ( -f "$IMAGE" || -b "$IMAGE" ) && -x "$SXFS_CLI" ]] || {
+    echo "tinycc: the SxFS target or sxfs-cli is missing; run ./build.sh build first" >&2
     exit 1
 }
-"$PYTHON" "$ROOT/tools/sxfs_sync.py" --image "$IMAGE" --source "$STAGE" --cli "$SXFS_CLI"
+"$PYTHON" "$ROOT/tools/sxfs_sync.py" --target "$IMAGE" --source "$STAGE" --cli "$SXFS_CLI"
 echo "tinycc: installed /bin/tcc and /system/tcc"

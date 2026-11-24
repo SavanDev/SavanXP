@@ -201,7 +201,7 @@ if ((NO_INSTALL)); then
     exit 0
 fi
 
-if [[ ! -f "$IMAGE" ]]; then
+if [[ ! -f "$IMAGE" && ! -b "$IMAGE" ]]; then
     echo "doomgeneric: persistent image is missing; run ./build.sh build first" >&2
     exit 1
 fi
@@ -231,7 +231,7 @@ fi
     --out "$STAGE/system/licenses" "${LICENSE_NOTICES[@]}"
 
 SYNC_ARGS=(
-    --image "$IMAGE"
+    --target "$IMAGE"
     --source "$STAGE"
     --cli "$SXFS_CLI"
     --sectors "$SECTORS"
