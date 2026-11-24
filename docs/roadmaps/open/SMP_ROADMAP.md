@@ -30,7 +30,7 @@
 >
 > Phase 3 keeps the other cores' TLBs honest when a kernel page is unmapped —
 > lazily, at lock acquisition, not with an IPI
-> ([why](#phase-3--tlb-shootdown)). A boot self-test catches an AP reading a
+> ([why](#phase-3--tlb-shootdown--done)). A boot self-test catches an AP reading a
 > stale translation and proves the flush removes it.
 >
 > Phase 4 paid the debt around the lock without splitting it: a panic stops
@@ -42,6 +42,15 @@
 > Phase 5 is the plan for what remains, with what the counters say today, the
 > conditions that start each slice, and what the lock quietly guarantees that a
 > split has to guarantee some other way.
+
+**What to read.** Changing kernel code that runs under the lock:
+[Known traps](#known-traps),
+[What the lock carries besides exclusion](#what-the-lock-carries-besides-exclusion)
+and [The rules every slice keeps](#the-rules-every-slice-keeps). Starting a
+phase 5 slice: [The slices](#the-slices). Reading the `smp-stats:` lines:
+[Reading `smp-stats`](#reading-smp-stats). Checking a change:
+[Verification](#verification). The phase sections before them record how each
+piece was built.
 
 The short version: **bringing up the other cores is the cheap part.** The
 kernel has around 450 mutable globals and no lock discipline at all, so the
@@ -285,7 +294,7 @@ emulates the disk, and `progman` measured more than 1.8 s of CPU without
 getting there. Nothing is lost or corrupted — it is phase 4's problem showing
 up early, and the reason not to size `--smp` to every host CPU.
 
-**Not done:** TLB shootdown, which became [phase 3](#phase-3--tlb-shootdown).
+**Not done:** TLB shootdown, which became [phase 3](#phase-3--tlb-shootdown--done).
 Also still pending: a `panic` on one core does not stop the others, and every
 device interrupt still goes to the BSP (phase 4).
 

@@ -7,6 +7,32 @@ the order, so the work is not reconstructed from commit messages.
 
 This is SDK v2 work. Breaking the existing SDK surface is acceptable and expected.
 
+## Where it stands, and what to read
+
+> **Status (2026-11-24): the four phases of
+> [What blocks the rest](#what-blocks-the-rest-in-order) are done.** Programs are
+> PIEs whose `PT_INTERP` names `/lib/ld.so.0.4`, but nothing is installed there:
+> the loader is `system/loader/ldso.c`, linked into each executable and shared by
+> SUN and POSIX. It binds eagerly, walks `DT_NEEDED`, resolves `DT_SONAME` to the
+> highest `libfoo.so.0.*`, and offers `dlopen` without unloading. `libsxgfx`,
+> `libgfx2d`, `libsxgui`, `libmath`, `libffmpeg.so.0.4` and the OpenSSL port's
+> libraries are shared, and `tools/check_shared_libs.py` fails the build when a
+> program carries its own copy of a library it maps. Not done, each for a reason
+> recorded below: `libc` as a library, a real `ld.so` mapped before the program
+> (so `--export-dynamic` stays), a shared POSIX client library, RELRO, demand
+> paging and symbol visibility.
+
+| To change | Read |
+| --- | --- |
+| The loader | [What is built](#what-is-built), [The loader's failure paths](#the-loaders-failure-paths), [DT_SONAME resolution](#dt_soname-resolution), [`dlopen`](#dlopen), [One loader over SXN](#one-loader-over-sxn) |
+| Which libraries a program maps | [One runtime unit list](#one-runtime-unit-list), [The runtime variant comes from DEPENDS](#the-runtime-variant-comes-from-depends), [A private copy of a library is not a failure](#a-private-copy-of-a-library-is-not-a-failure-which-is-the-problem), [A library has to declare the libraries it needs](#a-library-has-to-declare-the-libraries-it-needs) |
+| The toolkit libraries | [SxGUI as a library](#sxgui-as-a-library), [The toolkit, split](#the-toolkit-split-into-neutral-and-host), [`sxgui-smoke`](#sxgui-smoke-so-the-gate-cannot-rot) |
+| FFmpeg and other port libraries | [Phase 3](#phase-3--ffmpeg--done), [FFmpeg as one library](#ffmpeg-as-one-library-and-what-it-cost-to-find-out), [The first application with a library](#the-first-application-with-a-library-and-the-two-bugs-it-found) |
+| What is left | [What blocks the rest](#what-blocks-the-rest-in-order), [Out of scope](#deliberately-out-of-scope-for-the-first-implementation), [Not worth doing yet](#explicitly-not-worth-doing-yet), [The loader is POSIX's, and SUN is static](#the-loader-is-posixs-and-sun-is-static) |
+
+The other sections record the bugs found on the way and how each was caught;
+read the one whose symptom matches.
+
 ## What the measurements said
 
 Measured, not estimated:
@@ -740,9 +766,9 @@ acceptance condition is a wish.
 | 0 — diagnosable failures | done, five cases, each verified by breaking it |
 | 1 — fail at load | already satisfied; the loader binds eagerly and always did |
 | 2 — size and coverage | closed by measurement: 5.5 MB held back by `--export-dynamic`, and the caption assertion is not discriminating |
-| 3 — FFmpeg shared | the only open phase, and it does not need `dlopen` |
+| 3 — FFmpeg shared | done, without `dlopen` ([Phase 3](#phase-3--ffmpeg--done)) |
 
-So one phase is open. But the phase list is not the same as the list of things that
+So no phase is open. But the phase list is not the same as the list of things that
 are missing, and the two should not be confused. What no phase covers:
 
 - **Visibility.** Only global visibility exists: no `STV_HIDDEN`,
