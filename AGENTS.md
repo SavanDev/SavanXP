@@ -162,6 +162,8 @@ imports it, so Claude Code loads the rules when it works in the area.
 - Some documents run past a thousand lines (`WIN32.md`, `SHARED_LIBRARIES.md`,
   `SMP_ROADMAP.md`). List their headings (`grep -n '^#' FILE`) and read the
   sections the change touches, not the whole file.
+- Tree-wide searches skip third-party source, `vendor/` and `ports/*/source/`
+  (`.ignore`). To search there, name that directory or one inside it.
 - A commit does what was asked. No refactors, renames, reformatting or
   dependency changes in files the task does not need. Something worth fixing
   that is outside the task is reported, not fixed on the way.

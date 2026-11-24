@@ -1,0 +1,8 @@
+# Kept out of ripgrep's searches, and so out of the search and file-listing
+# tools AI agents use: third-party source a search through the tree almost
+# never wants (about 1,000 files). Git does not read this file. To search
+# there, name the ignored directory itself or one inside it
+# (`rg PATTERN vendor`, `rg PATTERN ports/doomgeneric/source`), or pass
+# `--no-ignore`; naming `ports/doomgeneric` alone still skips its `source/`.
+/vendor/
+/ports/*/source/
