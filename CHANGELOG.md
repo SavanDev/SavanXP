@@ -8,6 +8,9 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **The Xash3D client plays sound.** The engine's mix reaches `audiod`, or
+  `/dev/audio0` without the daemon. [Port notes](ports/xash3d/README.md#graphical-client).
+
 - **Xash3D appears under Games in All Programs.** Started with no arguments,
   `xash3d-client` saves to the desktop profile and reads the game and `ref_soft.so`
   from `/games/xash3d`. [Port notes](ports/xash3d/README.md#graphical-client).

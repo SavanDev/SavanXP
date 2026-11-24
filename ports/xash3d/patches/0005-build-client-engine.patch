@@ -9,19 +9,28 @@ diff --git a/common/backends.h b/common/backends.h
 
  // audio backends (XASH_SOUND)
  #define SOUND_NULL     0
+@@ -29,6 +30,7 @@
+ #define SOUND_PSP      2
+ #define SOUND_ALSA     3
+ #define SOUND_PS4      4
++#define SOUND_SAVANXP  5
+
+ // input (XASH_INPUT)
+ #define INPUT_NULL    0
 diff --git a/common/defaults.h b/common/defaults.h
 --- a/common/defaults.h
 +++ b/common/defaults.h
-@@ -34,6 +34,8 @@
+@@ -34,6 +34,9 @@
  		#define XASH_VIDEO     VIDEO_SDL
  		#define XASH_INPUT     INPUT_SDL
  		#define XASH_SOUND     SOUND_SDL
 +	#elif XASH_SAVANXP
 +		#define XASH_VIDEO VIDEO_SAVANXP
++		#define XASH_SOUND SOUND_SAVANXP
  	#elif XASH_LINUX // we are building for Linux without SDL, only framebuffer is supported for now
  		#define XASH_VIDEO     VIDEO_FBDEV
  		#define XASH_INPUT     INPUT_EVDEV
-@@ -141,7 +143,9 @@
+@@ -141,7 +144,9 @@
  */
 
  // Platform overrides

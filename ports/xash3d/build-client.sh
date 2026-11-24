@@ -35,15 +35,17 @@ echo "xash3d: building the POSIX client engine"
 for file in "$engine"/engine/common/*.c "$engine"/engine/common/{imagelib,soundlib}/*.c \
     "$engine"/engine/server/*.c "$engine"/engine/platform/{posix,stub}/*.c \
     "$engine"/engine/client/*.c "$engine"/engine/client/*/*.c \
-    "${public_sources[@]}" "$PORT"/overlay/{dedicated_savanxp,client_optional,client_video}.c; do
+    "${public_sources[@]}" "$PORT"/overlay/{dedicated_savanxp,client_optional,client_video,client_sound}.c; do
     case "${file##*/}" in
         whereami.c|xrcon.c|cl_steam.c|snd_mp3.c|snd_ogg_opus.c|snd_ogg_vorbis.c|voice.c) continue ;;
     esac
     client_compile client-engine "$file" "${engine_flags[@]}" -I "$engine/engine/client/sound" \
         -DXASH_REF_SOFT_ENABLED=1
 done
+# The audio module carries the PCM device link that client_sound.c uses.
+mapfile -t audio_runtime < <(savanxp_sdk_runtime_objects "$SYSROOT" pie audio)
 "${SAVANXP_LINK_CC:-$CC}" "${link_flags[@]}" \
-    -o "$client_bin" "${runtime[@]}" "${setjmp_runtime[@]}" "${client_objects[@]}"
+    -o "$client_bin" "${runtime[@]}" "${setjmp_runtime[@]}" "${audio_runtime[@]}" "${client_objects[@]}"
 
 client_objects=()
 client_cxx=("${cxx[@]}" -fno-threadsafe-statics)

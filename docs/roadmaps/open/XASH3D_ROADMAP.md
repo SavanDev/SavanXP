@@ -3,8 +3,8 @@
 > **Status: the dedicated server and graphical client run in step 2.**
 > The server loads the HLSDK and filesystem modules, starts Half-Life's
 > `c0a0` and answers IPv4 UDP queries through POSIX. The client opens MainUI
-> and plays `c0a0` with `ref_soft` in a POSIX window. Audio playback remains
-> pending.
+> and plays `c0a0` with `ref_soft` in a POSIX window, with sound through
+> `audiod`.
 >
 > Reviewed 2026-11-14 against the rest of the system. Since it was written,
 > SxGL ([SXGL_ROADMAP.md](../done/SXGL_ROADMAP.md), batches 0–4), user-space
@@ -116,8 +116,9 @@ in a POSIX window. It also checks relative pointer motion, buttons and wheel
 input after polling the keyboard on the same window.
 
 - The client backend presents `ref_soft` using `gfx_open` and `gfx_present`
-  and reads the window's keyboard and mouse events. Audio playback still
-  needs `sx_audio_mixer` and the shared mixer, as in Doom.
+  and reads the window's keyboard and mouse events. The sound backend
+  (`SOUND_SAVANXP`) resamples the engine's 44.1 kHz mix to the device rate
+  and sends it with `sx_audio_server_output`, the link Doom's mixer uses.
   [Audio daemon](../../media/AUDIO_DAEMON.md)
 - `ports/xash3d/build.sh --client` builds HLSDK Portable, FreeVGUI and
   MainUI with the POSIX SDK. The port's C++ runtime includes libcxxrt's RTTI
@@ -203,7 +204,10 @@ backend is what exercises the system's own interfaces.
   drop its custom backend.
 - **Threads in the engine** (upstream can mix sound or load on a thread) are
   optional. The port starts single-threaded, as the DOS backend is, and takes a
-  thread only where a measurement asks for it.
+  thread only where a measurement asks for it. Sound output was the first: sent
+  once per engine frame, the mix overflowed audiod's 40 ms pipe and lost its
+  tail, and QEMU's recording under TCG showed twice the dropouts of a thread
+  sending 10 ms slices. The engine still mixes on the main thread.
 
 **Done when:** SDL has a consumer that needs it. Then the port can move to
 upstream's SDL backend and delete its own.

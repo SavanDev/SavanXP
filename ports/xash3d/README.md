@@ -81,15 +81,20 @@ directory takes precedence over the installed one, and `-ref` accepts an
 absolute path.
 
 The client uses software rendering and captures relative mouse input during
-gameplay. Audio playback, voice chat, HTTP downloads and legacy GoldSrc
-authentication are pending.
+gameplay. It plays the engine's mix through `audiod`, or straight to
+`/dev/audio0` when no daemon holds the device, and declares itself to the
+daemon as `xash3d-client`. An output thread sends the mix in 10 ms slices, because
+audiod's pipe holds about 40 ms and one engine frame can last longer. MP3 and
+Ogg music, voice chat, HTTP downloads and legacy GoldSrc authentication are
+pending.
 
 The client smoke runs the same installer on an isolated SxFS copy. It starts
 the client without directory arguments, loads `c0a0`, checks the save and
 restore in the writable profile, and verifies that the installer preserved
 the profile's settings file. It also checks that the client is listed under
-Games in All Programs and the dedicated server is not. Serial output and
-screenshots are kept in `build/smoke-logs/`.
+Games in All Programs and the dedicated server is not, and records QEMU's HDA
+output to `client.wav` to check that the game is audible. Serial output,
+screenshots and the recording are kept in `build/smoke-logs/`.
 
 ```sh
 SAVANXP_XASH3D_VALVE=/path/to/valve ./build.sh smoke xash3d-client

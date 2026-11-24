@@ -15,10 +15,12 @@ import time
 from dedicated_smoke import ROOT
 from run_qemu import build_qemu_args, find_qemu, prepare_image
 from run_smoke import make_smoke_copy, stop_process, tail
-from shoot_session import Failure, Qmp, Session, wait_for_marker
+from shoot_session import Failure, Qmp, Session, _wav_signal, wait_for_marker
 
 GAME_PATH = Path("users/user/games/xash3d")
 TAG_CATEGORY = 0x0103
+# The floor audio-ports-offline uses for audible PCM in QEMU's recording.
+MIN_RMS = 0.001
 SAVE_NAME = "savanxp_client"
 
 
@@ -64,6 +66,7 @@ def menu_category(program: Path) -> str | None:
 def drive_client(session: Session, serial: Path, timeout: float) -> None:
     session.run("/bin/xash3d-client-smoke", wait=0)
     require_marker(serial, "client connected", timeout)
+    require_marker(serial, "Audio: SavanXP output at", 1)
     require_marker(serial, "Spawn Server: c0a0", 1)
     time.sleep(4)
     session.shot("c0a0")
@@ -98,6 +101,7 @@ def test_client(valve: Path, output: Path) -> None:
     logs = output / "smoke-logs" / f"xash3d-client.{os.getpid()}"
     logs.mkdir(parents=True)
     serial = logs / "serial.log"
+    wav = logs / "client.wav"
 
     with tempfile.TemporaryDirectory(prefix="sxclient-", dir="/tmp") as directory:
         work = Path(directory)
@@ -131,6 +135,7 @@ def test_client(valve: Path, output: Path) -> None:
             headless=True, debug=False, accel=os.environ.get("SAVANXP_ACCEL", "tcg"),
             smp=int(os.environ.get("SAVANXP_SMP", "2")), virtio=virtio,
             monitor_path=monitor, qmp_path=qmp_socket, serial_path=serial,
+            audio_device="hda", wav_path=wav,
         )
         args[0] = qemu
         with (logs / "qemu.log").open("w") as qemu_log:
@@ -145,6 +150,12 @@ def test_client(valve: Path, output: Path) -> None:
                 raise
             finally:
                 stop_process(process, monitor)
+
+        # The whole recording: c0a0 plays ambience and the tram announcer.
+        level = _wav_signal(wav, seconds=3600.0)
+        if level is None or level < MIN_RMS:
+            raise RuntimeError(f"the client played no audible PCM: RMS {level}")
+        print(f"xash3d-client: captured RMS {level:.4f}", flush=True)
 
         extracted = work / "extracted"
         run([cli, "extract", disk, extracted])
