@@ -139,6 +139,11 @@ sound archive from this copy and read two sounds with matching checksums.
 See [SxFS](SXFS_ROADMAP.md#current-baseline-and-the-version-boundary) and
 [VFS limits](../../kernel/FILESYSTEMS.md#limits).
 
+`ports/xash3d/build.sh --valve PATH` installs the user's game assets and packs
+loose sounds automatically. The client mounts the installed data read-only
+and uses the desktop profile for saves and settings.
+[Port notes](../../../ports/xash3d/README.md#graphical-client)
+
 The `xash3d-dedicated` smoke starts the dedicated server with user-supplied
 data on a disposable disk. It checks the server's UDP reply names `c0a0` in
 `valve` and declares dedicated mode. The port uses nonblocking POSIX IPv4

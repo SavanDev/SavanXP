@@ -1400,7 +1400,7 @@ SCENARIOS: dict[str, Scenario] = {
         success="XASH3D DEDICATED PASS",
         failure="XASH3D DEDICATED FAIL",
         description="Xash3D loads Half-Life c0a0 and answers a POSIX UDP query (SAVANXP_XASH3D_VALVE)",
-        port_command="python3 ./ports/xash3d/dedicated_smoke.py",
+        port_command="python3 -B ./ports/xash3d/dedicated_smoke.py",
     ),
     "xash3d-client": Scenario(
         command="port",

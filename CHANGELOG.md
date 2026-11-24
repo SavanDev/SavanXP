@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Xash3D installs Half-Life data with `--valve PATH`.** It packs loose
+  sounds for SxFS and uses the desktop profile for settings and saves.
+  [Port notes](ports/xash3d/README.md#graphical-client).
+
 - **Xash3D offers a graphical Half-Life client for POSIX.** Build with
   `ports/xash3d/build.sh --client` for MainUI, the HLSDK client and software
   rendering. [Port notes](ports/xash3d/README.md#graphical-client).

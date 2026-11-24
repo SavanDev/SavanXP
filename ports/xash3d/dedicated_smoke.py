@@ -8,11 +8,12 @@ import os
 from pathlib import Path
 import shutil
 import socket
-import struct
 import subprocess
 import sys
 import tempfile
 import time
+
+from assets import local_files, pack_sounds
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -24,35 +25,6 @@ GUEST_PORT = 27015
 INFO_REQUEST = b"\xff\xff\xff\xffTSource Engine Query\0"
 INFO_REPLY = b"\xff\xff\xff\xffI"
 INFO_CHALLENGE = b"\xff\xff\xff\xffA"
-
-
-def local_files(directory: Path):
-    for path in sorted(directory.rglob("*")):
-        if path.is_file() and not path.is_symlink():
-            yield path
-
-
-def pack_sounds(valve: Path, archive: Path) -> int:
-    records = []
-    with archive.open("wb") as output:
-        output.write(b"PACK" + bytes(8))
-        for asset in local_files(valve / "sound"):
-            name = os.fsencode(asset.relative_to(valve).as_posix())
-            if len(name) >= 56:
-                raise ValueError(f"PAK name is too long: {asset.relative_to(valve)}")
-            offset = output.tell()
-            with asset.open("rb") as source:
-                shutil.copyfileobj(source, output)
-            records.append(struct.pack("<56sII", name, offset, output.tell() - offset))
-        if not 0 < len(records) <= 65536:
-            raise ValueError(f"expected 1 to 65536 sound files, found {len(records)}")
-        offset = output.tell()
-        if offset + 64 * len(records) > 0x7fffffff:
-            raise ValueError("sound PAK exceeds the engine's signed 32-bit format")
-        output.writelines(records)
-        output.seek(4)
-        output.write(struct.pack("<II", offset, 64 * len(records)))
-    return len(records)
 
 
 def stage_valve(valve: Path, target: Path, module: Path) -> None:

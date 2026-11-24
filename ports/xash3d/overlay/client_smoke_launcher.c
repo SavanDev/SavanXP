@@ -9,7 +9,8 @@ int main(void)
         return 1;
     close(serial);
     char *argv[] = {
-        "/bin/xash3d-client", "-basedir", "/games/xash3d-client-smoke",
+        "/bin/xash3d-client", "-basedir", "/users/user/games/xash3d",
+        "-rodir", "/games/xash3d", "-ref", "/games/xash3d/ref_soft.so",
         "-windowed", "-width", "640", "-height", "480", "-dev", "2",
         "+sv_lan", "1", "+map", "c0a0", 0,
     };

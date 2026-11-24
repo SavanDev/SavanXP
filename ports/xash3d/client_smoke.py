@@ -6,56 +6,22 @@ from __future__ import annotations
 import fcntl
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 
-from dedicated_smoke import ROOT, local_files, pack_sounds
+from dedicated_smoke import ROOT
 from run_qemu import build_qemu_args, find_qemu, prepare_image
 from run_smoke import make_smoke_copy, stop_process, tail
 from shoot_session import Failure, Qmp, Session, wait_for_marker
 
-GAME_PATH = Path("games/xash3d-client-smoke")
+GAME_PATH = Path("users/user/games/xash3d")
 SAVE_NAME = "savanxp_client"
 
 
 def run(command, **kwargs):
     subprocess.run(command, cwd=ROOT, check=True, **kwargs)
-
-
-def stage_game(valve: Path, stage: Path, built: Path) -> Path:
-    game = stage / GAME_PATH
-    target = game / "valve"
-    if not any((valve / name).is_file() for name in ("liblist.gam", "gameinfo.txt")):
-        raise ValueError(f"{valve} has no Half-Life game metadata")
-    level = valve / "maps/c0a0.bsp"
-    if not level.is_file() or level.is_symlink():
-        raise ValueError(f"missing Half-Life fixture: {level}")
-
-    assets = [level]
-    suffixes = {".cfg", ".gam", ".hpk", ".inf", ".lst", ".rc", ".scr", ".txt", ".wad"}
-    assets.extend(path for path in valve.iterdir() if path.suffix.lower() in suffixes)
-    for name in ("gfx", "resource", "media", "models", "sprites", "events", "scripts"):
-        assets.extend(local_files(valve / name))
-    assets.extend(path for path in (valve / "maps").glob("c0a0*.cfg"))
-    for path in assets:
-        if path.is_file() and not path.is_symlink():
-            destination = target / path.relative_to(valve)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, destination)
-    for install_path in ("ref_soft.so", "valve/cl_dlls/client_savanxp_amd64.so",
-                         "valve/cl_dlls/menu_savanxp_amd64.so", "valve/dlls/hl_savanxp_amd64.so"):
-        destination = game / install_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(built / destination.name, destination)
-    entries = pack_sounds(valve, target / "sounds.pak")
-    print(f"xash3d-client: packed {entries} sound files", flush=True)
-    (target / "userconfig.cfg").write_text(
-        f'bind "F6" "save {SAVE_NAME}"\nbind "F7" "load {SAVE_NAME}"\n', encoding="ascii",
-    )
-    return target
 
 
 def require_marker(serial: Path, marker: str, timeout: float) -> None:
@@ -107,21 +73,18 @@ def test_client(valve: Path, output: Path) -> None:
         with source_disk.with_name("disk.img.lock").open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             make_smoke_copy(source_disk, disk, cli)
-        env = dict(os.environ, SAVANXP_DISK_IMAGE=str(disk), SAVANXP_SXFS_CLI=str(cli))
-        run(["./ports/xash3d/build.sh", "--client"], env=env)
         stage = work / "stage"
-        target = stage_game(valve, stage, output / "ports/xash3d")
+        userconfig = stage / GAME_PATH / "valve/userconfig.cfg"
+        bindings = f'bind "F6" "save {SAVE_NAME}"\nbind "F7" "load {SAVE_NAME}"\n'
+        userconfig.parent.mkdir(parents=True)
+        userconfig.write_text(bindings, encoding="ascii")
         launcher = stage / "bin/xash3d-client-smoke"
         launcher.parent.mkdir()
         run(["./tools/build-user.sh", "--source", "ports/xash3d/overlay/client_smoke_launcher.c",
              "--name", launcher.name, "--no-install", "--output", launcher])
         run([sys.executable, "tools/sxfs_sync.py", "--target", disk, "--source", stage, "--cli", cli])
-        owners = work / "owners"
-        owners.write_text("".join(
-            f"owner\t{path.relative_to(stage)}\t1000\t1000\t40755\n"
-            for path in [target, *(path for path in target.rglob("*") if path.is_dir())]
-        ), encoding="utf-8")
-        run([cli, "apply", disk, owners])
+        env = dict(os.environ, SAVANXP_DISK_IMAGE=str(disk), SAVANXP_SXFS_CLI=str(cli))
+        run(["./ports/xash3d/build.sh", "--valve", valve], env=env)
         run([sys.executable, "tools/smoke_profile.py", "--sxfs-cli", cli, disk])
 
         monitor = work / "monitor"
@@ -153,6 +116,8 @@ def test_client(valve: Path, output: Path) -> None:
 
         extracted = work / "extracted"
         run([cli, "extract", disk, extracted])
+        if (extracted / GAME_PATH / "valve/userconfig.cfg").read_text(encoding="ascii") != bindings:
+            raise RuntimeError("installing the game changed the existing user configuration")
         save = extracted / GAME_PATH / "valve/save" / f"{SAVE_NAME}.sav"
         with save.open("rb") as file:
             if file.read(4) != b"JSAV":

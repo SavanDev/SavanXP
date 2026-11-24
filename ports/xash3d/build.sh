@@ -18,6 +18,7 @@ OBJCOPY=${SAVANXP_OBJCOPY:-llvm-objcopy}
 READELF=${SAVANXP_READELF:-llvm-readelf}
 INSTALL=1
 BUILD_CLIENT=0
+VALVE_DATA=
 PROGRAM=xash3d-probe
 MODULE=hl_savanxp_amd64.so
 FS_PROBE=xash3d-fsprobe
@@ -30,11 +31,23 @@ while (($#)); do
     case "$1" in
         --no-install) INSTALL=0 ;;
         --client) BUILD_CLIENT=1 ;;
-        -h|--help) echo "Usage: ports/xash3d/build.sh [--client] [--no-install]"; exit 0 ;;
+        --valve)
+            if [[ -z ${2:-} || $2 == --* ]]; then
+                echo "xash3d: --valve requires an unpacked Half-Life valve directory" >&2
+                exit 2
+            fi
+            VALVE_DATA=$2
+            BUILD_CLIENT=1
+            shift ;;
+        -h|--help) echo "Usage: ports/xash3d/build.sh [--client] [--valve PATH] [--no-install]"; exit 0 ;;
         *) echo "xash3d: unknown argument '$1'" >&2; exit 2 ;;
     esac
     shift
 done
+if ((!INSTALL)) && [[ -n "$VALVE_DATA" ]]; then
+    echo "xash3d: --valve installs game data and cannot be used with --no-install" >&2
+    exit 2
+fi
 if ((INSTALL)) && [[ ( ! -f "$IMAGE" && ! -b "$IMAGE" ) || ! -x "$SXFS_CLI" ]]; then
     echo "xash3d: run ./build.sh build before installing the port" >&2
     exit 1
@@ -85,6 +98,9 @@ objects="$scratch/objects"
 resources="$scratch/sxe"
 stage="$scratch/stage"
 mkdir -p "$objects/fs" "$objects/dedicated" "$objects/ref" "$stage/bin" "$stage/games/xash3d/valve/dlls"
+if [[ -n "$VALVE_DATA" ]]; then
+    "$PYTHON" "$PORT/assets.py" "$VALVE_DATA" "$stage"
+fi
 extract_source hlsdk-portable "$commit" "" "$source"
 extract_source xash3d-fwgs "$engine_commit" engine_ "$engine"
 extract_source library-suffix "$suffix_commit" suffix_ "$suffix"

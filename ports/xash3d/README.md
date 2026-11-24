@@ -51,24 +51,39 @@ the same test frame.
 
 ## Graphical client
 
+To install the client and game assets on the persistent disk, point the port
+installer at your unpacked Half-Life `valve` directory.
+
 ```sh
-./ports/xash3d/build.sh --client
+./build.sh build
+./ports/xash3d/build.sh --valve /path/to/valve
+./build.sh run
 ```
 
-The optional build installs `/bin/xash3d-client`, the HLSDK client with
-FreeVGUI, and the MainUI menu module. Put your Half-Life files in a writable
-`/games/xash3d/valve` tree, keeping the SavanXP modules in `cl_dlls` and
-`dlls`. For another data directory, use `-basedir` and place `ref_soft.so` in
-that directory next to `valve`. See the roadmap for the SxFS inode limit.
+Run this from the SavanXP Command Prompt.
 
-From the SavanXP Command Prompt, run `start /bin/xash3d-client`. The client
-uses software rendering and captures relative mouse input during gameplay.
-Audio playback, voice chat, HTTP downloads and legacy GoldSrc authentication
-are pending.
+```sh
+start /bin/xash3d-client -basedir /users/user/games/xash3d -rodir /games/xash3d -ref /games/xash3d/ref_soft.so
+```
 
-The client smoke uses an isolated SxFS copy and your unpacked Half-Life data.
-It loads `c0a0`, saves a game and checks that the client reconnects after
-loading the slot. Serial output and screenshots are kept in `build/smoke-logs/`.
+`--valve` installs data under `/games/xash3d/valve`. The installer packs
+loose sounds into a PAK to fit the SxFS inode limit. The client mounts this
+directory read-only and writes settings and saves under
+`/users/user/games/xash3d/valve`, which persists across builds and installs.
+
+Use `--client` when you only need the client binaries. With an existing
+writable `/games/xash3d/valve` tree, `start /bin/xash3d-client` still works.
+For another writable tree, use `-basedir` and put `ref_soft.so` next to its
+`valve` directory or pass its absolute path with `-ref`.
+
+The client uses software rendering and captures relative mouse input during
+gameplay. Audio playback, voice chat, HTTP downloads and legacy GoldSrc
+authentication are pending.
+
+The client smoke runs the same installer on an isolated SxFS copy. It loads
+`c0a0`, checks the save and restore in the writable profile, and verifies
+that the installer preserved the profile's settings file. Serial output and
+screenshots are kept in `build/smoke-logs/`.
 
 ```sh
 SAVANXP_XASH3D_VALVE=/path/to/valve ./build.sh smoke xash3d-client
