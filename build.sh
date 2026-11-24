@@ -525,6 +525,9 @@ build_target() {
     shift
     local args=(--build "$BUILD_DIR" --target "$target")
     [[ -z "$JOBS" ]] || args+=(--parallel "$JOBS")
+    # Quiet mode keeps Ninja's reason for every step in the log, so the summary
+    # can say why a build ran far more steps than a commit costs.
+    ((QUIET == 0)) || set -- "$@" -- -d explain
     run_step ninja "build $target" "build-$target.log" cmake "${args[@]}" "$@"
 }
 

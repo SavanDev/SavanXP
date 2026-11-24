@@ -86,6 +86,21 @@ def main() -> int:
     # One warning, once, with the source root dropped; no step lines.
     assert out[1:] == ["kernel/net.cpp:10:5: warning: unused variable 'x' [-Wunused-variable]"], out
 
+    # A build far past a commit's cost says why, grouped by cause; "is dirty"
+    # lines only repeat a cause and are not counted.
+    big = "".join(
+        f"ninja explain: output o{n}.o older than most recent input /src/include/abi/abi.h (1 vs 2)\n"
+        f"ninja explain: o{n}.o is dirty\n[{n + 1}/300] Building C object o{n}.o\n"
+        for n in range(298))
+    big += ("ninja explain: command line changed for tool.o\n[299/300] Building C object tool.o\n"
+            "[300/300] Linking kernel\n")
+    out = summary(tool, "ninja", 0, big)
+    assert out[0].startswith("==> step: OK, 300 steps"), out
+    assert out[1] == "--- why 300 steps (ninja -d explain, by count) ---", out
+    assert out[2].split("  (e.g.")[0].split() == ["298", "older", "than", "include/abi/abi.h"], out
+    assert out[3].split("  (e.g.")[0].split() == ["1", "command", "line", "changed"], out
+    assert len(out) == 4, out
+
     out = summary(tool, "ninja", 0, "ninja: no work to do.\n")
     assert out[0].startswith("==> step: OK, no work to do, 0 warnings"), out
 

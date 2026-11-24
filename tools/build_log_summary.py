@@ -17,9 +17,14 @@ from pathlib import Path
 MAX_WARNINGS = 10
 MAX_FAILURE_LINES = 80
 TAIL_LINES = 40
+# A commit alone costs about 150 steps (the build number and the SXE stamps);
+# a build well past that is worth one line on why.
+REBUILD_REPORT_STEPS = 300
+MAX_REBUILD_CAUSES = 3
 
 NINJA_STEP = re.compile(r"^\[(\d+)/(\d+)\] ")
 WARNING = re.compile(r"^\S+:\d+(:\d+)?: warning: ")
+EXPLAIN = "ninja explain: "
 
 
 def shorten(text, roots):
@@ -40,6 +45,35 @@ def warnings_of(lines):
         if WARNING.match(line) and line not in seen:
             seen.append(line)
     return seen
+
+
+def rebuild_causes(lines):
+    """Group Ninja's -d explain lines by cause, most frequent first.
+
+    "X is dirty" only repeats a cause further down the graph, so it is left
+    out; what remains says which input was newer, or that a command line or a
+    dependency record changed.
+    """
+    counts, examples = {}, {}
+    for line in lines:
+        if not line.startswith(EXPLAIN) or line.endswith(" is dirty"):
+            continue
+        reason = line[len(EXPLAIN):]
+        newer = re.search(r"older than most recent input (\S+)", reason)
+        if newer:
+            key = f"older than {newer.group(1)}"
+        elif reason.startswith("command line changed for "):
+            key = "command line changed"
+        elif reason.startswith("deps for "):
+            key = "dependency records missing"
+        elif "doesn't exist" in reason:
+            key = "output missing"
+        else:
+            key = " ".join(reason.split()[:6])
+        counts[key] = counts.get(key, 0) + 1
+        examples.setdefault(key, reason)
+    ranked = sorted(counts, key=lambda k: -counts[k])[:MAX_REBUILD_CAUSES]
+    return [f"{counts[k]:>6}  {k}  (e.g. {examples[k][:120]})" for k in ranked]
 
 
 def ninja_failures(lines):
@@ -122,6 +156,10 @@ def summarize(kind, label, log, status, seconds, roots):
         out.extend(cap(warnings, MAX_WARNINGS, "warnings"))
         if kind == "configure":
             out.extend(l for l in lines if l.startswith("CMake Warning"))
+        causes = rebuild_causes(lines) if len(steps) >= REBUILD_REPORT_STEPS else []
+        if causes:
+            out.append(f"--- why {len(steps)} steps (ninja -d explain, by count) ---")
+            out.extend(causes)
         return out
 
     out.append(f"==> {label}: FAILED (exit {status}), {', '.join(facts)} (log: {shown_log})")
