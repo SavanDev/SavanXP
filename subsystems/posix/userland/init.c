@@ -75,6 +75,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && strcmp(spec, "xash3d-filesystem") == 0) {
         return "XASH3D FILESYSTEM";
     }
+    if (spec != 0 && strcmp(spec, "xash3d-dedicated") == 0) {
+        return "XASH3D DEDICATED";
+    }
     if (spec != 0 && text_contains(spec, "ccleste")) {
         return "CCLESTE SELFTEST";
     }
@@ -317,6 +320,10 @@ static int run_automation_spec(const char* spec) {
     const char* tinycc_argv[] = {"/bin/tccsmoke.sxe", 0};
     const char* xash3d_argv[] = {"/bin/xash3d-probe", 0};
     const char* xash3d_fs_argv[] = {"/bin/xash3d-fsprobe", "--selftest", 0};
+    const char* xash3d_server_argv[] = {
+        "/bin/xash3d-dedicated", "-basedir", "/games/xash3d-smoke", "-dev", "2",
+        "+sv_lan", "1", "+map", "c0a0", 0,
+    };
     const char* kbdtest_argv[] = {"/bin/kbdtest", "--selftest", 0};
     const char* mousetest_argv[] = {"/bin/mousetest", "--selftest", 0};
     /* Three paths: audio only (WAV), video only with no container (raw MJPEG),
@@ -662,6 +669,10 @@ static int run_automation_spec(const char* spec) {
             path = xash3d_fs_argv[0];
             argv = xash3d_fs_argv;
             argc = 2;
+        } else if (strcmp(spec, "xash3d-dedicated") == 0) {
+            path = xash3d_server_argv[0];
+            argv = xash3d_server_argv;
+            argc = sizeof(xash3d_server_argv) / sizeof(xash3d_server_argv[0]) - 1;
         } else if (strcmp(spec, "ccleste-selftest") == 0 || strcmp(spec, "ccleste") == 0) {
             path = "/bin/ccleste";
             argv = ccleste_argv;

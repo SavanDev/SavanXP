@@ -1,8 +1,8 @@
 # Xash3D FWGS — the port that pays for `dlopen` and SxGL
 
-> **Status: step 2 has the HLSDK Portable server module and filesystem_stdio.**
-> POSIX probes verify game initialization and read loose and PAK assets in
-> SavanXP. The dedicated engine, its UDP integration and the client are pending.
+> **Status: the dedicated server runs in step 2.** It loads the HLSDK and
+> filesystem modules, starts Half-Life's `c0a0` and answers IPv4 UDP queries
+> through POSIX. The client, `ref_soft` and the save round-trip are pending.
 >
 > Reviewed 2026-11-14 against the rest of the system. Since it was written,
 > SxGL ([SXGL_ROADMAP.md](../done/SXGL_ROADMAP.md), batches 0–4), user-space
@@ -130,8 +130,11 @@ sound archive from this copy and read two sounds with matching checksums.
 See [SxFS](SXFS_ROADMAP.md#current-baseline-and-the-version-boundary) and
 [VFS limits](../../kernel/FILESYSTEMS.md#limits).
 
-Build the dedicated server first, as upstream's porting guide recommends: it proves
-`dlopen` and the network stack with no video, input or sound in the way.
+The `xash3d-dedicated` smoke starts the dedicated server with user-supplied
+data on a disposable disk. It checks the server's UDP reply names `c0a0` in
+`valve` and declares dedicated mode. The port uses nonblocking POSIX IPv4
+sockets. See the [port notes](../../../ports/xash3d/README.md) for the current
+network limits and the test command.
 
 **Done when:** the client reaches the main menu and loads a map with `ref_soft`,
 and a save game round-trips (which is the `dladdr` check, end to end).

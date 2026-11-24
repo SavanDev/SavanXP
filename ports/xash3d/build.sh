@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build HLSDK Portable's server module and Xash3D's POSIX filesystem.
+# Build the Xash3D dedicated server, its modules and the POSIX probes.
 set -euo pipefail
 
 PORT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -21,6 +21,7 @@ PROGRAM=xash3d-probe
 MODULE=hl_savanxp_amd64.so
 FS_PROBE=xash3d-fsprobe
 FS_MODULE=filesystem_stdio.so
+DEDICATED=xash3d-dedicated
 
 case "${1:-}" in
     "") ;;
@@ -80,7 +81,7 @@ suffix="$scratch/suffix"
 objects="$scratch/objects"
 resources="$scratch/sxe"
 stage="$scratch/stage"
-mkdir -p "$objects/fs" "$stage/bin" "$stage/games/xash3d/valve/dlls"
+mkdir -p "$objects/fs" "$objects/dedicated" "$stage/bin" "$stage/games/xash3d/valve/dlls"
 extract_source hlsdk-portable "$commit" "" "$source"
 extract_source xash3d-fwgs "$engine_commit" engine_ "$engine"
 extract_source library-suffix "$suffix_commit" suffix_ "$suffix"
@@ -90,6 +91,7 @@ git -C "$suffix" init -q
 git -C "$source" apply "$PORT/patches/0001-recognize-savanxp.patch"
 git -C "$engine" apply "$PORT/patches/0002-build-filesystem-stdio.patch"
 git -C "$suffix" apply "$PORT/patches/0003-library-suffix-savanxp.patch"
+git -C "$engine" apply "$PORT/patches/0004-build-dedicated-server.patch"
 
 cat >"$scratch/vcs_info.h" <<EOF
 #define HLSDK_COMMIT "$commit"
@@ -157,9 +159,9 @@ fs_common=(
     -fmacro-prefix-map="$suffix=ports/xash3d/library-suffix"
 )
 echo "xash3d: building filesystem_stdio from Xash3D FWGS $engine_commit"
+public_sources=("$engine"/public/*.c "$engine/3rdparty/miniz/miniz.c" "$suffix/src/library_suffix.c")
 fs_objects=()
-for file in "$engine"/filesystem/*.c "$engine"/public/*.c \
-    "$engine/3rdparty/miniz/miniz.c" "$suffix/src/library_suffix.c"; do
+for file in "$engine"/filesystem/*.c "${public_sources[@]}"; do
     name=${file##*/}
     object="$objects/fs/${name%.c}.o"
     "$CC" -c "$file" -o "$object" "${fs_common[@]}" -std=gnu11 -fvisibility=hidden
@@ -180,16 +182,46 @@ fs_probe="$stage/bin/$FS_PROBE"
 "${SAVANXP_LINK_CC:-$CC}" "${link_flags[@]}" \
     -o "$fs_probe" "${runtime[@]}" "$objects/filesystem_probe.o"
 
+dedicated_flags=(
+    "${fs_common[@]}" -std=gnu11 -Wno-pointer-sign
+    -I "$PORT/overlay" -I "$engine/pm_shared" -I "$engine/engine/platform"
+    -I "$engine/engine/common" -I "$engine/engine/common/imagelib"
+    -I "$engine/engine/common/soundlib" -I "$engine/engine/server"
+    -I "$engine/engine/client" -I "$engine/engine/client/vgui"
+    -DENGINE_DLL=1 -DXASH_DEDICATED=1 -DXASH_ENABLE_MAIN=1 -DXASH_CRASHHANDLER=0
+    -DSTDIN_FILENO=0 -DSTDOUT_FILENO=1 -DSTDERR_FILENO=2
+)
+echo "xash3d: building the POSIX dedicated server"
+dedicated_objects=()
+for file in "$engine"/engine/common/*.c "$engine"/engine/common/{imagelib,soundlib}/*.c \
+    "$engine"/engine/server/*.c "$engine"/engine/platform/posix/*.c \
+    "${public_sources[@]}" "$PORT/overlay/dedicated_savanxp.c"; do
+    name=${file##*/}
+    case "$name" in
+        whereami.c|xrcon.c) continue ;;
+    esac
+    object="$objects/dedicated/${name%.c}.o"
+    "$CC" -c "$file" -o "$object" "${dedicated_flags[@]}"
+    dedicated_objects+=("$object")
+done
+
+dedicated="$stage/bin/$DEDICATED"
+mapfile -t setjmp_runtime < <(savanxp_sdk_runtime_objects "$SYSROOT" pie setjmp)
+"${SAVANXP_LINK_CC:-$CC}" "${link_flags[@]}" \
+    -o "$dedicated" "${runtime[@]}" "${setjmp_runtime[@]}" "${dedicated_objects[@]}"
+
 build_id=$(git -C "$ROOT" rev-parse --short HEAD)
 "$PYTHON" "$ROOT/tools/gen_sxe_resources.py" --project-root "$ROOT" \
     --output-dir "$resources" --manifest-dir "$PORT/overlay" --build-id "$build_id" \
-    --program "$PROGRAM" --program "$FS_PROBE"
+    --program "$PROGRAM" --program "$FS_PROBE" --program "$DEDICATED"
 "$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$probe" --name "$PROGRAM" \
     --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
 "$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$fs_probe" --name "$FS_PROBE" \
     --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
+"$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$dedicated" --name "$DEDICATED" \
+    --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
 
-cp -- "$probe" "$module" "$fs_probe" "$fs_module" "$WORK/"
+cp -- "$probe" "$module" "$fs_probe" "$fs_module" "$dedicated" "$WORK/"
 if ((INSTALL)); then
     "$PYTHON" "$ROOT/tools/stage_licenses.py" stage --root "$ROOT" --out "$stage/system/licenses" \
         "$PORT"/licenses/*.notice
@@ -198,3 +230,4 @@ if ((INSTALL)); then
 fi
 echo "xash3d: built $WORK/$PROGRAM and $WORK/$MODULE"
 echo "xash3d: built $WORK/$FS_PROBE and $WORK/$FS_MODULE"
+echo "xash3d: built $WORK/$DEDICATED"

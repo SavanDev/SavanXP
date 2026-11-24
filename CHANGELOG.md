@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Xash3D starts a dedicated Half-Life server over IPv4 UDP.** `xash3d-dedicated`
+  loads `c0a0` and answers server-info queries using POSIX. [Port notes](ports/xash3d/README.md).
+
 - **The Xash3D port reads loose files and PAK archives on SavanXP.** The port builds
   `filesystem_stdio.so` and `xash3d-fsprobe` for POSIX. [Port notes](ports/xash3d/README.md).
 

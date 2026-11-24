@@ -1,0 +1,257 @@
+--- a/engine/common/filesystem_engine.c
++++ b/engine/common/filesystem_engine.c
+@@ -219,6 +219,8 @@
+ #define FILESYSTEM_STDIO_DLL "filesystem_stdio"
+ #elif XASH_ANDROID
+ #define FILESYSTEM_STDIO_DLL "libfilesystem_stdio.so"
++#elif XASH_SAVANXP
++#define FILESYSTEM_STDIO_DLL "/games/xash3d/filesystem_stdio.so"
+ #else
+ #define FILESYSTEM_STDIO_DLL "filesystem_stdio." OS_LIB_EXT
+ #endif
+@@ -271,7 +273,11 @@
+ 		return true;
+ 	}
+ 
+-#if XASH_IOS
++#if XASH_SAVANXP
++	if( !_Sys_GetParmFromCmdLine( "-basedir", out, size ))
++		Q_strncpy( out, "/games/xash3d", size );
++	return true;
++#elif XASH_IOS
+ 	Q_strncpy( out, IOS_GetDocsDir(), size );
+ 	return true;
+ #elif XASH_PSVITA
+--- a/engine/common/net_ws_private.h
++++ b/engine/common/net_ws_private.h
+@@ -21,6 +21,8 @@
+ #elif XASH_PSVITA
+ #include "platform/psvita/net_psvita.h"
+ static const struct in6_addr in6addr_any;
++#elif XASH_SAVANXP
++#include "net_savanxp.h"
+ #else
+ #include "platform/posix/net.h"
+ #endif
+--- a/engine/common/net_ws.c
++++ b/engine/common/net_ws.c
+@@ -153,7 +153,7 @@
+ 
+ qboolean NET_MakeSocketNonBlocking( int socket_fd )
+ {
+-#if XASH_LINUX || XASH_PS4
++#if XASH_LINUX || XASH_PS4 || XASH_SAVANXP
+ 	int res = fcntl( socket_fd, F_GETFL, 0 );
+ 	if( NET_IsSocketError( res ))
+ 		return false;
+@@ -262,6 +262,16 @@
+ */
+ static qboolean NET_GetHostByName( const char *hostname, int family, struct sockaddr_storage *addr )
+ {
++#if XASH_SAVANXP
++	if( family == AF_INET6 || Q_stricmp( hostname, "localhost" ))
++		return false;
++
++	struct sockaddr_in *in = (struct sockaddr_in *)addr;
++	memset( addr, 0, sizeof( *addr ));
++	in->sin_family = AF_INET;
++	in->sin_addr.s_addr = inet_addr( "127.0.0.1" );
++	return true;
++#else
+ 	struct addrinfo *ai = NULL, *cur;
+ 	qboolean ret = false;
+ 
+@@ -292,6 +302,7 @@
+ 	}
+ 
+ 	return ret;
++#endif
+ }
+ 
+ static void NET_ResolveThread( void );
+@@ -413,15 +424,20 @@
+ net_gai_state_t NET_StringToSockaddr( const char *s, struct sockaddr_storage *sadr, qboolean nonblocking, int family )
+ {
+ 	int ret = 0;
+-	int port;
+ 	char	copy[128];
+-	byte ip6[16];
+ 	struct sockaddr_storage temp;
+ 
+ 	if( !net.initialized )
+ 		return NET_EAI_NONAME;
+ 
+ 	memset( sadr, 0, sizeof( *sadr ));
++
++#if XASH_SAVANXP
++	if( family == AF_INET6 )
++		return NET_EAI_NONAME;
++#else
++	int port;
++	byte ip6[16];
+ 
+ 	// try to parse it as IPv6 first
+ 	if(( family == AF_UNSPEC || family == AF_INET6 ) && ParseIPv6Addr( s, ip6, &port, NULL ))
+@@ -432,6 +448,7 @@
+ 
+ 		return NET_EAI_OK;
+ 	}
++#endif
+ 
+ 	Q_strncpy( copy, s, sizeof( copy ));
+ 
+@@ -449,7 +466,12 @@
+ 	if( copy[0] >= '0' && copy[0] <= '9' )
+ 	{
+ 		((struct sockaddr_in *)sadr)->sin_family = AF_INET;
++#if XASH_SAVANXP
++		if( inet_pton( AF_INET, copy, &((struct sockaddr_in *)sadr)->sin_addr ) != 1 )
++			return NET_EAI_NONAME;
++#else
+ 		((struct sockaddr_in *)sadr)->sin_addr.s_addr = inet_addr( copy );
++#endif
+ 	}
+ 	else
+ 	{
+@@ -1392,7 +1414,9 @@
+ 		case WSAEWOULDBLOCK:
+ 		case WSAECONNRESET:
+ 		case WSAECONNREFUSED:
++#if !XASH_SAVANXP
+ 		case WSAEMSGSIZE:
++#endif
+ 		case WSAETIMEDOUT:
+ 			break;
+ 		default:	// let's continue even after errors
+@@ -1550,15 +1574,21 @@
+ 		if( err == WSAEWOULDBLOCK )
+ 			return;
+ 
++#if !XASH_SAVANXP
+ 		// some PPP links don't allow broadcasts
+ 		if( err == WSAEADDRNOTAVAIL && ( type == NA_BROADCAST || type == NA_MULTICAST_IP6 ))
+ 			return;
++#endif
+ 
+ 		if( Host_IsDedicated( ))
+ 		{
+ 			Con_DPrintf( S_ERROR "%s: %s to %s\n", __func__, NET_ErrorString(), NET_AdrToString( to ));
+ 		}
+-		else if( err == WSAEADDRNOTAVAIL || err == WSAENOBUFS )
++		else if(
++#if !XASH_SAVANXP
++			err == WSAEADDRNOTAVAIL ||
++#endif
++			err == WSAENOBUFS )
+ 		{
+ 			Con_DPrintf( S_ERROR "%s: %s to %s\n", __func__, NET_ErrorString(), NET_AdrToString( to ));
+ 		}
+@@ -1587,6 +1617,41 @@
+ */
+ static int NET_IPSocket( const char *net_iface, int port, int family )
+ {
++#if XASH_SAVANXP
++	struct sockaddr_in addr = { .sin_family = AF_INET };
++	if( family != AF_INET || port <= 0 || port > UINT16_MAX )
++	{
++		Con_Printf( S_ERROR "The SavanXP server needs an explicit IPv4 port.\n" );
++		return INVALID_SOCKET;
++	}
++
++	if( !COM_StringEmpty( net_iface ) && Q_stricmp( net_iface, "localhost" ) &&
++		inet_pton( AF_INET, net_iface, &addr.sin_addr ) != 1 )
++	{
++		Con_Printf( S_ERROR "Invalid IPv4 bind address: %s\n", net_iface );
++		return INVALID_SOCKET;
++	}
++	addr.sin_port = htons( port );
++
++	int fd = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
++	if( !NET_IsSocketValid( fd ))
++	{
++		Con_Printf( S_ERROR "UDP socket: %s\n", NET_ErrorString() );
++		return INVALID_SOCKET;
++	}
++	if( !NET_MakeSocketNonBlocking( fd ) ||
++		bind( fd, (struct sockaddr *)&addr, sizeof( addr )) != 0 )
++	{
++		Con_Printf( S_ERROR "UDP port %d: %s\n", port, NET_ErrorString() );
++		closesocket( fd );
++		return INVALID_SOCKET;
++	}
++	net_local = (netadr_t){ 0 };
++	net_local.type = NA_IP;
++	net_local.port = addr.sin_port;
++	memcpy( net_local.ip, &addr.sin_addr, sizeof( addr.sin_addr ));
++	return fd;
++#else
+ 	struct sockaddr_storage	addr = { 0 };
+ 	int		net_socket;
+ 	uint		optval = 1;
+@@ -1697,6 +1762,7 @@
+ 	}
+ 
+ 	return net_socket;
++#endif
+ }
+ 
+ /*
+@@ -1777,6 +1843,19 @@
+ */
+ static void NET_DetermineLocalAddress( void )
+ {
++#if XASH_SAVANXP
++	if( !net.allow_ip )
++	{
++		Con_Printf( "IPv4 disabled.\n" );
++		return;
++	}
++	if( NET_IsSocketValid( net.ip_sockets[NS_SERVER] ))
++	{
++		const char *address = NET_AdrToString( net_local );
++		Con_Printf( "Server IPv4 address %s\n", address );
++		Cvar_FullSet( "net_address", address, net_address.flags );
++	}
++#else
+ 	char		hostname[512];
+ 	char		buff[512];
+ 	struct sockaddr_storage	address;
+@@ -1839,6 +1918,7 @@
+ 		}
+ 		else Con_DPrintf( S_ERROR "Could not get TCP/IPv6 address, Invalid hostname: '%s'\n", buff );
+ 	}
++#endif
+ }
+ 
+ /*
+@@ -1874,6 +1954,10 @@
+ 		if( Host_IsDedicated( ))
+ 		{
+ 			qboolean nov4 = net.allow_ip  && NET_IsSocketError( net.ip_sockets[NS_SERVER] );
++#if XASH_SAVANXP
++			if( nov4 )
++				Host_Error( "Couldn't allocate IPv4 server port.\n" );
++#else
+ 			qboolean nov6 = net.allow_ip6 && NET_IsSocketError( net.ip6_sockets[NS_SERVER] );
+ 
+ 			if( nov4 && nov6 )
+@@ -1882,6 +1966,7 @@
+ 				Con_Printf( S_ERROR "Couldn't allocate IPv4 server port\n" );
+ 			else if( !nov4 && nov6 )
+ 				Con_Printf( S_ERROR "Couldn't allocate IPv6 server_port\n" );
++#endif
+ 		}
+ 
+ 		// get our local address, if possible
+@@ -2016,7 +2101,11 @@
+ 	NET_InitializeCriticalSections();
+ 
+ 	net.allow_ip = !Sys_CheckParm( "-noip" );
++#if XASH_SAVANXP
++	net.allow_ip6 = false;
++#else
+ 	net.allow_ip6 = !Sys_CheckParm( "-noip6" );
++#endif
+ 
+ 	// specify custom host port
+ 	if( Sys_GetParmFromCmdLine( "-port", cmd ) && Q_isdigit( cmd ))

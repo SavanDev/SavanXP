@@ -1373,6 +1373,13 @@ SCENARIOS: dict[str, Scenario] = {
         "Xash3D filesystem_stdio loads and reads loose and PAK files on POSIX",
         prepare=("./ports/xash3d/build.sh",),
     ),
+    "xash3d-dedicated": Scenario(
+        command="port",
+        success="XASH3D DEDICATED PASS",
+        failure="XASH3D DEDICATED FAIL",
+        description="Xash3D loads Half-Life c0a0 and answers a POSIX UDP query (SAVANXP_XASH3D_VALVE)",
+        port_command="python3 ./ports/xash3d/dedicated_smoke.py",
+    ),
     "ccleste-selftest": _qemu_scenario(
         "ccleste-selftest",
         "CCLESTE SELFTEST PASS",
