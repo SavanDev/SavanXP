@@ -17,6 +17,12 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   release ISO in its own output root, the checks before publishing, tag, assets,
   release notes and the GitHub release.
 
+## Changelog — `changelog/`
+
+- [`vX.Y.Z.md`](changelog/) — the notes of each released version, one file per
+  version. [`CHANGELOG.md`](../CHANGELOG.md) holds only what is not released yet
+  and lists these files; [`RELEASING.md`](build/RELEASING.md) moves a version here.
+
 ## Kernel — `kernel/`
 
 - [`ARCH.md`](kernel/ARCH.md) — the architecture boundary: what lives in `arch/x86_64`

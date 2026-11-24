@@ -28,11 +28,39 @@ Releases up to `v0.4.2` had no name; their titles are the bare tag.
 ## 1. The release commit
 
 `include/shared/version.h` already says `X.Y.Z`: master always carries the next
-version. The release commit changes three things and nothing else:
+version. The release commit changes these things and nothing else:
 
-- `CHANGELOG.md`: `## [Unreleased]` becomes `## [X.Y.Z] - YYYY-MM-DD`.
+- The changelog: the `[Unreleased]` notes move to a new
+  `docs/changelog/vX.Y.Z.md` under `## [X.Y.Z] - YYYY-MM-DD`, with their
+  relative links rewritten for the new directory; `CHANGELOG.md` keeps an empty
+  `## [Unreleased]` and lists the new file first under `## Previous versions`.
+  The SavanXP website builds its changelog pages from that list, so its format
+  (`- [X.Y.Z](docs/changelog/vX.Y.Z.md) — YYYY-MM-DD`) stays as it is.
 - `CMakeLists.txt`: `project(SavanXP VERSION X.Y.Z ...)`.
 - `README.md`: ``Current version: `vX.Y.Z` ``.
+
+The changelog move, from the repository root:
+
+```bash
+python3 - X.Y.Z YYYY-MM-DD <<'EOF'
+import re, sys
+version, date = sys.argv[1:]
+head, rest = open('CHANGELOG.md').read().split('## [Unreleased]\n', 1)
+notes, index = rest.split('\n## Previous versions\n', 1)
+def relink(m):
+    target = m.group(1)
+    if re.match(r'[a-zA-Z][a-zA-Z+.-]*:|#|/', target):
+        return m.group(0)
+    target = '../' + target[5:] if target.startswith('docs/') else '../../' + target
+    return f']({target})'
+body = re.sub(r'\]\(([^)\s]+)\)', relink, notes.strip('\n'))
+open(f'docs/changelog/v{version}.md', 'w').write(
+    f'# SavanXP {version}\n\n## [{version}] - {date}\n\n{body}\n')
+open('CHANGELOG.md', 'w').write(
+    f'{head}## [Unreleased]\n\n## Previous versions\n\n'
+    f'- [{version}](docs/changelog/v{version}.md) — {date}\n' + index.lstrip('\n'))
+EOF
+```
 
 It changes no SDK version. `SAVANXP_SDK_VERSION_MAJOR`/`MINOR` in
 `include/abi/savanxp_abi.h` was already stepped by the first change that
@@ -156,7 +184,7 @@ sha256sum SavanXP-vX.Y.Z.iso FREEDOOM-LICENSE.txt ffmpeg-7.1.1.tar.xz > SHA256SU
 The body has this shape, in this order:
 
 1. One line: ``SavanXP `vX.Y.Z` — summarized change list: the opening line of
-   each entry. Full detail in `CHANGELOG.md` (`[X.Y.Z]` — YYYY-MM-DD).``
+   each entry. Full detail in `docs/changelog/vX.Y.Z.md` (YYYY-MM-DD).``
 2. `### Highlights`: three bullets, each opening in bold, on what a user would
    notice first.
 3. `### Download`: one paragraph on the ISO. Restate it from the current
@@ -172,10 +200,10 @@ The body has this shape, in this order:
    bullet per changelog entry, in changelog order, holding the entry's first
    bold span in bold, with a trailing colon dropped.
 
-The lists come straight from the changelog section:
+The lists come straight from the version's changelog file:
 
 ```bash
-python3 - CHANGELOG.md 'X.Y.Z' <<'EOF'
+python3 - docs/changelog/vX.Y.Z.md 'X.Y.Z' <<'EOF'
 import re, sys
 text = open(sys.argv[1]).read()
 body = text.split(f'## [{sys.argv[2]}]', 1)[1].split('\n## [', 1)[0]
