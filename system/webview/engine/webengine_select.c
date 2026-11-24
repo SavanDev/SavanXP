@@ -5,8 +5,7 @@
  * node returned to libcss is borrowed, not referenced: the document does not
  * change while a style is selected, and the tree keeps the node alive.
  *
- * What E1 leaves for E3: presentational hints (bgcolor="", <font>), the
- * dynamic states (:hover, :focus, :target, :visited), and quirks. */
+ * Selection uses screen styles and the static state of the document. */
 
 #include "webengine.h"
 
@@ -490,11 +489,140 @@ static css_error node_is_lang(void *pw, void *node, lwc_string *lang, bool *matc
     return CSS_OK;
 }
 
+/* The HTML color attributes retain the legacy names and hex forms that
+ * Web Viewer accepted before the CSS cascade moved to libcss. */
+static int hex_digit(char value) {
+    if (value >= '0' && value <= '9') {
+        return value - '0';
+    }
+    if (value >= 'a' && value <= 'f') {
+        return value - 'a' + 10;
+    }
+    if (value >= 'A' && value <= 'F') {
+        return value - 'A' + 10;
+    }
+    return -1;
+}
+
+static bool legacy_color(const char *text, const char *end, css_color *out) {
+    static const struct {
+        const char *name;
+        uint32_t color;
+    } k_names[] = {
+        {"black", 0xff000000u},
+        {"silver", 0xffc0c0c0u},
+        {"gray", 0xff808080u},
+        {"grey", 0xff808080u},
+        {"white", 0xffffffffu},
+        {"maroon", 0xff800000u},
+        {"red", 0xffff0000u},
+        {"purple", 0xff800080u},
+        {"fuchsia", 0xffff00ffu},
+        {"green", 0xff008000u},
+        {"lime", 0xff00ff00u},
+        {"olive", 0xff808000u},
+        {"yellow", 0xffffff00u},
+        {"navy", 0xff000080u},
+        {"blue", 0xff0000ffu},
+        {"teal", 0xff008080u},
+        {"aqua", 0xff00ffffu},
+        {"orange", 0xffffa500u},
+    };
+    char lowered[32];
+    size_t length = 0;
+    size_t i;
+
+    while (text < end && (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r')) {
+        text += 1;
+    }
+    while (end > text && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' ||
+                          end[-1] == '\r' || end[-1] == ';')) {
+        end -= 1;
+    }
+    if (end > text && text[0] == '#') {
+        int digits[6];
+        size_t count = 0;
+
+        text += 1;
+        while (text < end && count < 6) {
+            int digit = hex_digit(*text);
+
+            if (digit < 0) {
+                return false;
+            }
+            digits[count++] = digit;
+            text += 1;
+        }
+        if (text != end || (count != 3 && count != 6)) {
+            return false;
+        }
+        unsigned red = count == 3 ? digits[0] * 17 : digits[0] * 16 + digits[1];
+        unsigned green = count == 3 ? digits[1] * 17 : digits[2] * 16 + digits[3];
+        unsigned blue = count == 3 ? digits[2] * 17 : digits[4] * 16 + digits[5];
+        *out = 0xff000000u | (red << 16) | (green << 8) | blue;
+        return true;
+    }
+    while (text < end && length + 1 < sizeof(lowered)) {
+        char value = *text;
+
+        if (value >= 'A' && value <= 'Z') {
+            value = (char)(value - 'A' + 'a');
+        }
+        lowered[length++] = value;
+        text += 1;
+    }
+    if (text != end) {
+        return false;
+    }
+    lowered[length] = '\0';
+    for (i = 0; i < sizeof(k_names) / sizeof(k_names[0]); ++i) {
+        if (strcmp(lowered, k_names[i].name) == 0) {
+            *out = k_names[i].color;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool color_hint(dom_node *node, const char *name, uint32_t property, css_hint *hint) {
+    dom_string *value = attribute(node, name, strlen(name));
+    if (value == NULL) {
+        return false;
+    }
+    const char *text = dom_string_data(value);
+    css_color color;
+    bool found = legacy_color(text, text + dom_string_byte_length(value), &color);
+    dom_string_unref(value);
+    if (found) {
+        *hint = (css_hint){
+            .prop = property,
+            .status = property == CSS_PROP_COLOR ? CSS_COLOR_COLOR : CSS_BACKGROUND_COLOR_COLOR,
+            .data.color = color,
+        };
+    }
+    return found;
+}
+
 static css_error node_presentational_hint(void *pw, void *node, uint32_t *nhints, css_hint **hints) {
-    (void)pw;
-    (void)node;
+    css_hint *values = pw;
     *nhints = 0;
-    *hints = NULL;
+    *hints = values;
+    if (values == NULL) {
+        return CSS_OK;
+    }
+    if (has_name_text(node, "body")) {
+        *nhints += color_hint(node, "bgcolor", CSS_PROP_BACKGROUND_COLOR, &values[*nhints]);
+        *nhints += color_hint(node, "text", CSS_PROP_COLOR, &values[*nhints]);
+    } else if (has_name_text(node, "font")) {
+        *nhints += color_hint(node, "color", CSS_PROP_COLOR, values);
+    } else if (has_name_text(node, "a") && has_attribute_text(node, "href")) {
+        for (dom_node *parent = element_parent(node); parent != NULL; parent = element_parent(parent)) {
+            if (has_name_text(parent, "body")) {
+                *nhints += color_hint(parent, "link", CSS_PROP_COLOR, values);
+                break;
+            }
+        }
+    }
     return CSS_OK;
 }
 
@@ -552,10 +680,17 @@ static void node_data_changed(dom_node_operation operation, dom_string *key, voi
 static css_error set_libcss_node_data(void *pw, void *node, void *libcss_node_data) {
     (void)pw;
     void *previous = NULL;
-    return dom_node_set_user_data(node, g_node_data_key, libcss_node_data, node_data_changed,
-                                  &previous) == DOM_NO_ERR
-               ? CSS_OK
-               : CSS_NOMEM;
+    if (dom_node_set_user_data(node, g_node_data_key, libcss_node_data, node_data_changed,
+                               &previous) != DOM_NO_ERR) {
+        return CSS_NOMEM;
+    }
+    /* On reselection, release the old cache. A NULL set comes from libcss
+     * after it has already destroyed the data on invalidation. */
+    if (libcss_node_data != NULL && previous != NULL && previous != libcss_node_data) {
+        css_libcss_node_data_handler(&webengine_select_handler, CSS_NODE_DELETED,
+                                     NULL, node, NULL, previous);
+    }
+    return CSS_OK;
 }
 
 static css_error get_libcss_node_data(void *pw, void *node, void **libcss_node_data) {

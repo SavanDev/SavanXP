@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+<title>CSS cascade</title>
+<style>
+.sheet-order, .later { color: red; }
+#override { color: red !important; }
+</style>
+<link rel="StyleSheet" href="./e3-redirect.css" media="screen">
+<link rel="stylesheet" href="e3.css" media="print">
+<link rel="stylesheet" href="missing.css">
+<style>
+.later { color: #005566; }
+#override { color: #44aa55 !important; }
+</style>
+</head>
+<body>
+<h1>CSS cascade</h1>
+<div class="group">
+    <p class="row">First child</p>
+    <p class="child">Direct child</p>
+    <div><p class="descendant">Nested descendant</p></div>
+</div>
+<p class="sheet-order">External sheet</p>
+<p class="later">Later sheet</p>
+<p id="override" style="color: #552288 !important">Inline wins</p>
+<p class="hidden">Hidden by CSS</p>
+<p><a href="second.html">Styled link</a></p>
+</body>
+</html>

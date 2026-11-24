@@ -29,12 +29,10 @@ static void report(void *user, const char *line) {
     g_failures++;
 }
 
-/* A page of `paragraphs` styled paragraphs, well past any fixed buffer. No
- * sibling combinator: with one, libcss' search for a style to share walks
- * every earlier sibling, and the page would take minutes under TCG
- * (docs/desktop/WEBVIEWER_ENGINE.md, "Known costs"). */
+/* Exercise the native heap and adjacent-sibling selection on a large DOM. */
 static void check_large_page(unsigned paragraphs) {
     static const char head[] = "<!DOCTYPE html><html><head><style>p.odd { color: red }"
+                               " p + p { background: white }"
                                " body em { font-weight: bold }</style></head><body>";
     size_t capacity = sizeof head + paragraphs * 96u + 32u;
     char *page = malloc(capacity);

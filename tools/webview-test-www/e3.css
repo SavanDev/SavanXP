@@ -1,0 +1,6 @@
+.group .descendant { color: #a03070; }
+.group > .child { color: #006030; }
+.row:first-child { color: #806000; }
+.sheet-order, .later { color: #234ba0; }
+.hidden { display: none; }
+a:link { color: #801080; }

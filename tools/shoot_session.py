@@ -3468,6 +3468,7 @@ def scenario_webview_http(s):
         followed = s.shot("webview-e2-followed")
         expect_text(followed, (0, 0, *followed.size), "Second page", TEXT, FIELD,
                     "the last link navigated", which="title", solid_only=True)
+        webview_e3_styles(s, hostport)
         check_downloads_on_disk()
     finally:
         if tls is not None:
@@ -3476,6 +3477,52 @@ def scenario_webview_http(s):
         server.wait()
         dns.terminate()
         dns.wait()
+
+
+def webview_e3_styles(s, hostport):
+    """Checks the CSS cascade on the rendered page, including linked sheets."""
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, "/cascade.html")
+    s.qmp.tap("ret", pause=6.0)
+    page = s.shot("webview-e3-cascade")
+    area = (0, 0, *page.size)
+    for text, color in (
+        ("First child", (128, 96, 0)),
+        ("Direct child", (0, 96, 48)),
+        ("Nested descendant", (160, 48, 112)),
+        ("External sheet", (35, 75, 160)),
+        ("Later sheet", (0, 85, 102)),
+        ("Inline wins", (85, 34, 136)),
+        ("Styled link", (128, 16, 128)),
+    ):
+        expect_text(page, area, text, color, FIELD, "E3 " + text, solid_only=True)
+    if find_text(page, area, "Hidden by CSS", TEXT, FIELD, solid_only=True)[0] is not None:
+        raise Failure("display:none did not hide its subtree")
+    s.qmp.chord("ctrl", "u")
+    time.sleep(2.0)
+    source = s.shot("webview-e3-source")
+    expect_text(source, area, "e3-redirect.css", TEXT, FIELD, "the original source", solid_only=True)
+    s.qmp.chord("ctrl", "u")
+    time.sleep(2.0)
+    rendered = s.shot("webview-e3-restyled")
+    link = expect_text(rendered, area, "Styled link", (128, 16, 128), FIELD,
+                       "linked CSS survives View Source", solid_only=True)
+    s.qmp.move_to(link[0] + 8, link[1] + 4)
+    s.qmp.click()
+    time.sleep(5.0)
+    expect_text(s.shot("webview-e3-link"), area, "Second page", TEXT, FIELD,
+                "the CSS-styled link is clickable", which="title", solid_only=True)
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, "/pending-style.html")
+    s.qmp.tap("ret", pause=2.0)
+    wait_for_text(s, "webview-e3-loading", "Loading stylesheets...", "the CSS worker is waiting", 8)
+    s.qmp.tap("esc", pause=2.0)
+    stopped = s.shot("webview-e3-stopped")
+    expect_text(stopped, area, "Stopped.", TEXT, FACE, "Stop cancels the CSS fetch", solid_only=True)
+    expect_text(stopped, area, "Second page", TEXT, FIELD,
+                "the previous page stays after a cancelled stylesheet fetch", which="title", solid_only=True)
 
 
 def wait_for_text(s, name, text, label, timeout, colour=None, background=None):

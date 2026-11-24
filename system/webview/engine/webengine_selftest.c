@@ -185,7 +185,7 @@ int webengine_check_page(const uint8_t *data, size_t length, const char *url, un
     struct webengine_styles styles;
     struct walk walk = {0};
     int result = -1;
-    if (webengine_styles_open(&styles, document, url, NULL) == 0) {
+    if (webengine_styles_open(&styles, document, url, NULL, NULL, NULL) == 0) {
         result = webengine_style_document(&styles, document, record_element, &walk);
         webengine_styles_close(&styles);
     }
@@ -218,7 +218,7 @@ static void check_document(struct checker *checker) {
 
     struct webengine_styles styles;
     struct walk walk = {0};
-    CHECK(webengine_styles_open(&styles, document, "http://test/e1.html", NULL) == 0,
+    CHECK(webengine_styles_open(&styles, document, "http://test/e1.html", NULL, NULL, NULL) == 0,
           "the <style> sheet loads");
     CHECK(styles.sheet_count == 1, "one author sheet");
     int walked = webengine_style_document(&styles, document, record_element, &walk);

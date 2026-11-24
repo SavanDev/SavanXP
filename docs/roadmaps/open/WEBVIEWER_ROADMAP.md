@@ -1,12 +1,13 @@
 # Web Viewer: the native browser
 
-> **Status as of 2026-11-23: N1–N5, D1, E1 and E2 are implemented.** Web Viewer runs as
+> **Status as of 2026-11-24: N1–N5, D1 and E1–E3 are implemented.** Web Viewer runs as
 > `/system/webview.sxe`, resolves through SUN's `sxndns`, loads on a
 > per-window network worker through SUN's `sxnhttp`, opens validated
 > `https://`, and saves what it does not show in a download window of its
 > own. It reads HTML through libhubbub and libdom
 > ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md)) and builds its
-> paragraphs and runs from the DOM. The next engine stage is E3.
+> paragraphs and runs from the DOM using computed CSS. The next engine
+> stage is E4.
 
 ## Direction
 
@@ -217,6 +218,11 @@ renderer reads computed styles instead of its own cascade.
 such as `:link` and `:first-child`, and external stylesheets render in the
 corpus, and WEBVIEWER.md describes the new contract.
 
+**Implemented 2026-11-24.** The renderer uses computed styles from the
+browser defaults, HTML color hints and author CSS, including external sheets
+fetched by the navigation worker. The visual corpus covers the cascade and
+cancellation while waiting for CSS. See [WEBVIEWER.md](../../desktop/WEBVIEWER.md#selectors-and-origins).
+
 ### E4 — the box tree and normal flow
 
 Boxes from the DOM and computed `display`, then block and inline layout:
@@ -289,10 +295,8 @@ stage touches a drawing program, the loader or SXGUI, and
 - **Do not read NetSurf's core to write Web Viewer.** See the clean-room rule.
 - **Do not patch the vendored libraries in place.** A needed change goes
   upstream or into a documented glue file beside them.
-- **Do not start layout before E3.** A layout engine without computed styles
-  grows a second cascade inside it.
-- **Do not grow the old parser or cascade** while E2 and E3 are pending; they
-  are about to be replaced.
+- **Layout uses the computed styles from E3.** Keep selector matching and
+  the cascade in the engine when replacing paragraph layout in E4.
 - **Do not chase the modern web here.** A page that needs a current engine is
   the compatibility subsystems' target, not a reason to widen a stage.
 

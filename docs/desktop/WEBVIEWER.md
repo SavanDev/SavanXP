@@ -3,7 +3,7 @@
 > Web Viewer runs on SUN as `/system/webview.sxe` (N1), loads remote pages on a
 > network worker with Stop (N3) through SUN's HTTP loader (N4), over validated
 > HTTPS (N5), and saves what it does not show (D1). It parses HTML through
-> libhubbub and libdom (E2). Computed CSS styles are next (E3). See the
+> libhubbub and libdom (E2) and computes styles with libcss (E3). See the
 > [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 >
 > It is built only when the OpenSSL port is (`ports/openssl/build.sh`, then
@@ -13,8 +13,8 @@
 `/system/webview.sxe` ("Web Viewer", also launched as `webview`) is the in-tree
 browser prototype, in the spirit of IE 1.1, with an address bar, history, menus,
 local files and HTTP fetching by name or IP. libhubbub builds a libdom tree.
-Web Viewer walks it into paragraphs and inline runs, then applies its tag-rule
-cascade, wraps the text and paints it.
+libcss selects and composes the styles. Web Viewer projects the styled tree
+onto paragraphs and inline runs, then wraps and paints the text.
 
 This document pins what it renders and what it openly ignores, so later
 milestones extend a contract instead of rediscovering it.
@@ -77,9 +77,11 @@ resolver, its sockets and a body buffer of its own:
   the window set the worker's cancel event, which every wait of the worker
   checks first: DNS, connect, write and read. Stop is the toolbar's Stop,
   Esc, and View > Stop.
-- A failed or stopped load keeps the page on screen. The worker transfers
-  ownership of the complete body through the result mailbox. The address
-  bar goes back to that page, unless the person is typing in it.
+- A failed or stopped navigation keeps the page on screen. The worker
+  transfers the complete body through the mailbox. The UI parses the DOM
+  and, if needed, submits a batch of stylesheet requests to the worker
+  before committing the new document. The address bar goes back to the
+  previous page after a failure, unless the person is typing in it.
 - The status line follows the worker: `Resolving <host>...`, `Connecting to
   <host>...`, `Waiting for <host>...`. History moves (a push, or Back/Forward's
   target) are applied only when the page arrives.
@@ -146,30 +148,45 @@ Web Viewer's first role is the browser that downloads another one (D1 in the
 
 ## Selectors and origins
 
-- Tag selectors from `<style>` blocks (`h1`, `p`, `h1, h2`), later rules win.
-- `style=""` on any element, winning over tag rules per property.
-- `<body bgcolor text link>` attributes, winning over `body` rules.
-- `body` rules set the page colours directly; there are no body paragraphs.
-- Skipped, block-aware, never half parsed: classes, ids, pseudo-classes,
-  `@`-rules, `<link rel=stylesheet>`.
+libcss combines the browser's default stylesheet, the HTML color hints
+(`body bgcolor/text/link` and `font color`), the author's `<style>` and
+`<link rel="stylesheet">` sheets in their DOM order, and `style=""`. The
+cascade accounts for selector specificity, `!important`, origins and
+inheritance. Tag, class, ID, attribute, descendant, child and sibling
+selectors and static pseudo-classes such as `:link` and `:first-child` can
+affect the page.
+
+Linked sheets resolve against the document's final URL. The network worker
+loads HTTP and HTTPS sheets within the navigation's remaining budget.
+Local documents can use relative CSS files on disk. A remote document can
+load HTTP(S) sheets, with HTTPS documents restricted to HTTPS; the loader
+validates certificates and redirects. A missing sheet, an attachment or a
+response with a non-CSS media type is skipped. Cancel or navigate away to
+drop the candidate document and its pending loads. View Source and the
+return to the rendered page reuse the current document's stylesheet bytes.
+
+Sheets honor their `media` attribute and libcss evaluates `@media` for a
+screen at 800×600 CSS pixels. Alternate stylesheets, `@import`, the
+interactive states (`:hover`, `:visited`, `:active`, `:focus`, `:target`)
+and quirks mode are deferred.
 
 ## Properties
 
-| Property | Renders as |
+| Computed property | Paragraph renderer |
 |---|---|
-| `color`, `<font color>`, `<body text>` | Text colour: `#rgb`, `#rrggbb`, the 16 CSS1 names plus `grey` and `orange` |
-| `background-color`, `background` (single colour), `<body bgcolor>` | Viewport background for `body`, block-width band behind other elements |
-| `text-align: left/center/right` | Paragraph alignment (`justify` falls back to left) |
-| `font-weight: bold` (or `>= 700`), `<b>`, `<strong>` | Double-strike bold, one pixel over, counted into wrap widths |
-| `text-decoration: underline`, `<u>` | Underline in the run's own colour |
-| `font-size` keywords | Bitmap faces quantize: `small` and below → UI, `large` and above → title; px/pt stay ignored |
-| `<a href>` | Link blue (or `<body link>`), underlined, clickable |
+| `color` | Text and links use the computed color |
+| `background-color` | Page background or a paragraph-width color band |
+| `text-align` | Left, center or right; justified text aligns left |
+| `font-weight` | Bold text gets a one-pixel double strike, counted in wrapping |
+| `text-decoration` | Underlines propagate to descendant text |
+| `font-size` | Paragraphs use the title face at 18 CSS pixels or more and the UI face otherwise |
+| `display` | `none` hides a subtree; blocks, list items and table cells feed the paragraph model |
 
-Inline runs nest (`<b>a<span style="...">b</span></span>`) through a mark
-system; explicit `normal`/`none` inside bold/underline undoes it. Links never
-lose to run colours. `font-size` is paragraph-level only: runs do not change
-faces. `font-style`, `line-through`, `blink`, `url()` and `rgb()` values are
-parsed past and ignored.
+An `<a href>` remains clickable under author styling. The default UA sheet
+uses blue, underlined links and a larger face for the first three heading
+levels. Backgrounds and text with an alpha channel blend over the painted
+background. The box tree, geometry from CSS and per-run fonts are future
+layout work.
 
 ## Names
 
@@ -189,8 +206,8 @@ server empties the window's DNS cache.
 ## What it is not (yet)
 
 Images use an `[image]` marker, tables stack their cells, and fragments reload
-the page top. The tag-rule cascade holds up to 32 rules until E3. The raw
-document, paragraphs, runs and links grow with the page. View Source keeps the
+the page top. The raw document, paragraphs, runs and links grow with the
+page. View Source keeps the
 original bytes, and long lines wrap in both views.
 
 ## Verification
@@ -229,6 +246,10 @@ The visual scenario also launches `webview --dns HOST:PORT URL`, checks F5,
 launches `/system/webview.sxe /system/samples/welcome.html`, and opens a
 `file://` URL. Its E2 page exceeds 32 KiB and 1100 paragraphs. The scenario
 scrolls to the end, checks a decoded HTML entity and follows the last link.
+The E3 page asserts glyph colors from linked CSS, selector matches,
+cascade order, media and inline declarations. The scenario follows a
+styled link, checks the rendered page after View Source, and stops a
+navigation waiting for a stylesheet.
 The SUN socket contract is checked by `smoke native-network` and
 `smoke native-network-offline`, including pending ARP, cancellation,
 initialization without a NIC, route timeout and TCP refusal/reset/retry errors.

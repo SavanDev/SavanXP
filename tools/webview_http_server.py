@@ -9,6 +9,7 @@ answer the N4 steps: /chunked.html, a page sent chunked in small pieces with
 pauses; /contradictory, a Content-Length and chunking together; and
 /truncated, a Content-Length the body never reaches before the close.
 The E2 page has over 32 KiB and more than 1024 linked paragraphs.
+The E3 page links a stylesheet through /e3-redirect.css.
 The D1 steps download: /blob-attachment (tools/http_fixture.py's 3 MiB blob,
 as an attachment, its SHA-256 known to the scenario); /slow.bin, /cancel.bin
 and /close.bin, DOWNLOAD_SLOW_SIZE bytes of it in forty pieces a second
@@ -53,11 +54,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             return
-        self._send_html(body)
+        media = "text/css" if name.endswith(".css") else "text/html"
+        self._send_body(body, media)
 
     def _send_html(self, body):
+        self._send_body(body, "text/html")
+
+    def _send_body(self, body, media):
         self.send_response(200)
-        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Type", media)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
@@ -71,6 +76,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(b"<!doctype html><h1>Large document</h1>\n" +
                             b"<p><a href=second.html>Another linked paragraph</a>\n" * 1100 +
                             b"<p>Last paragraph &amp; <a href=second.html>Last link</a>\n")
+            return
+        if target == "/pending-style.html":
+            self._send_html(b"<link rel=stylesheet href=stall.css><h1>Pending style</h1>")
             return
         if target == "/chunked.html":
             # Status line, headers, chunk sizes and CRLFs all split across
@@ -124,9 +132,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b"HTTP/1.1 200 OK\r\nContent-Length: 500\r\n"
                              b"Connection: close\r\n\r\n<h1>Half a page</h1>")
             return
-        if target == "/stall":
+        if target in ("/stall", "/stall.css"):
             self.send_response(200)
-            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Type", "text/css" if target == "/stall.css" else "text/html")
             self.send_header("Connection", "close")
             self.end_headers()
             try:
@@ -137,9 +145,9 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 pass
             return
-        if target == "/old.html":
+        if target in ("/old.html", "/e3-redirect.css"):
             self.send_response(302)
-            self.send_header("Location", "/index.html")
+            self.send_header("Location", "/index.html" if target == "/old.html" else "/e3.css")
             self.send_header("Content-Length", "0")
             self.send_header("Connection", "close")
             self.end_headers()

@@ -18,8 +18,8 @@
 #include "webengine_html.h"
 #include <libcss/libcss.h>
 
-/* The handler libcss calls back to read and walk a libdom document. Its
- * private pointer (pw) is unused: pass NULL. */
+/* The handler libcss calls back to read and walk a libdom document. The
+ * selection call supplies storage for the element's presentational hints. */
 extern css_select_handler webengine_select_handler;
 
 /* Once before anything else, and once after the last document is gone.
@@ -27,29 +27,45 @@ extern css_select_handler webengine_select_handler;
 int webengine_init(void);
 void webengine_fini(void);
 
-/* One stylesheet from CSS text: an author sheet (`url` resolves its relative
- * URLs), or the body of a style="" attribute when `inline_style`. NULL out of
- * memory. css_stylesheet_destroy it. */
+/* Parse author CSS from `url`, or a style="" attribute when `inline_style`.
+ * Returns NULL on a library failure. Destroy the result with css_stylesheet_destroy. */
 css_stylesheet *webengine_stylesheet(const char *url, const uint8_t *data, size_t length,
                                      bool inline_style);
 
-/* The styles of one document: its <style> elements as author sheets, in
- * document order, on top of the `ua` sheet when there is one. */
-#define WEBENGINE_MAX_SHEETS 32
+/* A stylesheet declaration in DOM order. For <link>, href is the URL as
+ * written. For <style>, href is NULL. Both are borrowed during the callback. */
+typedef int (*webengine_sheet_visitor)(void *user, dom_element *element, const char *href);
+int webengine_visit_sheets(dom_document *document, webengine_sheet_visitor visit, void *user);
+
+/* A fetched <link> sheet. The callback can leave data NULL to skip a sheet.
+ * Its bytes and final URL need to live only through webengine_styles_open. */
+struct webengine_sheet_source {
+    const uint8_t *data;
+    size_t length;
+    const char *url;
+};
+typedef struct webengine_sheet_source (*webengine_link_sheet)(void *user, dom_element *element);
+
+/* Owns the author sheets, selection context and CSS units for one document.
+ * The caller's UA sheet must outlive the context. */
 struct webengine_styles {
     css_select_ctx *select;
-    css_stylesheet *sheets[WEBENGINE_MAX_SHEETS];
-    unsigned sheet_count;
-    /* Allocated: libcss' unit context has a const member, so it cannot be
-     * assigned in place. */
+    css_stylesheet **sheets;
+    size_t sheet_count;
+    size_t sheet_capacity;
+    css_stylesheet *empty_inline;
     css_unit_ctx *units;
 };
 
-/* 0, or -1 out of memory or past WEBENGINE_MAX_SHEETS. `ua` stays the
- * caller's and must outlive the styles. */
 int webengine_styles_open(struct webengine_styles *styles, dom_document *document,
-                          const char *url, css_stylesheet *ua);
+                          const char *url, css_stylesheet *ua, webengine_link_sheet link, void *user);
 void webengine_styles_close(struct webengine_styles *styles);
+
+/* Select an element and compose its inherited values with its parent's.
+ * With no parent this sets the root style for rem. Destroy the returned
+ * style when leaving the element; keep the root alive through the walk. */
+css_computed_style *webengine_style_element(struct webengine_styles *styles, dom_element *element,
+                                            const css_computed_style *parent);
 
 /* Called once per element, in document order, with its fully computed style
  * (inherited values composed from its parent's), which the visitor must not

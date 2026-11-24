@@ -4,8 +4,8 @@ NetSurf's MIT libraries are vendored, built and proven here. They read HTML
 into a DOM and compute CSS styles; Web Viewer's own layout, paint and,
 later, scripting go on top. This is stage E1 of
 [WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md#e1--the-libraries-build).
-Since E2, Web Viewer links libdom and libhubbub and walks the document they
-produce. E3 will integrate libcss into the rendering path.
+Since E2, Web Viewer walks the document libhubbub and libdom produce. E3
+uses libcss computed styles in the paragraph renderer.
 
 ## What is vendored
 
@@ -105,13 +105,14 @@ library, so the same source builds into SUN programs and the host test.
   step does. Unlabelled documents with valid non-ASCII UTF-8 keep their UTF-8
   text.
 - **`webengine_stylesheet`** turns one piece of CSS text into a sheet, either
-  an author sheet or the body of a `style=""` attribute. `@import` is not
-  followed yet. Relative URLs stay as written until E3 resolves them with
-  `sxnhttp`.
-- **`webengine_styles_open`** collects a document's `<style>` elements, in
-  document order, as author sheets, on top of an optional user-agent sheet.
-  The unit context is 800x600 at 96 dpi with 16px text, until E4 has a
-  viewport.
+  an author sheet or the body of a `style=""` attribute. Resource values and
+  `@import` do not initiate fetches.
+- **`webengine_visit_sheets`** enumerates `<style>` and eligible stylesheet
+  links in DOM order. **`webengine_styles_open`** appends the inline text and
+  the caller's already-fetched CSS as author sheets on top of its UA sheet.
+  The renderer uses 800×600 CSS pixels at 96 dpi with 16px default text.
+- **`webengine_style_element`** composes a selected style with its parent's.
+  Web Viewer calls it while projecting the DOM into paragraphs.
 - **`webengine_style_document`** selects every element's style in document
   order. It then composes the style with its parent's composed style
   (`css_computed_style_compose`), as libcss requires, and hands the result to
@@ -151,20 +152,19 @@ library, so the same source builds into SUN programs and the host test.
   The engine has no history, pointer or focus yet.
 - **User-agent defaults:** black text, sans-serif, no quotes.
 
-Left for E3: presentational hints (`bgcolor=""`, `<font>`), the user-agent
-stylesheet, `<link rel=stylesheet>`, media queries, the dynamic states and
-quirks mode.
+The handler supplies legacy HTML color hints for the body, links and
+`<font>` at the presentational-hint cascade level. The linked-sheet loader
+and the UA stylesheet live in Web Viewer. Interactive selector state and
+quirks mode remain deferred.
 
 ## Known costs
 
-- **libcss' style sharing and sibling combinators.** When it selects a
-  style, libcss looks for an earlier sibling of the same name whose style it
-  can share. A rule with `+` or `~` taints the siblings it touches, and the
-  search then walks every earlier same-named sibling. On a page of 8000
-  paragraphs and `p + p { ... }`, styling takes 1.7 s on the host, against
-  0.09 s without the rule, and grows with the square of the page. This is upstream behaviour,
-  not the handler's, and E3 is to deal with it before Web Viewer styles real
-  pages.
+- **libcss' style sharing and sibling combinators.** With `+` or `~`, its
+  style-sharing search can walk every earlier sibling of the same name. E3
+  supplies a reusable, empty inline stylesheet when an element has no
+  declarations. libcss then selects that node directly, keeping its normal
+  combinator matching and avoiding the redundant sharing search. The SUN
+  engine test exercises adjacent siblings on a 235 KiB document.
 - **The heap was quadratic, and is not any more.** The C runtime's `malloc`
   walked every block, in use or free, so a DOM of a few thousand nodes took
   100 s to style in the guest. It now walks a list of free blocks only

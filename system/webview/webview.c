@@ -3,12 +3,10 @@
  * files, http:// and validated https://, by name or address.
  *
  * Pages load on a network worker of the window's; HTML and plain text are
- * shown, with a first CSS: tag rules from <style> and style="" over colour,
- * background, alignment, bold, underline and a two-face size. Anything else
+ * shown using computed CSS styles and a paragraph renderer. Anything else
  * is a file, saved by download.c on a worker of its own.
  *
- * What it deliberately does NOT do yet: no CSS beyond that subset, no images
- * (an [image] marker), no tables as grids, no scroll-to-fragment.
+ * Images use a placeholder and table cells stack as separate lines.
  */
 
 #include "sxgfx/gfx2d.h"
@@ -18,7 +16,7 @@
 #include "sxn/sxnhttp.h"
 #include "sxn/sxngui.h"
 #include "download.h"
-#include "engine/webengine_html.h"
+#include "engine/webengine.h"
 #include "webview.sunres.h"
 #include "icons.inc"
 #include "../gfx/toolbar_glyphs/icons.inc"
@@ -91,15 +89,10 @@
 
 #define WEBVIEW_HISTORY_MAX 32
 
-#define WEBVIEW_LINK_COLOR SXGUI_RGB(0, 0, 255)
-
-/* Style runs: inline formatting over [start, start+length) of a paragraph.
- * Links live here too (link >= 0 indexes g_links); colour, when set, loses to
- * the link colour, like in early browsers. */
+/* Style runs cover the paragraph text. Link runs also index g_links. */
 struct webview_run {
     int start;
     int length;
-    int hasColor;
     uint32_t color;
     int bold;
     int underline;
@@ -110,45 +103,21 @@ struct webview_run {
  * into runs at the next flush. Offsets are into g_cur. */
 struct webview_mark {
     int offset;
-    int hasColor;
     uint32_t color;
     int bold;
     int underline;
     int link;
 };
 
-/* One parsed declaration block: shared shape for tag rules and style="". */
-struct webview_decl {
-    int hasColor;
-    uint32_t color;
-    int hasBg;
-    uint32_t bg;
-    int align;
-    int hasAlign;
-    int bold;
-    int hasBold;
-    int underline;
-    int hasUnderline;
-    int face;
-    int hasFace;
-};
-
-/* A tag rule from <style>: later rules win over earlier ones. */
-#define WEBVIEW_RULE_MAX 32
-struct webview_rule {
-    char tag[16];
-    struct webview_decl decl;
-};
-
-/* Pending block style: the tag that opened plus its inline declarations,
- * applied to the next flushed paragraph. */
+/* Style and paragraph spacing of the active block. */
 struct webview_block {
-    char tag[16];
-    struct webview_decl inlineDecl;
-    int hasInline;
     int gap;
     int heading;
     int indent;
+    int align;
+    int face;
+    int hasBg;
+    uint32_t bg;
 };
 
 #define WEBVIEW_OPEN_WIDTH 340
@@ -174,7 +143,19 @@ struct webview_bytes {
     size_t capacity;
 };
 
+/* A linked stylesheet's element is borrowed from the UI-owned document.
+ * The network worker only reads its URL and fills the byte buffer. */
+struct webview_sheet {
+    dom_element *element;
+    char url[WEBVIEW_PATH_CAPACITY];
+    struct webview_bytes body;
+    struct webview_sheet *next;
+};
+
 static struct webview_bytes g_raw;
+static dom_document *g_document;
+static struct webview_sheet *g_sheets;
+static css_stylesheet *g_ua;
 static char g_address[WEBVIEW_PATH_CAPACITY];
 
 /* Back/Forward history: plain paths, oldest first. Loading a new page after
@@ -195,18 +176,11 @@ static struct webview_mark *g_marks;
 static size_t g_marks_capacity;
 static int g_mark_count = 0;
 
-static struct webview_rule g_rules[WEBVIEW_RULE_MAX];
-static int g_rule_count = 0;
-
 /* The DOM walk saves and restores the active style as it enters and leaves
  * elements. Marks snapshot it at offsets in the current paragraph. */
 static struct webview_mark g_inline;
 
-/* Page colours: UA default, <style> body rule, <body> attributes and <style>
- * blocks all funnel here, in that precedence. Reset per document. */
 static uint32_t g_page_bg;
-static uint32_t g_page_fg;
-static uint32_t g_link_color;
 
 /* Clickable fragments from the last paint, in window coordinates. */
 struct webview_link_run {
@@ -233,10 +207,6 @@ struct webview_para {
     int rule;    /* 1 = <hr>, text unused */
     int indent;  /* 1 = list item */
     int gap;     /* pixels of air above this paragraph */
-    /* Cascade output: tag rule, overridden by the block's style="". */
-    int hasColor;
-    uint32_t color;
-    int baseBold;
     int align; /* 0 = left, 1 = center, 2 = right */
     int hasBg;
     uint32_t bg;
@@ -340,14 +310,11 @@ static void webview_reset_document(void)
     g_link_count = 0;
     g_run_count = 0;
     g_mark_count = 0;
-    g_rule_count = 0;
     g_link_run_count = 0;
     g_cur.length = 0;
     g_document_failed = 0;
-    g_inline = (struct webview_mark){ .link = -1 };
+    g_inline = (struct webview_mark){ .color = 0xff000000, .link = -1 };
     g_page_bg = SXGUI_COLOR_FIELD;
-    g_page_fg = SXGUI_COLOR_TEXT;
-    g_link_color = WEBVIEW_LINK_COLOR;
     memset(&g_pending, 0, sizeof(g_pending));
 }
 
@@ -385,7 +352,7 @@ static void webview_close_marks(struct webview_para *para)
         {
             end = para->length;
         }
-        if (end <= mark->offset || (!mark->hasColor && !mark->bold && !mark->underline && mark->link < 0))
+        if (end <= mark->offset)
         {
             continue;
         }
@@ -398,7 +365,7 @@ static void webview_close_marks(struct webview_para *para)
         }
         g_runs = runs;
         g_runs[g_run_count++] = (struct webview_run){
-            .start = mark->offset, .length = end - mark->offset, .hasColor = mark->hasColor,
+            .start = mark->offset, .length = end - mark->offset,
             .color = mark->color, .bold = mark->bold, .underline = mark->underline, .link = mark->link,
         };
     }
@@ -493,89 +460,6 @@ static void webview_push_literal(const char *text, int heading, int rule, int in
     (void)webview_push_para(text, (int)strlen(text), heading, rule, indent, gap);
 }
 
-/* Last matching rule wins: later <style> blocks override earlier ones. */
-static const struct webview_rule *webview_lookup_rule(const char *tag)
-{
-    const struct webview_rule *found = 0;
-    int i;
-
-    if (tag == 0 || tag[0] == '\0')
-    {
-        return 0;
-    }
-    for (i = 0; i < g_rule_count; ++i)
-    {
-        if (strcmp(g_rules[i].tag, tag) == 0)
-        {
-            found = &g_rules[i];
-        }
-    }
-    return found;
-}
-
-/* Applies the pending block style to the paragraph just pushed: the tag rule
- * first, the block's own style="" over it. h1..h3 keep their title face
- * unless a rule or inline style says otherwise: that face IS the UA sheet. */
-static void webview_apply_block_style(struct webview_para *para)
-{
-    const struct webview_rule *rule = webview_lookup_rule(g_pending.tag);
-    int heading = g_pending.heading;
-
-    para->face = (heading >= 1 && heading <= 3) ? 1 : 0;
-    if (rule != 0)
-    {
-        if (rule->decl.hasColor)
-        {
-            para->hasColor = 1;
-            para->color = rule->decl.color;
-        }
-        if (rule->decl.hasBg)
-        {
-            para->hasBg = 1;
-            para->bg = rule->decl.bg;
-        }
-        if (rule->decl.hasAlign)
-        {
-            para->align = rule->decl.align;
-        }
-        if (rule->decl.hasBold && rule->decl.bold)
-        {
-            para->baseBold = 1;
-        }
-        if (rule->decl.hasFace)
-        {
-            para->face = rule->decl.face;
-        }
-    }
-    if (g_pending.hasInline)
-    {
-        const struct webview_decl *decl = &g_pending.inlineDecl;
-
-        if (decl->hasColor)
-        {
-            para->hasColor = 1;
-            para->color = decl->color;
-        }
-        if (decl->hasBg)
-        {
-            para->hasBg = 1;
-            para->bg = decl->bg;
-        }
-        if (decl->hasAlign)
-        {
-            para->align = decl->align;
-        }
-        if (decl->hasBold)
-        {
-            para->baseBold = decl->bold;
-        }
-        if (decl->hasFace)
-        {
-            para->face = decl->face;
-        }
-    }
-}
-
 static void webview_flush_text(void)
 {
     while (g_cur.length > 0 && g_cur.data[g_cur.length - 1] == ' ')
@@ -586,624 +470,19 @@ static void webview_flush_text(void)
     {
         struct webview_para *para = webview_push_para(g_cur.data, (int)g_cur.length,
             g_pending.heading, 0, g_pending.indent, g_pending.gap);
-
         if (para != NULL)
         {
-            webview_apply_block_style(para);
+            para->face = g_pending.face;
+            para->align = g_pending.align;
+            para->hasBg = g_pending.hasBg;
+            para->bg = g_pending.bg;
             webview_close_marks(para);
         }
+        g_pending.gap = 0;
     }
     g_cur.length = 0;
     g_mark_count = 0;
-    if (g_inline.hasColor || g_inline.bold || g_inline.underline || g_inline.link >= 0)
-    {
-        webview_push_mark();
-    }
-    memset(&g_pending, 0, sizeof(g_pending));
-}
-
-static int webview_hex_value(char value)
-{
-    if (value >= '0' && value <= '9')
-    {
-        return value - '0';
-    }
-    if (value >= 'a' && value <= 'f')
-    {
-        return value - 'a' + 10;
-    }
-    if (value >= 'A' && value <= 'F')
-    {
-        return value - 'A' + 10;
-    }
-    return -1;
-}
-
-static int webview_parse_color(const char *text, const char *end, uint32_t *out)
-{
-    static const struct {
-        const char *name;
-        uint32_t color;
-    } k_names[] = {
-        {"black", SXGUI_RGB(0, 0, 0)},
-        {"silver", SXGUI_RGB(192, 192, 192)},
-        {"gray", SXGUI_RGB(128, 128, 128)},
-        {"grey", SXGUI_RGB(128, 128, 128)},
-        {"white", SXGUI_RGB(255, 255, 255)},
-        {"maroon", SXGUI_RGB(128, 0, 0)},
-        {"red", SXGUI_RGB(255, 0, 0)},
-        {"purple", SXGUI_RGB(128, 0, 128)},
-        {"fuchsia", SXGUI_RGB(255, 0, 255)},
-        {"green", SXGUI_RGB(0, 128, 0)},
-        {"lime", SXGUI_RGB(0, 255, 0)},
-        {"olive", SXGUI_RGB(128, 128, 0)},
-        {"yellow", SXGUI_RGB(255, 255, 0)},
-        {"navy", SXGUI_RGB(0, 0, 128)},
-        {"blue", SXGUI_RGB(0, 0, 255)},
-        {"teal", SXGUI_RGB(0, 128, 128)},
-        {"aqua", SXGUI_RGB(0, 255, 255)},
-        {"orange", SXGUI_RGB(255, 165, 0)},
-    };
-    char lowered[32];
-    size_t length = 0;
-    size_t i;
-
-    while (text < end && (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r'))
-    {
-        text += 1;
-    }
-    while (end > text && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' ||
-                          end[-1] == '\r' || end[-1] == ';'))
-    {
-        end -= 1;
-    }
-    if (end > text && text[0] == '#')
-    {
-        int digits[6];
-        size_t count = 0;
-
-        text += 1;
-        while (text < end && count < 6)
-        {
-            int digit = webview_hex_value(*text);
-
-            if (digit < 0)
-            {
-                return 0;
-            }
-            digits[count++] = digit;
-            text += 1;
-        }
-        if (text != end || (count != 3 && count != 6))
-        {
-            return 0;
-        }
-        if (count == 3)
-        {
-            *out = SXGUI_RGB((unsigned)(digits[0] * 17), (unsigned)(digits[1] * 17),
-                (unsigned)(digits[2] * 17));
-            return 1;
-        }
-        *out = SXGUI_RGB((unsigned)(digits[0] * 16 + digits[1]),
-            (unsigned)(digits[2] * 16 + digits[3]),
-            (unsigned)(digits[4] * 16 + digits[5]));
-        return 1;
-    }
-    while (text < end && length + 1 < sizeof(lowered))
-    {
-        char value = *text;
-
-        if (value >= 'A' && value <= 'Z')
-        {
-            value = (char)(value - 'A' + 'a');
-        }
-        lowered[length++] = value;
-        text += 1;
-    }
-    if (text != end)
-    {
-        return 0;
-    }
-    lowered[length] = '\0';
-    for (i = 0; i < sizeof(k_names) / sizeof(k_names[0]); ++i)
-    {
-        if (strcmp(lowered, k_names[i].name) == 0)
-        {
-            *out = k_names[i].color;
-            return 1;
-        }
-    }
-    return 0;
-}
-
-/* Compares a raw value range against a keyword, case-insensitively, trimmed. */
-static int webview_value_is(const char *text, const char *end, const char *want)
-{
-    size_t length = 0;
-
-    while (text < end && (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r'))
-    {
-        text += 1;
-    }
-    while (end > text && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' ||
-                          end[-1] == '\r' || end[-1] == ';'))
-    {
-        end -= 1;
-    }
-    while (want[length] != '\0')
-    {
-        length += 1;
-    }
-    if ((size_t)(end - text) != length)
-    {
-        return 0;
-    }
-    {
-        size_t i;
-
-        for (i = 0; i < length; ++i)
-        {
-            char value = text[i];
-
-            if (value >= 'A' && value <= 'Z')
-            {
-                value = (char)(value - 'A' + 'a');
-            }
-            if (value != want[i])
-            {
-                return 0;
-            }
-        }
-    }
-    return 1;
-}
-
-static int webview_parse_font_size(const char *text, const char *end, int *face)
-{
-    /* Bitmap faces quantize sizes: UI or title, nothing between. px/pt/size
-     * numbers have no face to map to and stay ignored. */
-    if (webview_value_is(text, end, "xx-small") || webview_value_is(text, end, "x-small") ||
-        webview_value_is(text, end, "small") || webview_value_is(text, end, "medium") ||
-        webview_value_is(text, end, "smaller"))
-    {
-        *face = 0;
-        return 1;
-    }
-    if (webview_value_is(text, end, "large") || webview_value_is(text, end, "x-large") ||
-        webview_value_is(text, end, "xx-large") || webview_value_is(text, end, "larger"))
-    {
-        *face = 1;
-        return 1;
-    }
-    return 0;
-}
-
-static void webview_apply_decl(struct webview_decl *decl, const char *name, size_t name_length,
-    const char *value, const char *value_end)
-{
-    char prop[24];
-    size_t i;
-
-    if (name_length >= sizeof(prop))
-    {
-        return;
-    }
-    for (i = 0; i < name_length; ++i)
-    {
-        char c = name[i];
-
-        prop[i] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
-    }
-    prop[name_length] = '\0';
-    if (strcmp(prop, "color") == 0)
-    {
-        uint32_t color = 0;
-
-        if (webview_parse_color(value, value_end, &color))
-        {
-            decl->hasColor = 1;
-            decl->color = color;
-        }
-        return;
-    }
-    if (strcmp(prop, "background-color") == 0)
-    {
-        uint32_t color = 0;
-
-        if (webview_parse_color(value, value_end, &color))
-        {
-            decl->hasBg = 1;
-            decl->bg = color;
-        }
-        return;
-    }
-    if (strcmp(prop, "background") == 0)
-    {
-        /* Shorthand with a single colour only: images and repeats are later. */
-        uint32_t color = 0;
-
-        if (webview_parse_color(value, value_end, &color))
-        {
-            decl->hasBg = 1;
-            decl->bg = color;
-        }
-        return;
-    }
-    if (strcmp(prop, "text-align") == 0)
-    {
-        if (webview_value_is(value, value_end, "left"))
-        {
-            decl->hasAlign = 1;
-            decl->align = 0;
-        }
-        else if (webview_value_is(value, value_end, "center"))
-        {
-            decl->hasAlign = 1;
-            decl->align = 1;
-        }
-        else if (webview_value_is(value, value_end, "right"))
-        {
-            decl->hasAlign = 1;
-            decl->align = 2;
-        }
-        else if (webview_value_is(value, value_end, "justify"))
-        {
-            /* No justification engine: left, said plainly. */
-            decl->hasAlign = 1;
-            decl->align = 0;
-        }
-        return;
-    }
-    if (strcmp(prop, "font-weight") == 0)
-    {
-        if (webview_value_is(value, value_end, "bold"))
-        {
-            decl->hasBold = 1;
-            decl->bold = 1;
-        }
-        else if (webview_value_is(value, value_end, "normal"))
-        {
-            decl->hasBold = 1;
-            decl->bold = 0;
-        }
-        else
-        {
-            /* Bounded digits: value is a range, not a string. */
-            const char *digits = value;
-            const char *digits_end = value_end;
-            unsigned number = 0;
-            int ok = 0;
-
-            while (digits < digits_end && (*digits == ' ' || *digits == '\t'))
-            {
-                digits += 1;
-            }
-            while (digits_end > digits &&
-                   (digits_end[-1] == ' ' || digits_end[-1] == '\t' || digits_end[-1] == ';'))
-            {
-                digits_end -= 1;
-            }
-            if (digits_end > digits)
-            {
-                ok = 1;
-                while (digits < digits_end)
-                {
-                    if (*digits < '0' || *digits > '9')
-                    {
-                        ok = 0;
-                        break;
-                    }
-                    number = number * 10u + (unsigned)(*digits - '0');
-                    digits += 1;
-                }
-            }
-            if (ok && number >= 100 && number <= 900)
-            {
-                decl->hasBold = 1;
-                decl->bold = number >= 700;
-            }
-        }
-        return;
-    }
-    if (strcmp(prop, "text-decoration") == 0)
-    {
-        if (webview_value_is(value, value_end, "underline"))
-        {
-            decl->hasUnderline = 1;
-            decl->underline = 1;
-        }
-        else if (webview_value_is(value, value_end, "none"))
-        {
-            decl->hasUnderline = 1;
-            decl->underline = 0;
-        }
-        /* blink and line-through: no engine, ignored. */
-        return;
-    }
-    if (strcmp(prop, "font-size") == 0)
-    {
-        int face = 0;
-
-        if (webview_parse_font_size(value, value_end, &face))
-        {
-            decl->hasFace = 1;
-            decl->face = face;
-        }
-        return;
-    }
-    /* font-style and the rest: parsed nowhere, ignored openly. */
-}
-
-/* Parses "prop: value; ..." into decl (ORed over the caller's zeroed struct).
- * Values with '(' (url(), rgb()) are out of the subset: skipped whole. */
-static void webview_parse_decls(const char *text, const char *end, struct webview_decl *decl)
-{
-    while (text < end)
-    {
-        const char *name = text;
-        const char *name_end;
-        const char *value;
-        const char *value_end;
-
-        /* Property names arrive with the block's own spacing ("{ color", ";  margin"):
-         * trim both edges, or no property past the first ever matches. */
-        while (name < end && (*name == ' ' || *name == '\t' || *name == '\n' || *name == '\r'))
-        {
-            name += 1;
-        }
-        text = name;
-        while (text < end && *text != ':' && *text != ';' && *text != '}')
-        {
-            text += 1;
-        }
-        name_end = text;
-        while (name_end > name && (name_end[-1] == ' ' || name_end[-1] == '\t' ||
-                                   name_end[-1] == '\n' || name_end[-1] == '\r'))
-        {
-            name_end -= 1;
-        }
-        if (text >= end || *text != ':')
-        {
-            while (text < end && *text != ';' && *text != '}')
-            {
-                text += 1;
-            }
-            if (text < end)
-            {
-                text += 1;
-            }
-            continue;
-        }
-        value = text + 1;
-        value_end = value;
-        while (value_end < end && *value_end != ';' && *value_end != '}')
-        {
-            value_end += 1;
-        }
-        {
-            const char *scan = value;
-            int paren = 0;
-
-            while (scan < value_end)
-            {
-                if (*scan == '(')
-                {
-                    paren = 1;
-                    break;
-                }
-                scan += 1;
-            }
-            if (!paren)
-            {
-                webview_apply_decl(decl, name, (size_t)(name_end - name), value, value_end);
-            }
-        }
-        text = value_end < end ? value_end + 1 : value_end;
-    }
-}
-
-static const char *webview_skip_css_space(const char *cursor, const char *end)
-{
-    while (cursor < end)
-    {
-        if (*cursor == ' ' || *cursor == '\t' || *cursor == '\n' || *cursor == '\r')
-        {
-            cursor += 1;
-            continue;
-        }
-        if (cursor + 1 < end && cursor[0] == '/' && cursor[1] == '*')
-        {
-            cursor += 2;
-            while (cursor + 1 < end && !(cursor[0] == '*' && cursor[1] == '/'))
-            {
-                cursor += 1;
-            }
-            if (cursor + 1 < end)
-            {
-                cursor += 2;
-            }
-            else
-            {
-                return end;
-            }
-            continue;
-        }
-        break;
-    }
-    return cursor;
-}
-
-/* Adds one rule per plain tag selector; body rules land on the page colours
- * directly (no body paragraphs exist to carry them). Returns how many stored. */
-static int webview_store_rule(const char *selector, const char *selector_end,
-    const struct webview_decl *decl)
-{
-    const char *cursor = selector;
-    int stored = 0;
-
-    while (cursor < selector_end)
-    {
-        const char *name = cursor;
-        char tag[16];
-        size_t length = 0;
-        int valid = 1;
-        size_t i;
-
-        while (cursor < selector_end && *cursor != ',')
-        {
-            cursor += 1;
-        }
-        {
-            const char *start = name;
-            const char *stop = cursor;
-
-            while (start < stop && (*start == ' ' || *start == '\t' || *start == '\n' ||
-                                    *start == '\r'))
-            {
-                start += 1;
-            }
-            while (stop > start && (stop[-1] == ' ' || stop[-1] == '\t' || stop[-1] == '\n' ||
-                                     stop[-1] == '\r'))
-            {
-                stop -= 1;
-            }
-            while (start < stop && length + 1 < sizeof(tag))
-            {
-                char value = *start;
-
-                if (value >= 'A' && value <= 'Z')
-                {
-                    value = (char)(value - 'A' + 'a');
-                }
-                if ((value < 'a' || value > 'z') && (value < '0' || value > '9'))
-                {
-                    valid = 0;
-                    break;
-                }
-                tag[length++] = value;
-                start += 1;
-            }
-            if (start != stop)
-            {
-                valid = 0;
-            }
-            tag[length] = '\0';
-            if (valid && length > 0 && g_rule_count < WEBVIEW_RULE_MAX)
-            {
-                if (strcmp(tag, "body") == 0)
-                {
-                    if (decl->hasColor)
-                    {
-                        g_page_fg = decl->color;
-                    }
-                    if (decl->hasBg)
-                    {
-                        g_page_bg = decl->bg;
-                    }
-                    stored += 1;
-                }
-                else
-                {
-                    struct webview_rule *rule = &g_rules[g_rule_count++];
-
-                    for (i = 0; i < sizeof(tag); ++i)
-                    {
-                        rule->tag[i] = tag[i];
-                    }
-                    rule->decl = *decl;
-                    stored += 1;
-                }
-            }
-        }
-        if (cursor < selector_end)
-        {
-            cursor += 1;
-        }
-    }
-    return stored;
-}
-
-/* Parses a <style> body: selector lists with tag names only. Class, id,
- * pseudo and at-rules are skipped block-aware, never half parsed. */
-static void webview_parse_css(const char *css)
-{
-    const char *end = css + strlen(css);
-    const char *cursor = css;
-
-    while (cursor < end)
-    {
-        const char *selector = cursor;
-        const char *brace;
-        const char *block_end;
-        int depth;
-        struct webview_decl decl;
-
-        cursor = webview_skip_css_space(cursor, end);
-        if (cursor >= end)
-        {
-            break;
-        }
-        if (*cursor == '@')
-        {
-            /* At-rule: skip to ';' or over the balanced block. */
-            brace = strchr(cursor, '{');
-            {
-                const char *semi = strchr(cursor, ';');
-
-                if (brace == 0 || (semi != 0 && semi < brace))
-                {
-                    cursor = semi != 0 ? semi + 1 : end;
-                    continue;
-                }
-            }
-            depth = 0;
-            block_end = brace;
-            while (block_end < end)
-            {
-                if (*block_end == '{')
-                {
-                    depth += 1;
-                }
-                else if (*block_end == '}')
-                {
-                    depth -= 1;
-                    if (depth == 0)
-                    {
-                        break;
-                    }
-                }
-                block_end += 1;
-            }
-            cursor = block_end < end ? block_end + 1 : end;
-            continue;
-        }
-        brace = strchr(cursor, '{');
-        if (brace == 0 || brace >= end)
-        {
-            break;
-        }
-        memset(&decl, 0, sizeof(decl));
-        depth = 1;
-        block_end = brace + 1;
-        while (block_end < end && depth > 0)
-        {
-            if (*block_end == '{')
-            {
-                depth += 1;
-            }
-            else if (*block_end == '}')
-            {
-                depth -= 1;
-            }
-            block_end += 1;
-        }
-        /* A nested '{' means something at-rule-shaped survived: the decls
-         * still parse, the nested chunk parses as garbage declarations that
-         * match no property. Harmless. */
-        webview_parse_decls(brace + 1, block_end - 1, &decl);
-        webview_store_rule(selector, brace, &decl);
-        cursor = block_end;
-    }
+    webview_push_mark();
 }
 
 static dom_string *webview_attribute(dom_node *node, const char *key)
@@ -1222,46 +501,6 @@ static dom_string *webview_attribute(dom_node *node, const char *key)
     }
     dom_string_unref(name);
     return value;
-}
-
-static int webview_color_attribute(dom_node *node, const char *name, uint32_t *color)
-{
-    dom_string *value = webview_attribute(node, name);
-    int parsed = 0;
-
-    if (value != NULL)
-    {
-        const char *text = dom_string_data(value);
-
-        parsed = webview_parse_color(text, text + dom_string_byte_length(value), color);
-        dom_string_unref(value);
-    }
-    return parsed;
-}
-
-static int webview_inline_declarations(dom_node *node, struct webview_decl *decl)
-{
-    dom_string *value = webview_attribute(node, "style");
-
-    if (value == NULL)
-    {
-        return 0;
-    }
-    const char *text = dom_string_data(value);
-    webview_parse_decls(text, text + dom_string_byte_length(value), decl);
-    dom_string_unref(value);
-    return 1;
-}
-
-/* Block opener: flush, then stage the tag, gaps and its own style="". */
-static void webview_pending_tag(dom_node *node, const char *tag, int gap, int heading, int indent)
-{
-    webview_flush_text();
-    snprintf(g_pending.tag, sizeof(g_pending.tag), "%s", tag);
-    g_pending.gap = gap;
-    g_pending.heading = heading;
-    g_pending.indent = indent;
-    g_pending.hasInline = webview_inline_declarations(node, &g_pending.inlineDecl);
 }
 
 static void webview_set_title(const char *text, size_t length)
@@ -1301,134 +540,176 @@ static void webview_set_title(const char *text, size_t length)
     g_title[used] = '\0';
 }
 
+/* Defaults from CSS 2.1 Appendix D and HTML's rendering rules, adapted
+ * to the viewer's two bitmap faces and paragraph renderer. */
+static const char k_webview_ua[] =
+    "html, body, div, p, blockquote, h1, h2, h3, ul, ol, hr {display:block}"
+    "head, script, style, title, link, template {display:none}"
+    "h1, h2, h3 {font-size:large}"
+    "li {display:list-item}"
+    "table {display:table} tr {display:table-row} td, th {display:table-cell}"
+    "b, strong {font-weight:bold}"
+    "u {text-decoration:underline}"
+    "a:link {color:blue; text-decoration:underline}";
+
+static uint32_t webview_color_over(css_color color, uint32_t background)
+{
+    unsigned alpha = color >> 24;
+    if (alpha == 255)
+    {
+        return color & 0xffffff;
+    }
+    uint32_t result = 0;
+    for (unsigned shift = 0; shift < 24; shift += 8)
+    {
+        unsigned from = (color >> shift) & 255;
+        unsigned to = (background >> shift) & 255;
+        result |= ((from * alpha + to * (255 - alpha) + 127) / 255) << shift;
+    }
+    return result;
+}
+
+static void webview_block_style(struct webview_block *block, const css_computed_style *style,
+    const css_unit_ctx *units)
+{
+    css_fixed size;
+    css_unit unit;
+    css_color background = 0;
+    uint8_t align = css_computed_text_align(style);
+
+    block->align = align == CSS_TEXT_ALIGN_CENTER ? 1 : align == CSS_TEXT_ALIGN_RIGHT ? 2 : 0;
+    css_computed_font_size(style, &size, &unit);
+    block->face = css_unit_len2css_px(style, units, size, unit) >= INTTOFIX(18);
+    css_computed_background_color(style, &background);
+    if (background >> 24)
+    {
+        block->bg = webview_color_over(background, block->hasBg ? block->bg : g_page_bg);
+        block->hasBg = 1;
+    }
+}
+
 struct webview_dom_frame {
     dom_node *node;
+    css_computed_style *style;
     struct webview_mark previous;
+    struct webview_block previous_block;
     int restore_inline;
-    int flush;
+    int block;
 };
 
-/* Map DOM elements onto the existing paragraph and inline style model.
- * Return zero for a subtree whose contents are handled here or are hidden. */
-static int webview_enter_element(struct webview_dom_frame *frame, const char *name)
+static void webview_begin_block(struct webview_dom_frame *frame, const css_unit_ctx *units,
+    int gap, int heading, int indent)
+{
+    webview_flush_text();
+    frame->previous_block = g_pending;
+    frame->block = 1;
+    g_pending.gap = gap;
+    g_pending.heading = heading;
+    g_pending.indent = indent;
+    webview_block_style(&g_pending, frame->style, units);
+}
+
+/* Keep the paragraph model for layout while reading its visual properties
+ * from the cascade. Text decorations propagate through descendant runs. */
+static int webview_enter_element(struct webview_dom_frame *frame, const char *name,
+    const css_unit_ctx *units)
 {
     dom_node *node = frame->node;
+    const css_computed_style *style = frame->style;
+    css_color color = 0;
+    uint8_t display = css_computed_display(style, 0);
+    int heading = name[0] == 'h' && name[1] >= '1' && name[1] <= '3' && name[2] == '\0'
+        ? name[1] - '0' : 0;
 
-    if (strcmp(name, "script") == 0 || strcmp(name, "template") == 0)
-    {
-        return 0;
-    }
-    if (strcmp(name, "title") == 0 || strcmp(name, "style") == 0)
+    if (strcmp(name, "title") == 0)
     {
         dom_string *value = NULL;
-
         if (dom_node_get_text_content(node, &value) != DOM_NO_ERR)
         {
             g_document_failed = 1;
         }
         if (value != NULL)
         {
-            const char *text = dom_string_data(value);
-
-            if (name[0] == 't')
-            {
-                webview_set_title(text, dom_string_byte_length(value));
-            }
-            else
-            {
-                webview_parse_css(text);
-            }
+            webview_set_title(dom_string_data(value), dom_string_byte_length(value));
             dom_string_unref(value);
         }
         return 0;
     }
-    if (name[0] == 'h' && name[1] >= '1' && name[1] <= '3' && name[2] == '\0')
+    /* Head normally has display:none; walk its children for the window title. */
+    if (strcmp(name, "head") == 0)
     {
-        webview_pending_tag(node, name, name[1] == '1' ? 8 : 6, name[1] - '0', 0);
-        frame->flush = 1;
+        return 1;
     }
-    else if (strcmp(name, "li") == 0)
+    if (display == CSS_DISPLAY_NONE || strcmp(name, "script") == 0 ||
+        strcmp(name, "template") == 0 || strcmp(name, "style") == 0)
     {
-        webview_pending_tag(node, name, 1, 0, 1);
-        frame->flush = 1;
+        return 0;
     }
-    else if (strcmp(name, "p") == 0 || strcmp(name, "div") == 0 || strcmp(name, "blockquote") == 0 ||
-             strcmp(name, "ul") == 0 || strcmp(name, "ol") == 0 ||
-             strcmp(name, "tr") == 0 || strcmp(name, "table") == 0)
+    if (strcmp(name, "html") == 0 || strcmp(name, "body") == 0)
     {
-        webview_pending_tag(node, name, 2, 0, 0);
-        frame->flush = 1;
-    }
-    else if (strcmp(name, "body") == 0)
-    {
-        (void)webview_color_attribute(node, "bgcolor", &g_page_bg);
-        (void)webview_color_attribute(node, "text", &g_page_fg);
-        (void)webview_color_attribute(node, "link", &g_link_color);
-    }
-    else if (strcmp(name, "br") == 0 || strcmp(name, "td") == 0 || strcmp(name, "th") == 0)
-    {
-        /* Table cells still fall back to separate lines. */
-        webview_flush_text();
+        css_color background = 0;
+
+        css_computed_background_color(style, &background);
+        g_page_bg = webview_color_over(background, g_page_bg);
+        webview_block_style(&g_pending, style, units);
+        g_pending.hasBg = 0;
     }
     else if (strcmp(name, "hr") == 0)
     {
         webview_flush_text();
         webview_push_literal("", 0, 1, 0, 4);
+        return 0;
     }
-    else if (strcmp(name, "img") == 0)
+    else if (strcmp(name, "br") == 0)
     {
-        webview_cur_append_text(" [image] ", sizeof(" [image] ") - 1);
+        webview_flush_text();
+        return 0;
     }
-    else if (strcmp(name, "a") == 0)
+    else if (display == CSS_DISPLAY_LIST_ITEM)
+    {
+        webview_begin_block(frame, units, 1, 0, 1);
+    }
+    else if (display == CSS_DISPLAY_TABLE_CELL)
+    {
+        webview_begin_block(frame, units, 0, 0, 0);
+    }
+    else if (display == CSS_DISPLAY_BLOCK || display == CSS_DISPLAY_TABLE ||
+             display == CSS_DISPLAY_TABLE_ROW)
+    {
+        webview_begin_block(frame, units, heading == 1 ? 8 : heading > 0 ? 6 : 2, heading, 0);
+    }
+
+    frame->previous = g_inline;
+    css_computed_color(style, &color);
+    g_inline.color = color;
+    uint8_t weight = css_computed_font_weight(style);
+    g_inline.bold = weight == CSS_FONT_WEIGHT_BOLD || weight == CSS_FONT_WEIGHT_BOLDER ||
+        weight >= CSS_FONT_WEIGHT_700;
+    g_inline.underline |= (css_computed_text_decoration(style) & CSS_TEXT_DECORATION_UNDERLINE) != 0;
+    if (strcmp(name, "a") == 0)
     {
         dom_string *href = webview_attribute(node, "href");
-
         if (href != NULL)
         {
             webview_open_anchor(dom_string_data(href));
             dom_string_unref(href);
         }
     }
-    else
+    if (frame->previous.color != g_inline.color || frame->previous.bold != g_inline.bold ||
+        frame->previous.underline != g_inline.underline || frame->previous.link != g_inline.link)
     {
-        struct webview_decl decl = {0};
-
-        if (strcmp(name, "b") == 0 || strcmp(name, "strong") == 0)
-        {
-            decl.hasBold = 1;
-            decl.bold = 1;
-        }
-        else if (strcmp(name, "u") == 0)
-        {
-            decl.hasUnderline = 1;
-            decl.underline = 1;
-        }
-        else if (strcmp(name, "font") == 0 || strcmp(name, "span") == 0)
-        {
-            (void)webview_inline_declarations(node, &decl);
-            if (webview_color_attribute(node, "color", &decl.color))
-            {
-                decl.hasColor = 1;
-            }
-        }
-        if (decl.hasBold)
-        {
-            g_inline.bold = decl.bold;
-        }
-        if (decl.hasUnderline)
-        {
-            g_inline.underline = decl.underline;
-        }
-        if (decl.hasColor)
-        {
-            g_inline.hasColor = 1;
-            g_inline.color = decl.color;
-        }
+        frame->restore_inline = 1;
+        webview_push_mark();
+    }
+    if (strcmp(name, "img") == 0)
+    {
+        webview_cur_append_text(" [image] ", sizeof(" [image] ") - 1);
     }
     return 1;
 }
 
-static int webview_enter_node(struct webview_dom_frame *frame)
+static int webview_enter_node(struct webview_dom_frame *frame, struct webengine_styles *styles,
+    const css_computed_style *parent)
 {
     dom_node *node = frame->node;
     dom_node_type type;
@@ -1452,62 +733,99 @@ static int webview_enter_node(struct webview_dom_frame *frame)
         }
         return 0;
     }
-    if (type == DOM_ELEMENT_NODE)
+    if (type != DOM_ELEMENT_NODE)
     {
-        char name[sizeof(g_pending.tag)] = {0};
-
-        if (dom_node_get_node_name(node, &value) != DOM_NO_ERR)
-        {
-            g_document_failed = 1;
-            return 0;
-        }
-        size_t length = dom_string_byte_length(value);
-        if (length < sizeof(name))
-        {
-            const char *text = dom_string_data(value);
-            for (size_t i = 0; i < length; ++i)
-            {
-                char ch = text[i];
-
-                name[i] = ch >= 'A' && ch <= 'Z' ? (char)(ch + 'a' - 'A') : ch;
-            }
-        }
-        dom_string_unref(value);
-        frame->previous = g_inline;
-        int descend = webview_enter_element(frame, name);
-        if (frame->previous.hasColor != g_inline.hasColor || frame->previous.color != g_inline.color ||
-            frame->previous.bold != g_inline.bold || frame->previous.underline != g_inline.underline ||
-            frame->previous.link != g_inline.link)
-        {
-            frame->restore_inline = 1;
-            webview_push_mark();
-        }
-        return descend;
+        return 0;
     }
-    return 0;
+    char name[16] = {0};
+    if (dom_node_get_node_name(node, &value) != DOM_NO_ERR)
+    {
+        g_document_failed = 1;
+        return 0;
+    }
+    size_t length = dom_string_byte_length(value);
+    if (length < sizeof(name))
+    {
+        const char *text = dom_string_data(value);
+        for (size_t i = 0; i < length; ++i)
+        {
+            char ch = text[i];
+            name[i] = ch >= 'A' && ch <= 'Z' ? (char)(ch + 'a' - 'A') : ch;
+        }
+    }
+    dom_string_unref(value);
+    frame->style = webengine_style_element(styles, (dom_element *)node, parent);
+    if (frame->style == NULL)
+    {
+        g_document_failed = 1;
+        return 0;
+    }
+    return webview_enter_element(frame, name, styles->units);
+}
+
+static void webview_leave_node(struct webview_dom_frame *frame)
+{
+    if (frame->block)
+    {
+        webview_flush_text();
+        g_pending = frame->previous_block;
+    }
+    if (frame->restore_inline)
+    {
+        g_inline = frame->previous;
+        webview_push_mark();
+    }
+}
+
+static void webview_release_frame(struct webview_dom_frame *frame)
+{
+    if (frame->style != NULL)
+    {
+        css_computed_style_destroy(frame->style);
+    }
+    dom_node_unref(frame->node);
+}
+
+static struct webengine_sheet_source webview_link_sheet(void *user, dom_element *element)
+{
+    struct webview_sheet **next = user;
+
+    if (*next == NULL || (*next)->element != element)
+    {
+        return (struct webengine_sheet_source){0};
+    }
+    const struct webview_sheet *sheet = *next;
+    *next = sheet->next;
+    return (struct webengine_sheet_source){
+        .data = (const uint8_t *)sheet->body.data, .length = sheet->body.length, .url = sheet->url,
+    };
 }
 
 static void webview_parse(void)
 {
-    dom_document *document = webengine_parse_html(
-        (const uint8_t *)(g_raw.data != NULL ? g_raw.data : ""), g_raw.length, NULL, NULL, 0);
+    struct webengine_styles styles;
+    struct webview_sheet *next_sheet = g_sheets;
     dom_element *root = NULL;
     struct webview_dom_frame *stack = NULL;
     size_t depth = 0;
     size_t capacity = 0;
-    dom_node *node;
 
-    if (document == NULL || dom_document_get_document_element(document, &root) != DOM_NO_ERR)
+    if (g_document == NULL || g_ua == NULL || webengine_styles_open(
+            &styles, g_document, g_path, g_ua, webview_link_sheet, &next_sheet) != 0)
+    {
+        g_document_failed = 1;
+        return;
+    }
+    if (dom_document_get_document_element(g_document, &root) != DOM_NO_ERR)
     {
         g_document_failed = 1;
     }
-    node = (dom_node *)root;
-    /* An explicit stack keeps deeply nested markup off the UI thread's
-     * call stack. Each entry owns a node reference until it is left. */
+    dom_node *node = (dom_node *)root;
+    webview_push_mark();
+    /* Keep the node references and the composed parent styles on the heap. */
     while (node != NULL && !g_document_failed)
     {
         struct webview_dom_frame *frames = webview_reserve(stack, &capacity, depth + 1, sizeof(*stack));
-
         if (frames == NULL)
         {
             g_document_failed = 1;
@@ -1515,8 +833,9 @@ static void webview_parse(void)
         }
         stack = frames;
         stack[depth] = (struct webview_dom_frame){ .node = node };
+        css_computed_style *parent = depth == 0 ? NULL : stack[depth - 1].style;
         node = NULL;
-        if (webview_enter_node(&stack[depth]) &&
+        if (webview_enter_node(&stack[depth], &styles, parent) &&
             dom_node_get_first_child(stack[depth].node, &node) != DOM_NO_ERR)
         {
             g_document_failed = 1;
@@ -1525,30 +844,21 @@ static void webview_parse(void)
         while (node == NULL && depth > 0 && !g_document_failed)
         {
             struct webview_dom_frame *frame = &stack[--depth];
-
-            if (frame->flush)
-            {
-                webview_flush_text();
-            }
-            if (frame->restore_inline)
-            {
-                g_inline = frame->previous;
-                webview_push_mark();
-            }
+            webview_leave_node(frame);
             if (depth > 0 && dom_node_get_next_sibling(frame->node, &node) != DOM_NO_ERR)
             {
                 g_document_failed = 1;
             }
-            dom_node_unref(frame->node);
+            webview_release_frame(frame);
         }
     }
     dom_node_unref(node);
     while (depth > 0)
     {
-        dom_node_unref(stack[--depth].node);
+        webview_release_frame(&stack[--depth]);
     }
     free(stack);
-    dom_node_unref(document);
+    webengine_styles_close(&styles);
     if (!g_document_failed)
     {
         webview_flush_text();
@@ -1596,7 +906,6 @@ static void webview_invalidate_layout(void)
     sxngui_app_request_repaint(&g_app);
 }
 
-static int webview_load_file(const char *path);
 static int webview_open_location(const char *location, int push, int hist_target);
 static void webview_navigate(const char *address, int push);
 
@@ -1628,24 +937,21 @@ static void webview_show_welcome(void)
     webview_invalidate_layout();
 }
 
-static int webview_load_file(const char *path)
+/* Read a local document or stylesheet into a private buffer. */
+static const char *webview_read_file(const char *path, struct webview_bytes *output)
 {
-    long stream;
     struct sxn_file_info info = {0};
     struct webview_bytes body = {0};
     unsigned char chunk[8192];
 
-    if (path == 0 || path[0] == '\0') return -1;
     if (sxn_query_path(path, &info) == 0 && info.type == SXN_FILE_TYPE_DIRECTORY)
     {
-        snprintf(g_status, sizeof(g_status), "That path is a directory.");
-        return -1;
+        return "That path is a directory.";
     }
-    stream = sxn_open_file(path, SXN_FILE_READ);
+    long stream = sxn_open_file(path, SXN_FILE_READ);
     if (stream < 0)
     {
-        snprintf(g_status, sizeof(g_status), "Cannot open that file.");
-        return -1;
+        return "Cannot open that file.";
     }
     for (;;)
     {
@@ -1659,21 +965,23 @@ static int webview_load_file(const char *path)
         {
             sxn_close(stream);
             free(body.data);
-            snprintf(g_status, sizeof(g_status), "%s",
-                got < 0 ? "Cannot read that file." : "Not enough memory for this document.");
-            return -1;
+            return got < 0 ? "Cannot read that file." : "Not enough memory for this document.";
         }
     }
     sxn_close(stream);
-    free(g_raw.data);
-    g_raw = body;
+    *output = body;
+    return NULL;
+}
 
-    g_fetch_note[0] = '\0';
-    g_page_secure = 0;
-    g_plain = 0;
-    snprintf(g_path, sizeof(g_path), "%s", path);
-    g_has_file = 1;
-    return 0;
+static void webview_free_sheets(struct webview_sheet *sheets)
+{
+    while (sheets != NULL)
+    {
+        struct webview_sheet *next = sheets->next;
+        free(sheets->body.data);
+        free(sheets);
+        sheets = next;
+    }
 }
 
 /* View Source: the raw buffer as plain lines, no tag stripping and no entity
@@ -1780,7 +1088,8 @@ static void webview_render_current(void)
 
 enum webview_load_outcome
 {
-    WEBVIEW_LOAD_PAGE,      /* the body is in the result */
+    WEBVIEW_LOAD_PAGE,      /* the HTML or plain text is in the result */
+    WEBVIEW_LOAD_STYLES,    /* the worker has finished the stylesheets */
     WEBVIEW_LOAD_FAILED,    /* `message` says why */
     WEBVIEW_LOAD_CANCELLED, /* the cancel event was set */
     WEBVIEW_LOAD_DOWNLOAD,  /* a file, not a page: `location`, saved as `file_name` */
@@ -1791,6 +1100,8 @@ struct webview_request
     uint32_t id;
     char url[WEBVIEW_PATH_CAPACITY];
     struct sxn_ipv4_endpoint dns;
+    struct webview_sheet *sheets;
+    uint64_t deadline;
 };
 
 struct webview_result
@@ -1804,8 +1115,16 @@ struct webview_result
     int secure; /* https://, validated */
     char security[64];
     struct webview_bytes body;
+    struct webview_sheet *sheets;
     char file_name[SXNHTTP_FILENAME_CAP];
 };
+
+static void webview_clear_result(struct webview_result *result)
+{
+    free(result->body.data);
+    webview_free_sheets(result->sheets);
+    *result = (struct webview_result){0};
+}
 
 /* The lock: 0 free, 1 held, 2 held with waiters, a futex mutex over
  * sxn_wait_address. Held only to copy a slot, never across a wait. */
@@ -1883,8 +1202,7 @@ static void webview_refresh_nav(void);
 static void webview_sync_address(void);
 static void webview_history_push(const char *path);
 
-/* http:// and https://: both go to the worker, which says https:// is not
- * available yet (N5). */
+/* HTTP and HTTPS requests go to the network worker. */
 static int webview_location_is_http(const char *location)
 {
     return location != 0 &&
@@ -2142,6 +1460,58 @@ static void webview_fetch_http(const struct webview_request *request, struct web
     memcpy(result->location, response.url, sizeof(result->location));
 }
 
+static int webview_css_head(void *user, const struct sxnhttp_response *response)
+{
+    (void)user;
+    return response->status < 200 || response->status >= 300 || response->attachment ||
+        (response->content_type[0] != '\0' && !webview_type_is(response->content_type, "text/css"));
+}
+
+static void webview_fetch_sheets(const struct webview_request *request, struct webview_result *result)
+{
+    static struct sxnhttp_response response;
+
+    result->outcome = WEBVIEW_LOAD_STYLES;
+    result->sheets = request->sheets;
+    for (struct webview_sheet *sheet = result->sheets; sheet != NULL; sheet = sheet->next)
+    {
+        if (!webview_location_is_http(sheet->url))
+        {
+            continue;
+        }
+        uint64_t now = sxn_clock_ns();
+        if (now >= request->deadline || sxn_wait_one(g_cancel_event, 0) >= 0)
+        {
+            break;
+        }
+        struct webview_fetch fetch = { .request = request, .body = &sheet->body };
+        struct sxnhttp_request load = {
+            .url = sheet->url,
+            .cancel = g_cancel_event,
+            .total_ms = (uint32_t)((request->deadline - now + 999999) / 1000000),
+            .user_agent = "SavanXP-WebViewer/" SAVANXP_VERSION_STRING,
+            .user = &fetch,
+            .head = webview_css_head,
+            .sink = webview_http_body,
+            .sink_keep_total = 1,
+        };
+        long status = sxnhttp_get(&g_http, &load, &response);
+        if (status != 0 || (response.flags & SXNHTTP_RESPONSE_HEAD_ONLY) != 0)
+        {
+            free(sheet->body.data);
+            sheet->body = (struct webview_bytes){0};
+            if (status == SXNHTTP_ERROR_CANCELLED)
+            {
+                break;
+            }
+        }
+        else
+        {
+            snprintf(sheet->url, sizeof(sheet->url), "%s", response.url);
+        }
+    }
+}
+
 /* The worker thread: one request at a time, each with the cancel event
  * cleared as it is taken, so a cancel set after that point is for it. */
 static void webview_worker_main(void *argument)
@@ -2165,6 +1535,7 @@ static void webview_worker_main(void *argument)
         if (g_request_ready)
         {
             request = g_request;
+            g_request.sheets = NULL;
             g_request_ready = 0;
             (void)sxn_event_reset(g_cancel_event);
             have = 1;
@@ -2177,11 +1548,17 @@ static void webview_worker_main(void *argument)
         memset(&result, 0, sizeof(result));
         result.id = request.id;
         sxndns_set_server(&g_resolver, &request.dns);
-        webview_fetch_http(&request, &result);
+        if (request.sheets != NULL)
+        {
+            webview_fetch_sheets(&request, &result);
+        }
+        else
+        {
+            webview_fetch_http(&request, &result);
+        }
         webview_lock();
-        free(g_result.body.data);
+        webview_clear_result(&g_result);
         g_result = result;
-        result.body = (struct webview_bytes){0};
         g_result_ready = 1;
         webview_unlock();
         (void)sxngui_app_wake(&g_app);
@@ -2200,10 +1577,14 @@ struct webview_navigation
     uint32_t id;
     int push;
     int hist_target;
+    uint64_t deadline;
 };
 
 static struct webview_navigation g_nav;
 static uint32_t g_nav_counter = 0;
+/* Waiting for the stylesheet batch. Only the UI owns this document. */
+static struct webview_result g_pending_page;
+static dom_document *g_pending_document;
 
 static void webview_refresh_commands(void);
 
@@ -2225,8 +1606,13 @@ static int webview_cancel_navigation(void)
     }
     webview_lock();
     g_request_ready = 0;
+    webview_free_sheets(g_request.sheets);
+    g_request.sheets = NULL;
     (void)sxn_event_set(g_cancel_event);
     webview_unlock();
+    webview_clear_result(&g_pending_page);
+    dom_node_unref(g_pending_document);
+    g_pending_document = NULL;
     g_nav.id = 0;
     webview_set_loading(0);
     return 1;
@@ -2244,24 +1630,28 @@ static void webview_stop(void)
     }
 }
 
-/* Hands `url` to the worker. Whatever was loading is dropped first. */
+static void webview_begin_navigation(int push, int hist_target)
+{
+    if (++g_nav_counter == 0)
+    {
+        ++g_nav_counter;
+    }
+    g_nav = (struct webview_navigation){
+        .id = g_nav_counter, .push = push, .hist_target = hist_target,
+        .deadline = sxn_clock_ns() + (uint64_t)SXNHTTP_TOTAL_MS * 1000000,
+    };
+}
+
+/* Hands the main document request to the worker. */
 static void webview_start_remote(const char *url, int push, int hist_target)
 {
-    (void)webview_cancel_navigation();
     if (g_worker < 0)
     {
         snprintf(g_status, sizeof(g_status), "The network worker did not start.");
         webview_sync_address();
         return;
     }
-    g_nav_counter += 1;
-    if (g_nav_counter == 0)
-    {
-        g_nav_counter = 1;
-    }
-    g_nav.id = g_nav_counter;
-    g_nav.push = push;
-    g_nav.hist_target = hist_target;
+    webview_begin_navigation(push, hist_target);
     webview_lock();
     g_request.id = g_nav.id;
     snprintf(g_request.url, sizeof(g_request.url), "%s", url);
@@ -2291,6 +1681,146 @@ static void webview_finish_load(int push, int hist_target)
     webview_render_current();
     webview_sync_address();
     webview_refresh_nav();
+}
+
+struct webview_sheet_plan {
+    const char *base;
+    struct webview_sheet *sheets;
+    struct webview_sheet **tail;
+    int remote;
+};
+
+static int webview_plan_sheet(void *user, dom_element *element, const char *href)
+{
+    struct webview_sheet_plan *plan = user;
+    char reference[WEBVIEW_PATH_CAPACITY];
+    char url[WEBVIEW_PATH_CAPACITY];
+    size_t length;
+    int network;
+
+    if (href == NULL)
+    {
+        return 0;
+    }
+    while (webview_html_space((unsigned char)*href))
+    {
+        ++href;
+    }
+    length = strlen(href);
+    while (length > 0 && webview_html_space((unsigned char)href[length - 1]))
+    {
+        --length;
+    }
+    if (length == 0 || length >= sizeof(reference) || href[0] == '#')
+    {
+        return 0;
+    }
+    memcpy(reference, href, length);
+    reference[length] = '\0';
+    if (webview_location_is_http(plan->base))
+    {
+        if (sxnhttp_resolve(plan->base, reference, url, sizeof(url)) != 0 ||
+            (strncmp(plan->base, "https://", 8) == 0 && strncmp(url, "https://", 8) != 0))
+        {
+            return 0;
+        }
+    }
+    else if (webview_resolve_against(plan->base, reference, url, sizeof(url)) != 0)
+    {
+        return 0;
+    }
+    network = webview_location_is_http(url);
+    const char *path = strncmp(url, "file://", 7) == 0 ? url + 7 : url;
+    if (!network && (webview_location_is_http(plan->base) || path[0] != '/' || path[1] == '/'))
+    {
+        return 0;
+    }
+
+    struct webview_sheet *sheet = calloc(1, sizeof(*sheet));
+    if (sheet == NULL)
+    {
+        return -1;
+    }
+    sheet->element = element;
+    snprintf(sheet->url, sizeof(sheet->url), "%s", url);
+    if (network)
+    {
+        plan->remote = 1;
+    }
+    else if (webview_read_file(path, &sheet->body) != NULL)
+    {
+        free(sheet);
+        return 0;
+    }
+    *plan->tail = sheet;
+    plan->tail = &sheet->next;
+    return 0;
+}
+
+static void webview_commit_page(struct webview_result *result, dom_document *document,
+    struct webview_sheet *sheets)
+{
+    struct webview_navigation nav = g_nav;
+
+    g_nav.id = 0;
+    webview_set_loading(0);
+    free(g_raw.data);
+    webview_free_sheets(g_sheets);
+    dom_node_unref(g_document);
+    g_raw = result->body;
+    result->body = (struct webview_bytes){0};
+    g_document = document;
+    g_sheets = sheets;
+    g_plain = result->plain;
+    memcpy(g_fetch_note, result->note, sizeof(g_fetch_note));
+    g_page_secure = result->secure;
+    memcpy(g_security, result->security, sizeof(g_security));
+    memcpy(g_path, result->location, sizeof(g_path));
+    g_has_file = 1;
+    webview_finish_load(nav.push, nav.hist_target);
+}
+
+/* Parse on the UI thread. Send only the resource buffers to the worker,
+ * keeping the candidate document and the displayed page separate. */
+static void webview_prepare_page(struct webview_result *result)
+{
+    dom_document *document = NULL;
+    struct webview_sheet_plan plan = { .base = result->location };
+    plan.tail = &plan.sheets;
+
+    if (!result->plain)
+    {
+        const char *html = result->body.data != NULL ? result->body.data : "";
+        document = webengine_parse_html((const uint8_t *)html, result->body.length, NULL, NULL, 0);
+        if (document == NULL || webengine_visit_sheets(document, webview_plan_sheet, &plan) != 0)
+        {
+            webview_free_sheets(plan.sheets);
+            dom_node_unref(document);
+            webview_clear_result(result);
+            g_nav.id = 0;
+            webview_set_loading(0);
+            snprintf(g_status, sizeof(g_status), "Cannot prepare this document.");
+            webview_sync_address();
+            return;
+        }
+    }
+    if (plan.remote && g_worker >= 0 && sxn_clock_ns() < g_nav.deadline)
+    {
+        g_pending_page = *result;
+        result->body = (struct webview_bytes){0};
+        g_pending_document = document;
+        webview_lock();
+        g_request = (struct webview_request){
+            .id = g_nav.id, .dns = g_dns_server, .sheets = plan.sheets, .deadline = g_nav.deadline,
+        };
+        g_request_ready = 1;
+        webview_unlock();
+        (void)sxn_event_set(g_work_event);
+        snprintf(g_status, sizeof(g_status), "Loading stylesheets...");
+        webview_set_loading(1);
+        return;
+    }
+    webview_commit_page(result, document, plan.sheets);
 }
 
 /* On the UI thread, after the worker woke the window: the latest progress
@@ -2324,9 +1854,9 @@ static void on_wake(struct sxngui_app *app)
         }
         else
         {
-            free(g_result.body.data);
+            webview_clear_result(&g_result);
         }
-        g_result.body = (struct webview_bytes){0};
+        g_result = (struct webview_result){0};
     }
     webview_unlock();
 
@@ -2343,21 +1873,22 @@ static void on_wake(struct sxngui_app *app)
         }
         return;
     }
+    if (result.outcome == WEBVIEW_LOAD_PAGE)
+    {
+        webview_prepare_page(&result);
+        return;
+    }
+    if (result.outcome == WEBVIEW_LOAD_STYLES)
+    {
+        webview_commit_page(&g_pending_page, g_pending_document, result.sheets);
+        g_pending_document = NULL;
+        result.sheets = NULL;
+        return;
+    }
     g_nav.id = 0;
     webview_set_loading(0);
     switch (result.outcome)
     {
-    case WEBVIEW_LOAD_PAGE:
-        free(g_raw.data);
-        g_raw = result.body;
-        g_plain = result.plain;
-        memcpy(g_fetch_note, result.note, sizeof(g_fetch_note));
-        g_page_secure = result.secure;
-        memcpy(g_security, result.security, sizeof(g_security));
-        memcpy(g_path, result.location, sizeof(g_path));
-        g_has_file = 1;
-        webview_finish_load(nav.push, nav.hist_target);
-        return;
     case WEBVIEW_LOAD_FAILED:
         memcpy(g_status, result.message, sizeof(g_status));
         break;
@@ -2401,13 +1932,14 @@ static void webview_stop_worker(void)
     webview_lock();
     g_worker_quit = 1;
     g_request_ready = 0;
+    webview_free_sheets(g_request.sheets);
+    g_request.sheets = NULL;
     (void)sxn_event_set(g_cancel_event);
     webview_unlock();
     (void)sxn_event_set(g_work_event);
     if (sxn_wait_one(g_worker, 2000) >= 0)
     {
-        free(g_result.body.data);
-        g_result.body = (struct webview_bytes){0};
+        webview_clear_result(&g_result);
     }
 }
 
@@ -2482,13 +2014,19 @@ static int webview_open_location(const char *location, int push, int hist_target
         webview_refresh_nav();
         return -1;
     }
-    if (webview_load_file(strncmp(target, "file://", 7) == 0 ? target + 7 : target) != 0)
+    struct webview_result result = { .outcome = WEBVIEW_LOAD_PAGE };
+    const char *path = strncmp(target, "file://", 7) == 0 ? target + 7 : target;
+    const char *error = webview_read_file(path, &result.body);
+    if (error != NULL)
     {
+        snprintf(g_status, sizeof(g_status), "%s", error);
         webview_sync_address();
         webview_refresh_nav();
         return -1;
     }
-    webview_finish_load(push, hist_target);
+    snprintf(result.location, sizeof(result.location), "%s", path);
+    webview_begin_navigation(push, hist_target);
+    webview_prepare_page(&result);
     return 0;
 }
 
@@ -2805,10 +2343,6 @@ static int webview_bold_extra(int para, int start, int end)
     {
         return 0;
     }
-    if (g_paras[para].baseBold)
-    {
-        return end - start;
-    }
     for (i = g_paras[para].first_run; i < g_paras[para].first_run + g_paras[para].run_count; ++i)
     {
         int run_start;
@@ -2863,11 +2397,9 @@ static int webview_prefix_width(struct sx_painter *painter, const char *text, in
     return sx_painter_text_width(painter, piece);
 }
 
-/* Repaints the runs overlapping [start, end) of one laid-out line: run colour
- * (link blue wins), double-strike bold, underline; records link runs for
- * click hit-testing. Base colour and bold come from the paragraph. */
+/* Paints each styled run once and records clickable glyph spans. */
 static void webview_paint_runs(struct sx_painter *painter, int para, int start,
-    int end, int x, int y, int height, uint32_t baseColor, int baseBold)
+    int end, int x, int y, int height, uint32_t background)
 {
     const char *text = g_paras[para].text;
     int i;
@@ -2881,8 +2413,6 @@ static void webview_paint_runs(struct sx_painter *painter, int para, int start,
         char piece[WEBVIEW_LINE_BUFFER];
         int piece_length;
         uint32_t color;
-        int bold;
-        int underline;
 
         if (g_runs[i].start >= end)
         {
@@ -2894,16 +2424,11 @@ static void webview_paint_runs(struct sx_painter *painter, int para, int start,
         {
             continue;
         }
-        color = g_runs[i].hasColor ? g_runs[i].color : baseColor;
-        bold = g_runs[i].bold || baseBold;
-        underline = g_runs[i].underline;
-        if (g_runs[i].link >= 0)
-        {
-            color = g_link_color;
-            underline = 1;
-        }
-        x1 = x + webview_prefix_width(painter, text + start, run_start - start);
-        x2 = x + webview_prefix_width(painter, text + start, run_end - start);
+        color = webview_color_over(g_runs[i].color, background);
+        x1 = x + webview_prefix_width(painter, text + start, run_start - start) +
+            webview_bold_extra(para, start, run_start);
+        x2 = x + webview_prefix_width(painter, text + start, run_end - start) +
+            webview_bold_extra(para, start, run_end);
         piece_length = run_end - run_start;
         if (piece_length >= (int)sizeof(piece))
         {
@@ -2911,8 +2436,8 @@ static void webview_paint_runs(struct sx_painter *painter, int para, int start,
         }
         memcpy(piece, text + run_start, (size_t)piece_length);
         piece[piece_length] = '\0';
-        webview_draw_run_text(painter, x1, y, piece, color, bold);
-        if (underline && x2 > x1)
+        webview_draw_run_text(painter, x1, y, piece, color, g_runs[i].bold);
+        if (g_runs[i].underline && x2 > x1)
         {
             sx_painter_hline(painter, x1, y + height - 3, x2 - x1, color);
         }
@@ -3036,8 +2561,7 @@ static void on_paint(struct sxngui_app *app)
                 int width = sx_painter_text_width(painter, line) +
                             webview_bold_extra(index, offset, next);
                 int draw_x = line_x;
-                uint32_t baseColor = g_paras[index].hasColor ? g_paras[index].color
-                                                             : g_page_fg;
+                uint32_t background = g_paras[index].hasBg ? g_paras[index].bg : g_page_bg;
 
                 if (g_paras[index].align == 1)
                 {
@@ -3056,10 +2580,14 @@ static void on_paint(struct sxngui_app *app)
                     sx_painter_fill_rect(painter,
                         sx_rect_make(text_left, y, avail, height), g_paras[index].bg);
                 }
-                webview_draw_run_text(painter, draw_x, y, line, baseColor,
-                    g_paras[index].baseBold);
-                webview_paint_runs(painter, index, offset, next, draw_x, y,
-                    height, baseColor, g_paras[index].baseBold);
+                if (g_paras[index].run_count == 0)
+                {
+                    sx_painter_draw_text(painter, draw_x, y, line, SXGUI_COLOR_TEXT);
+                }
+                else
+                {
+                    webview_paint_runs(painter, index, offset, next, draw_x, y, height, background);
+                }
             }
             y += height;
             offset = next;
@@ -3732,6 +3260,10 @@ int main(int argc, char **argv)
             g_worker_stack + sizeof(g_worker_stack), 0);
     }
     webview_download_init(&g_app);
+    if (webengine_init() == 0)
+    {
+        g_ua = webengine_stylesheet("", (const uint8_t *)k_webview_ua, sizeof(k_webview_ua) - 1, false);
+    }
 
     webview_show_welcome();
     /* argv carries an optional resolver override plus the location to open:
@@ -3786,6 +3318,15 @@ int main(int argc, char **argv)
 
         webview_stop_worker();
         webview_download_shutdown();
+        webview_clear_result(&g_pending_page);
+        dom_node_unref(g_pending_document);
+        webview_free_sheets(g_sheets);
+        dom_node_unref(g_document);
+        if (g_ua != NULL)
+        {
+            css_stylesheet_destroy(g_ua);
+        }
+        webengine_fini();
         webview_reset_document();
         free(g_raw.data);
         free(g_cur.data);
