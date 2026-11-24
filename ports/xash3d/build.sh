@@ -253,6 +253,7 @@ ref_probe="$stage/bin/$REF_PROBE"
     -o "$ref_probe" "${runtime[@]}" "$objects/renderer_probe.o"
 
 programs=("$PROGRAM" "$FS_PROBE" "$DEDICATED" "$REF_PROBE")
+manifest_dirs=(--manifest-dir "$PORT/overlay")
 outputs=("$probe" "$module" "$fs_probe" "$fs_module" "$dedicated" "$ref_probe" "$ref_module")
 notices=()
 for notice in "$PORT"/licenses/*.notice; do
@@ -270,7 +271,7 @@ for program in "${programs[@]}"; do
     program_args+=(--program "$program")
 done
 "$PYTHON" "$ROOT/tools/gen_sxe_resources.py" --project-root "$ROOT" \
-    --output-dir "$resources" --manifest-dir "$PORT/overlay" --build-id "$build_id" "${program_args[@]}"
+    --output-dir "$resources" "${manifest_dirs[@]}" --build-id "$build_id" "${program_args[@]}"
 for program in "${programs[@]}"; do
     "$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$stage/bin/$program" --name "$program" \
         --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"

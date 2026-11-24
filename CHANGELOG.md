@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Xash3D appears under Games in All Programs.** Started with no arguments,
+  `xash3d-client` saves to the desktop profile and reads the game and `ref_soft.so`
+  from `/games/xash3d`. [Port notes](ports/xash3d/README.md#graphical-client).
+
 - **Xash3D installs Half-Life data with `--valve PATH`.** It packs loose
   sounds for SxFS and uses the desktop profile for settings and saves.
   [Port notes](ports/xash3d/README.md#graphical-client).

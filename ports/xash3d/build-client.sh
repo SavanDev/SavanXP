@@ -97,4 +97,5 @@ done
     --gc-sections -o "$menu_module" "${client_objects[@]}"
 
 programs+=("${client_bin##*/}")
+manifest_dirs+=(--manifest-dir "$PORT/overlay/client")
 outputs+=("$client_bin" "$client_module" "$menu_module")

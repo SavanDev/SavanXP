@@ -6,6 +6,7 @@ from __future__ import annotations
 import fcntl
 import os
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ from run_smoke import make_smoke_copy, stop_process, tail
 from shoot_session import Failure, Qmp, Session, wait_for_marker
 
 GAME_PATH = Path("users/user/games/xash3d")
+TAG_CATEGORY = 0x0103
 SAVE_NAME = "savanxp_client"
 
 
@@ -27,6 +29,36 @@ def run(command, **kwargs):
 def require_marker(serial: Path, marker: str, timeout: float) -> None:
     if not wait_for_marker(serial, marker, timeout=timeout):
         raise RuntimeError(f"guest did not report {marker!r}")
+
+
+def elf_section(data: bytes, wanted: str) -> bytes | None:
+    if data[:4] != b"\x7fELF" or data[4] != 2:
+        raise RuntimeError("not an ELF64 file")
+    shoff, = struct.unpack_from("<Q", data, 0x28)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
+    sections = [struct.unpack_from("<IIQQQQ", data, shoff + index * shentsize)
+                for index in range(shnum)]
+    names = sections[shstrndx]
+    for name, _kind, _flags, _addr, offset, size in sections:
+        start = names[4] + name
+        if data[start:data.index(b"\0", start)].decode() == wanted:
+            return data[offset:offset + size]
+    return None
+
+
+def menu_category(program: Path) -> str | None:
+    """The CATEGORY record that lists a program in All Programs (SXE_FORMAT.md)."""
+    blob = elf_section(program.read_bytes(), ".sxmeta")
+    if blob is None or blob[:4] != b"SXME":
+        raise RuntimeError(f"{program.name} carries no .sxmeta")
+    header_bytes, _blob_bytes, count = struct.unpack_from("<HII", blob, 6)
+    offset = header_bytes
+    for _ in range(count):
+        tag, _flags, length = struct.unpack_from("<HHI", blob, offset)
+        if tag == TAG_CATEGORY:
+            return blob[offset + 8:offset + 8 + length].decode("utf-8")
+        offset += 8 + ((length + 3) & ~3)
+    return None
 
 
 def drive_client(session: Session, serial: Path, timeout: float) -> None:
@@ -116,6 +148,10 @@ def test_client(valve: Path, output: Path) -> None:
 
         extracted = work / "extracted"
         run([cli, "extract", disk, extracted])
+        if menu_category(extracted / "bin/xash3d-client") != "Games":
+            raise RuntimeError("xash3d-client is not listed under Games in All Programs")
+        if menu_category(extracted / "bin/xash3d-dedicated") is not None:
+            raise RuntimeError("xash3d-dedicated is listed in All Programs")
         if (extracted / GAME_PATH / "valve/userconfig.cfg").read_text(encoding="ascii") != bindings:
             raise RuntimeError("installing the game changed the existing user configuration")
         save = extracted / GAME_PATH / "valve/save" / f"{SAVE_NAME}.sav"

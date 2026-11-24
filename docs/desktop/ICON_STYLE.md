@@ -9,8 +9,9 @@ joins the set instead of standing out from it.
 
 - `assets/desktop/icons/16x16` and `32x32`: the system catalog (`icon=<name>`).
 - The icons that travel next to a manifest through `icon_file=`: the media
-  player (`subsystems/posix/userland/mediaplayer/icon*.png`) and the Doom and
-  Celeste ports (`ports/*/overlay/icon*.png`).
+  player (`subsystems/posix/userland/mediaplayer/icon*.png`) and the Doom,
+  Celeste and Xash3D ports (`ports/*/overlay/icon*.png`, and
+  `ports/xash3d/overlay/client/` for the Xash3D client).
 - The media player's folder and speaker glyphs, which the taskbar tray also
   uses for the volume icon.
 - Image Viewer's separately drawn application icons and 20x20 toolbar objects

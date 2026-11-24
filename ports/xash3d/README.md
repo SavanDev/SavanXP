@@ -60,29 +60,35 @@ installer at your unpacked Half-Life `valve` directory.
 ./build.sh run
 ```
 
-Run this from the SavanXP Command Prompt.
+Start Xash3D from Start > All Programs > Games, or run this from the
+SavanXP Command Prompt.
 
 ```sh
-start /bin/xash3d-client -basedir /users/user/games/xash3d -rodir /games/xash3d -ref /games/xash3d/ref_soft.so
+start /bin/xash3d-client
 ```
 
 `--valve` installs data under `/games/xash3d/valve`. The installer packs
-loose sounds into a PAK to fit the SxFS inode limit. The client mounts this
-directory read-only and writes settings and saves under
-`/users/user/games/xash3d/valve`, which persists across builds and installs.
+loose sounds into a PAK to fit the SxFS inode limit and creates
+`/users/user/games/xash3d/valve`. When that profile directory exists and no
+`-basedir` is given, the client uses it as the writable game tree, mounts
+`/games/xash3d` read-only and loads `/games/xash3d/ref_soft.so`. Settings and
+saves persist across builds and installs.
 
-Use `--client` when you only need the client binaries. With an existing
-writable `/games/xash3d/valve` tree, `start /bin/xash3d-client` still works.
-For another writable tree, use `-basedir` and put `ref_soft.so` next to its
-`valve` directory or pass its absolute path with `-ref`.
+Use `--client` when you only need the client binaries. Without the profile
+directory, the client uses `/games/xash3d` as a writable game tree. For
+another tree, use `-basedir`. A renderer next to that tree's `valve`
+directory takes precedence over the installed one, and `-ref` accepts an
+absolute path.
 
 The client uses software rendering and captures relative mouse input during
 gameplay. Audio playback, voice chat, HTTP downloads and legacy GoldSrc
 authentication are pending.
 
-The client smoke runs the same installer on an isolated SxFS copy. It loads
-`c0a0`, checks the save and restore in the writable profile, and verifies
-that the installer preserved the profile's settings file. Serial output and
+The client smoke runs the same installer on an isolated SxFS copy. It starts
+the client without directory arguments, loads `c0a0`, checks the save and
+restore in the writable profile, and verifies that the installer preserved
+the profile's settings file. It also checks that the client is listed under
+Games in All Programs and the dedicated server is not. Serial output and
 screenshots are kept in `build/smoke-logs/`.
 
 ```sh

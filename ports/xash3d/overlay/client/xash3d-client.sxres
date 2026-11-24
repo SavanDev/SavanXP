@@ -1,0 +1,27 @@
+# SXE resources for the Xash3D client. See docs/userland/SXE_FORMAT.md.
+#
+# Only the client gets a manifest: category= is what lists it under Games in
+# All Programs, and the probes and the dedicated server stay out of the menu.
+# build.sh passes this directory only when it builds the client.
+#
+# The menu starts the program with no arguments. With none, the client saves
+# to games/xash3d in the desktop profile and reads the game from /games/xash3d
+# (patch 0005, FS_DetermineProfileDirectory).
+#
+# The icon is a wooden crate, drawn for this port in the house style
+# (docs/desktop/ICON_STYLE.md): 16x16 and 32x32 drawn separately. It carries
+# no Half-Life artwork or trademark.
+#
+# version= is the port revision, not a system version.
+name=Xash3D
+description=GoldSrc-compatible engine port for Half-Life
+version=0.1
+version_string=Xash3D FWGS 0119ead
+vendor=xash3d-fwgs
+accent=b07434
+icon_file=icon.png,icon-32.png
+category=Games
+
+# The engine modules and the user's installed game data. Saves and settings
+# live in the profile and are not part of it.
+data_dir=/games/xash3d

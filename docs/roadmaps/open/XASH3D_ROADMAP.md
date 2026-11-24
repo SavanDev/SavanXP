@@ -141,7 +141,9 @@ See [SxFS](SXFS_ROADMAP.md#current-baseline-and-the-version-boundary) and
 
 `ports/xash3d/build.sh --valve PATH` installs the user's game assets and packs
 loose sounds automatically. The client mounts the installed data read-only
-and uses the desktop profile for saves and settings.
+and uses the desktop profile for saves and settings. These are its defaults,
+because the Start menu launches a program without arguments. The client's
+`.sxres` lists it under Games in All Programs.
 [Port notes](../../../ports/xash3d/README.md#graphical-client)
 
 The `xash3d-dedicated` smoke starts the dedicated server with user-supplied

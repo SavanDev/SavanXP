@@ -1,4 +1,6 @@
-/* Launch the client in a window and expose its console to QEMU's serial log. */
+/* Launch the client in a window and expose its console to QEMU's serial log.
+ * It passes no -basedir, -rodir or -ref, as the Start menu does not, so the
+ * smoke covers the profile and /games/xash3d defaults. */
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -9,9 +11,7 @@ int main(void)
         return 1;
     close(serial);
     char *argv[] = {
-        "/bin/xash3d-client", "-basedir", "/users/user/games/xash3d",
-        "-rodir", "/games/xash3d", "-ref", "/games/xash3d/ref_soft.so",
-        "-windowed", "-width", "640", "-height", "480", "-dev", "2",
+        "/bin/xash3d-client", "-windowed", "-width", "640", "-height", "480", "-dev", "2",
         "+sv_lan", "1", "+map", "c0a0", 0,
     };
     return execv(argv[0], argv);

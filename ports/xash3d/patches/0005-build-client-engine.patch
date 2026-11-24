@@ -106,6 +106,81 @@ diff --git a/engine/client/mod_dbghulls.c b/engine/client/mod_dbghulls.c
 
  		ref.dllFuncs.Begin( TRI_POLYGON );
  		for( i = 0; i < poly->numpoints; i++ )
+diff --git a/engine/common/filesystem_engine.c b/engine/common/filesystem_engine.c
+--- a/engine/common/filesystem_engine.c
++++ b/engine/common/filesystem_engine.c
+@@ -26,6 +26,9 @@
+ #include "common.h"
+ #include "library.h"
+ #include "platform/platform.h"
++#if XASH_SAVANXP
++#include <sys/stat.h>
++#endif
+ 
+ #if XASH_WIN32
+ #include <direct.h>
+@@ -263,6 +266,31 @@
+ 	return true;
+ }
+ 
++#if XASH_SAVANXP && !XASH_DEDICATED
++static qboolean fs_profile_basedir;
++
++/*
++================
++FS_DetermineProfileDirectory
++
++A client started without arguments, as the Start menu does, writes saves and
++settings to games/xash3d in the desktop profile and reads the installed game
++from /games/xash3d. The installer creates that profile directory.
++================
++*/
++static qboolean FS_DetermineProfileDirectory( char *out, size_t size )
++{
++	const char *home = getenv( "HOME" );
++	struct stat st;
++
++	if( COM_StringEmptyOrNULL( home ) || !Q_strcmp( home, "/" ))
++		return false;
++
++	Q_snprintf( out, size, "%s/games/xash3d", home );
++	return stat( out, &st ) == 0 && S_ISDIR( st.st_mode );
++}
++#endif
++
+ static qboolean FS_DetermineRootDirectory( char *out, size_t size )
+ {
+ 	const char *path = getenv( "XASH3D_BASEDIR" );
+@@ -274,8 +302,14 @@
+ 	}
+ 
+ #if XASH_SAVANXP
+-	if( !_Sys_GetParmFromCmdLine( "-basedir", out, size ))
+-		Q_strncpy( out, "/games/xash3d", size );
++	if( _Sys_GetParmFromCmdLine( "-basedir", out, size ))
++		return true;
++#if !XASH_DEDICATED
++	fs_profile_basedir = FS_DetermineProfileDirectory( out, size );
++	if( fs_profile_basedir )
++		return true;
++#endif
++	Q_strncpy( out, "/games/xash3d", size );
+ 	return true;
+ #elif XASH_IOS
+ 	Q_strncpy( out, IOS_GetDocsDir(), size );
+@@ -350,6 +384,12 @@
+ #if XASH_IOS
+ 	Q_strncpy( out, IOS_GetExecDir(), size );
+ 	return true;
++#elif XASH_SAVANXP && !XASH_DEDICATED
++	if( fs_profile_basedir )
++	{
++		Q_strncpy( out, "/games/xash3d", size );
++		return true;
++	}
+ #endif
+ 
+ 	return false;
 diff --git a/engine/common/net_chan.c b/engine/common/net_chan.c
 --- a/engine/common/net_chan.c
 +++ b/engine/common/net_chan.c
@@ -226,19 +301,34 @@ diff --git a/engine/platform/platform.h b/engine/platform/platform.h
 diff --git a/engine/client/dll_int/ref_common.c b/engine/client/dll_int/ref_common.c
 --- a/engine/client/dll_int/ref_common.c
 +++ b/engine/client/dll_int/ref_common.c
-@@ -616,6 +616,18 @@
-
+@@ -20,6 +20,9 @@
+ #include "platform/platform.h"
+ #include "vid_common.h"
+ #include "imagelib.h"
++#if XASH_SAVANXP
++#include <unistd.h>
++#endif
+ 
+ struct ref_state_s ref;
+ 
+@@ -616,6 +619,23 @@
+ 
  static void R_GetRendererName( char *dest, size_t size, const char *opt )
  {
 +#if XASH_SAVANXP
-+	char root[MAX_OSPATH];
++	char root[MAX_OSPATH], name[MAX_OSPATH];
 +	if( opt[0] != '/' && g_fsapi.GetRootDirectory( root, sizeof( root )))
 +	{
 +		if( Q_strstr( opt, "." OS_LIB_EXT ))
-+			Q_snprintf( dest, size, "%s/%s", root, opt );
++			Q_strncpy( name, opt, sizeof( name ));
 +		else
-+			Q_snprintf( dest, size, "%s/%s%s." OS_LIB_EXT, root,
++			Q_snprintf( name, sizeof( name ), "%s%s." OS_LIB_EXT,
 +				Q_strncmp( opt, "ref_", 4 ) ? "ref_" : "", opt );
++		// A renderer next to the game tree wins. A profile tree has none, so
++		// the installed one in /games/xash3d is used.
++		Q_snprintf( dest, size, "%s/%s", root, name );
++		if( access( dest, F_OK ) != 0 )
++			Q_snprintf( dest, size, "/games/xash3d/%s", name );
 +		return;
 +	}
 +#endif
