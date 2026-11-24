@@ -10,6 +10,8 @@ Pushing and publishing are outward-facing: they happen only when the release
 was asked for. Everything below runs from a full clone (the build number is
 `git rev-list --count HEAD`), on `master`, with a clean tree that matches
 `origin/master`, after the area checks of `AGENTS.md` have passed on it.
+In Claude Code, `/release` (`.claude/skills/release/`) runs this document and
+stops for confirmation before the tag, the push and the GitHub release.
 
 ## Names
 
