@@ -8,6 +8,13 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+def configured_sudo(tools: Path) -> str:
+    try:
+        return (tools / "sudo.path").read_text().strip()
+    except FileNotFoundError:
+        return ""
+
+
 @contextmanager
 def claim(path: Path, *, writable: bool):
     expected = path.stat()

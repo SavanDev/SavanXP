@@ -14,7 +14,7 @@ import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
-from block_device import claim, device_identity, geometry, write_at
+from block_device import claim, configured_sudo, device_identity, geometry, write_at
 
 VOLUME_LIMIT = 1 << 30
 TRANSFER_SIZE = 1 << 20
@@ -581,10 +581,7 @@ def drop_sudo_privileges() -> None:
 
 def sync_with_sudo(args: argparse.Namespace, image: Path, identity: str, source: Path,
                    cli: Path, recovery: Path) -> int:
-    try:
-        sudo = (cli.parent / "sudo.path").read_text().strip()
-    except FileNotFoundError:
-        sudo = ""
+    sudo = configured_sudo(cli.parent)
     if not sudo:
         raise PermissionError(f"write access to {image} requires sudo or device permissions")
     command = [sudo, "--", sys.executable, "-E", "-S", "-B", str(Path(__file__).resolve()),

@@ -17,8 +17,8 @@ pacman -S clang lld llvm cmake ninja make python-pillow \
   qemu-system-x86 edk2-ovmf libisoburn
 ```
 
-`sudo` is optional for physical disk preparation and port installation. CMake
-finds it as `SAVANXP_SUDO`.
+`sudo` is optional for physical disk preparation, port installation and QEMU
+device access. CMake finds it as `SAVANXP_SUDO`.
 
 The Win32 subsystem's DLLs and test fixtures are PE32 images: Clang compiles
 them for `i686-pc-windows-msvc` (a target every LLVM build includes) and
@@ -162,10 +162,10 @@ cp -i build/disk.img /media/usb/savanxp.img
 For direct block access, use a USB drive already formatted with raw SxFS or
 select its SxFS partition. Use a stable link from `/dev/disk/by-id` (including
 the partition suffix if needed), since device names like `/dev/sde` can
-change. Unmount the volume in Linux before opening it and make sure your
-account has permission to read the device. Guest writes go to a temporary
-overlay. Add `--disk-write` and grant device write access to keep the changes.
-The launcher claims the device exclusively for the lifetime of QEMU.
+change. Unmount the volume in Linux first. The launcher asks for `sudo` if it
+lacks permission to open the device. It holds the device exclusively for the
+lifetime of QEMU, which runs as your user. Guest writes go to a temporary
+overlay by default. Add `--disk-write` to keep them on the device.
 
 ```bash
 ./build.sh run --disk-device /dev/disk/by-id/usb-YOUR_DEVICE

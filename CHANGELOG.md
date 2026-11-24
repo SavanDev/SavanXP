@@ -216,6 +216,9 @@ Cut-off notes:
 
 ### Changed
 
+- **`build.sh run` and `debug` can request `sudo` to open an SxFS device.** QEMU still runs with the invoking user's
+  permissions.
+
 - **Port installers can request `sudo` for a physical SxFS volume.** Builds, validation and recovery files stay under
   the invoking user's permissions.
 

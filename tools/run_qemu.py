@@ -6,12 +6,17 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import secrets
 import shutil
+import socket
+import struct
 import subprocess
+import sys
 from contextlib import ExitStack
 from pathlib import Path
 
-from block_device import claim
+from block_device import claim, configured_sudo, device_identity
+
 
 def find_qemu() -> str | None:
     override = os.environ.get("SAVANXP_QEMU")
@@ -401,27 +406,113 @@ def prepare_image(
     return code, vars_copy
 
 
-def open_disk_device(path: Path, writable: bool, resources: ExitStack) -> tuple[int, ...]:
-    """Claim the volume until QEMU exits and pass the same device by descriptor."""
+def claim_disk_fds(path: Path, writable: bool, resources: ExitStack) -> tuple[int, ...]:
+    fd = resources.enter_context(claim(path, writable=writable))
+    if not writable:
+        return (fd,)
+    # QEMU also requests a read-only descriptor for probes and reopening.
+    read_fd = os.open(f"/proc/self/fd/{fd}", os.O_RDONLY)
+    resources.callback(os.close, read_fd)
+    return fd, read_fd
+
+
+def check_sxfs(path: Path, fd: int) -> None:
+    # Match either superblock. The guest validates the volume at mount time.
+    header = os.pread(fd, 2 * SXFS_SECTOR_SIZE, 0)
+    if not (header.startswith(SXFS_SUPERBLOCK_MAGIC) or
+            header.startswith(SXFS_SUPERBLOCK_MAGIC, SXFS_SECTOR_SIZE)):
+        raise ValueError(f"{path} does not contain a raw SxFS volume. "
+                         "Select the SxFS partition on a partitioned disk.")
+
+
+def peer_uid(connection: socket.socket) -> int:
+    _, uid, _ = struct.unpack("iII", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+    return uid
+
+
+def receive_disk_fds(connection: socket.socket, writable: bool, identity: str,
+                     resources: ExitStack) -> tuple[int, ...]:
+    modes = (os.O_RDWR, os.O_RDONLY) if writable else (os.O_RDONLY,)
+    message, fds, flags, _ = socket.recv_fds(connection, 1, len(modes))
+    for fd in fds:
+        resources.callback(os.close, fd)
+        os.set_inheritable(fd, False)
+    if message != b"D" or flags & socket.MSG_CTRUNC or len(fds) != len(modes):
+        raise ValueError("the device opener did not return the expected descriptors")
+    for fd, mode in zip(fds, modes):
+        if (fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE) != mode or device_identity(os.fstat(fd)) != identity:
+            raise ValueError("the device opener returned a different device or access mode")
+    return tuple(fds)
+
+
+def sudo_disk_fds(path: Path, writable: bool, sudo: str, resources: ExitStack) -> tuple[int, ...]:
+    identity = device_identity(path.stat())
+    address = "savanxp-qemu-" + secrets.token_hex(16)
+    command = [sudo, "--", sys.executable, "-E", "-S", "-B", str(Path(__file__).resolve()),
+               "--send-disk-fds", str(path), identity, address]
+    if writable:
+        command.append("--disk-write")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+        listener.bind("\0" + address)
+        listener.listen(1)
+        print(f"Requesting sudo to open QEMU disk device {path}", flush=True)
+        result = subprocess.run(command, check=False)
+        if result.returncode:
+            raise ValueError(f"sudo could not open the device (exit {result.returncode})")
+        listener.settimeout(2)
+        connection, _ = listener.accept()
+        with connection:
+            connection.settimeout(2)
+            if peer_uid(connection) != 0:
+                raise ValueError("the device opener is not running as root")
+            return receive_disk_fds(connection, writable, identity, resources)
+
+
+def send_disk_fds(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Open a QEMU disk device and pass it to the launcher.")
+    parser.add_argument("path", type=Path)
+    parser.add_argument("identity")
+    parser.add_argument("address")
+    parser.add_argument("--disk-write", action="store_true")
+    args = parser.parse_args(argv)
     try:
-        fd = resources.enter_context(claim(path, writable=writable))
-        # Match either of the two SxFS superblocks. The guest validates the volume.
-        header = os.pread(fd, 2 * SXFS_SECTOR_SIZE, 0)
-        if not (header.startswith(SXFS_SUPERBLOCK_MAGIC) or
-                header.startswith(SXFS_SUPERBLOCK_MAGIC, SXFS_SECTOR_SIZE)):
-            raise SystemExit(f"QEMU disk device {path} does not contain a raw SxFS volume; "
-                             "select the SxFS partition on a partitioned disk")
-        if not writable:
-            return (fd,)
-        # QEMU also requests a read-only descriptor for probes and reopening.
-        read_fd = os.open(f"/proc/self/fd/{fd}", os.O_RDONLY)
-        resources.callback(os.close, read_fd)
-        return fd, read_fd
+        uid = int(os.environ.get("SUDO_UID", "0"))
+        if os.geteuid() != 0 or uid <= 0:
+            raise ValueError("the device opener must be started by sudo")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection, ExitStack() as resources:
+            connection.connect("\0" + args.address)
+            if peer_uid(connection) != uid:
+                raise ValueError("the QEMU launcher is not owned by the sudo user")
+            fds = claim_disk_fds(args.path, args.disk_write, resources)
+            if device_identity(os.fstat(fds[0])) != args.identity:
+                raise ValueError(f"{args.path} changed while waiting for sudo")
+            check_sxfs(args.path, fds[0])
+            socket.send_fds(connection, [b"D"], fds)
+    except (OSError, ValueError) as error:
+        parser.exit(1, f"QEMU device opener: {error}\n")
+    return 0
+
+
+def open_disk_device(path: Path, writable: bool, resources: ExitStack, sudo: str = "") -> tuple[int, ...]:
+    """Hold the exclusive device open until QEMU exits."""
+    try:
+        try:
+            with ExitStack() as direct:
+                fds = claim_disk_fds(path, writable, direct)
+                resources.callback(direct.pop_all().close)
+        except PermissionError:
+            if not sudo or os.geteuid() == 0:
+                raise
+            fds = sudo_disk_fds(path, writable, sudo, resources)
+        check_sxfs(path, fds[0])
+        return fds
     except (OSError, ValueError) as error:
         raise SystemExit(f"cannot open QEMU disk device {path}: {error}") from error
 
 
 def main() -> int:
+    if sys.argv[1:2] == ["--send-disk-fds"]:
+        return send_disk_fds(sys.argv[2:])
     parser = argparse.ArgumentParser()
     parser.add_argument("--image-root", required=True, type=Path)
     disk = parser.add_mutually_exclusive_group(required=True)
@@ -474,7 +565,8 @@ def main() -> int:
     disk_image = (args.disk_device or args.disk_image).resolve()
     with ExitStack() as resources:
         if args.disk_device is not None:
-            disk_fds = open_disk_device(disk_image, args.disk_write, resources)
+            sudo = configured_sudo(image_root.parent / "tools")
+            disk_fds = open_disk_device(disk_image, args.disk_write, resources, sudo)
             mode = "persistent writes" if args.disk_write else "temporary overlay"
             print(f"QEMU disk device: {disk_image} ({mode})", flush=True)
         else:
