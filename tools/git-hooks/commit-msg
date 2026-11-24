@@ -1,0 +1,5 @@
+#!/bin/sh
+# The commit message rules of AGENTS.md. Enabled once per clone with
+# `git config core.hooksPath tools/git-hooks`
+# (docs/build/BUILD_CMAKE.md, "Commit checks").
+exec python3 "$(git rev-parse --show-toplevel)/tools/check_commit.py" commit-msg "$1"

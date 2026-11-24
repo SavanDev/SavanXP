@@ -120,6 +120,33 @@ and restamp every program's SXE resources. The repository's `.claude/settings.js
 `SAVANXP_QUIET=1` for Claude Code; other agents should set it the same way.
 People and CI see the full output unless they ask for less.
 
+### Commit checks
+
+`tools/git-hooks/` holds a `pre-commit` and a `commit-msg` hook that run
+`tools/check_commit.py` over the rules of `AGENTS.md` a script can decide.
+Git does not take hooks from a repository by itself; each clone enables them
+once:
+
+```bash
+git config core.hooksPath tools/git-hooks
+```
+
+A commit stops when it:
+
+- adds or changes an `.exe`, `.dll`, `.wad` or `.log` file;
+- adds a line naming a home directory (`/home/<user>/`, `/Users/<user>/`) to
+  `build.sh`, the CMake files or a tools or ports shell script;
+- adds or edits a changelog entry longer than 6 lines or not opening in bold,
+  or leaves `[Unreleased]` with a subsection repeated or out of order;
+- changes the text of a released version's notes in `docs/changelog/` (a link
+  target may change) or removes one;
+- carries a link to an agent's session in its message.
+
+A commit that changes code without touching `CHANGELOG.md` gets a warning
+only: a refactor or a comment translation needs no entry, and only a person
+can tell. `git commit --no-verify` skips the hooks; an agent uses it only when
+the user says so. `check-commit-test` covers each rule.
+
 ### Preparing an installed disk
 
 `prepare-disk` builds a fresh GPT disk with a FAT32 EFI partition and a 1 GiB

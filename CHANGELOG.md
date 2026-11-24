@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Commit hooks check the mechanical rules of `AGENTS.md`.** `git config core.hooksPath tools/git-hooks`
+  enables them: binaries, WADs and logs, machine paths in tooling, changelog entry size and released notes.
+  [Commit checks](docs/build/BUILD_CMAKE.md#commit-checks).
+
 - **`build.sh --quiet` (or `SAVANXP_QUIET=1`) prints a summary instead of the full build output.**
   Logs go to `build/build-logs/`; failures show Ninja's errors and ctest's failed or skipped tests.
   `--verbose` overrides it. [Quiet output](docs/build/BUILD_CMAKE.md#quiet-output).

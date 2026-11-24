@@ -1495,6 +1495,11 @@ add_test(NAME build-log-summary-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/build_log_summary_test.py"
             --root "${CMAKE_SOURCE_DIR}")
+# The commit hooks (docs/build/BUILD_CMAKE.md, "Commit checks").
+add_test(NAME check-commit-test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/host/check_commit_test.py"
+            --root "${CMAKE_SOURCE_DIR}")
 add_test(NAME qemu-disk-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/qemu_disk_test.py")

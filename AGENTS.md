@@ -181,6 +181,11 @@ imports it, so Claude Code loads the rules when it works in the area.
 - Do not push without being asked.
 - Stage files by name. `git add -A` and `git add .` pick up whatever a tool
   left in the tree.
+- The hooks in `tools/git-hooks/` check the mechanical part of these rules
+  (`git config core.hooksPath tools/git-hooks`, once per clone). A commit they
+  stop is fixed, never retried with `--no-verify` unless the user says so; a
+  warning about a missing changelog entry asks whether the change is visible
+  from the outside.
 
 ## Files that never enter the repository
 
