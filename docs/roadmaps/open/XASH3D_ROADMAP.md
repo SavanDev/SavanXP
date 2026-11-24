@@ -1,8 +1,9 @@
 # Xash3D FWGS — the port that pays for `dlopen` and SxGL
 
-> **Status: the dedicated server runs in step 2.** It loads the HLSDK and
-> filesystem modules, starts Half-Life's `c0a0` and answers IPv4 UDP queries
-> through POSIX. The client, `ref_soft` and the save round-trip are pending.
+> **Status: the dedicated server and software renderer run in step 2.**
+> The server loads the HLSDK and filesystem modules, starts Half-Life's
+> `c0a0` and answers IPv4 UDP queries through POSIX. The renderer draws a
+> test frame in a POSIX window. The full client and save round-trip are pending.
 >
 > Reviewed 2026-11-14 against the rest of the system. Since it was written,
 > SxGL ([SXGL_ROADMAP.md](../done/SXGL_ROADMAP.md), batches 0–4), user-space
@@ -108,6 +109,10 @@ The next slice builds Xash3D's `filesystem_stdio.so` against the SavanXP POSIX
 SDK. `xash3d-filesystem` checks the module's interfaces, game metadata and loose
 and PAK reads from SxFS.
 
+The `xash3d-renderer` smoke loads `ref_soft.so` through `GetRefAPI`, renders
+color swatches through the software blitter and checks the composited pixels
+in a POSIX window. It exercises the 2D drawing path without game data.
+
 - `engine/platform/savanxp/`: video over `gfx_open`/`gfx_present_region`, input
   from the window's key and mouse events, sound through `sx_audio_mixer` (which
   reaches the shared mixer, [AUDIO_DAEMON.md](../../media/AUDIO_DAEMON.md), the
@@ -115,7 +120,10 @@ and PAK reads from SxFS.
 - A C++ runtime in the SDK for the HLSDK modules (see above), with a test of
   its own: a global object whose constructor runs under `dlopen`.
 - `hlsdk-portable` built with the same SDK, producing the client and server
-  libraries.
+  libraries. The client uses FreeVGUI, whose controls need C++ RTTI. The
+  client and menu modules still need a reproducible SDK build.
+- Relative mouse motion for in-game camera control needs POSIX SDK support
+  for [window pointer capture](../../desktop/WM_SUBSYSTEM.md#pointer-capture).
 - The game data (`valve/`) is the user's, installed under `/games`, like the
   Doom IWAD. Nothing proprietary is vendored or built.
 

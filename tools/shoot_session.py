@@ -3984,6 +3984,27 @@ def _wav_residue_s(path, seconds=6.0, rate=48000, window_s=0.02, min_crossings=8
     return (last_nonzero - last_active) / float(rate)
 
 
+def scenario_xash3d_renderer(s):
+    """Check the RGB swatches drawn by ref_soft on the composited desktop."""
+    s.run("/bin/xash3d-refprobe", wait=0)
+    # ref_soft quantizes RGB to five red, six green and five blue bits before blitting.
+    red, green, blue = (222, 0, 0), (0, 223, 0), (0, 0, 222)
+    row = bytes(red) * 64 + bytes(3 * 32) + bytes(green) * 64 + bytes(3 * 32) + bytes(blue) * 64
+
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        image = s.shot("xash3d-renderer")
+        offset = image.tobytes().find(row)
+        if offset >= 0 and offset % 3 == 0:
+            y, x = divmod(offset // 3, image.width)
+            region = image.crop((x, y, x + 256, y + 64))
+            if region.tobytes() == row * 64:
+                print("  ref_soft: verified red, green and blue swatches and black spacing")
+                return
+        time.sleep(1)
+    raise Failure("ref_soft did not paint the expected color swatches")
+
+
 def scenario_doom(s):
     """DoomGeneric sobre el escritorio real: entra al juego, suena y se cierra.
 
@@ -4669,6 +4690,7 @@ SCENARIOS = {
     "sxgldiag": scenario_sxgldiag,
     "sound_capture": scenario_sound_capture,
     "doom": scenario_doom,
+    "xash3d-renderer": scenario_xash3d_renderer,
     "audio_ports_offline": scenario_audio_ports_offline,
     "desktop": scenario_desktop,
     "mediaplayer_unavailable": scenario_mediaplayer_unavailable,

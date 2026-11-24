@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Xash3D dedicated server, its modules and the POSIX probes.
+# Build the Xash3D dedicated server, renderer, modules and POSIX probes.
 set -euo pipefail
 
 PORT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -22,6 +22,8 @@ MODULE=hl_savanxp_amd64.so
 FS_PROBE=xash3d-fsprobe
 FS_MODULE=filesystem_stdio.so
 DEDICATED=xash3d-dedicated
+REF_MODULE=ref_soft.so
+REF_PROBE=xash3d-refprobe
 
 case "${1:-}" in
     "") ;;
@@ -81,7 +83,7 @@ suffix="$scratch/suffix"
 objects="$scratch/objects"
 resources="$scratch/sxe"
 stage="$scratch/stage"
-mkdir -p "$objects/fs" "$objects/dedicated" "$stage/bin" "$stage/games/xash3d/valve/dlls"
+mkdir -p "$objects/fs" "$objects/dedicated" "$objects/ref" "$stage/bin" "$stage/games/xash3d/valve/dlls"
 extract_source hlsdk-portable "$commit" "" "$source"
 extract_source xash3d-fwgs "$engine_commit" engine_ "$engine"
 extract_source library-suffix "$suffix_commit" suffix_ "$suffix"
@@ -210,18 +212,42 @@ mapfile -t setjmp_runtime < <(savanxp_sdk_runtime_objects "$SYSROOT" pie setjmp)
 "${SAVANXP_LINK_CC:-$CC}" "${link_flags[@]}" \
     -o "$dedicated" "${runtime[@]}" "${setjmp_runtime[@]}" "${dedicated_objects[@]}"
 
+ref_flags=(
+    "${fs_common[@]}" -std=gnu11 -Wno-pointer-sign
+    -I "$engine/ref/common" -I "$engine/ref/soft"
+    -I "$engine/pm_shared" -I "$engine/engine/common" -I "$engine/engine/client"
+)
+echo "xash3d: building the POSIX software renderer"
+ref_objects=()
+for file in "$engine"/ref/{common,soft}/*.c "$engine"/public/*.c "$suffix/src/library_suffix.c"; do
+    name=${file##*/}
+    object="$objects/ref/${name%.c}.o"
+    "$CC" -c "$file" -o "$object" "${ref_flags[@]}" -DREF_DLL=1 -fvisibility=hidden
+    ref_objects+=("$object")
+done
+ref_module="$stage/games/xash3d/$REF_MODULE"
+"$LD" -shared -soname "$REF_MODULE" -z max-page-size=0x1000 --build-id=none \
+    --gc-sections -o "$ref_module" "${ref_objects[@]}"
+
+ref_probe="$stage/bin/$REF_PROBE"
+"$CC" -c "$PORT/overlay/renderer_probe.c" -o "$objects/renderer_probe.o" "${ref_flags[@]}"
+"${SAVANXP_LINK_CC:-$CC}" "${link_flags[@]}" \
+    -o "$ref_probe" "${runtime[@]}" "$objects/renderer_probe.o"
+
 build_id=$(git -C "$ROOT" rev-parse --short HEAD)
 "$PYTHON" "$ROOT/tools/gen_sxe_resources.py" --project-root "$ROOT" \
     --output-dir "$resources" --manifest-dir "$PORT/overlay" --build-id "$build_id" \
-    --program "$PROGRAM" --program "$FS_PROBE" --program "$DEDICATED"
+    --program "$PROGRAM" --program "$FS_PROBE" --program "$DEDICATED" --program "$REF_PROBE"
 "$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$probe" --name "$PROGRAM" \
     --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
 "$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$fs_probe" --name "$FS_PROBE" \
     --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
 "$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$dedicated" --name "$DEDICATED" \
     --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
+"$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$ref_probe" --name "$REF_PROBE" \
+    --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
 
-cp -- "$probe" "$module" "$fs_probe" "$fs_module" "$dedicated" "$WORK/"
+cp -- "$probe" "$module" "$fs_probe" "$fs_module" "$dedicated" "$ref_probe" "$ref_module" "$WORK/"
 if ((INSTALL)); then
     "$PYTHON" "$ROOT/tools/stage_licenses.py" stage --root "$ROOT" --out "$stage/system/licenses" \
         "$PORT"/licenses/*.notice
@@ -231,3 +257,4 @@ fi
 echo "xash3d: built $WORK/$PROGRAM and $WORK/$MODULE"
 echo "xash3d: built $WORK/$FS_PROBE and $WORK/$FS_MODULE"
 echo "xash3d: built $WORK/$DEDICATED"
+echo "xash3d: built $WORK/$REF_PROBE and $WORK/$REF_MODULE"

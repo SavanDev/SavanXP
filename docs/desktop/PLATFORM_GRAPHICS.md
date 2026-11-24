@@ -96,6 +96,11 @@ parity:** `sxgui_app.c` has no `on_wake` yet; it is to gain one (a flag its
 Dialogs work the same way: `struct sxgui_dialog_host` gives them a window of
 their own, and each frame is the host that provides it.
 
+**Pending, POSIX parity:** the POSIX window API still needs pointer capture
+and relative-motion events for ports such as
+[Xash3D](../roadmaps/open/XASH3D_ROADMAP.md). SUN exposes both through
+`sxnwm_set_pointer_capture` and `SAVANXP_WM_EVENT_POINTER_MOTION`.
+
 ### The clipboard's formats
 
 The host above carries the clipboard's text only. Its formats

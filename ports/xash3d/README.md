@@ -1,10 +1,10 @@
 # Xash3D FWGS
 
-The [dedicated server port](../../docs/roadmaps/open/XASH3D_ROADMAP.md#step-2--the-engine-with-ref_soft-and-a-savanxp-backend)
-builds the Xash3D dedicated server, HLSDK Portable's Half-Life game DLL
-and Xash3D's filesystem module for amd64 SavanXP POSIX. `UPSTREAM` pins the
-source archives by revision and SHA-256. The archives and built files are
-kept under `build/ports/xash3d/`.
+The [port](../../docs/roadmaps/open/XASH3D_ROADMAP.md#step-2--the-engine-with-ref_soft-and-a-savanxp-backend)
+builds the Xash3D dedicated server, HLSDK Portable's Half-Life game DLL,
+and Xash3D's filesystem and software renderer modules for amd64 SavanXP POSIX.
+`UPSTREAM` pins the source archives by revision and SHA-256. The archives and
+built files are kept under `build/ports/xash3d/`.
 
 ```sh
 ./build.sh build
@@ -34,6 +34,20 @@ prints the size and FNV-1a hash of each file it reads.
 
 The modules use a small C++ ABI runtime that uses the program's allocator and
 runs module destructors on normal process exit.
+
+## Software renderer
+
+`/bin/xash3d-refprobe` loads `/games/xash3d/ref_soft.so` and draws three
+color swatches in a POSIX window. The desktop smoke verifies the swatches in
+QEMU's framebuffer. It uses no Half-Life files.
+
+```sh
+./build.sh smoke xash3d-renderer
+```
+
+Run `start /bin/xash3d-refprobe` from the SavanXP Command Prompt to display
+the same test frame. The full client, main menu and in-game rendering are
+pending.
 
 ## Dedicated server
 

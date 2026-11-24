@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **Xash3D's software renderer draws in a POSIX window.** `ref_soft.so` and
+  `xash3d-refprobe` provide a rendering check without game data. [Port notes](ports/xash3d/README.md).
+
 - **Xash3D starts a dedicated Half-Life server over IPv4 UDP.** `xash3d-dedicated`
   loads `c0a0` and answers server-info queries using POSIX. [Port notes](ports/xash3d/README.md).
 
