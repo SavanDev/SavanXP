@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **QEMU can use a personal SxFS volume.** `build.sh run` and `debug` accept `--disk-image` or `--disk-device`.
+  Physical volumes use a temporary overlay unless `--disk-write` is given.
+
 - **The Xash3D port can build and load Half-Life's server module.** `ports/xash3d/build.sh` builds HLSDK Portable
   and `xash3d-module` verifies game initialization through SavanXP's POSIX loader. [Port notes](ports/xash3d/README.md).
 

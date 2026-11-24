@@ -1456,6 +1456,9 @@ add_test(NAME smoke-runner-layout-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/smoke_runner_layout_test.py"
             --root "${CMAKE_SOURCE_DIR}")
+add_test(NAME qemu-disk-test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/host/qemu_disk_test.py")
 add_test(NAME tcp-echo-server-test
     COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/host/tcp_echo_server_test.py"

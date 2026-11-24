@@ -88,6 +88,43 @@ is `savanxp`; `savanxp_iso` adds the hybrid BIOS/UEFI ISO. `build.sh clean`
 removes generated CMake outputs but preserves `build/disk.img` and
 `build/external/`.
 
+### Personal volumes in QEMU
+
+`run` and `debug` can build the local kernel and initramfs and boot with an
+existing SxFS root of your choice. For a USB drive with a mounted FAT volume,
+shut down the development VM and copy its image to a file on the drive once.
+The guest's writes go to the copy. This example uses `/media/usb` as the
+mount point.
+
+```bash
+./build.sh build
+cp -i build/disk.img /media/usb/savanxp.img
+./build.sh run --disk-image /media/usb/savanxp.img
+```
+
+For direct block access, use a USB drive already formatted with raw SxFS or
+select its SxFS partition. Use a stable link from `/dev/disk/by-id` (including
+the partition suffix if needed), since device names like `/dev/sde` can
+change. Unmount the volume in Linux before opening it and make sure your
+account has permission to read the device. Guest writes go to a temporary
+overlay. Add `--disk-write` and grant device write access to keep the changes.
+The launcher claims the device exclusively for the lifetime of QEMU.
+
+```bash
+./build.sh run --disk-device /dev/disk/by-id/usb-YOUR_DEVICE
+./build.sh run --disk-device /dev/disk/by-id/usb-YOUR_DEVICE --disk-write
+```
+
+Both options use the applications and libraries already on the selected
+volume. To refresh the internal userland on a personal **image file**, close
+QEMU and run the same additive update as the normal build.
+
+```bash
+./build.sh build
+python3 tools/sxfs_sync.py --image /media/usb/savanxp.img \
+    --source build/diskfs --cli build/tools/sxfs-cli
+```
+
 ## External applications
 
 The external POSIX builder is deliberately separate from the in-tree CMake

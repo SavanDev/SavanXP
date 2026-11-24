@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
 import os
 import shutil
+import stat
 import subprocess
+from contextlib import ExitStack
 from pathlib import Path
 
 
@@ -38,6 +41,8 @@ def find_ovmf(name: str) -> Path | None:
 
 
 DISK_BUSES = ("ahci", "ide", "nvme")
+SXFS_SECTOR_SIZE = 512
+SXFS_SUPERBLOCK_MAGIC = b"SXFS\0\0\0\0"
 
 # A tablet is what a QEMU window wants (the host pointer maps straight onto
 # it). Next to the PS/2 mouse it is wrong for relative scenarios: QEMU sends
@@ -140,6 +145,8 @@ def build_qemu_args(
     usb_host: str = "xhci",
     iommu: str = "none",
     rng: bool = True,
+    disk_fds: tuple[int, ...] = (),
+    disk_snapshot: bool = False,
 ) -> list[str]:
     """Build the common QEMU command used by normal and smoke launches.
 
@@ -235,7 +242,14 @@ def build_qemu_args(
             f"unix:{qmp_path},server=on,wait=off",
         ]
 
-    drive = f"if=none,id=svdisk,media=disk,format=raw,file={disk_image}"
+    disk_path = str(disk_image).replace(",", ",,")
+    drive = f"if=none,id=svdisk,media=disk,format=raw,file={disk_path}"
+    if disk_fds:
+        for fd in disk_fds:
+            args_list += ["-add-fd", f"fd={fd},set=0"]
+        drive = "if=none,id=svdisk,media=disk,format=raw,file=/dev/fdset/0,file.driver=host_device"
+        if disk_snapshot:
+            drive += ",snapshot=on"
     if virtio and extra_disks:
         # virtio_blk drives a single device (vblk0) today.
         raise SystemExit("extra disks need the AHCI machine: run without --virtio")
@@ -388,10 +402,44 @@ def prepare_image(
     return code, vars_copy
 
 
+def open_disk_device(path: Path, writable: bool, resources: ExitStack) -> tuple[int, ...]:
+    """Claim the volume until QEMU exits and pass the same device by descriptor."""
+    try:
+        expected = path.stat()
+        if not stat.S_ISBLK(expected.st_mode):
+            raise SystemExit(f"QEMU disk device {path} is not a block device")
+        access = os.O_RDWR if writable else os.O_RDONLY
+        fd = os.open(path, access | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK)
+        resources.callback(os.close, fd)
+        opened = os.fstat(fd)
+        if not stat.S_ISBLK(opened.st_mode) or opened.st_rdev != expected.st_rdev:
+            raise SystemExit(f"QEMU disk device {path} changed while opening it")
+        # Match either of the two SxFS superblocks. The guest validates the volume.
+        header = os.pread(fd, 2 * SXFS_SECTOR_SIZE, 0)
+        if not (header.startswith(SXFS_SUPERBLOCK_MAGIC) or
+                header.startswith(SXFS_SUPERBLOCK_MAGIC, SXFS_SECTOR_SIZE)):
+            raise SystemExit(f"QEMU disk device {path} does not contain a raw SxFS volume; "
+                             "select the SxFS partition on a partitioned disk")
+        if not writable:
+            return (fd,)
+        # QEMU also requests a read-only descriptor for probes and reopening.
+        read_fd = os.open(f"/proc/self/fd/{fd}", os.O_RDONLY)
+        resources.callback(os.close, read_fd)
+        return fd, read_fd
+    except OSError as error:
+        detail = ("device is busy; unmount it and close other users first"
+                  if error.errno == errno.EBUSY else error.strerror)
+        raise SystemExit(f"cannot open QEMU disk device {path}: {detail}") from error
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--image-root", required=True, type=Path)
-    parser.add_argument("--disk-image", required=True, type=Path)
+    disk = parser.add_mutually_exclusive_group(required=True)
+    disk.add_argument("--disk-image", type=Path, help="a regular SxFS image file")
+    disk.add_argument("--disk-device", type=Path, help="an existing raw SxFS block device")
+    parser.add_argument("--disk-write", action="store_true",
+                        help="write to --disk-device instead of using a temporary overlay")
     parser.add_argument("--ovmf-code", type=Path)
     parser.add_argument("--ovmf-vars", type=Path)
     parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg")
@@ -427,12 +475,32 @@ def main() -> int:
     args = parser.parse_args()
     if not 1 <= args.smp <= 32:
         parser.error("--smp must be between 1 and 32")
+    if args.disk_write and args.disk_device is None:
+        parser.error("--disk-write requires --disk-device")
 
     qemu = find_qemu()
     if not qemu:
         raise SystemExit("qemu-system-x86_64 was not found in PATH")
     image_root = args.image_root.resolve()
-    disk_image = args.disk_image.resolve()
+    disk_image = (args.disk_device or args.disk_image).resolve()
+    with ExitStack() as resources:
+        if args.disk_device is not None:
+            disk_fds = open_disk_device(disk_image, args.disk_write, resources)
+            mode = "persistent writes" if args.disk_write else "temporary overlay"
+            print(f"QEMU disk device: {disk_image} ({mode})", flush=True)
+        else:
+            if not disk_image.is_file():
+                raise SystemExit(f"QEMU disk image {disk_image} is not a regular file; "
+                                 "use --disk-device for a block device")
+            disk_fds = ()
+            lock_path = disk_image.with_name(disk_image.name + ".lock")
+            lock = resources.enter_context(lock_path.open("a+"))
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        return launch_qemu(qemu, args, image_root, disk_image, disk_fds)
+
+
+def launch_qemu(qemu: str, args: argparse.Namespace, image_root: Path,
+                disk_image: Path, disk_fds: tuple[int, ...]) -> int:
     code, vars_copy = prepare_image(
         image_root=image_root,
         disk_image=disk_image,
@@ -465,14 +533,13 @@ def main() -> int:
         usb_pointer=args.usb_pointer,
         usb_host=args.usb_host,
         iommu=args.iommu,
+        disk_fds=disk_fds,
+        disk_snapshot=not args.disk_write,
     )
     args_list[0] = qemu
 
     print("qemu:", " ".join(args_list), flush=True)
-    lock_path = disk_image.with_name(disk_image.name + ".lock")
-    with lock_path.open("a+") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        return subprocess.run(args_list, check=False).returncode
+    return subprocess.run(args_list, pass_fds=disk_fds, check=False).returncode
 
 
 if __name__ == "__main__":

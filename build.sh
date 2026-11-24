@@ -17,6 +17,8 @@ IOMMU=${SAVANXP_IOMMU:-}
 BOOT_OPTIONS=${SAVANXP_BOOT_OPTIONS:-}
 HEADLESS=${SAVANXP_HEADLESS:-OFF}
 JOBS=${SAVANXP_JOBS:-}
+QEMU_DISK_OPTION=()
+QEMU_DISK_WRITE=0
 SMOKE_SCENARIO=""
 SMOKE_TIMEOUT=120
 SMOKE_TIMEOUT_SET=0
@@ -80,6 +82,19 @@ while [[ $# -gt 0 ]]; do
             HEADLESS=ON
             shift
             ;;
+        --disk-device|--disk-image)
+            [[ $# -ge 2 ]] || { echo "build.sh: $1 requires a path" >&2; exit 2; }
+            [[ ${#QEMU_DISK_OPTION[@]} -eq 0 ]] || {
+                echo "build.sh: specify only one QEMU disk" >&2
+                exit 2
+            }
+            QEMU_DISK_OPTION=("$1" "$2")
+            shift 2
+            ;;
+        --disk-write)
+            QEMU_DISK_WRITE=1
+            shift
+            ;;
         --iommu)
             [[ $# -ge 2 ]] || { echo "build.sh: --iommu requires none, amd or intel" >&2; exit 2; }
             IOMMU=$2
@@ -130,6 +145,9 @@ Options:
   --gl              virtio hardware with virtio-vga-gl (virgl); needs virglrenderer
   --usb             add a QEMU xHCI controller with a USB keyboard and tablet
   --headless        do not open a graphical QEMU window
+  --disk-image PATH   run/debug with an existing SxFS image file
+  --disk-device PATH  run/debug with an existing SxFS block device, using a temporary overlay
+  --disk-write        persist guest writes when using --disk-device
   --iommu none|amd|intel  add an emulated IOMMU (smokes: overrides the scenario's)
   --boot-options S  extra kernel boot options for the development image
   --jobs N          pass a parallelism limit to Ninja
@@ -294,6 +312,16 @@ case "$COMMAND" in
         exit 2
         ;;
 esac
+
+if [[ "$COMMAND" != run && "$COMMAND" != debug ]] &&
+    (( ${#QEMU_DISK_OPTION[@]} || QEMU_DISK_WRITE )); then
+    echo "build.sh: QEMU disk options require run or debug" >&2
+    exit 2
+fi
+if (( QEMU_DISK_WRITE )) && [[ "${QEMU_DISK_OPTION[0]:-}" != --disk-device ]]; then
+    echo "build.sh: --disk-write requires --disk-device" >&2
+    exit 2
+fi
 
 # Some ports own a multi-phase host smoke (build/install + more than one QEMU
 # boot).  The catalog only names the port entry point; the port keeps the
@@ -563,13 +591,19 @@ case "$COMMAND" in
         ;;
     run|debug)
         configure
-        build_target savanxp
+        if (( ${#QEMU_DISK_OPTION[@]} )); then
+            build_target savanxp_image
+        else
+            build_target savanxp
+            QEMU_DISK_OPTION=(--disk-image "$OUTPUT_ROOT/disk.img")
+        fi
         QEMU_ARGS=(
             --image-root "$OUTPUT_ROOT/image"
-            --disk-image "$OUTPUT_ROOT/disk.img"
+            "${QEMU_DISK_OPTION[@]}"
             --accel "$ACCEL"
             --smp "$SMP"
         )
+        (( QEMU_DISK_WRITE == 0 )) || QEMU_ARGS+=(--disk-write)
         [[ "$VIRTIO" == ON ]] && QEMU_ARGS+=(--virtio)
         [[ "$GL" == ON ]] && QEMU_ARGS+=(--gl)
         [[ "$USB" == ON ]] && QEMU_ARGS+=(--usb)
