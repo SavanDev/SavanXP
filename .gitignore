@@ -20,6 +20,8 @@ __pycache__/
 # Official ports are versioned; local experiments remain ignored.
 ports/*
 !ports/README.md
+!ports/AGENTS.md
+!ports/CLAUDE.md
 !ports/doomgeneric/
 !ports/doomgeneric/**
 !ports/ffmpeg/

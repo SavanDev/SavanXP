@@ -1,5 +1,27 @@
 # AGENTS
 
+How to work in this repository, for people and AI agents alike. This file has
+the rules for the whole tree. `kernel/`, `system/`, `subsystems/posix/`,
+`subsystems/win32/`, `subsystems/linux/` and `ports/` each have an `AGENTS.md`
+of their own with the documents to read and the scenarios to run there; read
+it before changing that area. Each sits next to a `CLAUDE.md` that only
+imports it, so Claude Code loads the rules when it works in the area.
+
+## Commands
+
+```bash
+./build.sh build             # kernel, userland and disk image
+./build.sh test              # CTest host tests
+./build.sh smoke smoke       # core QEMU smoke; ./build.sh smoke --list names the rest
+./build.sh run               # boot in QEMU
+./build.sh iso               # bootable ISO
+./tools/shoot.sh             # visual desktop check over QMP
+./tools/build-user.sh --source path/to/app --name app
+```
+
+`README.md` has the full list and the requirements;
+[`docs/build/BUILD_CMAKE.md`](docs/build/BUILD_CMAKE.md) covers the build.
+
 ## Toolchain
 
 - The native build uses `build.sh` and CMake, resolving tools from the host
@@ -17,6 +39,9 @@
 - Do not add entries to a version section that is already closed (dated): that
   rewrites published history. If `[Unreleased]` does not exist at the top of
   the file, create it.
+- `CHANGELOG.md` holds only `[Unreleased]`; each released version is its own
+  file in `docs/changelog/`, listed under `## Previous versions`. Those files
+  are never edited, and adding an entry needs nothing from them.
 - The release commit (`release(vX.Y.Z): ...`) is the only one that renames
   `[Unreleased]` to the new version with a date.
 - Right after a release, master bumps `include/shared/version.h` to the next
@@ -55,9 +80,9 @@
 
 ## Documentation language
 
-- All repository documentation (`README.md`, `CHANGELOG.md`, `AGENTS.md`,
-  `docs/`, `assets/README.md`) is written in English, so the project is
-  readable by anyone who finds it.
+- All repository documentation (`README.md`, `CHANGELOG.md`, every
+  `AGENTS.md` and `CLAUDE.md`, `docs/`, `assets/README.md`) is written in
+  English, so the project is readable by anyone who finds it.
 
 ## Code language
 
@@ -127,10 +152,14 @@
 
 ## Before changing a subsystem
 
-- Read its document first. `docs/README.md` lists every document with one
-  line on what it covers; the one for the area being changed states the
-  decisions and the bugs behind the current code, and a change that
-  contradicts it is wrong until the document changes too.
+- Read its document first. The area's `AGENTS.md` names the usual ones, and
+  `docs/README.md` lists every document with one line on what it covers; the
+  one for the area being changed states the decisions and the bugs behind the
+  current code, and a change that contradicts it is wrong until the document
+  changes too.
+- Some documents run past a thousand lines (`WIN32.md`, `SHARED_LIBRARIES.md`,
+  `SMP_ROADMAP.md`). List their headings (`grep -n '^#' FILE`) and read the
+  sections the change touches, not the whole file.
 - A commit does what was asked. No refactors, renames, reformatting or
   dependency changes in files the task does not need. Something worth fixing
   that is outside the task is reported, not fixed on the way.
@@ -196,7 +225,7 @@
 
 Every change: `./build.sh build` succeeds, then `./build.sh test` (the host
 tests) passes. The exception is a change that touches only documentation
-(the Markdown files listed under "Documentation language", and `CLAUDE.md`):
+(the Markdown files listed under "Documentation language"):
 nothing in the build reads them, so it needs no build, no tests and no
 scenario. On top of that, by area — these are the scenarios CI runs on every
 push, plus the ones specific to each area:
@@ -206,7 +235,7 @@ push, plus the ones specific to each area:
 | Kernel, POSIX runtime or userland | `./build.sh smoke smoke` |
 | Native API, SUN, a syscall | `./build.sh smoke native-test` |
 | `windowd`, `compositord`, the desktop | `./build.sh smoke windowd-smoke`, `./build.sh smoke taskbar-smoke` |
-| `libsxgui`, the loader, a program that draws | `./build.sh smoke sxgui-smoke` (see below) |
+| `libsxgui`, the loader, a program that draws | `./build.sh smoke sxgui-smoke` (see `system/AGENTS.md`) |
 | The loader, shared libraries | also `dltest`, `sonametest`, `sonametest-newer`, `ldfailtest`, `diamondtest` |
 | SxFS, the disk image, `build.sh`, CMake, the SDK | the persistence check below |
 | Power-off, reboot, `/dev/power`, the writeback queue | `./build.sh smoke power-smoke`, `./build.sh smoke power-button-smoke` |
@@ -240,20 +269,6 @@ push, plus the ones specific to each area:
   `/games/doom/doom1.wad`, are still present.
 - For a repeatable isolated check, run
   `./tools/verify_doom_persistence.sh` (or pass `--wad` for a real IWAD).
-
-## Minimum verification for the shared library work
-
-- `./build.sh smoke sxgui-smoke` whenever `libsxgui.so.0.4`, the loader, or a
-  program that draws is touched. It is the only check that looks at what SxGUI
-  puts on screen, and it is what caught a toolkit that stopped painting.
-  `smoke` and `calc-smoke` only prove the loader works, not that the toolkit
-  draws. It asserts the glyphs of the editor's lines and a taskbar label, not
-  just that a pixel moved.
-- When checking that something visibly changed, confirm the rebuilt binary is the
-  one being tested. `./build.sh build` output matters: a build that fails leaves
-  the previous binary in the image and every scenario still passes. When a visual
-  check does not fail, extract the binary from `build/disk.img` and look at it
-  before believing the check.
 
 ## Visual checks with `tools/shoot.sh`
 
