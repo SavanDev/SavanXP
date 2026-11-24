@@ -216,6 +216,8 @@ Cut-off notes:
 
 ### Changed
 
+- **`prepare-disk` can request `sudo` for a physical disk.** The build and staging run with the user's permissions.
+
 - **Web Viewer** is built only when the OpenSSL port is (`ports/openssl/build.sh` before `./build.sh build`).
 - **Web Viewer loads through `sxnhttp` (N4 complete):** HTTP/1.1 with chunked bodies; contradictory framing and
   truncated bodies fail with their message and keep the page; `text/plain` shows as text; a non-200 status is

@@ -29,21 +29,20 @@ def claim(path: Path, *, writable: bool):
         os.close(fd)
 
 
-def geometry(fd: int) -> tuple[int, int]:
+def device_node(device: int) -> Path:
+    return Path(f"/sys/dev/block/{os.major(device)}:{os.minor(device)}").resolve(strict=True)
+
+
+def device_geometry(node: Path) -> tuple[int, int]:
     """Return capacity in bytes and logical sector size."""
-    device = os.fstat(fd).st_rdev
-    node = Path(f"/sys/dev/block/{os.major(device)}:{os.minor(device)}").resolve(strict=True)
     disk = node.parent if (node / "partition").exists() else node
     sectors = int((node / "size").read_text())  # Linux sysfs uses 512-byte units.
     logical_size = int((disk / "queue/logical_block_size").read_text())
     return sectors * 512, logical_size
 
 
-def require_whole_disk(fd: int):
-    device = os.fstat(fd).st_rdev
-    node = Path(f"/sys/dev/block/{os.major(device)}:{os.minor(device)}")
-    if (node / "partition").exists():
-        raise ValueError("select the whole disk to prepare it")
+def geometry(fd: int) -> tuple[int, int]:
+    return device_geometry(device_node(os.fstat(fd).st_rdev))
 
 
 def rescan(fd: int):

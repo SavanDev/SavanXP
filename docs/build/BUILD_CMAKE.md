@@ -17,6 +17,8 @@ pacman -S clang lld llvm cmake ninja make python-pillow \
   qemu-system-x86 edk2-ovmf libisoburn
 ```
 
+`sudo` is optional for `prepare-disk`. CMake finds it as `SAVANXP_SUDO`.
+
 The Win32 subsystem's DLLs and test fixtures are PE32 images: Clang compiles
 them for `i686-pc-windows-msvc` (a target every LLVM build includes) and
 `lld-link`, from the same `lld` package as `ld.lld`, links them, and `llvm-rc`,
@@ -101,7 +103,9 @@ command builds the SDK and populates the root from the base system tree.
 
 The image is a standalone UEFI hard disk for QEMU with OVMF. To prepare a
 dedicated USB drive instead, select the **whole disk**, unmount all its
-volumes in Linux, and make sure your account has write access to the device.
+volumes in Linux, and run `build.sh` as your regular user. If the device
+requires more permissions, the command asks for `sudo` after building and
+staging the data. Only the device write runs with elevated permissions.
 `--erase` authorizes replacing its partition table and the filesystems in the
 new layout. Use the stable device link, without a partition suffix.
 

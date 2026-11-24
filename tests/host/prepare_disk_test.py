@@ -9,6 +9,7 @@ import sys
 import tempfile
 import uuid
 import zlib
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -83,12 +84,55 @@ def check_port_writes(cli: Path, root: Path, capacity: int, work: Path) -> None:
         os.close(fd)
 
 
+def check_device_elevation(work: Path) -> None:
+    device = Path("/dev/test-disk")
+    target = prepare_disk.DiskTarget(123, 2 << 30, 456)
+    sudo = "/test/path/sudo"
+    with (patch.object(prepare_disk, "claim", side_effect=PermissionError("denied")),
+          patch.object(prepare_disk, "install") as install,
+          patch.object(subprocess, "run") as run):
+        prepare_disk.install_device(device, target, work, sudo)
+        run.assert_called_once_with(
+            [sudo, "--", sys.executable, "-E", "-S", "-B", str(ROOT / "tools/prepare_disk.py"),
+             "--write-staged", str(device), "123", str(2 << 30), "456", str(work)], check=True)
+        install.assert_not_called()
+
+    with (patch.object(prepare_disk, "claim", return_value=nullcontext(11)),
+          patch.object(os, "fstat"), patch.object(prepare_disk, "inspect_disk", return_value=target),
+          patch.object(prepare_disk, "rescan"), patch.object(prepare_disk, "install") as install,
+          patch.object(subprocess, "run") as run):
+        prepare_disk.install_device(device, target, work, sudo)
+        install.assert_called_once_with(11, target.capacity, work, physical=True)
+        run.assert_not_called()
+
+        install.side_effect = PermissionError("write denied after opening the device")
+        try:
+            prepare_disk.install_device(device, target, work, sudo)
+        except PermissionError:
+            run.assert_not_called()
+        else:
+            raise AssertionError("a write failure should leave without retrying as root")
+
+    replacement = prepare_disk.DiskTarget(target.number, target.capacity, target.sequence + 1)
+    with (patch.object(prepare_disk, "claim", return_value=nullcontext(11)),
+          patch.object(os, "fstat"), patch.object(prepare_disk, "inspect_disk", return_value=replacement),
+          patch.object(prepare_disk, "install") as install):
+        try:
+            prepare_disk.install_device(device, target, work, sudo)
+        except ValueError as error:
+            assert "changed since staging began" in str(error)
+            install.assert_not_called()
+        else:
+            raise AssertionError("a replaced disk must be rejected")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tools", type=Path, required=True)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="savanxp-install-test-") as temporary:
         work = Path(temporary)
+        check_device_elevation(work)
         boot = work / "boot-tree"
         for name in ("EFI/BOOT/BOOTX64.EFI", "boot/kernel.elf", "boot/initramfs.cpio"):
             file = boot / name
@@ -102,7 +146,7 @@ def main() -> int:
         command = [sys.executable, ROOT / "tools/prepare_disk.py", "--output", image,
                    "--boot", boot, "--diskfs", base, "--tools", args.tools,
                    "--config", ROOT / "boot/limine-installed.conf", "--sync", ROOT / "tools/sxfs_sync.py",
-                   "--python", sys.executable, "--root-sectors", str(sectors)]
+                   "--python", sys.executable, "--root-sectors", str(sectors), "--sudo", work / "no-sudo"]
         output = subprocess.check_output(command, text=True)
         assert check_gpt(image) in output
         again = subprocess.run(command, text=True, capture_output=True)
