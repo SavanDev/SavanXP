@@ -82,9 +82,8 @@ typedef uint64_t Elf64_Xword;
  * addresses where the code looks for them. An image relocated without it has
  * pointers to the value zero. */
 #define R_X86_64_RELATIVE 8
-/* The absolute 64-bit address of an IMPORTED symbol, stored in data. It is the
- * same as a GLOB_DAT -- resolve by name and write the value -- and appears when
- * code takes &symbol and keeps it in a table. */
+/* An absolute address stored in data, such as a C++ vtable pointer. The
+ * relocation writes the resolved symbol address plus its signed addend. */
 #define R_X86_64_64 1
 
 typedef struct {
@@ -743,6 +742,7 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
             return 0;
         }
         const unsigned name_index = (unsigned)(rela.r_info >> 32);
+        const Elf64_Addr addend = type == R_X86_64_64 ? (Elf64_Addr)rela.r_addend : 0;
         Elf64_Sym symbol;
         copy_bytes(g_libs[slot].dynsym + (name_index * sizeof(Elf64_Sym)), &symbol, sizeof(symbol));
 
@@ -753,16 +753,13 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         Elf64_Addr target = 0;
         const int owner = resolve_for(slot, g_libs[slot].dynstr + symbol.st_name, &target);
         if (owner < 0 && (symbol.st_info >> 4) == STB_WEAK) {
-            /* A weak reference nothing defines is zero, as ELF says: the code
-             * that made it weak tests the address before using it. It is how
-             * a library asks for something a program may or may not provide
-             * (sxgui_default_host), and how it keeps working with a program
-             * built before that something existed. */
+            /* An undefined weak symbol has address zero. A library can use
+             * this to query an optional symbol such as sxgui_default_host. */
             Elf64_Addr* where = (Elf64_Addr*)map_of(slot, rela.r_offset);
             if (where == 0) {
                 return 0;
             }
-            *where = 0;
+            *where = addend;
             continue;
         }
         if (owner < 0) {
@@ -799,7 +796,7 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
             report_unmapped(image_name(slot), g_libs[slot].dynstr + symbol.st_name, rela.r_offset);
             return 0;
         }
-        *where = value;
+        *where = value + addend;
     }
     if (skipped != 0) {
         /* One line, not one per symbol: the load's message already named the

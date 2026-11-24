@@ -29,6 +29,9 @@ int dl_probe(void)
     return 100;
 }
 
+const char dl_base_bytes[] = "addend";
+const char* const dl_base_middle = dl_base_bytes + 2;
+
 #elif defined(DLMOD_ONE)
 int dl_probe(void)
 {
@@ -42,9 +45,12 @@ int dl_one_only(void)
 
 #elif defined(DLMOD_TWO)
 extern int dl_probe(void);
+extern const char dl_base_bytes[];
 
 int dl_two_probe(void)
 {
     return dl_probe();
 }
+
+const char* const dl_two_middle = dl_base_bytes + 3;
 #endif

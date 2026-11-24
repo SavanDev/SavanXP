@@ -320,6 +320,9 @@ changes not released yet; each released version has its own file in
 
 ### Fixed
 
+- **The POSIX loader applies nonzero `R_X86_64_64` addends (SDK 2.0).**
+  Shared libraries such as the Xash3D HLSDK client can use C++ virtual tables.
+
 - **`build.sh smoke --smoke-command` no longer aborts on an unset variable, and a command named `false`
   or `off` is staged.** CMake read such a command as an empty one and staged no smoke specification.
 

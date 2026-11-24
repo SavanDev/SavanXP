@@ -101,6 +101,18 @@ int main(void)
         return fail("two's call to dl_probe bound to the wrong library");
     }
 
+    /* A C++ vtable pointer is a symbol plus the offset of its first slot.
+     * Check a relocation to the same image and one to a DT_NEEDED library. */
+    const char* bytes = dlsym(base, "dl_base_bytes");
+    const char* const* base_middle = dlsym(base, "dl_base_middle");
+    const char* const* two_middle = dlsym(two, "dl_two_middle");
+    if (bytes == 0 || base_middle == 0 || *base_middle != bytes + 2) {
+        return fail("an absolute relocation lost the addend on a local definition");
+    }
+    if (two_middle == 0 || *two_middle != bytes + 3) {
+        return fail("an absolute relocation lost the addend on an imported definition");
+    }
+
     /* dlsym walks the handle's dependency tree: two does not define dl_probe,
      * its dependency does. */
     if ((probe_fn)dlsym(two, "dl_probe") != base_probe) {

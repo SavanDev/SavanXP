@@ -1429,10 +1429,11 @@ out of building it and failing to load it.
 ### One thing the loader was missing, found by this library
 
 **`R_X86_64_64` was not implemented.** A data slot holding the address of an
-*imported* symbol — `&func` stored in a table — needs a runtime resolution, and
-the loader aborted the load on it. There are 253 of them. It is the same work as
-`R_X86_64_GLOB_DAT`: look the name up, write the value. The diagnostic added in
-the earlier phase named the type on its own, which is how it was found.
+imported symbol needs a runtime resolution. FFmpeg carries 253 such slots.
+This relocation writes the resolved symbol address plus the signed ELF
+addend. Xash3D's HLSDK client exposed the need for nonzero addends. Its C++
+vtable pointers reference an address inside the table, past the metadata.
+`dltest` checks the addend for both a local definition and an imported one.
 
 ### Symbol lookup was tried and rejected
 
