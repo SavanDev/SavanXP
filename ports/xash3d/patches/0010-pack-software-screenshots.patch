@@ -1,0 +1,39 @@
+diff --git a/ref/soft/r_glblit.c b/ref/soft/r_glblit.c
+--- a/ref/soft/r_glblit.c
++++ b/ref/soft/r_glblit.c
+@@ -744,8 +744,9 @@
+ 	int  width = 0, height = 0;
+
+ 	rgbdata_t *r_shot = Mem_Calloc( r_temppool, sizeof( rgbdata_t ));
+-	r_shot->width = vid.width;
+-	r_shot->height = vid.height;
++	// The screenshot is tightly packed, even when the window surface has padding.
++	r_shot->width = swblit.rotate ? vid.height : vid.width;
++	r_shot->height = swblit.rotate ? vid.width : vid.height;
+ 	r_shot->flags = IMAGE_HAS_COLOR;
+ 	r_shot->type = PF_BGRA_32; // was RGBA
+ 	r_shot->size = r_shot->width * r_shot->height * gEngfuncs.Image_GetPFDesc( r_shot->type )->bpp;
+@@ -760,12 +761,12 @@
+ 		for( int v = 0; v < vid.height; v++ )
+ 		{
+ 			uint start = vid.rowbytes * ( vid.height - v - 1 );
+-			uint d = swblit.stride - v - 1;
++			uint d = r_shot->width - v - 1;
+
+ 			for( int u = 0; u < vid.width; u++ )
+ 			{
+ 				pbuf[d] = Get8888PixelAt( u, start );
+-				d += swblit.stride;
++				d += r_shot->width;
+ 			}
+ 		}
+ 	}
+@@ -776,7 +777,7 @@
+ 		for( int v = 0; v < vid.height; v++ )
+ 		{
+ 			uint start = vid.rowbytes * ( vid.height - v - 1 );
+-			uint dstart = swblit.stride * v;
++			uint dstart = r_shot->width * v;
+
+ 			for( int u = 0; u < vid.width; u++ )
+ 			{

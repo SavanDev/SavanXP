@@ -4,6 +4,7 @@ copyright=Half Life 1 SDK Copyright(c) Valve Corp.
 origin=https://github.com/FWGS/hlsdk-portable
 version=commit b562490665c48d273f352d62228577cd003c4d92
 used-in=/games/xash3d/valve/dlls/hl_savanxp_amd64.so
+used-in=/games/xash3d/valve/cl_dlls/client_savanxp_amd64.so
 used-in=/bin/xash3d-probe
 source=ports/xash3d in https://github.com/SavanDev/SavanXP (upstream pin, patch and overlay)
 provenance=HLSDK Portable

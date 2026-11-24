@@ -1,0 +1,9 @@
+name=Xash3D MainUI
+license=GPL-3.0-or-later
+copyright=Uncle Mike and the authors named in the source files
+origin=https://github.com/FWGS/mainui_cpp
+version=commit 93e89c780e795f07da9d14ec51529a04c712f913
+used-in=/games/xash3d/valve/cl_dlls/menu_savanxp_amd64.so
+source=ports/xash3d in https://github.com/SavanDev/SavanXP
+provenance=Xash3D client libraries
+text=ports/xash3d/licenses/GPL-3.0.txt

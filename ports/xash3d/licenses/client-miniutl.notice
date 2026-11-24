@@ -1,0 +1,9 @@
+name=MiniUTL
+license=BSD-3-Clause
+copyright=Valve Software and Flying With Gauss
+origin=https://github.com/FWGS/miniutl
+version=commit 048a416f4c54c501dfd728fd792bfdc9f2883f51
+used-in=/games/xash3d/valve/cl_dlls/menu_savanxp_amd64.so
+source=ports/xash3d in https://github.com/SavanDev/SavanXP
+provenance=Xash3D client libraries
+text=ports/xash3d/licenses/client/miniutl.txt

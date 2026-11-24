@@ -1,0 +1,56 @@
+diff --git a/cl_dll/entity.cpp b/cl_dll/entity.cpp
+--- a/cl_dll/entity.cpp
++++ b/cl_dll/entity.cpp
+@@ -7,7 +7,7 @@
+
+ // Client side entity management functions
+
+-#include <memory.h>
++#include <string.h>
+
+ #include "hud.h"
+ #include "cl_util.h"
+diff --git a/cl_dll/geiger.cpp b/cl_dll/geiger.cpp
+--- a/cl_dll/geiger.cpp
++++ b/cl_dll/geiger.cpp
+@@ -37,7 +37,6 @@
+
+ 	gHUD.AddHudElem( this );
+
+-	srand( (unsigned)time( NULL ) );
+
+ 	return 1;
+ }
+@@ -168,16 +167,16 @@
+ 			i = 2;
+ 		}
+
+-		flvol = ( flvol * ( ( rand() & 127 ) ) / 255 ) + 0.25f; // UTIL_RandomFloat( 0.25f, 0.5f );
++		flvol = ( flvol * ( ( gEngfuncs.pfnRandomLong( 0, 127 ) ) ) / 255 ) + 0.25f; // UTIL_RandomFloat( 0.25f, 0.5f );
+
+-		if( ( rand() & 127 ) < pct || ( rand() & 127 ) < pct )
++		if( ( gEngfuncs.pfnRandomLong( 0, 127 ) ) < pct || ( gEngfuncs.pfnRandomLong( 0, 127 ) ) < pct )
+ 		{
+ 			//S_StartDynamicSound( -1, 0, rgsfx[rand() % i], r_origin, flvol, 1.0f, 0, 100 );
+ 			char sz[256];
+
+-			int j = rand() & 1;
++			int j = gEngfuncs.pfnRandomLong( 0, 1 );
+ 			if( i > 2 )
+-				j += rand() & 1;
++				j += gEngfuncs.pfnRandomLong( 0, 1 );
+
+ 			sprintf( sz, "player/geiger%d.wav", j + 1 );
+ 			PlaySound( sz, flvol );
+diff --git a/cl_dll/message.cpp b/cl_dll/message.cpp
+--- a/cl_dll/message.cpp
++++ b/cl_dll/message.cpp
+@@ -223,7 +223,7 @@
+ 			m_parms.fadeBlend = 0;	// Pure source (on)
+ 		m_parms.charTime = 0;
+
+-		if( m_parms.pMessage->effect == 1 && ( rand() % 100 ) < 10 )
++		if( m_parms.pMessage->effect == 1 && gEngfuncs.pfnRandomLong( 0, 99 ) < 10 )
+ 			m_parms.charTime = 1;
+ 		break;
+ 	case 2:

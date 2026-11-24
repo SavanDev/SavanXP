@@ -304,6 +304,23 @@ which is why both go into the registry.
   `/games/xash3d/ref_soft.so` when the standalone port is installed. Game data is
   supplied separately.
 
+### Xash3D client libraries
+
+- Origin: [FreeVGUI](https://github.com/FWGS/freevgui) at
+  `73bfb4659f3d9eb28b79e5b26baea8c6b888d5eb`, BSD-3-Clause, for the HLSDK
+  client. [libcxxrt](https://github.com/libcxxrt/libcxxrt) at
+  `a6f71cbc3a1e1b8b9df241e081fa0ffdcde96249`, BSD-2-Clause, supplies type
+  metadata and dynamic casts for FreeVGUI.
+- Origin: [MainUI](https://github.com/FWGS/mainui_cpp) at
+  `93e89c780e795f07da9d14ec51529a04c712f913`, GPL-3.0-or-later, and its
+  [MiniUTL](https://github.com/FWGS/miniutl) dependency at
+  `048a416f4c54c501dfd728fd792bfdc9f2883f51`, BSD-3-Clause.
+- Versioned: archive checksums and SavanXP patches under `ports/xash3d/`.
+- Decision: `Adopt` the optional menu and FreeVGUI modules. `Selective port`
+  for the libcxxrt RTTI sources. The license notices travel with the modules.
+- Distributed in: `/bin/xash3d-client` and the libraries under
+  `/games/xash3d/valve/cl_dlls` from `ports/xash3d/build.sh --client`.
+
 ### Alpine Xlib profile libraries
 
 - Origin: X.Org's [individual library releases](https://www.x.org/releases/individual/lib/)

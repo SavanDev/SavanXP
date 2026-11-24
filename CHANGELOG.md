@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Xash3D offers a graphical Half-Life client for POSIX.** Build with
+  `ports/xash3d/build.sh --client` for MainUI, the HLSDK client and software
+  rendering. [Port notes](ports/xash3d/README.md#graphical-client).
+
 - **POSIX windows can capture the pointer (SDK 2.0).** Use
   `gfx_set_pointer_capture` and `gfx_poll_window_motion` to read relative mouse
   input while the window is active. [SDK reference](subsystems/posix/sdk/v1/REFERENCE.md#graphics-runtime).

@@ -1,0 +1,259 @@
+diff --git a/common/backends.h b/common/backends.h
+--- a/common/backends.h
++++ b/common/backends.h
+@@ -22,6 +22,7 @@
+ #define VIDEO_FBDEV   3
+ #define VIDEO_DOS     4
+ #define VIDEO_PS4     5
++#define VIDEO_SAVANXP 6
+
+ // audio backends (XASH_SOUND)
+ #define SOUND_NULL     0
+diff --git a/common/defaults.h b/common/defaults.h
+--- a/common/defaults.h
++++ b/common/defaults.h
+@@ -34,6 +34,8 @@
+ 		#define XASH_VIDEO     VIDEO_SDL
+ 		#define XASH_INPUT     INPUT_SDL
+ 		#define XASH_SOUND     SOUND_SDL
++	#elif XASH_SAVANXP
++		#define XASH_VIDEO VIDEO_SAVANXP
+ 	#elif XASH_LINUX // we are building for Linux without SDL, only framebuffer is supported for now
+ 		#define XASH_VIDEO     VIDEO_FBDEV
+ 		#define XASH_INPUT     INPUT_EVDEV
+@@ -141,7 +143,9 @@
+ */
+
+ // Platform overrides
+-#if XASH_WIN32
++#if XASH_SAVANXP
++	#define DEFAULT_FULLSCREEN "0"
++#elif XASH_WIN32
+ 	// set up windowed by default on Windows to avoid problems with
+ 	// Xbox Game Bar
+ 	#define DEFAULT_FULLSCREEN   "0"
+diff --git a/engine/client/cl_main.c b/engine/client/cl_main.c
+--- a/engine/client/cl_main.c
++++ b/engine/client/cl_main.c
+@@ -23,7 +23,9 @@
+ #include "library.h"
+ #include "vid_common.h"
+ #include "pm_local.h"
++#if !XASH_SAVANXP
+ #include "multi_emulator.h"
++#endif
+
+ #define CL_CONNECTION_TIMEOUT 15.0f
+ #define CL_CONNECTION_RETRIES 5
+@@ -1177,6 +1179,7 @@
+ 	Info_SetValueForKey( protinfo, "cdkey", key, protinfosize );
+ }
+
++#if !XASH_SAVANXP
+ static void CL_WriteSteamTicket( sizebuf_t *send )
+ {
+ 	string key;
+@@ -1203,8 +1206,13 @@
+ 	*(uint32_t*)(cls.steamid + 4) = LittleLong( ((uint32_t*)buf)[5] );
+ }
+
++#endif
++
+ void CL_SendGoldSrcConnectPacket( netadr_t adr, int challenge, const void *ticket, size_t ticketlen )
+ {
++#if XASH_SAVANXP
++	Con_Printf( S_ERROR "Legacy GoldSrc authentication is unavailable on SavanXP.\n" );
++#else
+ 	sizebuf_t send;
+ 	byte send_buf[2048];
+ 	char protinfo[MAX_INFO_STRING];
+@@ -1234,6 +1242,7 @@
+
+ 	NET_SendPacket( NS_CLIENT, MSG_GetNumBytesWritten( &send ), MSG_GetData( &send ), adr );
+ 	Con_Printf( "Trying to connect with GoldSrc 48 protocol\n" );
++#endif
+ }
+
+ /*
+diff --git a/engine/client/identification.c b/engine/client/identification.c
+--- a/engine/client/identification.c
++++ b/engine/client/identification.c
+@@ -740,7 +740,9 @@
+ 				cfg = fopen( va( "%s/.xash_id", home ), "r" );
+ 			if( cfg )
+ 			{
+-				if( fscanf( cfg, "%016"PRIX64, &id ) > 0 )
++				char saved_id[64];
++				if( fgets( saved_id, sizeof( saved_id ), cfg ) &&
++					sscanf( saved_id, "%016"PRIX64, &id ) == 1 )
+ 				{
+ 					id ^= SYSTEM_XOR_MASK;
+ 					ID_Check();
+diff --git a/engine/client/mod_dbghulls.c b/engine/client/mod_dbghulls.c
+--- a/engine/client/mod_dbghulls.c
++++ b/engine/client/mod_dbghulls.c
+@@ -708,8 +708,13 @@
+ 	{
+ 		int i;
+
++#if XASH_SAVANXP
++		uint32_t color = ((uint32_t)(uintptr_t)poly >> 4) * 0x9e3779b1u;
++		ref.dllFuncs.Color4ub( color & 255, (color >> 8) & 255, (color >> 16) & 255, 255 );
++#else
+ 		srand((unsigned int)(uintptr_t)poly );
+ 		ref.dllFuncs.Color4ub( rand() & 255, rand() & 255, rand() & 255, 255 );
++#endif
+
+ 		ref.dllFuncs.Begin( TRI_POLYGON );
+ 		for( i = 0; i < poly->numpoints; i++ )
+diff --git a/engine/common/net_chan.c b/engine/common/net_chan.c
+--- a/engine/common/net_chan.c
++++ b/engine/common/net_chan.c
+@@ -18,7 +18,7 @@
+ #include "xash3d_mathlib.h"
+ #include "net_encode.h"
+ #include "protocol.h"
+-#if !XASH_DEDICATED
++#if !XASH_DEDICATED && !XASH_SAVANXP
+ #include <bzlib.h>
+ #endif // !XASH_DEDICATED
+
+@@ -110,7 +110,7 @@
+ 	"Server",
+ };
+
+-#if !XASH_DEDICATED
++#if !XASH_DEDICATED && !XASH_SAVANXP
+ void bz_internal_error( int errcode );
+ void bz_internal_error( int errcode )
+ {
+@@ -654,7 +654,7 @@
+
+ 	if( chan->use_bz2 && memcmp( MSG_GetData( msg ), "BZ2", 4 ))
+ 	{
+-#if !XASH_DEDICATED
++#if !XASH_DEDICATED && !XASH_SAVANXP
+ 		byte pbOut[0x10000];
+ 		uint uSourceSize = MSG_GetNumBytesWritten( msg );
+ 		uint uCompressedSize = MSG_GetNumBytesWritten( msg ) - 4;
+@@ -832,7 +832,7 @@
+
+ 	if( chan->gs_netchan )
+ 	{
+-#if !XASH_DEDICATED
++#if !XASH_DEDICATED && !XASH_SAVANXP
+ 		uint uCompressedSize = size + 600;
+ 		byte *pbOut = Mem_Malloc( net_mempool, uCompressedSize );
+ 		if( BZ2_bzBuffToBuffCompress( pbOut, &uCompressedSize, pbuf, size, 9, 0, 30 ) == BZ_OK && uCompressedSize < size )
+@@ -977,7 +977,7 @@
+ 		uncompressed = FS_LoadFile( filename, &filesize, false );
+ 		if( chan->gs_netchan )
+ 		{
+-#if !XASH_DEDICATED
++#if !XASH_DEDICATED && !XASH_SAVANXP
+ 			compressed = Mem_Malloc( net_mempool, filesize + 600 );
+ 			uCompressedSize = filesize + 600;
+ 			if( BZ2_bzBuffToBuffCompress( compressed, &uCompressedSize, uncompressed, filesize, 9, 0, 30 ) == BZ_OK && uCompressedSize < filesize )
+@@ -1152,7 +1152,7 @@
+
+ 	if( chan->use_bz2 && size >= 4 && !memcmp( MSG_GetData( msg ), "BZ2", 4 ))
+ 	{
+-#if !XASH_DEDICATED
++#if !XASH_DEDICATED && !XASH_SAVANXP
+ 		byte buf[0x10000];
+ 		uint uDecompressedLen = sizeof( buf );
+ 		int bz2_err = BZ2_bzBuffToBuffDecompress( buf, &uDecompressedLen, MSG_GetData( msg ) + 4, size - 4, 1, 0 );
+@@ -1303,7 +1303,7 @@
+
+ 	if( chan->gs_netchan && chan->use_bz2 && !Q_stricmp( compressor, "bz2" ))
+ 	{
+-#if !XASH_DEDICATED
++#if !XASH_DEDICATED && !XASH_SAVANXP
+ 		if( uncompressedSize == 0 || uncompressedSize > MAX_NETCHAN_DECOMPRESSED_SIZE )
+ 		{
+ 			Con_Printf( S_ERROR "BZ2 fragment uncompressed size out of range: %u for %s\n", uncompressedSize, filename );
+diff --git a/engine/common/soundlib/snd_utils.c b/engine/common/soundlib/snd_utils.c
+--- a/engine/common/soundlib/snd_utils.c
++++ b/engine/common/soundlib/snd_utils.c
+@@ -29,9 +29,11 @@
+ {
+ #ifndef XASH_DEDICATED
+ { "wav", Sound_LoadWAV },
++#if !XASH_SAVANXP
+ { "mp3", Sound_LoadMPG },
+ { "ogg", Sound_LoadOggVorbis },
+ { "opus", Sound_LoadOggOpus },
++#endif
+ #else // we only need extensions
+ { "wav" },
+ { "mp3" },
+@@ -51,10 +53,14 @@
+ static const streamfmt_t stream_game[] =
+ {
+ #ifndef XASH_DEDICATED
++#if !XASH_SAVANXP
+ { "mp3", Stream_OpenMPG, Stream_ReadMPG, Stream_SetPosMPG, Stream_GetPosMPG, Stream_FreeMPG },
++#endif
+ { "wav", Stream_OpenWAV, Stream_ReadWAV, Stream_SetPosWAV, Stream_GetPosWAV, Stream_FreeWAV },
++#if !XASH_SAVANXP
+ { "ogg", Stream_OpenOggVorbis, Stream_ReadOggVorbis, Stream_SetPosOggVorbis, Stream_GetPosOggVorbis, Stream_FreeOggVorbis },
+ { "opus", Stream_OpenOggOpus, Stream_ReadOggOpus, Stream_SetPosOggOpus, Stream_GetPosOggOpus, Stream_FreeOggOpus },
++#endif
+ #else // we only need extensions
+ { "mp3" },
+ { "wav" },
+diff --git a/engine/platform/platform.h b/engine/platform/platform.h
+--- a/engine/platform/platform.h
++++ b/engine/platform/platform.h
+@@ -362,7 +362,7 @@
+ static inline void Platform_PreCreateMove( void ) { }
+ static inline int Platform_GetClipboardText( char *buffer, size_t size ) { return 0; }
+ static inline void Platform_SetClipboardText( const char *buffer ) { }
+-#if XASH_PS4 // platform/ps4/kbm_ps4.c
++#if XASH_PS4 || (XASH_SAVANXP && !XASH_DEDICATED)
+ void Platform_SetCursorType( VGUI_DefaultCursor type );
+ void GAME_EXPORT Platform_GetMousePos( int *x, int *y );
+ void GAME_EXPORT Platform_SetMousePos( int x, int y );
+@@ -395,7 +395,7 @@
+ static inline qboolean Platform_MouseConnected( void ) { return true; }
+ #endif
+
+-#if XASH_SDL || XASH_DOS
++#if XASH_SDL || XASH_DOS || (XASH_SAVANXP && !XASH_DEDICATED)
+ void Platform_RunEvents( void );
+ void Platform_MouseMove( float *x, float *y );
+ #elif XASH_PS4 // the gamepad, keyboard and mouse are polled in Platform_RunEvents
+diff --git a/engine/client/dll_int/ref_common.c b/engine/client/dll_int/ref_common.c
+--- a/engine/client/dll_int/ref_common.c
++++ b/engine/client/dll_int/ref_common.c
+@@ -616,6 +616,18 @@
+
+ static void R_GetRendererName( char *dest, size_t size, const char *opt )
+ {
++#if XASH_SAVANXP
++	char root[MAX_OSPATH];
++	if( opt[0] != '/' && g_fsapi.GetRootDirectory( root, sizeof( root )))
++	{
++		if( Q_strstr( opt, "." OS_LIB_EXT ))
++			Q_snprintf( dest, size, "%s/%s", root, opt );
++		else
++			Q_snprintf( dest, size, "%s/%s%s." OS_LIB_EXT, root,
++				Q_strncmp( opt, "ref_", 4 ) ? "ref_" : "", opt );
++		return;
++	}
++#endif
+ 	if( !Q_strstr( opt, "." OS_LIB_EXT ))
+ 	{
+ #ifdef XASH_INTERNAL_GAMELIBS
+diff --git a/engine/server/sv_save.c b/engine/server/sv_save.c
+--- a/engine/server/sv_save.c
++++ b/engine/server/sv_save.c
+@@ -1678,6 +1678,8 @@
+
+ 	// restore server time
+ 	sv.time = header.time;
++	if( !changelevel )
++		Con_Reportf( "Restored server state for %s\n", level );
+
+ 	return 1;
+ }

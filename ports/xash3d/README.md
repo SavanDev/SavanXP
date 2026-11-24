@@ -39,15 +39,40 @@ runs module destructors on normal process exit.
 
 `/bin/xash3d-refprobe` loads `/games/xash3d/ref_soft.so` and draws three
 color swatches in a POSIX window. The desktop smoke verifies the swatches in
-QEMU's framebuffer. It uses no Half-Life files.
+QEMU's framebuffer, then checks captured pointer input with the probe's
+`--capture` mode. It uses no Half-Life files.
 
 ```sh
 ./build.sh smoke xash3d-renderer
 ```
 
 Run `start /bin/xash3d-refprobe` from the SavanXP Command Prompt to display
-the same test frame. The full client, main menu and in-game rendering are
-pending.
+the same test frame.
+
+## Graphical client
+
+```sh
+./ports/xash3d/build.sh --client
+```
+
+The optional build installs `/bin/xash3d-client`, the HLSDK client with
+FreeVGUI, and the MainUI menu module. Put your Half-Life files in a writable
+`/games/xash3d/valve` tree, keeping the SavanXP modules in `cl_dlls` and
+`dlls`. For another data directory, use `-basedir` and place `ref_soft.so` in
+that directory next to `valve`. See the roadmap for the SxFS inode limit.
+
+From the SavanXP Command Prompt, run `start /bin/xash3d-client`. The client
+uses software rendering and captures relative mouse input during gameplay.
+Audio playback, voice chat, HTTP downloads and legacy GoldSrc authentication
+are pending.
+
+The client smoke uses an isolated SxFS copy and your unpacked Half-Life data.
+It loads `c0a0`, saves a game and checks that the client reconnects after
+loading the slot. Serial output and screenshots are kept in `build/smoke-logs/`.
+
+```sh
+SAVANXP_XASH3D_VALVE=/path/to/valve ./build.sh smoke xash3d-client
+```
 
 ## Dedicated server
 

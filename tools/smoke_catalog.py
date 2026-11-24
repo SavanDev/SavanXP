@@ -1402,6 +1402,13 @@ SCENARIOS: dict[str, Scenario] = {
         description="Xash3D loads Half-Life c0a0 and answers a POSIX UDP query (SAVANXP_XASH3D_VALVE)",
         port_command="python3 ./ports/xash3d/dedicated_smoke.py",
     ),
+    "xash3d-client": Scenario(
+        command="port",
+        success="XASH3D CLIENT PASS",
+        failure="XASH3D CLIENT FAIL",
+        description="Xash3D renders c0a0 and exercises Half-Life saves (SAVANXP_XASH3D_VALVE)",
+        port_command="python3 -B ./ports/xash3d/client_smoke.py",
+    ),
     "ccleste-selftest": _qemu_scenario(
         "ccleste-selftest",
         "CCLESTE SELFTEST PASS",

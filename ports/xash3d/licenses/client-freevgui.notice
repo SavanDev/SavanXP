@@ -1,0 +1,9 @@
+name=FreeVGUI
+license=BSD-3-Clause
+copyright=Nagist, Valve Software and Alibek Omarov
+origin=https://github.com/FWGS/freevgui
+version=commit 73bfb4659f3d9eb28b79e5b26baea8c6b888d5eb
+used-in=/games/xash3d/valve/cl_dlls/client_savanxp_amd64.so
+source=ports/xash3d in https://github.com/SavanDev/SavanXP
+provenance=Xash3D client libraries
+text=ports/xash3d/licenses/client/freevgui.txt

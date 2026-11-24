@@ -17,6 +17,7 @@ PYTHON=${SAVANXP_PYTHON:-python3}
 OBJCOPY=${SAVANXP_OBJCOPY:-llvm-objcopy}
 READELF=${SAVANXP_READELF:-llvm-readelf}
 INSTALL=1
+BUILD_CLIENT=0
 PROGRAM=xash3d-probe
 MODULE=hl_savanxp_amd64.so
 FS_PROBE=xash3d-fsprobe
@@ -25,15 +26,15 @@ DEDICATED=xash3d-dedicated
 REF_MODULE=ref_soft.so
 REF_PROBE=xash3d-refprobe
 
-case "${1:-}" in
-    "") ;;
-    --no-install) INSTALL=0; shift ;;
-    -h|--help) echo "Usage: ports/xash3d/build.sh [--no-install]"; exit 0 ;;
-esac
-if (($#)); then
-    echo "xash3d: unknown argument '$1'" >&2
-    exit 2
-fi
+while (($#)); do
+    case "$1" in
+        --no-install) INSTALL=0 ;;
+        --client) BUILD_CLIENT=1 ;;
+        -h|--help) echo "Usage: ports/xash3d/build.sh [--client] [--no-install]"; exit 0 ;;
+        *) echo "xash3d: unknown argument '$1'" >&2; exit 2 ;;
+    esac
+    shift
+done
 if ((INSTALL)) && [[ ( ! -f "$IMAGE" && ! -b "$IMAGE" ) || ! -x "$SXFS_CLI" ]]; then
     echo "xash3d: run ./build.sh build before installing the port" >&2
     exit 1
@@ -94,6 +95,7 @@ git -C "$source" apply "$PORT/patches/0001-recognize-savanxp.patch"
 git -C "$engine" apply "$PORT/patches/0002-build-filesystem-stdio.patch"
 git -C "$suffix" apply "$PORT/patches/0003-library-suffix-savanxp.patch"
 git -C "$engine" apply "$PORT/patches/0004-build-dedicated-server.patch"
+git -C "$engine" apply "$PORT/patches/0010-pack-software-screenshots.patch"
 
 cat >"$scratch/vcs_info.h" <<EOF
 #define HLSDK_COMMIT "$commit"
@@ -184,13 +186,13 @@ fs_probe="$stage/bin/$FS_PROBE"
 "${SAVANXP_LINK_CC:-$CC}" "${link_flags[@]}" \
     -o "$fs_probe" "${runtime[@]}" "$objects/filesystem_probe.o"
 
-dedicated_flags=(
+engine_flags=(
     "${fs_common[@]}" -std=gnu11 -Wno-pointer-sign
     -I "$PORT/overlay" -I "$engine/pm_shared" -I "$engine/engine/platform"
     -I "$engine/engine/common" -I "$engine/engine/common/imagelib"
     -I "$engine/engine/common/soundlib" -I "$engine/engine/server"
     -I "$engine/engine/client" -I "$engine/engine/client/vgui"
-    -DENGINE_DLL=1 -DXASH_DEDICATED=1 -DXASH_ENABLE_MAIN=1 -DXASH_CRASHHANDLER=0
+    -DENGINE_DLL=1 -DXASH_ENABLE_MAIN=1 -DXASH_CRASHHANDLER=0
     -DSTDIN_FILENO=0 -DSTDOUT_FILENO=1 -DSTDERR_FILENO=2
 )
 echo "xash3d: building the POSIX dedicated server"
@@ -203,7 +205,7 @@ for file in "$engine"/engine/common/*.c "$engine"/engine/common/{imagelib,soundl
         whereami.c|xrcon.c) continue ;;
     esac
     object="$objects/dedicated/${name%.c}.o"
-    "$CC" -c "$file" -o "$object" "${dedicated_flags[@]}"
+    "$CC" -c "$file" -o "$object" "${engine_flags[@]}" -DXASH_DEDICATED=1
     dedicated_objects+=("$object")
 done
 
@@ -234,23 +236,34 @@ ref_probe="$stage/bin/$REF_PROBE"
 "${SAVANXP_LINK_CC:-$CC}" "${link_flags[@]}" \
     -o "$ref_probe" "${runtime[@]}" "$objects/renderer_probe.o"
 
-build_id=$(git -C "$ROOT" rev-parse --short HEAD)
-"$PYTHON" "$ROOT/tools/gen_sxe_resources.py" --project-root "$ROOT" \
-    --output-dir "$resources" --manifest-dir "$PORT/overlay" --build-id "$build_id" \
-    --program "$PROGRAM" --program "$FS_PROBE" --program "$DEDICATED" --program "$REF_PROBE"
-"$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$probe" --name "$PROGRAM" \
-    --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
-"$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$fs_probe" --name "$FS_PROBE" \
-    --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
-"$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$dedicated" --name "$DEDICATED" \
-    --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
-"$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$ref_probe" --name "$REF_PROBE" \
-    --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
+programs=("$PROGRAM" "$FS_PROBE" "$DEDICATED" "$REF_PROBE")
+outputs=("$probe" "$module" "$fs_probe" "$fs_module" "$dedicated" "$ref_probe" "$ref_module")
+notices=()
+for notice in "$PORT"/licenses/*.notice; do
+    if ((BUILD_CLIENT)) || [[ "${notice##*/}" != client-* ]]; then
+        notices+=("$notice")
+    fi
+done
+if ((BUILD_CLIENT)); then
+    . "$PORT/build-client.sh"
+fi
 
-cp -- "$probe" "$module" "$fs_probe" "$fs_module" "$dedicated" "$ref_probe" "$ref_module" "$WORK/"
+build_id=$(git -C "$ROOT" rev-parse --short HEAD)
+program_args=()
+for program in "${programs[@]}"; do
+    program_args+=(--program "$program")
+done
+"$PYTHON" "$ROOT/tools/gen_sxe_resources.py" --project-root "$ROOT" \
+    --output-dir "$resources" --manifest-dir "$PORT/overlay" --build-id "$build_id" "${program_args[@]}"
+for program in "${programs[@]}"; do
+    "$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$stage/bin/$program" --name "$program" \
+        --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
+done
+
+cp -- "${outputs[@]}" "$WORK/"
 if ((INSTALL)); then
     "$PYTHON" "$ROOT/tools/stage_licenses.py" stage --root "$ROOT" --out "$stage/system/licenses" \
-        "$PORT"/licenses/*.notice
+        "${notices[@]}"
     "$PYTHON" "$ROOT/tools/sxfs_sync.py" --target "$IMAGE" --source "$stage" --cli "$SXFS_CLI" \
         --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"
 fi
@@ -258,3 +271,6 @@ echo "xash3d: built $WORK/$PROGRAM and $WORK/$MODULE"
 echo "xash3d: built $WORK/$FS_PROBE and $WORK/$FS_MODULE"
 echo "xash3d: built $WORK/$DEDICATED"
 echo "xash3d: built $WORK/$REF_PROBE and $WORK/$REF_MODULE"
+if ((BUILD_CLIENT)); then
+    echo "xash3d: built $WORK/${client_bin##*/}, $WORK/${client_module##*/} and $WORK/${menu_module##*/}"
+fi

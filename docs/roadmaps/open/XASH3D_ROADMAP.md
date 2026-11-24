@@ -1,9 +1,10 @@
 # Xash3D FWGS — the port that pays for `dlopen` and SxGL
 
-> **Status: the dedicated server and software renderer run in step 2.**
+> **Status: the dedicated server and graphical client run in step 2.**
 > The server loads the HLSDK and filesystem modules, starts Half-Life's
-> `c0a0` and answers IPv4 UDP queries through POSIX. The renderer draws a
-> test frame in a POSIX window. The full client and save round-trip are pending.
+> `c0a0` and answers IPv4 UDP queries through POSIX. The client opens MainUI
+> and plays `c0a0` with `ref_soft` in a POSIX window. Audio playback remains
+> pending.
 >
 > Reviewed 2026-11-14 against the rest of the system. Since it was written,
 > SxGL ([SXGL_ROADMAP.md](../done/SXGL_ROADMAP.md), batches 0–4), user-space
@@ -114,17 +115,16 @@ color swatches through the software blitter and checks the composited pixels
 in a POSIX window. It also checks relative pointer motion, buttons and wheel
 input after polling the keyboard on the same window.
 
-- `engine/platform/savanxp/`: video over `gfx_open`/`gfx_present_region`, input
-  from the window's key and mouse events, sound through `sx_audio_mixer` (which
-  reaches the shared mixer, [AUDIO_DAEMON.md](../../media/AUDIO_DAEMON.md), the
-  way Doom does), and the system hooks.
-- A C++ runtime in the SDK for the HLSDK modules (see above), with a test of
-  its own: a global object whose constructor runs under `dlopen`.
-- `hlsdk-portable` built with the same SDK, producing the client and server
-  libraries. The client uses FreeVGUI, whose controls need C++ RTTI. The
-  client and menu modules still need a reproducible SDK build.
+- The client backend presents `ref_soft` using `gfx_open` and `gfx_present`
+  and reads the window's keyboard and mouse events. Audio playback still
+  needs `sx_audio_mixer` and the shared mixer, as in Doom.
+  [Audio daemon](../../media/AUDIO_DAEMON.md)
+- `ports/xash3d/build.sh --client` builds HLSDK Portable, FreeVGUI and
+  MainUI with the POSIX SDK. The port's C++ runtime includes libcxxrt's RTTI
+  support for FreeVGUI. `dltest` checks the relocation addends used by C++
+  vtables and runs a shared library constructor under `dlopen`.
 - The POSIX SDK exposes [window pointer capture](../../desktop/WM_SUBSYSTEM.md#pointer-capture).
-  The client backend can use it for the in-game camera.
+  The client uses it for the in-game camera.
 - The game data (`valve/`) is the user's, installed under `/games`, like the
   Doom IWAD. Nothing proprietary is vendored or built.
 
@@ -145,8 +145,10 @@ data on a disposable disk. It checks the server's UDP reply names `c0a0` in
 sockets. See the [port notes](../../../ports/xash3d/README.md) for the current
 network limits and the test command.
 
-**Done when:** the client reaches the main menu and loads a map with `ref_soft`,
-and a save game round-trips (which is the `dladdr` check, end to end).
+**Client acceptance verified:** MainUI opens, `ref_soft` renders `c0a0`, and
+`xash3d-client` checks that the game restores server state and reconnects to
+the map after loading the saved slot. The smoke also checks the saved game
+and thumbnail headers on disk.
 
 ### Step 3 — `ref_gl` on SxGL
 

@@ -1,0 +1,9 @@
+name=libcxxrt RTTI
+license=BSD-2-Clause
+copyright=PathScale, Inc. and the authors named in the source files
+origin=https://github.com/libcxxrt/libcxxrt
+version=commit a6f71cbc3a1e1b8b9df241e081fa0ffdcde96249
+used-in=/games/xash3d/valve/cl_dlls/client_savanxp_amd64.so
+source=ports/xash3d in https://github.com/SavanDev/SavanXP
+provenance=Xash3D client libraries
+text=ports/xash3d/licenses/client/libcxxrt.txt

@@ -1,0 +1,21 @@
+diff --git a/controls/wizard.cpp b/controls/wizard.cpp
+--- a/controls/wizard.cpp
++++ b/controls/wizard.cpp
+@@ -1,7 +1,6 @@
+ // SPDX-License-Identifier: BSD-3-Clause
+ // Copyright (C) 2024-2026 Alibek Omarov
+
+-#include <initializer_list>
+ #include "controls/wizard.h"
+
+ using namespace vgui;
+@@ -93,7 +92,8 @@
+ 	wizardPage->setBounds( 2, 2, wide - 4, tall - bTall - 8 );
+
+ 	int x = wide - gap * 2;
+-	for( Button *btn: { cancelButton, finishedButton, nextButton, backButton })
++	Button *buttons[] = { cancelButton, finishedButton, nextButton, backButton };
++	for( Button *btn: buttons )
+ 	{
+ 		btn->setPos( x - btn->getWide(), rowY );
+

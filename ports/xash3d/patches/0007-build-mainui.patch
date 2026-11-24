@@ -1,0 +1,76 @@
+diff --git a/controls/AnimatedBanner.cpp b/controls/AnimatedBanner.cpp
+--- a/controls/AnimatedBanner.cpp
++++ b/controls/AnimatedBanner.cpp
+@@ -126,7 +126,7 @@
+
+ void CMenuAnimatedBanner::RandomizeGoalTime( float time )
+ {
+-	const float randval = rand() / (float)RAND_MAX;
++	const float randval = EngFuncs::RandomFloat( 0.0f, 1.0f );
+ 	const float range = ( m_flTimeLogoNewGoalMax - m_flTimeLogoNewGoalMin );
+
+ 	m_flTimeLogoNewGoal = time + randval * range;
+@@ -135,7 +135,7 @@
+ void CMenuAnimatedBanner::RandomizeSpeed( float initial_speed )
+ {
+ 	const float range = m_fLogoSpeedMax - m_fLogoSpeedMin;
+-	const float randval = rand() / (float)RAND_MAX;
++	const float randval = EngFuncs::RandomFloat( 0.0f, 1.0f );
+
+ 	m_fLogoSpeed = initial_speed + randval * range;
+ }
+@@ -143,7 +143,7 @@
+ void CMenuAnimatedBanner::RandomizeBlipTime( float time )
+ {
+ 	const float range = m_flTimeUntilLogoBlipMax - m_flTimeUntilLogoBlipMin;
+-	const float randval = rand() / (float)RAND_MAX;
++	const float randval = EngFuncs::RandomFloat( 0.0f, 1.0f );
+
+ 	m_flTimeLogoBlip = time + randval * range;
+ }
+@@ -151,7 +151,7 @@
+ void CMenuAnimatedBanner::RandomizeBlip()
+ {
+ 	// why tho
+-	const float randval = rand() / (float)RAND_MAX;
++	const float randval = EngFuncs::RandomFloat( 0.0f, 1.0f );
+
+ 	if( randval >= 0.6f )
+ 		m_nLogoBlipType = E_LOGO_BLIP_BOTH;
+diff --git a/font/FontManager.cpp b/font/FontManager.cpp
+--- a/font/FontManager.cpp
++++ b/font/FontManager.cpp
+@@ -12,7 +12,6 @@
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ */
+-#include <locale.h>
+ #include "FontManager.h"
+ #include "BaseMenu.h"
+ #include "Utils.h"
+diff --git a/sdk_includes/common/xash3d_types.h b/sdk_includes/common/xash3d_types.h
+--- a/sdk_includes/common/xash3d_types.h
++++ b/sdk_includes/common/xash3d_types.h
+@@ -2,7 +2,7 @@
+ #ifndef XASH_TYPES_H
+ #define XASH_TYPES_H
+
+-#include <wchar.h> // off_t
++#include <stddef.h> // off_t
+ #include <sys/types.h> // off_t
+ #include <stdint.h>
+ #include <assert.h>
+diff --git a/sdk_includes/public/build.h b/sdk_includes/public/build.h
+--- a/sdk_includes/public/build.h
++++ b/sdk_includes/public/build.h
+@@ -108,7 +108,9 @@
+ 	#define XASH_POSIX 1
+ 	// OpenOrbis toolchain targets FreeBSD, but libc++ headers undefine __FreeBSD__
+ 	// so PS4 must be checked first to get same result in C and C++
+-	#if defined __ORBIS__
++	#if defined __savanxp__
++		#define XASH_SAVANXP 1
++	#elif defined __ORBIS__
+ 		#define XASH_PS4 1
+ 	#elif defined __linux__
+ 		#if defined __ANDROID__

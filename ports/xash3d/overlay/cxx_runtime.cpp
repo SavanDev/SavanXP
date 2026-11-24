@@ -3,6 +3,7 @@
 
 /* The modules are compiled without exceptions. Allocation failure is
  * fatal and each loaded module owns its destructor list. */
+#ifndef XASH3D_FREEVGUI
 void* operator new(size_t size)
 {
     void* ptr = malloc(size ? size : 1);
@@ -35,6 +36,7 @@ void operator delete[](void* ptr, size_t) noexcept
 {
     free(ptr);
 }
+#endif
 
 struct Destructor {
     void (*run)(void*);
