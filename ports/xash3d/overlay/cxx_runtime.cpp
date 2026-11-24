@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-/* The server module is compiled without exceptions. Allocation failure is
+/* The modules are compiled without exceptions. Allocation failure is
  * fatal and each loaded module owns its destructor list. */
 void* operator new(size_t size)
 {
@@ -83,10 +83,12 @@ void __cxa_pure_virtual()
     abort();
 }
 
+#ifdef XASH3D_HLSDK
 /* HLSDK's own global objects register here during DT_INIT_ARRAY. */
 __attribute__((visibility("default"))) int xash3d_hlsdk_has_destructors()
 {
     return destructors != nullptr;
 }
+#endif
 
 }

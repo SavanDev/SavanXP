@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build HLSDK Portable's server module and the POSIX program that tests it.
+# Build HLSDK Portable's server module and Xash3D's POSIX filesystem.
 set -euo pipefail
 
 PORT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -19,6 +19,8 @@ READELF=${SAVANXP_READELF:-llvm-readelf}
 INSTALL=1
 PROGRAM=xash3d-probe
 MODULE=hl_savanxp_amd64.so
+FS_PROBE=xash3d-fsprobe
+FS_MODULE=filesystem_stdio.so
 
 case "${1:-}" in
     "") ;;
@@ -39,39 +41,55 @@ pin() {
 }
 
 commit=$(pin commit)
-url=$(pin archive_url)
-digest=$(pin archive_sha256)
-archive="$WORK/hlsdk-portable-$commit.tar.gz"
+engine_commit=$(pin engine_commit)
+suffix_commit=$(pin suffix_commit)
 mkdir -p "$WORK"
 scratch=$(mktemp -d "$WORK/work.XXXXXX")
 trap 'rm -rf -- "$scratch"' EXIT
 verify_archive() {
-    printf '%s  %s\n' "$digest" "$1" | sha256sum --check --status
+    printf '%s  %s\n' "$2" "$1" | sha256sum --check --status
 }
-if [[ ! -f "$archive" ]]; then
-    curl -fL --retry 2 --output "$scratch/hlsdk.tar.gz" "$url"
-    if ! verify_archive "$scratch/hlsdk.tar.gz"; then
-        echo "xash3d: downloaded HLSDK archive checksum mismatch" >&2
+
+extract_source() {
+    local name=$1 revision=$2 key_prefix=$3 destination=$4
+    local archive="$WORK/$name-$revision.tar.gz"
+    local digest
+    digest=$(pin "${key_prefix}archive_sha256")
+    if [[ ! -f "$archive" ]]; then
+        curl -fL --retry 2 --output "$scratch/$name.tar.gz" "$(pin "${key_prefix}archive_url")"
+        if ! verify_archive "$scratch/$name.tar.gz" "$digest"; then
+            echo "xash3d: downloaded $name archive checksum mismatch" >&2
+            exit 1
+        fi
+        mv -f -- "$scratch/$name.tar.gz" "$archive"
+    fi
+    if ! verify_archive "$archive" "$digest"; then
+        echo "xash3d: $name archive checksum mismatch: $archive" >&2
         exit 1
     fi
-    mv -f -- "$scratch/hlsdk.tar.gz" "$archive"
-fi
-if ! verify_archive "$archive"; then
-    echo "xash3d: HLSDK archive checksum mismatch: $archive" >&2
-    exit 1
-fi
+    mkdir -p -- "$destination"
+    tar -xf "$archive" -C "$destination" --strip-components=1
+}
 
 SAVANXP_OUTPUT_ROOT="$OUTPUT_ROOT" "$ROOT/tools/make-sdk.sh" --quiet
 SYSROOT=$(SAVANXP_OUTPUT_ROOT="$OUTPUT_ROOT" "$ROOT/tools/make-sdk.sh" --print-path)
 
 source="$scratch/hlsdk"
+engine="$scratch/engine"
+suffix="$scratch/suffix"
 objects="$scratch/objects"
 resources="$scratch/sxe"
 stage="$scratch/stage"
-mkdir -p "$source" "$objects" "$stage/bin" "$stage/games/xash3d/valve/dlls"
-tar -xf "$archive" -C "$source" --strip-components=1
+mkdir -p "$objects/fs" "$stage/bin" "$stage/games/xash3d/valve/dlls"
+extract_source hlsdk-portable "$commit" "" "$source"
+extract_source xash3d-fwgs "$engine_commit" engine_ "$engine"
+extract_source library-suffix "$suffix_commit" suffix_ "$suffix"
 git -C "$source" init -q
+git -C "$engine" init -q
+git -C "$suffix" init -q
 git -C "$source" apply "$PORT/patches/0001-recognize-savanxp.patch"
+git -C "$engine" apply "$PORT/patches/0002-build-filesystem-stdio.patch"
+git -C "$suffix" apply "$PORT/patches/0003-library-suffix-savanxp.patch"
 
 cat >"$scratch/vcs_info.h" <<EOF
 #define HLSDK_COMMIT "$commit"
@@ -96,7 +114,7 @@ cxx=(
 )
 module_flags=(
     -fvisibility=hidden -Dstricmp=strcasecmp -Dstrnicmp=strncasecmp
-    -D_snprintf=snprintf -D_vsnprintf=vsnprintf
+    -D_snprintf=snprintf -D_vsnprintf=vsnprintf -DXASH3D_HLSDK
 )
 
 echo "xash3d: building HLSDK Portable $commit"
@@ -128,18 +146,55 @@ mapfile -t runtime < <(savanxp_sdk_runtime_objects "$SYSROOT" pie core math load
 "${SAVANXP_LINK_CC:-$CC}" "${link_flags[@]}" \
     -o "$probe" "${runtime[@]}" "$objects/module_probe.o"
 
+fs_common=(
+    "${abi_flags[@]}" -O2 -I "$SYSROOT/include" -I "$suffix/include"
+    -I "$engine/common" -I "$engine/engine" -I "$engine/public" -I "$engine/filesystem"
+    -I "$engine/3rdparty/miniz" -D__savanxp__ -D_DEFAULT_SOURCE -DHAVE_STRCASECMP=1
+    -DXASH_MINIZ=1 -DMINIZ_NO_ARCHIVE_APIS
+    "-DXASH_BUILD_COMMIT=\"$engine_commit\"" '-DXASH_BUILD_BRANCH="master"'
+    "-DXASH_BUILD_COMMIT_DATE=\"$(pin engine_commit_date)\""
+    -fmacro-prefix-map="$engine=ports/xash3d/xash3d-fwgs"
+    -fmacro-prefix-map="$suffix=ports/xash3d/library-suffix"
+)
+echo "xash3d: building filesystem_stdio from Xash3D FWGS $engine_commit"
+fs_objects=()
+for file in "$engine"/filesystem/*.c "$engine"/public/*.c \
+    "$engine/3rdparty/miniz/miniz.c" "$suffix/src/library_suffix.c"; do
+    name=${file##*/}
+    object="$objects/fs/${name%.c}.o"
+    "$CC" -c "$file" -o "$object" "${fs_common[@]}" -std=gnu11 -fvisibility=hidden
+    fs_objects+=("$object")
+done
+"$CC" -c "$engine/filesystem/VFileSystem009.cpp" -o "$objects/fs/VFileSystem009.o" \
+    "${fs_common[@]}" "${cxx[@]}" -fvisibility=hidden '-DALLOCA_H=<stdlib.h>' -Dalloca=__builtin_alloca
+"$CC" -c "$PORT/overlay/cxx_runtime.cpp" -o "$objects/fs/cxx_runtime.o" \
+    "${fs_common[@]}" "${cxx[@]}" -fvisibility=hidden
+
+fs_module="$stage/games/xash3d/$FS_MODULE"
+"$LD" -shared -soname "$FS_MODULE" -z max-page-size=0x1000 --build-id=none \
+    --gc-sections -o "$fs_module" "${fs_objects[@]}" "$objects/fs/VFileSystem009.o" "$objects/fs/cxx_runtime.o"
+
+fs_probe="$stage/bin/$FS_PROBE"
+"$CC" -c "$PORT/overlay/filesystem_probe.c" -o "$objects/filesystem_probe.o" \
+    "${fs_common[@]}" -std=gnu11
+"${SAVANXP_LINK_CC:-$CC}" "${link_flags[@]}" \
+    -o "$fs_probe" "${runtime[@]}" "$objects/filesystem_probe.o"
+
 build_id=$(git -C "$ROOT" rev-parse --short HEAD)
 "$PYTHON" "$ROOT/tools/gen_sxe_resources.py" --project-root "$ROOT" \
     --output-dir "$resources" --manifest-dir "$PORT/overlay" --build-id "$build_id" \
-    --program "$PROGRAM"
+    --program "$PROGRAM" --program "$FS_PROBE"
 "$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$probe" --name "$PROGRAM" \
     --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
+"$PYTHON" "$ROOT/tools/stamp_sxe.py" --binary "$fs_probe" --name "$FS_PROBE" \
+    --resource-dir "$resources" --objcopy "$OBJCOPY" --readelf "$READELF"
 
-cp -- "$probe" "$module" "$WORK/"
+cp -- "$probe" "$module" "$fs_probe" "$fs_module" "$WORK/"
 if ((INSTALL)); then
     "$PYTHON" "$ROOT/tools/stage_licenses.py" stage --root "$ROOT" --out "$stage/system/licenses" \
-        "$PORT/licenses/hlsdk-portable.notice"
+        "$PORT"/licenses/*.notice
     "$PYTHON" "$ROOT/tools/sxfs_sync.py" --target "$IMAGE" --source "$stage" --cli "$SXFS_CLI" \
         --sectors "${SAVANXP_SXFS_SECTORS:-2097152}"
 fi
 echo "xash3d: built $WORK/$PROGRAM and $WORK/$MODULE"
+echo "xash3d: built $WORK/$FS_PROBE and $WORK/$FS_MODULE"

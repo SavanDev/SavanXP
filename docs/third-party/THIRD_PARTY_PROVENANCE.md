@@ -291,6 +291,18 @@ which is why both go into the registry.
 - Distributed in: `/games/xash3d/valve/dlls/hl_savanxp_amd64.so` when the
   standalone port is installed. Half-Life game data is supplied separately.
 
+### Xash3D FWGS
+
+- Origin: [FWGS/xash3d-fwgs](https://github.com/FWGS/xash3d-fwgs), commit
+  `0119ead19d61f1064b996f26d17d2f3e1c075fd2`, with its pinned
+  [library-suffix](https://github.com/FWGS/library-suffix) submodule.
+- Versioned: archive checksums and SavanXP patches in `ports/xash3d/`.
+- License reviewed: GPL-3.0-or-later for the filesystem module, Unlicense for
+  library-suffix and MIT for miniz. The license texts accompany the module.
+- Decision: `Adopt` for the optional Xash3D port.
+- Distributed in: `/games/xash3d/filesystem_stdio.so` when the standalone port
+  is installed. Game data is supplied separately.
+
 ### Alpine Xlib profile libraries
 
 - Origin: X.Org's [individual library releases](https://www.x.org/releases/individual/lib/)

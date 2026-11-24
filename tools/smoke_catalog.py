@@ -1366,6 +1366,13 @@ SCENARIOS: dict[str, Scenario] = {
         "POSIX loads and initializes the HLSDK Portable server module",
         prepare=("./ports/xash3d/build.sh",),
     ),
+    "xash3d-filesystem": _qemu_scenario(
+        "xash3d-filesystem",
+        "XASH3D FILESYSTEM PASS",
+        "XASH3D FILESYSTEM FAIL",
+        "Xash3D filesystem_stdio loads and reads loose and PAK files on POSIX",
+        prepare=("./ports/xash3d/build.sh",),
+    ),
     "ccleste-selftest": _qemu_scenario(
         "ccleste-selftest",
         "CCLESTE SELFTEST PASS",

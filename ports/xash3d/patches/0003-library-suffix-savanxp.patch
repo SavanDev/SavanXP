@@ -1,0 +1,51 @@
+--- a/include/build.h
++++ b/include/build.h
+@@ -75,6 +75,7 @@
+ #undef XASH_NSWITCH
+ #undef XASH_OPENBSD
+ #undef XASH_OSX
++#undef XASH_SAVANXP
+ #undef XASH_POSIX
+ #undef XASH_PPC
+ #undef XASH_PS4
+@@ -108,7 +109,9 @@
+ 	#define XASH_POSIX 1
+ 	// OpenOrbis toolchain targets FreeBSD, but libc++ headers undefine __FreeBSD__
+ 	// so PS4 must be checked first to get same result in C and C++
+-	#if defined __ORBIS__
++	#if defined __savanxp__
++		#define XASH_SAVANXP 1
++	#elif defined __ORBIS__
+ 		#define XASH_PS4 1
+ 	#elif defined __linux__
+ 		#if defined __ANDROID__
+--- a/include/buildenums.h
++++ b/include/buildenums.h
+@@ -61,6 +61,7 @@
+ #define PLATFORM_PSP        18
+ #define PLATFORM_IOS    	19
+ #define PLATFORM_PS4        20
++#define PLATFORM_SAVANXP    21
+
+ #if XASH_WIN32
+ 	#define XASH_PLATFORM PLATFORM_WIN32
+@@ -98,6 +99,8 @@
+ 	#define XASH_PLATFORM PLATFORM_HURD
+ #elif XASH_PSP
+ 	#define XASH_PLATFORM PLATFORM_PSP
++#elif XASH_SAVANXP
++	#define XASH_PLATFORM PLATFORM_SAVANXP
+ #elif XASH_PS4
+ 	#define XASH_PLATFORM PLATFORM_PS4
+ #else
+--- a/src/library_suffix.c
++++ b/src/library_suffix.c
+@@ -79,6 +79,8 @@
+ 		return "hurd";
+ 	case PLATFORM_PSP:
+ 		return "psp";
++	case PLATFORM_SAVANXP:
++		return "savanxp";
+ 	case PLATFORM_PS4:
+ 		return "ps4";
+ 	}

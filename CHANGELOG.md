@@ -12,6 +12,9 @@ Cut-off notes:
 
 ### Added
 
+- **The Xash3D port reads loose files and PAK archives on SavanXP.** The port builds
+  `filesystem_stdio.so` and `xash3d-fsprobe` for POSIX. [Port notes](ports/xash3d/README.md).
+
 - **Linux can prepare a UEFI SavanXP disk.** `build.sh prepare-disk` creates GPT, EFI and SxFS on a new image or
   an explicitly selected whole disk. `SAVANXP_DISK_IMAGE` also accepts an existing SxFS partition for port installs.
 

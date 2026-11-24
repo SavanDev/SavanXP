@@ -4,3 +4,18 @@ commit=b562490665c48d273f352d62228577cd003c4d92
 archive_url=https://codeload.github.com/FWGS/hlsdk-portable/tar.gz/b562490665c48d273f352d62228577cd003c4d92
 archive_sha256=cb12ce51e2c68421f4e21870ca8373b72dae5ef2b821da6bad24c17a810f801d
 license=Half-Life 1 SDK License
+
+engine_name=Xash3D FWGS
+engine_repository=https://github.com/FWGS/xash3d-fwgs.git
+engine_commit=0119ead19d61f1064b996f26d17d2f3e1c075fd2
+engine_commit_date=2026-11-22
+engine_archive_url=https://codeload.github.com/FWGS/xash3d-fwgs/tar.gz/0119ead19d61f1064b996f26d17d2f3e1c075fd2
+engine_archive_sha256=462551ef0db26cbeb5615c59ffe5b1e65318cc9ec077701eaa6650535a015e9a
+engine_license=GPL-3.0-or-later
+
+suffix_name=library-suffix
+suffix_repository=https://github.com/FWGS/library-suffix.git
+suffix_commit=0d4aec027312308d60de0f8eb087a68ce09623d6
+suffix_archive_url=https://codeload.github.com/FWGS/library-suffix/tar.gz/0d4aec027312308d60de0f8eb087a68ce09623d6
+suffix_archive_sha256=ddaecf2786b7c48c28bcd8706870cfbe143cadf79c9fffb0808906d5155a7cd6
+suffix_license=Unlicense

@@ -1,8 +1,8 @@
 # Xash3D FWGS — the port that pays for `dlopen` and SxGL
 
-> **Status: step 2 started with the HLSDK Portable server module.** The POSIX
-> probe loads and initializes the module in SavanXP. The dedicated engine,
-> its filesystem and network integration, and the client are pending.
+> **Status: step 2 has the HLSDK Portable server module and filesystem_stdio.**
+> POSIX probes verify game initialization and read loose and PAK assets in
+> SavanXP. The dedicated engine, its UDP integration and the client are pending.
 >
 > Reviewed 2026-11-14 against the rest of the system. Since it was written,
 > SxGL ([SXGL_ROADMAP.md](../done/SXGL_ROADMAP.md), batches 0–4), user-space
@@ -104,6 +104,10 @@ game initialization. The C++ ABI support lives in the port while the server
 and client establish what they need from a shared runtime. See the
 [port notes](../../../ports/xash3d/README.md).
 
+The next slice builds Xash3D's `filesystem_stdio.so` against the SavanXP POSIX
+SDK. `xash3d-filesystem` checks the module's interfaces, game metadata and loose
+and PAK reads from SxFS.
+
 - `engine/platform/savanxp/`: video over `gfx_open`/`gfx_present_region`, input
   from the window's key and mouse events, sound through `sx_audio_mixer` (which
   reaches the shared mixer, [AUDIO_DAEMON.md](../../media/AUDIO_DAEMON.md), the
@@ -114,6 +118,17 @@ and client establish what they need from a shared runtime. See the
   libraries.
 - The game data (`valve/`) is the user's, installed under `/games`, like the
   Doom IWAD. Nothing proprietary is vendored or built.
+
+**SxFS v2 inode limit.** A tested `valve/` copy has 4,269 files and 76
+directories, which exceeds the 4,096 inodes in a volume even when the data fits
+in bytes. The VFS loads and evicts directory entries on demand, so its resident
+node limit is a separate constraint. Use the assets needed by a single map to
+bring up the dedicated server. For a full install, package static assets such
+as `sound/` into an engine-readable `.pak` on the host and keep modules,
+configuration and saves as loose files. The POSIX probe mounted a 3,009-entry
+sound archive from this copy and read two sounds with matching checksums.
+See [SxFS](SXFS_ROADMAP.md#current-baseline-and-the-version-boundary) and
+[VFS limits](../../kernel/FILESYSTEMS.md#limits).
 
 Build the dedicated server first, as upstream's porting guide recommends: it proves
 `dlopen` and the network stack with no video, input or sound in the way.
