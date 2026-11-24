@@ -2671,7 +2671,10 @@ def check_submenu_arrows(s, opened):
     down_y = work - 2 - SUBMENU_SCROLL_STRIP_HEIGHT + 4
     row = [opened.getpixel((x, down_y)) for x in range(SUBMENU_X + 4, min(width, SUBMENU_X + SUBMENU_MAX_WIDTH))]
     live = [index for index, pixel in enumerate(row) if pixel == TEXT]
-    if opened.getpixel((SUBMENU_X + 1, 1)) == opened.getpixel((SUBMENU_X - 20, 1)) or not live:
+    # A cascade that reaches y 0 shows its up strip, in face grey, inside the
+    # frame. Comparing with the desktop beside it instead fails on a gradient
+    # wallpaper, whose neighbouring pixels differ.
+    if opened.getpixel((SUBMENU_X + 4, 4)) != FACE or not live:
         print("startmenu: the Programs cascade fits, no arrow strips to check")
         return
     # The arrow's 7px base row; its middle is the arrow's centre.

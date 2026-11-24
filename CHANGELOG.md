@@ -336,6 +336,9 @@ changes not released yet; each released version has its own file in
 
 ### Fixed
 
+- **`shoot.sh --scenario startmenu` passes on a gradient wallpaper.** It no longer
+  mistakes a Programs cascade that fits the screen for one with scroll arrows.
+
 - **The POSIX loader applies nonzero `R_X86_64_64` addends (SDK 2.0).**
   Shared libraries such as the Xash3D HLSDK client can use C++ virtual tables.
 
