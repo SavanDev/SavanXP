@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 
+#include "kernel/inventory.hpp"
 #include "kernel/string.hpp"
 
 namespace {
@@ -52,6 +53,19 @@ void enumerate() {
     }
     g_identity.full_sectors = g_image.sector_count;
     (void)block::register_device(kOps, &g_image, g_image.sector_count, g_image.writable, g_image.name, &g_identity);
+    // Listed once, however many times the block layer enumerates.
+    static bool listed = false;
+    if (!listed) {
+        listed = true;
+        inventory::PlatformDevice disk = {};
+        disk.device_class = SXN_DEVICE_CLASS_DISK;
+        disk.state = SXN_DEVICE_STARTED;
+        disk.flags = SXN_DEVICE_SYNTHETIC;
+        disk.name = "LiveCD RAM disk";
+        disk.driver = "ramdisk";
+        disk.location = g_image.name;
+        (void)inventory::platform_add(disk);
+    }
 }
 
 const block::Driver kDriver = {

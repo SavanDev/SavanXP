@@ -483,6 +483,10 @@ long storage_snapshot(unsigned long index, struct savanxp_storage_device* device
     return syscall3(SAVANXP_SYS_STORAGE_SNAPSHOT, index, (unsigned long)device, sizeof(*device));
 }
 
+long device_snapshot(struct savanxp_device_info* devices, unsigned long count) {
+    return syscall3(SAVANXP_SYS_DEVICE_SNAPSHOT, (unsigned long)devices, count, sizeof(*devices));
+}
+
 long fscheck(struct savanxp_fscheck_report* report) {
     return syscall1(SAVANXP_SYS_FSCHECK, (unsigned long)report);
 }

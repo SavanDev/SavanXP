@@ -24,6 +24,7 @@
 #include "kernel/gpu_device.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/iommu.hpp"
 #include "kernel/net.hpp"
@@ -268,6 +269,9 @@ namespace
     uacpi_glue::dump_pci_routing();
     boot_screen::show("Scanning PCI bus");
     pci::initialize();
+    // Ids for the computer and every function, before any driver takes one
+    // (docs/kernel/DEVICE_INVENTORY.md).
+    inventory::initialize();
     if (boot::has_option(boot_info.cmdline, "iommu-selftest"))
     {
         iommu::selftest();
@@ -281,6 +285,7 @@ namespace
     if (boot::has_option(boot_info.cmdline, "nousb"))
     {
         console::write_line("usb: disabled by the nousb boot option");
+        inventory::pci_boot_option(0x0c, 0x03);
     }
     else
     {
@@ -317,6 +322,24 @@ namespace
     else
     {
         console::printf("display: no driver claimed the hardware\n");
+    }
+    // The firmware's framebuffer has no PCI function of its own to list:
+    // the GPU behind it stays unclaimed, which is what it is.
+    if (display::bound_driver() == &fb_gpu::driver() && boot_info.framebuffer.available)
+    {
+        inventory::PlatformDevice framebuffer = {};
+        framebuffer.device_class = SXN_DEVICE_CLASS_DISPLAY;
+        framebuffer.state = SXN_DEVICE_STARTED;
+        framebuffer.flags = SXN_DEVICE_FIRMWARE;
+        framebuffer.name = "Firmware framebuffer";
+        framebuffer.driver = "framebuffer";
+        framebuffer.location = "boot";
+        framebuffer.resources[0].kind = SXN_DEVICE_RESOURCE_MEMORY;
+        framebuffer.resources[0].start =
+            reinterpret_cast<uint64_t>(boot_info.framebuffer.address) - boot_info.hhdm_offset;
+        framebuffer.resources[0].length = boot_info.framebuffer.pitch * boot_info.framebuffer.height;
+        framebuffer.resource_count = 1;
+        (void)inventory::platform_add(framebuffer);
     }
     gpu_device::initialize();
     ui::initialize(boot_info.framebuffer);

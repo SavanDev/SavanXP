@@ -9,6 +9,8 @@
 
 #include "arch/cpu.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
+#include "kernel/inventory_rules.hpp"
 #include "kernel/string.hpp"
 #include "kernel/timer.hpp"
 #include "usb_internal.hpp"
@@ -138,7 +140,9 @@ bool read_configuration(Device& device) {
     return true;
 }
 
-bool claim(Device& device, const usb::InterfaceDescriptor& interface, const uint8_t* extra, size_t extra_length) {
+// The class driver that took the interface, or nullptr.
+const usb::ClassDriver* claim(Device& device, const usb::InterfaceDescriptor& interface, const uint8_t* extra,
+    size_t extra_length) {
     for (size_t i = 0; i < g_class_driver_count; ++i) {
         const usb::ClassDriver& driver = *g_class_drivers[i];
         if (!driver.probe(device, interface, extra, extra_length)) {
@@ -150,9 +154,23 @@ bool claim(Device& device, const usb::InterfaceDescriptor& interface, const uint
                 break;
             }
         }
-        return true;
+        return &driver;
     }
-    return false;
+    return nullptr;
+}
+
+// Keeps what the inventory lists about an interface offered to the drivers.
+void record_interface(Device& device, const usb::InterfaceDescriptor& interface, const usb::ClassDriver* driver) {
+    if (device.interface_count >= usb::kMaxInterfaces) {
+        return;
+    }
+    usb::InterfaceRecord& record = device.interfaces[device.interface_count++];
+    record.inventory_id = inventory::allocate_id();
+    record.number = interface.interface_number;
+    record.interface_class = interface.interface_class;
+    record.interface_subclass = interface.interface_subclass;
+    record.interface_protocol = interface.interface_protocol;
+    record.driver = driver;
 }
 
 // Offers every interface (alternate setting 0) to the class drivers.
@@ -178,12 +196,17 @@ void offer_interfaces(Device& device) {
         if (end > total) {
             end = total;
         }
-        if (interface.alternate_setting == 0 &&
-            !claim(device, interface, bytes + offset + length, end - offset - length)) {
-            console::printf("usb: %x:%x interface %u class %x.%x.%x: no driver\n",
-                static_cast<unsigned>(device.descriptor.vendor_id), static_cast<unsigned>(device.descriptor.product_id),
-                static_cast<unsigned>(interface.interface_number), static_cast<unsigned>(interface.interface_class),
-                static_cast<unsigned>(interface.interface_subclass), static_cast<unsigned>(interface.interface_protocol));
+        if (interface.alternate_setting == 0) {
+            const usb::ClassDriver* driver = claim(device, interface, bytes + offset + length, end - offset - length);
+            record_interface(device, interface, driver);
+            if (driver == nullptr) {
+                console::printf("usb: %x:%x interface %u class %x.%x.%x: no driver\n",
+                    static_cast<unsigned>(device.descriptor.vendor_id),
+                    static_cast<unsigned>(device.descriptor.product_id),
+                    static_cast<unsigned>(interface.interface_number), static_cast<unsigned>(interface.interface_class),
+                    static_cast<unsigned>(interface.interface_subclass),
+                    static_cast<unsigned>(interface.interface_protocol));
+            }
         }
         offset = end;
     }
@@ -372,12 +395,14 @@ Device* attach(uint8_t controller, uint8_t root_port, Device* parent, uint8_t pa
         return nullptr;
     }
 
-    char product[48] = {};
-    usb::read_string(device, device.descriptor.product_index, product, sizeof(product));
+    usb::read_string(device, device.descriptor.product_index, device.product, sizeof(device.product));
+    usb::read_string(device, device.descriptor.manufacturer_index, device.manufacturer, sizeof(device.manufacturer));
     console::printf("usb: %s %x:%x class %x %s-speed \"%s\"\n", path,
         static_cast<unsigned>(device.descriptor.vendor_id), static_cast<unsigned>(device.descriptor.product_id),
-        static_cast<unsigned>(device.descriptor.device_class), speed_name(speed), product);
+        static_cast<unsigned>(device.descriptor.device_class), speed_name(speed), device.product);
+    device.inventory_id = inventory::allocate_id();
     offer_interfaces(device);
+    inventory::changed();
     return &device;
 }
 
@@ -401,6 +426,75 @@ void detach(Device& device) {
         static_cast<unsigned>(device.descriptor.product_id));
     hc::disable_device(device);
     free_device(device);
+    inventory::changed();
+}
+
+void describe(inventory::Sink& sink) {
+    if (!g_ready) {
+        return;
+    }
+    // By depth, so a hub always comes before what hangs from it.
+    for (uint8_t depth = 0; depth <= kMaxHubDepth; ++depth) {
+        for (Device& device : g_devices) {
+            if (!device.present || device.depth != depth || device.inventory_id == 0) {
+                continue;
+            }
+            sxn_device_info record = {};
+            record.id = device.inventory_id;
+            record.parent_id = device.parent != nullptr ? device.parent->inventory_id : hc::inventory_id(device.controller);
+            if (record.parent_id == 0) {
+                record.parent_id = inventory::root_id();
+            }
+            record.bus = SXN_DEVICE_BUS_USB;
+            record.device_class = device.hub ? SXN_DEVICE_CLASS_USB : SXN_DEVICE_CLASS_USB_DEVICE;
+            // Addressed, described and configured by the USB core itself.
+            record.state = SXN_DEVICE_STARTED;
+            record.flags = SXN_DEVICE_REMOVABLE;
+            record.vendor_id = device.descriptor.vendor_id;
+            record.product_id = device.descriptor.product_id;
+            record.class_code = device.descriptor.device_class;
+            record.subclass = device.descriptor.device_subclass;
+            record.protocol = device.descriptor.device_protocol;
+            record.bus_number = device.controller;
+            record.device_number = device.depth;
+            record.function_number = device.parent != nullptr ? device.parent_port : device.root_port;
+            record.usb_speed = static_cast<uint8_t>(device.speed);
+            record.usb_version = device.descriptor.usb_version;
+            record.device_version = device.descriptor.device_version;
+            inventory::copy_text(record.name, sizeof(record.name), device.product);
+            inventory::copy_text(record.manufacturer, sizeof(record.manufacturer), device.manufacturer);
+            inventory::copy_text(record.driver, sizeof(record.driver), "usb");
+            format_path(device, record.location, sizeof(record.location));
+            inventory::emit(sink, record);
+
+            for (uint8_t index = 0; index < device.interface_count; ++index) {
+                const InterfaceRecord& interface = device.interfaces[index];
+                sxn_device_info child = {};
+                child.id = interface.inventory_id;
+                child.parent_id = device.inventory_id;
+                child.bus = SXN_DEVICE_BUS_USB_INTERFACE;
+                child.device_class = inventory::classify_usb_interface(
+                    interface.interface_class, interface.interface_subclass, interface.interface_protocol);
+                child.state = interface.driver != nullptr ? SXN_DEVICE_STARTED : SXN_DEVICE_UNBOUND;
+                child.reason = interface.driver != nullptr ? SXN_DEVICE_REASON_NONE : SXN_DEVICE_REASON_NOT_CLAIMED;
+                child.flags = SXN_DEVICE_REMOVABLE;
+                child.vendor_id = device.descriptor.vendor_id;
+                child.product_id = device.descriptor.product_id;
+                child.class_code = interface.interface_class;
+                child.subclass = interface.interface_subclass;
+                child.protocol = interface.interface_protocol;
+                child.bus_number = device.controller;
+                child.device_number = device.depth;
+                child.function_number = interface.number;
+                child.usb_speed = static_cast<uint8_t>(device.speed);
+                if (interface.driver != nullptr) {
+                    inventory::copy_text(child.driver, sizeof(child.driver), interface.driver->name);
+                }
+                format_path(device, child.location, sizeof(child.location));
+                inventory::emit(sink, child);
+            }
+        }
+    }
 }
 
 void initialize() {

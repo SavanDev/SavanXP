@@ -457,6 +457,87 @@ struct savanxp_storage_device {
 #define SAVANXP_STORAGE_SCHEME_GPT 2u
 #define SAVANXP_STORAGE_SCHEME_DAMAGED 3u
 
+/* SAVANXP_SYS_DEVICE_SNAPSHOT: one hardware instance of the inventory. The
+ * same layout and values as SUN's struct sxn_device_info; grows at the end
+ * only (docs/kernel/DEVICE_INVENTORY.md). */
+#define SAVANXP_DEVICE_BUS_ROOT 1u
+#define SAVANXP_DEVICE_BUS_PCI 2u
+#define SAVANXP_DEVICE_BUS_PLATFORM 3u
+#define SAVANXP_DEVICE_BUS_USB 4u
+#define SAVANXP_DEVICE_BUS_USB_INTERFACE 5u
+#define SAVANXP_DEVICE_CLASS_UNKNOWN 0u
+#define SAVANXP_DEVICE_CLASS_COMPUTER 1u
+#define SAVANXP_DEVICE_CLASS_SYSTEM 2u
+#define SAVANXP_DEVICE_CLASS_DISPLAY 3u
+#define SAVANXP_DEVICE_CLASS_SOUND 4u
+#define SAVANXP_DEVICE_CLASS_NETWORK 5u
+#define SAVANXP_DEVICE_CLASS_KEYBOARD 6u
+#define SAVANXP_DEVICE_CLASS_POINTER 7u
+#define SAVANXP_DEVICE_CLASS_INPUT 8u
+#define SAVANXP_DEVICE_CLASS_STORAGE 9u
+#define SAVANXP_DEVICE_CLASS_DISK 10u
+#define SAVANXP_DEVICE_CLASS_USB 11u
+#define SAVANXP_DEVICE_CLASS_USB_DEVICE 12u
+#define SAVANXP_DEVICE_DISCOVERED 1u
+#define SAVANXP_DEVICE_UNBOUND 2u
+#define SAVANXP_DEVICE_STARTING 3u
+#define SAVANXP_DEVICE_STARTED 4u
+#define SAVANXP_DEVICE_QUIESCING 5u
+#define SAVANXP_DEVICE_DISABLED 6u
+#define SAVANXP_DEVICE_FAILED 7u
+#define SAVANXP_DEVICE_REMOVED 8u
+#define SAVANXP_DEVICE_REASON_NONE 0u
+#define SAVANXP_DEVICE_REASON_NOT_CLAIMED 1u
+#define SAVANXP_DEVICE_REASON_START_FAILED 2u
+#define SAVANXP_DEVICE_REASON_BOOT_OPTION 3u
+#define SAVANXP_DEVICE_REASON_UNSUPPORTED 4u
+#define SAVANXP_DEVICE_SYNTHETIC (1u << 0)
+#define SAVANXP_DEVICE_FIRMWARE (1u << 1)
+#define SAVANXP_DEVICE_REMOVABLE (1u << 2)
+#define SAVANXP_DEVICE_RESOURCE_MEMORY 1u
+#define SAVANXP_DEVICE_RESOURCE_IO_PORT 2u
+#define SAVANXP_DEVICE_RESOURCE_IRQ 3u
+#define SAVANXP_DEVICE_RESOURCE_64BIT (1u << 0)
+#define SAVANXP_DEVICE_RESOURCE_PREFETCHABLE (1u << 1)
+#define SAVANXP_DEVICE_MAX_RESOURCES 8u
+struct savanxp_device_resource {
+    uint32_t kind;
+    uint32_t flags;
+    uint64_t start;
+    uint64_t length;           /* 0 = not recorded */
+};
+struct savanxp_device_info {
+    uint32_t id;               /* stable for the instance's life; never reused */
+    uint32_t parent_id;        /* 0 for the computer */
+    uint32_t generation;       /* the same in every record of one snapshot */
+    uint32_t bus;              /* SAVANXP_DEVICE_BUS_* */
+    uint32_t device_class;     /* SAVANXP_DEVICE_CLASS_* */
+    uint32_t state;            /* SAVANXP_DEVICE_STARTED and the rest */
+    uint32_t reason;           /* SAVANXP_DEVICE_REASON_* */
+    uint32_t flags;            /* SAVANXP_DEVICE_SYNTHETIC and the rest */
+    uint16_t vendor_id;
+    uint16_t product_id;
+    uint16_t subsystem_vendor_id;
+    uint16_t subsystem_id;
+    uint8_t class_code;
+    uint8_t subclass;
+    uint8_t protocol;
+    uint8_t revision;
+    uint8_t bus_number;
+    uint8_t device_number;
+    uint8_t function_number;
+    uint8_t usb_speed;
+    uint16_t usb_version;
+    uint16_t device_version;
+    uint32_t resource_count;
+    char name[48];
+    char manufacturer[32];
+    char driver[16];
+    char location[32];
+    struct savanxp_device_resource resources[SAVANXP_DEVICE_MAX_RESOURCES];
+};
+#define SAVANXP_DEVICE_INFO_V1_SIZE ((uint32_t)sizeof(struct savanxp_device_info))
+
 struct savanxp_realtime {
     uint16_t year;
     uint8_t month;

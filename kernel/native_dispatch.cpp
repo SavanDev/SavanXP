@@ -10,6 +10,7 @@
 #include "kernel/display.hpp"
 #include "kernel/file_lock.hpp"
 #include "kernel/heap.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/klog.hpp"
 #include "kernel/object.hpp"
 #include "kernel/net.hpp"
@@ -931,6 +932,37 @@ int native_storage_snapshot(uint64_t index, uint64_t user_out, uint64_t size) {
     return sx::copy_to_user(user_out, &device, length) ? 1 : sx::negative_error(SX_EINVAL);
 }
 
+// The whole inventory in one call, under the kernel lock: every record of
+// it carries the same generation, and nothing can come or go halfway.
+struct DeviceCopy {
+    uint64_t user_out;
+    uint64_t capacity;
+    uint64_t record_size;
+    size_t length;
+};
+
+bool copy_device_record(const sxn_device_info& record, size_t index, void* context) {
+    const DeviceCopy& copy = *static_cast<const DeviceCopy*>(context);
+    if (index >= copy.capacity) {
+        return true;
+    }
+    return sx::copy_to_user(copy.user_out + index * copy.record_size, &record, copy.length);
+}
+
+int native_device_snapshot(uint64_t user_out, uint64_t capacity, uint64_t size) {
+    if (size < SXN_DEVICE_INFO_V1_SIZE || size > 0x10000u || capacity > 0x10000u) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    if (capacity != 0 && !sx::validate_user_range(user_out, static_cast<size_t>(capacity * size), true)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    DeviceCopy copy = {user_out, capacity, size,
+        size < sizeof(sxn_device_info) ? static_cast<size_t>(size) : sizeof(sxn_device_info)};
+    inventory::Sink sink = {&copy_device_record, &copy, 0, 0, false};
+    const size_t total = inventory::snapshot(sink);
+    return sink.failed ? sx::negative_error(SX_EINVAL) : static_cast<int>(total);
+}
+
 // Raw sectors cross through here: user memory is never handed to a driver.
 // One transfer at a time, under the kernel lock.
 uint8_t g_storage_bounce[storage::kMaxTransferSectors * 512u];
@@ -1814,6 +1846,10 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
         case SXN_SYS_STORAGE_SNAPSHOT:
             context->rax = static_cast<uint64_t>(
                 native_storage_snapshot(context->rdi, context->rsi, context->rdx));
+            return context;
+        case SXN_SYS_DEVICE_SNAPSHOT:
+            context->rax = static_cast<uint64_t>(
+                native_device_snapshot(context->rdi, context->rsi, context->rdx));
             return context;
         case SXN_SYS_STORAGE_READ:
         case SXN_SYS_STORAGE_WRITE:

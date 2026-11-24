@@ -156,6 +156,9 @@ long clock_status(struct savanxp_clock_status* status);
 /* The index-th storage device and where it is mounted
  * (docs/userland/DISK_MANAGEMENT.md): 1 when written, 0 past the last one. */
 long storage_snapshot(unsigned long index, struct savanxp_storage_device* device);
+/* The hardware inventory (docs/kernel/DEVICE_INVENTORY.md), parents first:
+ * how many instances there are; at most `count` written. */
+long device_snapshot(struct savanxp_device_info* devices, unsigned long count);
 /* Informe de consistencia del volumen SxFS montado. Solo lectura: no repara y
  * no modifica nada. Negativo si el volumen no esta disponible. */
 long fscheck(struct savanxp_fscheck_report* report);

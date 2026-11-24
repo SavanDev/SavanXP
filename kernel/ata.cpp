@@ -2,6 +2,8 @@
 
 #include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
+#include "kernel/pci.hpp"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -429,7 +431,23 @@ const block::DeviceOps kOps = {
     /*deferred_writes=*/true,
 };
 
+// The legacy ports belong to the PCI IDE function whose primary channel is in
+// compatibility mode (programming interface bit 0 clear): the one the
+// inventory shows this driver on, once it found a disk behind them.
+void claim_ide_function() {
+    for (size_t index = 0; index < pci::device_count(); ++index) {
+        pci::DeviceInfo info = {};
+        if (pci::device_info(index, info) && info.class_code == 0x01 && info.subclass == 0x01 &&
+            (info.prog_if & 0x01u) == 0) {
+            inventory::pci_claim(info, "ata");
+            inventory::pci_started(info);
+            return;
+        }
+    }
+}
+
 void enumerate() {
+    bool found = false;
     for (size_t index = 0; index < kSlotCount; ++index) {
         if (identify(g_slots[index])) {
             (void)block::register_device(kOps, &g_slots[index], g_slots[index].sector_count,
@@ -437,8 +455,12 @@ void enumerate() {
             console::printf("ata: %s %u sectors, \"%s\" serial \"%s\"\n", kSlotNames[index],
                 static_cast<unsigned>(g_slots[index].sector_count),
                 g_slots[index].identity.model, g_slots[index].identity.serial);
+            found = true;
         }
         io_wait();
+    }
+    if (found) {
+        claim_ide_function();
     }
 }
 

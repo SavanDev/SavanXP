@@ -8,6 +8,7 @@
 #include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
 #include "kernel/input.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/ioapic.hpp"
 
 namespace {
@@ -84,6 +85,9 @@ bool g_mouse_ready = false;
 // driver already provides a keyboard, and the 8042 stays quiet so each key is
 // not reported twice (QEMU feeds the host's input to every backend at once).
 bool g_keyboard_active = false;
+// The keyboard answered on the first port and then failed to set up: the
+// inventory lists it as failed instead of leaving it out.
+bool g_keyboard_failed = false;
 
 RawByte g_raw_queue[kRawQueueCapacity] = {};
 size_t g_raw_read_index = 0;
@@ -847,6 +851,7 @@ bool initialize_controller(bool& second_port_present) {
     if (keyboard_taken) {
         console::write_line("ps2: skipping keyboard, another input driver provides one");
     } else if (!initialize_keyboard()) {
+        g_keyboard_failed = true;
         return false;
     }
     g_keyboard_active = !keyboard_taken;
@@ -888,6 +893,23 @@ bool initialize_controller(bool& second_port_present) {
     return true;
 }
 
+// The keyboard (IRQ 1) or mouse (IRQ 12) in the hardware inventory, with the
+// 8042's two ports.
+void list_device(bool keyboard, bool started) {
+    inventory::PlatformDevice device = {};
+    device.device_class = keyboard ? SXN_DEVICE_CLASS_KEYBOARD : SXN_DEVICE_CLASS_POINTER;
+    device.state = started ? SXN_DEVICE_STARTED : SXN_DEVICE_FAILED;
+    device.reason = started ? SXN_DEVICE_REASON_NONE : SXN_DEVICE_REASON_START_FAILED;
+    device.name = keyboard ? "PS/2 keyboard" : "PS/2 mouse";
+    device.driver = "ps2";
+    device.location = keyboard ? "8042 port 1" : "8042 port 2";
+    device.resources[0] = {SXN_DEVICE_RESOURCE_IO_PORT, 0, kDataPort, 1};
+    device.resources[1] = {SXN_DEVICE_RESOURCE_IO_PORT, 0, kStatusPort, 1};
+    device.resources[2] = {SXN_DEVICE_RESOURCE_IRQ, 0, keyboard ? 1u : 12u, 1};
+    device.resource_count = 3;
+    (void)inventory::platform_add(device);
+}
+
 void keyboard_irq() {
     g_irq_count = g_irq_count + 1;
     (void)drain_controller_output_to_queue();
@@ -924,7 +946,11 @@ void initialize() {
     }
 
     bool second_port_present = false;
+    g_keyboard_failed = false;
     if (!initialize_controller(second_port_present)) {
+        if (g_keyboard_failed) {
+            list_device(true, false);
+        }
         return;
     }
 
@@ -939,6 +965,7 @@ void initialize() {
             : arch::register_irq_handler(1, keyboard_irq);
         if (!keyboard_routed) {
             console::write_line("ps2: failed to route irq1");
+            list_device(true, false);
             return;
         }
     }
@@ -963,6 +990,12 @@ void initialize() {
     }
     g_irq_routed = true;
     g_ready = true;
+    if (g_keyboard_active) {
+        list_device(true, true);
+    }
+    if (g_mouse_ready) {
+        list_device(false, true);
+    }
 
     if (g_keyboard_active || g_mouse_ready) {
         (void)input::register_driver({

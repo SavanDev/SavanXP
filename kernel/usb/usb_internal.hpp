@@ -163,6 +163,18 @@ struct ClassDriver {
 
 constexpr size_t kMaxClassDrivers = 4;
 
+// One interface of a device as the inventory lists it.
+struct InterfaceRecord {
+    uint32_t inventory_id;
+    uint8_t number;
+    uint8_t interface_class;
+    uint8_t interface_subclass;
+    uint8_t interface_protocol;
+    const ClassDriver* driver; // nullptr: no class driver took it
+};
+
+constexpr size_t kMaxInterfaces = 8;
+
 struct Device {
     bool present;
     // Bumps every time the slot is reused, so a driver can tell a stale
@@ -193,6 +205,14 @@ struct Device {
     const ClassDriver* drivers[4];
     // Each claiming driver's own per-device state.
     void* driver_data[4];
+    // For the hardware inventory (docs/kernel/DEVICE_INVENTORY.md): this
+    // attachment's id, never reused, the strings read once at attach, and
+    // every interface offered to the class drivers with the one that took it.
+    uint32_t inventory_id;
+    char product[48];
+    char manufacturer[32];
+    uint8_t interface_count;
+    InterfaceRecord interfaces[kMaxInterfaces];
 };
 
 const char* status_name(int status);
@@ -316,8 +336,11 @@ struct ControllerOps {
 // Eight UHCI or OHCI and two EHCI on a 2008 south bridge, and room for xHCI.
 constexpr size_t kMaxControllers = 16;
 
-// Called by a driver's start() for each controller it brought up.
-bool add_controller(const ControllerOps& ops, uint8_t local);
+// Called by a driver's start() for each controller it brought up, with its
+// PCI function: the inventory marks it started.
+bool add_controller(const ControllerOps& ops, uint8_t local, const pci::DeviceInfo& info);
+// The controller's PCI function's inventory id; 0 when it has none.
+uint32_t inventory_id(uint8_t controller);
 uint8_t local_index(uint8_t controller);
 // "xhci", "ehci", "uhci" or "ohci", for the log.
 const char* controller_name(uint8_t controller);
@@ -352,7 +375,9 @@ constexpr uint8_t kProgIfXhci = 0x30;
 
 // Memory or I/O decode and bus mastering on, the interrupt line off (every
 // driver here polls), and the function brought to D0 if the firmware left it
-// in a low-power state. `name` prefixes the log line.
+// in a low-power state. `name` prefixes the log line and names the driver in
+// the hardware inventory, which holds the function as failing to start until
+// add_controller() takes it.
 void prepare_pci(const pci::DeviceInfo& info, const char* name, bool io_space);
 // Zeroed pages below 4 GiB, for the controllers that address only 32 bits.
 bool allocate_dma32(size_t pages, memory::PageAllocation& allocation);

@@ -8,6 +8,7 @@
 #include "arch/cpu.hpp"
 #include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/iommu.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
@@ -396,6 +397,12 @@ int prepare() {
 bool bring_up() {
     int result;
     do { result = prepare(); asm volatile("pause"); } while (result == -SX_EAGAIN);
+    // Probed is taken; up or not is what the inventory shows from here.
+    if (result == 0) {
+        inventory::pci_started(g_pci_device);
+    } else {
+        inventory::pci_failed(g_pci_device);
+    }
     return result == 0;
 }
 
@@ -406,6 +413,9 @@ bool probe() {
     if (!g_present) {
         return false;
     }
+    // Recognized; bring_up() brings the link when asked.
+    inventory::pci_claim(g_pci_device, "rtl8139");
+    inventory::pci_started(g_pci_device);
 
     g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
     // Route INTx through _PRT/IOAPIC once at probe. The device asserts it

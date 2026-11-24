@@ -100,7 +100,7 @@ void shell_print_help(const struct shell_capture_sink* sink) {
     shell_emit_text(sink, 1, "Network: netinfo ping tcpget udpsend udprecv ntpsync\n");
     shell_emit_text(sink, 1, "Programs: desktop notepad calc paint mines filesapp progman\n");
     shell_emit_text(sink, 1, "          aboutapp appwiz nightwood\n");
-    shell_emit_text(sink, 1, "Tools: console taskmgr logview diskmgmt imgview webview\n");
+    shell_emit_text(sink, 1, "Tools: console taskmgr logview diskmgmt devmgmt imgview webview\n");
     shell_emit_text(sink, 1, "       sxbasic sxbide sxgldiag\n");
     shell_emit_text(sink, 1, "Subsystems: linux winhost\n");
 #if DESKTOP_INCLUDE_TEST_APPS

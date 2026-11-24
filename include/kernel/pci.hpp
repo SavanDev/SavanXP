@@ -21,6 +21,10 @@ struct DeviceInfo {
     uint8_t header_type;
     uint8_t irq_line;
     uint32_t bar[6];
+    // INTA# to INTD# as 1-4; 0 when the function uses no INTx pin.
+    uint8_t interrupt_pin;
+    // Bridges only: the bus number behind the bridge.
+    uint8_t secondary_bus;
 };
 
 struct BarInfo {

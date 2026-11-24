@@ -319,6 +319,14 @@ SCENARIOS: dict[str, Scenario] = {
         "LOGVIEW SMOKE FAIL",
         "Log Viewer: reads the system log and files it by subsystem and program",
     ),
+    "devmgmt-smoke": _qemu_scenario(
+        "devmgmt-selftest",
+        "DEVMGMT SMOKE PASS",
+        "DEVMGMT SMOKE FAIL",
+        "Device Manager: its tree, names and Properties against fixtures of every state, then the live "
+        "inventory with USB devices attached",
+        usb=True,
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",

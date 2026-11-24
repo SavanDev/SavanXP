@@ -5,6 +5,7 @@
 
 #include "arch/cpu.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -394,6 +395,8 @@ void enumerate() {
     if (!pci::ready() || !find_hba(hba)) {
         return;
     }
+    // Taken from here on; started once its ports were looked at.
+    inventory::pci_claim(hba, "ahci");
 
     pci::BarInfo abar = {};
     if (!pci::bar_info(hba, kAbarIndex, abar) || abar.io_space || abar.base == 0) {
@@ -437,6 +440,7 @@ void enumerate() {
             static_cast<unsigned>(port_index), static_cast<unsigned>(disk.sector_count),
             disk.identity.model, disk.identity.serial);
     }
+    inventory::pci_started(hba);
 }
 
 // Above ata (100), below virtio-blk (110): the three never serve the same disk,

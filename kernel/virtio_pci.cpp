@@ -2,6 +2,7 @@
 
 #include "arch/cpu.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/iommu.hpp"
 #include "kernel/string.hpp"
 #include "kernel/vmm.hpp"
@@ -114,7 +115,32 @@ static bool resolve_capability(Device& device, uint8_t cfg_type, bool required, 
     return true;
 }
 
+// The driver's name in the hardware inventory, from the virtio device type:
+// the modern ID's offset from 0x1040, or a transitional device's subsystem.
+static const char* inventory_driver_name(const pci::DeviceInfo& info, uint32_t& device_class) {
+    const uint16_t type = info.device_id >= 0x1040u ? static_cast<uint16_t>(info.device_id - 0x1040u)
+                                                    : info.subsystem_device_id;
+    device_class = SXN_DEVICE_CLASS_UNKNOWN;
+    switch (type) {
+        case 1: return "virtio-net";
+        case 2: return "virtio-blk";
+        case 4:
+            // Its class code (0xff) says nothing; it is an entropy source.
+            device_class = SXN_DEVICE_CLASS_SYSTEM;
+            return "virtio-rng";
+        case 16: return "virtio-gpu";
+        case 18: return "virtio-input";
+        case 25: return "virtio-sound";
+        default: return "virtio";
+    }
+}
+
 bool initialize_device(const pci::DeviceInfo& pci_device, bool require_device_cfg, Device& device) {
+    // Taken from here on: DRIVER_OK says it started, fail_device() that it
+    // did not.
+    uint32_t device_class = SXN_DEVICE_CLASS_UNKNOWN;
+    const char* driver = inventory_driver_name(pci_device, device_class);
+    inventory::pci_claim(pci_device, driver, device_class);
     memset(&device, 0, sizeof(device));
     device.pci_device = pci_device;
     device.msix_vector = kVirtioMsiNoVector;
@@ -213,6 +239,9 @@ uint8_t read_isr_status(Device& device) {
 
 void set_device_status(Device& device, uint8_t status) {
     common_cfg(device)->device_status = status;
+    if ((status & kStatusFailed) == 0 && (status & kStatusDriverOk) != 0 && device.pci_device.present) {
+        inventory::pci_started(device.pci_device);
+    }
 }
 
 uint8_t device_status(const Device& device) {
@@ -252,6 +281,9 @@ void fail_device(Device& device) {
         set_device_status(device, static_cast<uint8_t>(device_status(device) | kStatusFailed));
     }
     device.ready = false;
+    if (device.pci_device.present) {
+        inventory::pci_failed(device.pci_device);
+    }
 }
 
 uint16_t choose_queue_size(uint16_t maximum, uint16_t limit) {

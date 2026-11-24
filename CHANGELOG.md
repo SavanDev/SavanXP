@@ -12,6 +12,13 @@ Cut-off notes:
 
 ### Added
 
+- **Device Manager and the hardware inventory.** `devmgmt` (System menu) lists the
+  hardware by type or by connection, with each device's driver, state, problem
+  marks and Properties; read-only. It reads `SXN_SYS_DEVICE_SNAPSHOT`
+  (`sxn_device_snapshot`; POSIX `device_snapshot`): PCI, platform and USB
+  instances with stable ids, parents and recorded resources.
+  [Inventory](docs/kernel/DEVICE_INVENTORY.md), [Device Manager](docs/userland/DEVICE_MANAGER.md).
+
 - **Xash3D's software renderer draws in a POSIX window.** `ref_soft.so` and
   `xash3d-refprobe` provide a rendering check without game data. [Port notes](ports/xash3d/README.md).
 

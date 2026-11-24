@@ -65,6 +65,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   registration order decides which keyboard and pointer win, and the keyboard
   core that turns set 1 key positions into keys, text and modifiers, and the
   pointer speed applied to relative mice.
+- [`DEVICE_INVENTORY.md`](kernel/DEVICE_INVENTORY.md) — the hardware inventory:
+  what is listed and what each instance hangs from, ids that are never reused,
+  the states and their reasons, how drivers report what they took, recorded
+  resources, and `SXN_SYS_DEVICE_SNAPSHOT`.
 - [`USB_HOST_CONTROLLERS.md`](kernel/USB_HOST_CONTROLLERS.md) — xHCI, EHCI, UHCI and OHCI
   behind one controller table: start order, taking them from the firmware,
   EHCI's companion routing, each one's schedule, and what QEMU cannot test.
@@ -189,6 +193,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`DISK_MANAGEMENT.md`](userland/DISK_MANAGEMENT.md) — Disk Management: the window,
   why storage is reached through calls and not `/dev/disk<n>`, the SxFS GPT type GUID,
   the rules for the operations that write, and its tests.
+- [`DEVICE_MANAGER.md`](userland/DEVICE_MANAGER.md) — Device Manager: the two views,
+  where a device goes and how it is named, the problem marks, Properties, the
+  selection kept by id, its tests and what is pending.
 - [`LOG_VIEWER.md`](userland/LOG_VIEWER.md) — Log Viewer: the system log on screen,
   by subsystem and by program, how it spots problems, and `logview --print`.
 - [`SETUP_AND_UPDATES.md`](userland/SETUP_AND_UPDATES.md) — the planned setup and

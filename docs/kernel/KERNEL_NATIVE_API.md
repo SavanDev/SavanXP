@@ -21,8 +21,8 @@ object/process factoring, not before.
   scheduling stay identical; only the call path moves.
 - The native dispatcher only uses the `sx::` surface
   ([`sx.hpp`](../../include/kernel/sx.hpp): current process, user-memory copy,
-  errors) plus `display::*`, `console::*` and `storage::*`. It never reaches into
-  `process.cpp` internals.
+  errors) plus `display::*`, `console::*`, `storage::*` and `inventory::*`. It
+  never reaches into `process.cpp` internals.
 - `kernel/process.cpp` no longer implements user-memory copy itself: the
   single implementation lives in `kernel/sx.cpp`, and the `process::`
   wrappers exist only so drivers and the translation layer keep compiling
@@ -73,6 +73,8 @@ object/process factoring, not before.
   `SXN_SYS_SYSTEM_INFO`), and `SXN_SYS_TERMINATE` under kill's rule.
 - Slice 28: storage for Disk Management (`SXN_SYS_STORAGE_*`).
 - Slice 29: `SXN_SYS_LOG_READ`, the system log for Log Viewer.
+- Slice 30: `SXN_SYS_DEVICE_SNAPSHOT`, the hardware inventory for Device
+  Manager.
 - Files (VFS-A step 1): `sx::open_file`, `read_file`, `write_file`,
   `seek_file`, `close_handle` in `kernel/sx_file.cpp`, with `sx::IoResult`;
   native dispatch and POSIX translation both call them
@@ -259,6 +261,29 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 30: the hardware inventory
+
+What Device Manager needs ([DEVICE_MANAGER.md](../userland/DEVICE_MANAGER.md)),
+D1 of [DRIVERS_ROADMAP.md](../roadmaps/open/DRIVERS_ROADMAP.md). The dispatcher
+reaches the inventory through `inventory::` only.
+
+- `SXN_SYS_DEVICE_SNAPSHOT` (`0x104E`): rdi = `struct sxn_device_info[]`
+  (written), rsi = how many fit, rdx = the record size. The whole inventory in
+  one call under the kernel lock, parents first, one generation; returns how
+  many instances there are, writing at most rsi of them (rsi = 0 only counts).
+  `-EINVAL` below `SXN_DEVICE_INFO_V1_SIZE`, above 64 KiB per record or 65536
+  records, or for a bad buffer. Any process may read it. The records, the
+  states and how drivers fill them are in
+  [DEVICE_INVENTORY.md](DEVICE_INVENTORY.md).
+- POSIX has the same call as `SAVANXP_SYS_DEVICE_SNAPSHOT` (78),
+  `device_snapshot()` in libc, over a struct of the same layout.
+
+`nativetest` checks the computer comes first, ids are unique, the generation is
+one, every parent precedes its children, each state carries its reason and a
+started instance its driver, PCI locations match their numbers, a storage
+controller is started, and that a short buffer returns the count while a short
+record size and a bad pointer are `-EINVAL`.
 
 ## Slice 29: reading the system log
 

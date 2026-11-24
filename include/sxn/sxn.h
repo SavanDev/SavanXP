@@ -314,6 +314,14 @@ static inline long sxn_storage_snapshot(unsigned long index, struct sxn_storage_
     return sxn_trap(SXN_SYS_STORAGE_SNAPSHOT, index, (unsigned long)out, sizeof(*out));
 }
 
+/* The hardware inventory, parents before children, in one consistent view
+ * (docs/kernel/DEVICE_INVENTORY.md): how many instances there are, of which
+ * at most `capacity` were written. More than `capacity` means it did not fit:
+ * call again with room. 0 for capacity only counts. */
+static inline long sxn_device_snapshot(struct sxn_device_info* out, unsigned long capacity) {
+    return sxn_trap(SXN_SYS_DEVICE_SNAPSHOT, (unsigned long)out, capacity, sizeof(*out));
+}
+
 /* Raw sectors of a storage device, by its snapshot id; at most
  * SXN_STORAGE_MAX_TRANSFER per call. The system only. A write overlapping a
  * mounted volume is -EBUSY. */

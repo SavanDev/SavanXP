@@ -1,0 +1,10 @@
+# SXE resources of Device Manager. See docs/userland/SXE_FORMAT.md; as a SUN
+# program it also gets them compiled in (devmgmt.sunres.h).
+name=Device Manager
+description=The hardware, its drivers and their state
+version=system
+vendor=SavanXP
+subsystem=native
+accent=4f5f3f
+icon=app-devmgmt
+category=System

@@ -6,6 +6,7 @@
 #include "arch/x86/io.hpp"
 #include "kernel/audio.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
@@ -434,6 +435,8 @@ void initialize() {
     if (!pci::ready() || !find_controller(g_pci)) {
         return;
     }
+    // Taken from here on; started once the codec answers and DMA is set.
+    inventory::pci_claim(g_pci, "ac97");
     if (!map_io_bars()) {
         console::write_line("ac97: I/O BARs missing or invalid");
         return;
@@ -475,6 +478,7 @@ void initialize() {
         .flags = 0,
     };
     g_ready = true;
+    inventory::pci_started(g_pci);
 
     console::printf(
         "ac97: ready pci=%x:%x.%u nam=0x%x nabm=0x%x pcm=%uHz/%uch/%ubit\n",

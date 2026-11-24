@@ -98,6 +98,10 @@ What changed from 1.2 to 2.0 is listed in [`README.md`](README.md#breaking-chang
 - storage devices: `storage_snapshot` (the index-th disk, partition or memory
   volume and where it is mounted, `struct savanxp_storage_device`;
   `docs/userland/DISK_MANAGEMENT.md`)
+- hardware inventory: `device_snapshot` (the computer, PCI functions,
+  platform devices and USB devices and interfaces with their driver, state
+  and recorded resources, `struct savanxp_device_info`;
+  `docs/kernel/DEVICE_INVENTORY.md`)
 - consistency: `fscheck` (a read-only report of the volume; see
   `docs/fs/SXFS_CHECK.md`)
 

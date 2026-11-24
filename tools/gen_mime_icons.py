@@ -36,6 +36,18 @@ HOUSE_ICONS = {
     "drive-harddisk": "drive-harddisk",
     "drive-optical": "drive-optical",
     "drive-removable-media": "drive-removable-media",
+    # Device Manager's classes (docs/userland/DEVICE_MANAGER.md#icons).
+    "device-computer": "desktop",
+    "device-display": "app-display",
+    "device-sound": "app-sound",
+    "device-keyboard": "app-keyboard-settings",
+    "device-mouse": "app-mouse",
+    "device-network": "device-network",
+    "device-storage": "device-storage",
+    "device-usb": "device-usb",
+    "device-system": "device-system",
+    "device-hid": "device-hid",
+    "device-unknown": "device-unknown",
 }
 
 

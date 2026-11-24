@@ -1,10 +1,12 @@
 # Drivers, Plug and Play, and Device Manager
 
 > **Status: open.** Native drivers, per-class registries and USB hotplug exist.
-> A common device manager, general Plug and Play lifecycle and the Device Manager
-> application below are planned, not implemented. The application is a SUN
-> program inspired by Windows XP's Device Manager; it does not depend on the
-> Win32 subsystem, MMC or Windows driver compatibility.
+> **D1 and the initial D2 window landed 2026-11-24**: the hardware inventory
+> ([DEVICE_INVENTORY.md](../../kernel/DEVICE_INVENTORY.md)) and a read-only
+> Device Manager ([DEVICE_MANAGER.md](../../userland/DEVICE_MANAGER.md)). General
+> Plug and Play lifecycle (D3-D7) is planned, not implemented. The application
+> is a SUN program inspired by Windows XP's Device Manager; it does not depend
+> on the Win32 subsystem, MMC or Windows driver compatibility.
 
 The goal is a common foundation for discovering hardware, binding drivers,
 owning resources, submitting I/O and safely removing devices. Preserve the
@@ -16,8 +18,10 @@ driver implement its own version of Plug and Play.
 
 Drivers are compiled and linked into the kernel by `CMakeLists.txt`, registered
 explicitly during `kernel/kernel_main.cpp`, and selected/enumerated through
-interfaces of function pointers. There is no runtime driver-module loader,
-external driver ABI or general device graph. `device::Device` is the small
+interfaces of function pointers. There is no runtime driver-module loader or
+external driver ABI. The hardware inventory (D1) lists every instance with its
+parent and the driver using it, but it records bindings; it does not make them.
+`device::Device` is the small
 read/write/ioctl/close interface used to publish `/dev` nodes, not a global
 hardware manager. A device whose answers depend on the descriptor gets one
 word of per-descriptor state through its `ioctl_state` and `can_read_state`
@@ -26,13 +30,13 @@ node can aggregate several hardware instances.
 
 | Layer / class | What exists |
 | --- | --- |
-| PCI | Boot-time enumeration into a flat table of 64 functions; IDs, class codes, BAR/capability helpers and configuration-space access |
+| PCI | Boot-time enumeration into a flat table of 256 functions; IDs, class codes, BAR/capability helpers and configuration-space access |
 | ACPI and architecture | uACPI namespace/routing integration, IOAPIC/legacy IRQ registration, MMIO mappings and `arch::` operations; parts remain PC/x86-shaped |
 | Shared virtio transport | Modern virtio-pci configuration, feature negotiation, queues and MSI-X support shared by net, block, GPU, input and sound |
-| Storage | All registered enumerators run; AHCI, ATA, virtio-blk, ramdisk, USB storage and partition devices coexist; block writeback is class-specific |
+| Storage | All registered enumerators run; AHCI, ATA, NVMe, virtio-blk, ramdisk, USB storage and partition devices coexist; block writeback is class-specific |
 | Display | One selected backend by priority: virtio-gpu or the boot framebuffer |
 | Audio | Multiple backends/instances, separate playback/capture defaults and endpoints: virtio-sound, AC'97 and HDA/azalia |
-| Network | One selected NIC by priority: virtio-net or RTL8139 |
+| Network | One selected NIC by priority: virtio-net, RTL8139 or the RTL8111/8168 family |
 | Input | PS/2, virtio-input and USB HID report through the input core, with selection/coexistence policy |
 | Filesystems | SxFS/FAT register format drivers; filesystem lookup, lifetime and mount contracts have their own VFS roadmap |
 | Driver execution | Kernel-resident, with mixed IRQ/polling paths; storage and USB mainly poll, while PS/2, RTL8139 and virtio-gpu have interrupt paths |
@@ -111,7 +115,18 @@ that failed to start must not all appear as "working properly" or "no driver".
 
 ## D1 — common inventory and the first management API
 
-**Open, first phase.** Add a shared device inventory fed by PCI, USB and current
+**Landed 2026-11-24, first cut** ([DEVICE_INVENTORY.md](../../kernel/DEVICE_INVENTORY.md)):
+`SXN_SYS_DEVICE_SNAPSHOT` and POSIX's `device_snapshot()` list the computer,
+every PCI function, platform devices and every USB device and interface with
+their parent, driver, state and reason, recorded resources and a generation,
+in one consistent copy under the kernel lock. Drivers report what they took
+(`inventory::pci_claim` and its kin); listing never touches the hardware.
+Still open from the paragraphs below: disks, codecs and other class endpoints
+as child instances; the class associations of an instance with its `/dev`
+nodes; persistent best-effort identity; an event stream instead of polling the
+generation.
+
+Add a shared device inventory fed by PCI, USB and current
 class bindings. Include unbound hardware and supported synthetic instances;
 registration must not require a successful driver start. Track parent/child and
 endpoint associations with explicit budgets and cleanup. Agree ownership of
@@ -140,12 +155,16 @@ the native API slice.
 
 ## D2 — a Windows XP-style Device Manager, read-only first
 
-**Planned; consumes D1 and can ship before general driver lifecycle work.**
-Proposed command/image: `devmgmt` / `/bin/devmgmt.sxe`, source under
-`system/devmgmt/`. It is a C/SUN application using the existing SXGUI-C host,
-desktop services and resource/icon conventions. Its title is **Device Manager**
-and it appears in the Start menu's System group. This specifies the planned
-program, not a command or path already installed.
+**Initial window landed 2026-11-24** ([DEVICE_MANAGER.md](../../userland/DEVICE_MANAGER.md)):
+both views, problem marks, the four Properties tabs, selection by instance id,
+its fixture self-test (`devmgmt-smoke`) and `shoot.sh --scenario devmgmt`.
+Still open: the compact toolbar, a live USB insertion/removal scenario with the
+window open, and disconnected-device history.
+Command/image: `devmgmt` / `/system/devmgmt.sxe` (preinstalled SUN programs
+live under `/system`), source under `system/devmgmt/`. It is a C/SUN
+application using the existing SXGUI-C host, desktop services and
+resource/icon conventions. Its title is **Device Manager** and it appears in
+the Start menu's System group.
 
 Use the familiar XP management layout within SavanXP's desktop style:
 

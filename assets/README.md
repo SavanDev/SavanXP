@@ -66,8 +66,10 @@ The names follow freedesktop's Icon Naming Specification (`text-x-generic`,
 without rewriting the mapping.
 
 A few names in `/icons` are house art rather than Tango, for what the
-catalog has no icon for: `application-x-linux` and the drives Files' My
-Computer shows (`drive-harddisk`, `drive-optical`, `drive-removable-media`).
+catalog has no icon for: `application-x-linux`, the drives Files' My
+Computer shows (`drive-harddisk`, `drive-optical`, `drive-removable-media`)
+and Device Manager's device classes (`device-*`, some of them the system's
+own icons under a second name; see `docs/userland/DEVICE_MANAGER.md`).
 They are drawn to [`ICON_STYLE.md`](../docs/desktop/ICON_STYLE.md), live in
 `icons/16x16` and `icons/32x32`, and `HOUSE_ICONS` in
 `tools/gen_mime_icons.py` emits them next to the catalog.

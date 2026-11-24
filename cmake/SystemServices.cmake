@@ -108,6 +108,10 @@ savanxp_system_service(NAME diskmgmt LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOL
     SHARED_SOURCES libsxdisk/sxdisk.c libsxfs/sxfs_core.c)
 target_include_directories(diskmgmt PRIVATE "${CMAKE_SOURCE_DIR}/libsxfs")
 
+# Device Manager (docs/userland/DEVICE_MANAGER.md): the consumer of the
+# hardware inventory, SXN_SYS_DEVICE_SNAPSHOT.
+savanxp_system_service(NAME devmgmt LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES devmgmt.c)
+
 # Sound control panel: SUN consumer of audiod's native control port.
 savanxp_system_service(NAME sound LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} SOURCES sound.c)
 

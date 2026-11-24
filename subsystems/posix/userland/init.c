@@ -102,6 +102,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "logview")) {
         return "LOGVIEW SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "devmgmt")) {
+        return "DEVMGMT SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "imgview-selftest")) {
         return "IMGVIEW SELFTEST";
     }
@@ -228,6 +231,7 @@ static int run_automation_spec(const char* spec) {
     const char* taskmgr_selftest_argv[] = {"/system/taskmgr.sxe", "--selftest", 0};
     const char* diskmgmt_selftest_argv[] = {"/system/diskmgmt.sxe", "--selftest", 0};
     const char* logview_selftest_argv[] = {"/system/logview.sxe", "--selftest", 0};
+    const char* devmgmt_selftest_argv[] = {"/system/devmgmt.sxe", "--selftest", "usb", 0};
     const char* imgview_selftest_argv[] = {"/system/imgview.sxe", "--selftest", 0};
     const char* calc_selftest_argv[] = {"/bin/calc", "--selftest", 0};
     const char* mines_selftest_argv[] = {"/bin/mines", "--selftest", 0};
@@ -377,6 +381,11 @@ static int run_automation_spec(const char* spec) {
             path = "/system/logview.sxe";
             argv = logview_selftest_argv;
             argc = 2;
+        } else if (strcmp(spec, "devmgmt-selftest") == 0 || strcmp(spec, "devmgmt") == 0) {
+            /* The scenario attaches USB devices: the inventory must list them. */
+            path = "/system/devmgmt.sxe";
+            argv = devmgmt_selftest_argv;
+            argc = 3;
         } else if (strcmp(spec, "imgview-selftest") == 0) {
             path = "/system/imgview.sxe";
             argv = imgview_selftest_argv;

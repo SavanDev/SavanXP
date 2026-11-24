@@ -25,6 +25,7 @@ static void register_posix_process_state(void) {
 #include <stdint.h>
 
 #include "kernel/heap.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/random.hpp"
 #include "kernel/random_crypto.hpp"
 #include "kernel/rtc.hpp"
@@ -643,6 +644,45 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
                     write_to_process_memory(caller, context->rdi, &value, sizeof(value))
                 ? 0
                 : static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+            return context;
+        }
+        case SAVANXP_SYS_DEVICE_SNAPSHOT: {
+            // SUN's DEVICE_SNAPSHOT for POSIX programs: the same records, all
+            // of the inventory in one call.
+            static_assert(sizeof(savanxp_device_info) == sizeof(sxn_device_info),
+                "POSIX and SUN device records share one layout");
+            static_assert(offsetof(savanxp_device_info, name) == offsetof(sxn_device_info, name),
+                "POSIX and SUN device records share one layout");
+            static_assert(offsetof(savanxp_device_info, resources) == offsetof(sxn_device_info, resources),
+                "POSIX and SUN device records share one layout");
+            struct Copy {
+                Process* caller;
+                uint64_t user_out;
+                uint64_t capacity;
+                uint64_t record_size;
+                size_t length;
+            };
+            const uint64_t capacity = context->rsi;
+            const uint64_t size = context->rdx;
+            if (size < SAVANXP_DEVICE_INFO_V1_SIZE || size > 0x10000u || capacity > 0x10000u ||
+                (capacity != 0 &&
+                    !vm::is_user_range_accessible(caller.address_space, context->rdi, capacity * size, true))) {
+                context->rax = static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL));
+                return context;
+            }
+            Copy copy = {&caller, context->rdi, capacity, size,
+                size < sizeof(sxn_device_info) ? static_cast<size_t>(size) : sizeof(sxn_device_info)};
+            inventory::Sink sink = {
+                [](const sxn_device_info& record, size_t index, void* raw) {
+                    const Copy& target = *static_cast<const Copy*>(raw);
+                    return index >= target.capacity ||
+                        write_to_process_memory(*target.caller, target.user_out + index * target.record_size, &record,
+                            target.length);
+                },
+                &copy, 0, 0, false};
+            const size_t total = inventory::snapshot(sink);
+            context->rax = sink.failed ? static_cast<uint64_t>(sx::negative_error(SAVANXP_EINVAL))
+                                       : static_cast<uint64_t>(total);
             return context;
         }
         case SAVANXP_SYS_STORAGE_SNAPSHOT: {

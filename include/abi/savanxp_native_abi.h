@@ -466,6 +466,17 @@ enum sxn_syscall_number {
      * had. 0, -ENOENT, -EISDIR, -EINVAL (a relative path), -EACCES, -EROFS,
      * -EBUSY (FAT, the file open). DeleteFile. */
     SXN_SYS_DELETE_PATH = 0x104D,
+    /* rdi = struct sxn_device_info[] (written), rsi = how many fit, rdx =
+     * sizeof(struct sxn_device_info). The hardware inventory in one
+     * consistent view (docs/kernel/DEVICE_INVENTORY.md): the computer, every
+     * PCI function, the platform devices, every USB device and interface,
+     * parents before their children, all with the same generation. Writes at
+     * most rdx bytes per record and at most rsi records. Returns how many
+     * instances there are, which is more than rsi when they did not fit (call
+     * again with room); rsi = 0 only counts. -EINVAL for a size below
+     * SXN_DEVICE_INFO_V1_SIZE or a bad buffer. Any process may read it.
+     * SetupDiGetClassDevs + SetupDiGetDeviceRegistryProperty. */
+    SXN_SYS_DEVICE_SNAPSHOT = 0x104E,
 };
 
 /* Where the date came from (sxn_clock_status.source). */
@@ -707,6 +718,140 @@ struct sxn_storage_device {
 };
 
 #define SXN_STORAGE_DEVICE_V1_SIZE ((uint32_t)sizeof(struct sxn_storage_device))
+
+/* SXN_SYS_DEVICE_SNAPSHOT: one hardware instance. docs/kernel/DEVICE_INVENTORY.md. */
+
+/* Where an instance sits (sxn_device_info.bus). */
+enum sxn_device_bus {
+    SXN_DEVICE_BUS_ROOT = 1,          /* the computer itself; parent_id 0 */
+    SXN_DEVICE_BUS_PCI = 2,           /* a PCI function */
+    SXN_DEVICE_BUS_PLATFORM = 3,      /* found by a driver, not on a bus: PS/2, the boot framebuffer */
+    SXN_DEVICE_BUS_USB = 4,           /* a USB device; its functions are its interfaces */
+    SXN_DEVICE_BUS_USB_INTERFACE = 5, /* one interface of a USB device */
+};
+
+/* What kind of hardware it is, from its class codes or from the driver
+ * that took it. A hint for grouping: an instance with no driver is still
+ * classified by what it says it is. */
+enum sxn_device_class {
+    SXN_DEVICE_CLASS_UNKNOWN = 0,
+    SXN_DEVICE_CLASS_COMPUTER = 1,
+    SXN_DEVICE_CLASS_SYSTEM = 2,      /* bridges, SMBus, IOMMU, entropy sources */
+    SXN_DEVICE_CLASS_DISPLAY = 3,
+    SXN_DEVICE_CLASS_SOUND = 4,       /* sound, video and game controllers */
+    SXN_DEVICE_CLASS_NETWORK = 5,
+    SXN_DEVICE_CLASS_KEYBOARD = 6,
+    SXN_DEVICE_CLASS_POINTER = 7,     /* mice, tablets, touch pads */
+    SXN_DEVICE_CLASS_INPUT = 8,       /* other human interface devices */
+    SXN_DEVICE_CLASS_STORAGE = 9,     /* disk controllers: IDE, AHCI, NVMe, virtio-blk */
+    SXN_DEVICE_CLASS_DISK = 10,       /* a disk itself: a USB stick, the LiveCD's RAM disk */
+    SXN_DEVICE_CLASS_USB = 11,        /* USB host controllers and hubs */
+    SXN_DEVICE_CLASS_USB_DEVICE = 12, /* a USB device as a whole */
+};
+
+/* The lifecycle states (docs/kernel/DEVICE_INVENTORY.md#states). The kernel
+ * reports UNBOUND, STARTED and FAILED today; the others are named now so the
+ * numbers stay when D3 brings them. REMOVED never appears in a snapshot: a
+ * removed instance is absent, and its id is never used again. */
+enum sxn_device_state {
+    SXN_DEVICE_DISCOVERED = 1, /* found, not yet offered to the drivers */
+    SXN_DEVICE_UNBOUND = 2,    /* offered; no driver is using it */
+    SXN_DEVICE_STARTING = 3,
+    SXN_DEVICE_STARTED = 4,    /* a driver took it and it works */
+    SXN_DEVICE_QUIESCING = 5,
+    SXN_DEVICE_DISABLED = 6,
+    SXN_DEVICE_FAILED = 7,     /* a driver took it and could not start it */
+    SXN_DEVICE_REMOVED = 8,
+};
+
+/* Why it is in that state; NONE when STARTED. */
+enum sxn_device_reason {
+    SXN_DEVICE_REASON_NONE = 0,
+    SXN_DEVICE_REASON_NOT_CLAIMED = 1,  /* no built-in driver took it: none matches,
+                                         * or its class chose another device */
+    SXN_DEVICE_REASON_START_FAILED = 2, /* the driver gave up while starting it */
+    SXN_DEVICE_REASON_BOOT_OPTION = 3,  /* a boot option kept the drivers away (nousb) */
+    SXN_DEVICE_REASON_UNSUPPORTED = 4,  /* the driver took it and found nothing it
+                                         * supports on it (HD Audio with no analog codec) */
+};
+
+enum sxn_device_flags {
+    SXN_DEVICE_SYNTHETIC = 1u << 0, /* no hardware behind it: the LiveCD's RAM disk */
+    SXN_DEVICE_FIRMWARE = 1u << 1,  /* set up by the firmware and used as it left it */
+    SXN_DEVICE_REMOVABLE = 1u << 2, /* can go away while the system runs (USB) */
+};
+
+enum sxn_device_resource_kind {
+    SXN_DEVICE_RESOURCE_MEMORY = 1,
+    SXN_DEVICE_RESOURCE_IO_PORT = 2,
+    SXN_DEVICE_RESOURCE_IRQ = 3,    /* start = the line; length 1 */
+};
+
+enum sxn_device_resource_flags {
+    SXN_DEVICE_RESOURCE_64BIT = 1u << 0,
+    SXN_DEVICE_RESOURCE_PREFETCHABLE = 1u << 1,
+};
+
+/* An assignment as recorded: a PCI BAR's base as the firmware programmed it,
+ * an interrupt line, a legacy port range. length 0 = not recorded (reading a
+ * BAR's size writes to the device, which a listing never does). */
+struct sxn_device_resource {
+    uint32_t kind;  /* enum sxn_device_resource_kind */
+    uint32_t flags; /* enum sxn_device_resource_flags */
+    uint64_t start;
+    uint64_t length;
+};
+
+#define SXN_DEVICE_MAX_RESOURCES 8u
+#define SXN_DEVICE_NAME_CAPACITY 48u
+#define SXN_DEVICE_MANUFACTURER_CAPACITY 32u
+#define SXN_DEVICE_DRIVER_CAPACITY 16u
+#define SXN_DEVICE_LOCATION_CAPACITY 32u
+
+/* SXN_SYS_DEVICE_SNAPSHOT. Grows at the end only. Fields that do not apply
+ * to the bus are 0 or "". */
+struct sxn_device_info {
+    uint32_t id;           /* stable for the instance's life; never reused */
+    uint32_t parent_id;    /* 0 for the computer */
+    uint32_t generation;   /* bumps whenever any instance changes; one per snapshot */
+    uint32_t bus;          /* enum sxn_device_bus */
+    uint32_t device_class; /* enum sxn_device_class */
+    uint32_t state;        /* enum sxn_device_state */
+    uint32_t reason;       /* enum sxn_device_reason */
+    uint32_t flags;        /* enum sxn_device_flags */
+    /* Hardware IDs. PCI: vendor, device, subsystem vendor and subsystem.
+     * USB device and interface: idVendor, idProduct, 0, 0. */
+    uint16_t vendor_id;
+    uint16_t product_id;
+    uint16_t subsystem_vendor_id;
+    uint16_t subsystem_id;
+    /* PCI: class, subclass, programming interface, revision. USB device:
+     * bDeviceClass, SubClass, Protocol; USB interface: the interface's. */
+    uint8_t class_code;
+    uint8_t subclass;
+    uint8_t protocol;
+    uint8_t revision;
+    /* PCI: bus, device, function. USB device: the host controller's index,
+     * the depth below its root port (0 on the root port itself) and the
+     * port it hangs from. USB interface: bInterfaceNumber as the function. */
+    uint8_t bus_number;
+    uint8_t device_number;
+    uint8_t function_number;
+    uint8_t usb_speed;     /* USB: 1 full, 2 low, 3 high, 4 super, 5 super+ */
+    uint16_t usb_version;  /* USB device: bcdUSB */
+    uint16_t device_version; /* USB device: bcdDevice */
+    uint32_t resource_count;
+    /* What the hardware reports about itself (a USB product string, an NVMe
+     * model) or, for a platform device, what its driver found. "" when
+     * nothing said. */
+    char name[SXN_DEVICE_NAME_CAPACITY];
+    char manufacturer[SXN_DEVICE_MANUFACTURER_CAPACITY]; /* USB: iManufacturer */
+    char driver[SXN_DEVICE_DRIVER_CAPACITY];   /* the built-in driver using it; "" when none */
+    char location[SXN_DEVICE_LOCATION_CAPACITY]; /* "PCI 00:1f.2", "xhci0 port 1.3" */
+    struct sxn_device_resource resources[SXN_DEVICE_MAX_RESOURCES];
+};
+
+#define SXN_DEVICE_INFO_V1_SIZE ((uint32_t)sizeof(struct sxn_device_info))
 
 enum sxn_process_state {
     SXN_PROCESS_RUNNING = 1, /* alive: running, ready or blocked */

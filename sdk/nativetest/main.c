@@ -3933,6 +3933,88 @@ static void test_random(void) {
 
 /* `nativetest random-unseeded`: a machine with no entropy source at all. The
  * generator must say so and hand out nothing. */
+/* DEVICE_SNAPSHOT (D1 of docs/roadmaps/open/DRIVERS_ROADMAP.md): the
+ * hardware inventory Device Manager lists. The scenario boots from a disk, so
+ * some storage controller is started; whatever else QEMU attached only has to
+ * keep the inventory's rules. */
+static struct sxn_device_info g_devices[512];
+
+static void test_device_snapshot(void) {
+    long count = sxn_device_snapshot(0, 0);
+    long total;
+    long index;
+    long other;
+    int storage_started = 0;
+    int pci_seen = 0;
+
+    check(count >= 2);
+    if (count < 2 || count > 512) {
+        return;
+    }
+    memset(g_devices, 0xa5, sizeof(g_devices));
+    total = sxn_device_snapshot(g_devices, 512);
+    check(total == count);
+    if (total != count) {
+        return;
+    }
+    check(g_devices[0].bus == SXN_DEVICE_BUS_ROOT && g_devices[0].device_class == SXN_DEVICE_CLASS_COMPUTER &&
+        g_devices[0].parent_id == 0u && g_devices[0].state == SXN_DEVICE_STARTED);
+    for (index = 0; index < total; ++index) {
+        const struct sxn_device_info* device = &g_devices[index];
+        int parent_before = index == 0;
+
+        check(device->id != 0u && device->generation == g_devices[0].generation);
+        for (other = 0; other < total; ++other) {
+            if (other != index) {
+                check(g_devices[other].id != device->id);
+            }
+            if (other < index && g_devices[other].id == device->parent_id) {
+                parent_before = 1;
+            }
+        }
+        check(parent_before);
+        check(device->state == SXN_DEVICE_UNBOUND || device->state == SXN_DEVICE_STARTED ||
+            device->state == SXN_DEVICE_FAILED);
+        /* Everything started has a driver but the computer itself. */
+        check(device->state != SXN_DEVICE_STARTED || (device->reason == SXN_DEVICE_REASON_NONE &&
+            (device->driver[0] != '\0' || device->bus == SXN_DEVICE_BUS_ROOT)));
+        check(device->state != SXN_DEVICE_FAILED || device->reason == SXN_DEVICE_REASON_START_FAILED);
+        check(device->state != SXN_DEVICE_UNBOUND || device->reason != SXN_DEVICE_REASON_NONE);
+        check(device->resource_count <= SXN_DEVICE_MAX_RESOURCES);
+        check(memchr(device->name, '\0', sizeof(device->name)) != 0 &&
+            memchr(device->driver, '\0', sizeof(device->driver)) != 0 &&
+            memchr(device->location, '\0', sizeof(device->location)) != 0);
+        if (device->bus == SXN_DEVICE_BUS_PCI) {
+            static const char digits[] = "0123456789abcdef";
+            char location[16];
+
+            pci_seen = 1;
+            check(device->vendor_id != 0xffffu && device->vendor_id != 0u);
+            memcpy(location, "PCI 00:00.0", 12);
+            location[4] = digits[device->bus_number >> 4];
+            location[5] = digits[device->bus_number & 15];
+            location[7] = digits[device->device_number >> 4];
+            location[8] = digits[device->device_number & 15];
+            location[10] = digits[device->function_number & 15];
+            check(streq(device->location, location));
+            if (device->device_class == SXN_DEVICE_CLASS_STORAGE && device->state == SXN_DEVICE_STARTED) {
+                storage_started = 1;
+            }
+        }
+    }
+    check(pci_seen && storage_started);
+
+    /* Short of room: the count, and only what fits. */
+    memset(g_devices, 0xa5, sizeof(g_devices));
+    check(sxn_device_snapshot(g_devices, 1) == count);
+    check(g_devices[0].bus == SXN_DEVICE_BUS_ROOT && g_devices[1].id == 0xa5a5a5a5u);
+    check(sxn_trap(SXN_SYS_DEVICE_SNAPSHOT, (unsigned long)g_devices, 1, SXN_DEVICE_INFO_V1_SIZE - 1u) ==
+        -SAVANXP_EINVAL);
+    check(sxn_trap(SXN_SYS_DEVICE_SNAPSHOT, 16ul, 1, sizeof(g_devices[0])) == -SAVANXP_EINVAL);
+    check(sxn_trap(SXN_SYS_DEVICE_SNAPSHOT, 16ul, 0, sizeof(g_devices[0])) == count);
+    check(sxn_log("nativetest: device snapshot done") == 0);
+}
+
 static void test_random_unseeded(void) {
     struct sxn_random_status status;
     unsigned char bytes[16];
@@ -4911,6 +4993,8 @@ int main(int argc, char** argv) {
         check(sxn_log_read(found.sequence, g_log_records, 1) == 1 && g_log_records[0].sequence == found.sequence);
         check(sxn_log("nativetest: log read done") == 0);
     }
+
+    test_device_snapshot();
 
     /* STORAGE_SNAPSHOT (slice 28): the devices Disk Management lists. The
      * scenario boots from a disk, so something is mounted at "/" and holds

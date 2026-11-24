@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -17,6 +18,10 @@ namespace {
 struct Entry {
     const usb::hc::ControllerOps* ops;
     uint8_t local;
+    // Its PCI function, for the hardware inventory.
+    uint8_t pci_bus;
+    uint8_t pci_slot;
+    uint8_t pci_function;
 };
 
 Entry g_controllers[usb::hc::kMaxControllers] = {};
@@ -41,7 +46,7 @@ constexpr uint8_t kPciCapabilityPowerManagement = 0x01;
 
 namespace usb::hc {
 
-bool add_controller(const ControllerOps& ops, uint8_t local) {
+bool add_controller(const ControllerOps& ops, uint8_t local, const pci::DeviceInfo& info) {
     if (g_count >= kMaxControllers) {
         console::printf("usb: more than %u controllers, %s %u left alone\n", static_cast<unsigned>(kMaxControllers),
             ops.name, static_cast<unsigned>(local));
@@ -49,8 +54,20 @@ bool add_controller(const ControllerOps& ops, uint8_t local) {
     }
     g_controllers[g_count].ops = &ops;
     g_controllers[g_count].local = local;
+    g_controllers[g_count].pci_bus = info.bus;
+    g_controllers[g_count].pci_slot = info.slot;
+    g_controllers[g_count].pci_function = info.function;
     ++g_count;
+    inventory::pci_started(info);
     return true;
+}
+
+uint32_t inventory_id(uint8_t controller) {
+    if (controller >= g_count) {
+        return 0;
+    }
+    const Entry& entry = g_controllers[controller];
+    return inventory::pci_id(entry.pci_bus, entry.pci_slot, entry.pci_function);
 }
 
 uint8_t local_index(uint8_t controller) {
@@ -62,6 +79,8 @@ const char* controller_name(uint8_t controller) {
 }
 
 void prepare_pci(const pci::DeviceInfo& info, const char* name, bool io_space) {
+    // Taken from here on; add_controller() says it started.
+    inventory::pci_claim(info, name);
     uint16_t command = pci::read_config_u16(info.bus, info.slot, info.function, kPciCommandOffset);
     command = static_cast<uint16_t>(command | (io_space ? kPciCommandIo : kPciCommandMemory) | kPciCommandBusMaster |
         kPciCommandInterruptDisable);

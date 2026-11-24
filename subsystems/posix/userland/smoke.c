@@ -45,6 +45,47 @@ static int storage_lists_the_root(void) {
     return 1;
 }
 
+/* The hardware inventory through POSIX (docs/kernel/DEVICE_INVENTORY.md),
+ * SUN's DEVICE_SNAPSHOT: the computer first, every parent before its
+ * children, one generation, and the smoke machine's virtio-rng started. */
+static int devices_list_the_machine(void) {
+    static struct savanxp_device_info devices[256];
+    long count = device_snapshot(devices, 256);
+    long index;
+    long other;
+    int rng_started = 0;
+
+    if (count < 2 || count > 256 || devices[0].bus != SAVANXP_DEVICE_BUS_ROOT) {
+        printf("smoke: device_snapshot returned %ld\n", count);
+        return 0;
+    }
+    for (index = 1; index < count; ++index) {
+        int parent_before = 0;
+        for (other = 0; other < index; ++other) {
+            if (devices[other].id == devices[index].parent_id) {
+                parent_before = 1;
+            }
+        }
+        if (!parent_before || devices[index].generation != devices[0].generation) {
+            printf("smoke: device_snapshot record %ld is out of order\n", index);
+            return 0;
+        }
+        if (strcmp(devices[index].driver, "virtio-rng") == 0 && devices[index].state == SAVANXP_DEVICE_STARTED) {
+            rng_started = 1;
+        }
+    }
+    if (!rng_started) {
+        puts_out("smoke: device_snapshot has no started virtio-rng\n");
+        return 0;
+    }
+    if (device_snapshot((struct savanxp_device_info*)16, 1) != -SAVANXP_EINVAL) {
+        puts_out("smoke: device_snapshot took a bad pointer\n");
+        return 0;
+    }
+    printf("smoke: ok device_snapshot devices=%ld\n", count);
+    return 1;
+}
+
 static int run_and_expect(const char* path, const char* const* argv, int argc, int expected_status) {
     int status = -1;
     long pid = spawn(path, argv, argc);
@@ -470,6 +511,7 @@ int main(void) {
         !run_and_expect("/bin/libctest", libctest_argv, 1, 0) ||
         !random_is_seeded() ||
         !storage_lists_the_root() ||
+        !devices_list_the_machine() ||
         !run_and_expect("/bin/stacktest", stacktest_argv, 1, 0) ||
         !run_and_expect("/rescue/bin/imagetest", imagetest_argv, 1, 0) ||
         !run_and_expect("/bin/imagetest", imagetest_disk_argv, 1, 0) ||

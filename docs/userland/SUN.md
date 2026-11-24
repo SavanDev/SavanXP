@@ -182,6 +182,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `GetExitCodeProcess` | `sxn_process_query` | done |
 | Toolhelp (`CreateToolhelp32Snapshot`, `Process32Next`), `GlobalMemoryStatus`, `GetSystemInfo` | `sxn_process_snapshot`, `sxn_system_info` | done (slice 27) |
 | `SetupDiGetClassDevs`, `IOCTL_DISK_GET_DRIVE_LAYOUT_EX`, `GetVolumeInformation` | `sxn_storage_snapshot` | done (slice 28, Disk Management) |
+| `SetupDiGetClassDevs` + `SetupDiGetDeviceRegistryProperty` (every device class) | `sxn_device_snapshot` | done (slice 30, Device Manager; [DEVICE_INVENTORY.md](../kernel/DEVICE_INVENTORY.md)) |
 | `ReadFile`/`WriteFile` on `\\.\PhysicalDriveN`, `IOCTL_DISK_UPDATE_PROPERTIES` | `sxn_storage_read`, `sxn_storage_write`, `sxn_storage_rescan` (system only) | done (slice 28) |
 | `SetVolumeMountPoint`, `DeleteVolumeMountPoint` | `sxn_storage_mount`, `sxn_storage_mount_flags` (`SXN_STORAGE_MOUNT_READ_ONLY`), `sxn_storage_unmount` (system only, under `/mnt`) | done (slice 28; read-only with SxFS V2-C, consumer Disk Management) |
 | `ShellExecute` with `runas` | `sxn_elevate` (`sxn/sxnelevate.h`), through the elevation broker | done |

@@ -2,6 +2,10 @@
 
 #include "kernel/block.hpp"
 
+namespace inventory {
+struct Sink;
+}
+
 // The USB stack (kernel/usb/): xHCI controllers, the devices on their ports,
 // and the class drivers that turn them into keyboards, pointers and disks.
 // Polled, like every driver here. See docs/roadmaps/done/USB_ROADMAP.md.
@@ -26,5 +30,9 @@ bool service();
 // USB sticks as block devices (usb0, usb1...), below the system disk and the
 // LiveCD's volume in the probe order.
 const block::Driver& storage_driver();
+// Every USB device present and its interfaces, as hardware inventory
+// records, hubs before what hangs from them (docs/kernel/DEVICE_INVENTORY.md).
+// Reads only what attach recorded: no transfer.
+void describe(inventory::Sink& sink);
 
 } // namespace usb

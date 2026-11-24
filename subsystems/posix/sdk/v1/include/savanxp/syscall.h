@@ -134,6 +134,11 @@ enum savanxp_syscall_number {
      * written, 0 past the last, -EINVAL for a size below V1 or a bad pointer.
      * Any process may list them. */
     SAVANXP_SYS_STORAGE_SNAPSHOT = 77,
+    /* DEVICE_SNAPSHOT(struct savanxp_device_info[], count, size): the hardware
+     * inventory, as SUN's SXN_SYS_DEVICE_SNAPSHOT. Returns how many instances
+     * there are (more than count when they did not fit), -EINVAL for a size
+     * below V1 or a bad buffer. Any process may read it. */
+    SAVANXP_SYS_DEVICE_SNAPSHOT = 78,
 };
 enum savanxp_identity_field {
     SAVANXP_IDENTITY_UID = 0,

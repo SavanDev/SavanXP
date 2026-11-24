@@ -2161,6 +2161,69 @@ def scenario_sxgldiag(s):
         raise Failure("Next Page did not reach More Help")
 
 
+def scenario_devmgmt(s):
+    """Device Manager (docs/userland/DEVICE_MANAGER.md): the tree by type with
+    the groups that hold a problem open, the same machine by connection, and
+    a device's Properties on its General and Resources tabs."""
+    def settle(name):
+        image = s.shot(name)
+        for _ in range(5):
+            time.sleep(2.0)
+            again = s.shot(name)
+            if list(again.getdata()) == list(image.getdata()):
+                break
+            image = again
+        return image
+
+    s.run("devmgmt")
+    image = settle("devmgmt")
+    expect_text(image, (0, 0, 1280, 770), "Computer", SELECT_TEXT, SELECT,
+                "the tree starts at the computer, selected")
+    expect_text(image, (0, 0, 1280, 770), "System devices", TEXT, FIELD, "the devices are grouped by type")
+    expect_text(image, (0, 0, 1280, 770), "Storage controllers", TEXT, FIELD,
+                "the disk controller has its group")
+
+    # View > Devices by connection: every branch open, the controllers under
+    # the computer.
+    view = find_text(image, (0, 0, 1280, 770), "View", TEXT, FACE)[0]
+    if view is None:
+        raise Failure("Device Manager has no View menu")
+    s.qmp.move_to(view[0] + 4, view[1] + 4)
+    s.qmp.click()
+    time.sleep(1.5)
+    image = s.shot("devmgmt-view-menu")
+    item = find_text(image, (0, 0, 1280, 770), "Devices by connection", TEXT, FACE)[0]
+    if item is None:
+        raise Failure("the View menu has no Devices by connection")
+    s.qmp.move_to(item[0] + 4, item[1] + 4)
+    s.qmp.click()
+    time.sleep(2.0)
+    image = settle("devmgmt-connection")
+    row = find_text(image, (0, 0, 1280, 770), "Intel SATA AHCI controller", TEXT, FIELD)[0]
+    if row is None:
+        raise Failure("by connection does not list the AHCI controller under the computer")
+
+    # Its Properties: General, then Resources.
+    s.qmp.move_to(row[0] + 4, row[1] + 4)
+    s.qmp.click()
+    time.sleep(1.5)
+    s.qmp.chord("alt", "ret")
+    time.sleep(3.0)
+    image = s.shot("devmgmt-properties")
+    expect_text(image, (0, 0, 1280, 800), "This device is working properly.", TEXT, FACE,
+                "Properties says the controller works")
+    tab = find_text(image, (0, 0, 1280, 800), "Resources", TEXT, FACE)[0]
+    if tab is None:
+        raise Failure("Properties has no Resources tab")
+    s.qmp.move_to(tab[0] + 4, tab[1] + 4)
+    s.qmp.click()
+    time.sleep(1.5)
+    image = s.shot("devmgmt-resources")
+    expect_text(image, (0, 0, 1280, 800), "Memory range:", TEXT, FACE,
+                "Resources lists the controller's memory range")
+    s.qmp.tap("esc", pause=2.0)
+
+
 def scenario_diskmgmt(s):
     """Disk Management (docs/userland/DISK_MANAGEMENT.md): the volume list,
     the disk map, Properties, then Initialize and New Partition on a blank
@@ -4729,6 +4792,7 @@ SCENARIOS = {
     "filescomputer": scenario_filescomputer,
     "taskmgrmenu": scenario_taskmgrmenu,
     "diskmgmt": scenario_diskmgmt,
+    "devmgmt": scenario_devmgmt,
     "bench": scenario_bench,
     "saturate": scenario_saturate,
     "spin": scenario_spin,

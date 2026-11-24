@@ -34,6 +34,7 @@
 #include "azalia/playback.hpp"
 #include "azalia/recovery.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
@@ -432,6 +433,9 @@ bool probe() {
     for (size_t index = 0; index < pci::device_count() && g_controller_count < kMaxControllers && g_device_count < kMaxCodecs; ++index) {
         pci::DeviceInfo dev;
         if (!pci::device_info(index,dev) || dev.class_code != 4 || dev.subclass != 3) continue;
+        // Taken from here on: started once its command rings run, released
+        // if no codec on it has an analog path.
+        inventory::pci_claim(dev,"azalia");
         pci::BarInfo bar;
         if (!pci::bar_info(dev,0,bar) || !bar.present || bar.io_space || !bar.base) continue;
         void* mapped = nullptr;
@@ -459,6 +463,7 @@ bool probe() {
         const uint16_t codecs = mmio_read(&c,HDA_STATESTS,2);
         mmio_write(&c,HDA_STATESTS,codecs,2);
         if (azalia_init_rings(&c.az)) { (void)stop_commands(c); continue; }
+        inventory::pci_started(dev);
         for (unsigned address = 0; address < HDA_MAX_CODECS && c.codecs < kCodecsPerController && g_device_count < kMaxCodecs; ++address) {
             if (!(codecs&(1u<<address))) continue;
             Device& d = g_devices[g_device_count];
@@ -505,6 +510,7 @@ bool probe() {
             suffix[8] = digits[dev.function]; suffix[10] = digits[address];
             strcpy(d.device_name+strlen(d.device_name),suffix);
             d.online = true; d.setup_adapter();
+            if (!c.codecs) inventory::pci_name(dev,d.codec.vid == 0x10ec0892 ? "Realtek ALC892 (HD Audio)" : "HD Audio analog codec");
             ++g_device_count; ++c.codecs;
             console::printf("azalia: ready %x:%x.%u codec=0x%x address=%u pin=0x%x dac=0x%x rings=%u/%u\n",
                 dev.bus,dev.slot,dev.function,d.codec.vid,address,playback ? d.playback_path.nodes[0] : 0,
@@ -513,6 +519,7 @@ bool probe() {
         if (!c.codecs) {
             console::printf("azalia: %x:%x.%u no supported analog path, skipped\n",dev.bus,dev.slot,dev.function);
             (void)stop_commands(c);
+            inventory::pci_unsupported(dev);
         }
         // MMIO has no unmap yet; command/stream allocations remain reserved for
         // this controller for the boot, including failed-stop hardware.

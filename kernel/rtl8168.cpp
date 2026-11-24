@@ -48,6 +48,7 @@
 #include "arch/cpu.hpp"
 #include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -661,6 +662,12 @@ int prepare() {
 bool bring_up() {
     int result;
     do { result = prepare(); asm volatile("pause"); } while (result == -SX_EAGAIN);
+    // Probed is taken; up or not is what the inventory shows from here.
+    if (result == 0) {
+        inventory::pci_started(g_pci_device);
+    } else {
+        inventory::pci_failed(g_pci_device);
+    }
     return result == 0;
 }
 
@@ -753,6 +760,7 @@ bool probe() {
     if (!find_device(g_pci_device)) {
         return false;
     }
+    inventory::pci_claim(g_pci_device, "rtl8168");
 
     prepare_pci();
     if (!map_registers()) {
@@ -801,6 +809,11 @@ bool probe() {
         static_cast<unsigned>(g_mac[4]), static_cast<unsigned>(g_mac[5]),
         g_irq_routed ? "intx" : "polled");
     g_present = true;
+    // Recognized and set up; bring_up() brings the link when asked.
+    if (strcmp(g_revision_name, "unknown") != 0) {
+        inventory::pci_name(g_pci_device, g_revision_name);
+    }
+    inventory::pci_started(g_pci_device);
     return true;
 }
 

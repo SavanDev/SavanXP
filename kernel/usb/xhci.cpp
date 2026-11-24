@@ -1213,7 +1213,7 @@ size_t start() {
             continue;
         }
         if (start_controller(info, g_controllers[g_controller_count]) &&
-            hc::add_controller(kOps, static_cast<uint8_t>(g_controller_count))) {
+            hc::add_controller(kOps, static_cast<uint8_t>(g_controller_count), info)) {
             ++g_controller_count;
         }
     }

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_pci.hpp"
 #include "abi/savanxp_abi.h"
@@ -295,6 +296,8 @@ bool probe() {
     }
 
     g_present = true;
+    // Recognized and negotiated; DRIVER_OK waits for bring_up().
+    inventory::pci_started(pci_device);
     return true;
 }
 

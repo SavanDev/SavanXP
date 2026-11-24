@@ -94,6 +94,13 @@ void append_device(uint8_t bus, uint8_t slot, uint8_t function) {
     info.class_code = static_cast<uint8_t>((class_info >> 24) & 0xffu);
     info.header_type = static_cast<uint8_t>((type_info >> 16) & 0xffu);
     info.irq_line = static_cast<uint8_t>(irq_info & 0xffu);
+    info.interrupt_pin = static_cast<uint8_t>((irq_info >> 8) & 0xffu);
+    // A bridge's secondary bus (type 1) or CardBus bus (type 2): what the
+    // inventory hangs the functions behind it from.
+    const uint8_t layout = static_cast<uint8_t>(info.header_type & 0x7fu);
+    if (layout == 0x01 || layout == 0x02) {
+        info.secondary_bus = static_cast<uint8_t>((pci::read_config_u32(bus, slot, function, 0x18) >> 8) & 0xffu);
+    }
 
     for (uint8_t index = 0; index < 6; ++index) {
         info.bar[index] = pci::read_config_u32(bus, slot, function, static_cast<uint8_t>(0x10 + index * 4));
