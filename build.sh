@@ -259,6 +259,12 @@ SMOKE_USB_HUB=False
 SMOKE_USB_HOST=xhci
 SMOKE_IOMMU=none
 SMOKE_BOOT_OPTIONS=""
+# Also read from the catalog, so --smoke-command (which skips it) needs them too.
+SMOKE_UNSUPPORTED=""
+SMOKE_REQUIRES_VIRTIO=False
+SMOKE_NO_DISK=False
+SMOKE_EXTRA_DISK_MIB=0
+SMOKE_FAT_DISK_MIB=0
 if [[ "$COMMAND" == smoke ]]; then
     [[ -n "$SMOKE_SCENARIO" ]] || SMOKE_SCENARIO=smoke
     if [[ -n "$SMOKE_COMMAND_OVERRIDE" ]]; then

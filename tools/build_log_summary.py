@@ -114,7 +114,7 @@ def summarize(kind, label, log, status, seconds, roots):
     warnings = warnings_of(lines)
     facts = []
     if kind == "ninja":
-        facts.append(f"{len(steps)} steps" if steps else "no work to do")
+        facts.append(f"{len(steps)} step{'s' if len(steps) != 1 else ''}" if steps else "no work to do")
     facts.append(f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}")
     facts.append(f"{seconds}s")
     if status == 0:

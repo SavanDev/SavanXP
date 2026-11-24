@@ -1536,7 +1536,8 @@ foreach(target IN LISTS SAVANXP_RESCUE_PROGRAMS)
                 "${SAVANXP_ROOTFS_ROOT}/bin/$<TARGET_FILE_NAME:${target}>"
     )
 endforeach()
-if(SAVANXP_SMOKE_COMMAND)
+# Compared as a string: if(VAR) would read a command named false, off or no as unset.
+if(NOT SAVANXP_SMOKE_COMMAND STREQUAL "")
     list(APPEND SAVANXP_STAGE_COMMANDS
         COMMAND "${CMAKE_COMMAND}" -E rm -f "${SAVANXP_ROOTFS_ROOT}/SMOKE"
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/write_smoke_spec.py"

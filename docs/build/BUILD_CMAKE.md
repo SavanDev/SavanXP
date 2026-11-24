@@ -114,8 +114,9 @@ tail. `--verbose` prints everything
 even when `SAVANXP_QUIET` is set.
 
 It exists for AI agents, which pay for every line they read: a full Ninja build
-prints about 1,800 lines, and every commit changes the build number, which
-rebuilds everything. The repository's `.claude/settings.json` sets
+prints about 1,800 lines, and even the build after a commit prints about 150,
+because the new build number and build id rebuild the files that show them
+and restamp every program's SXE resources. The repository's `.claude/settings.json` sets
 `SAVANXP_QUIET=1` for Claude Code; other agents should set it the same way.
 People and CI see the full output unless they ask for less.
 

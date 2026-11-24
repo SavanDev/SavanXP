@@ -316,6 +316,9 @@ changes not released yet; each released version has its own file in
 
 ### Fixed
 
+- **`build.sh smoke --smoke-command` no longer aborts on an unset variable, and a command named `false`
+  or `off` is staged.** CMake read such a command as an empty one and staged no smoke specification.
+
 - **GitHub Actions installs `gperf` for the NetSurf build.**
 - **`malloc` walked every block on each call:** the C runtime's allocator now keeps a list of free blocks, so a heap
   of many small allocations stays fast; styling a 4000-element DOM in the guest went from 100 s to under a second
