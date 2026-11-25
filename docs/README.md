@@ -364,6 +364,10 @@ all its phases have landed; the links to it move with it.
 - [`DRM_PORT_ROADMAP.md`](roadmaps/open/DRM_PORT_ROADMAP.md) — not planned: porting
   OpenBSD's DRM drivers (`i915` first, `amdgpu` last) on a Linux interface layer
   of our own, when to start, the kernel prerequisites and phases DP0-DP6.
+- [`PORTABILITY_ROADMAP.md`](roadmaps/open/PORTABILITY_ROADMAP.md) — a second 64-bit
+  architecture: what NT's HAL did and did not do, the split of `arch` into CPU
+  and `platform`, what stands in the way on `master`, aarch64 on QEMU `virt`
+  as the first target, and phases P1-P9.
 - [`DRIVERS_ROADMAP.md`](roadmaps/open/DRIVERS_ROADMAP.md) — native driver registries,
   common device/resource/I/O lifetime, general Plug and Play and safe removal,
   plus a SUN Device Manager inspired by Windows XP, with staged acceptance gates.

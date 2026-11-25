@@ -125,3 +125,8 @@ is the case this boundary is drawn for:
 - `memory.cpp` rewritten with `rep movsd`.
 - What does **not** follow from this boundary: `vmm.cpp` still builds 4-level
   page tables itself. That is the VMM package in PENTIUM4_EVO_N1020V.md.
+
+A second 64-bit architecture (aarch64 first) is planned in
+[PORTABILITY_ROADMAP.md](../roadmaps/open/PORTABILITY_ROADMAP.md): it splits
+this contract into `arch` (the CPU) and `platform` (the machine) and puts the
+page tables behind a backend.
