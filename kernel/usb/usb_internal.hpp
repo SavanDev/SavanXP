@@ -373,11 +373,14 @@ constexpr uint8_t kProgIfOhci = 0x10;
 constexpr uint8_t kProgIfEhci = 0x20;
 constexpr uint8_t kProgIfXhci = 0x30;
 
+// Takes the function for `name` in the hardware inventory, first thing in a
+// controller's start: false when another driver holds it, and the caller
+// leaves it alone. The inventory lists it as failing to start until
+// add_controller() takes it.
+[[nodiscard]] bool claim_pci(const pci::DeviceInfo& info, const char* name);
 // Memory or I/O decode and bus mastering on, the interrupt line off (every
 // driver here polls), and the function brought to D0 if the firmware left it
-// in a low-power state. `name` prefixes the log line and names the driver in
-// the hardware inventory, which holds the function as failing to start until
-// add_controller() takes it.
+// in a low-power state. `name` prefixes the log line.
 void prepare_pci(const pci::DeviceInfo& info, const char* name, bool io_space);
 // Zeroed pages below 4 GiB, for the controllers that address only 32 bits.
 bool allocate_dma32(size_t pages, memory::PageAllocation& allocation);

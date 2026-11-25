@@ -51,6 +51,14 @@ long pci_parent(const PciNode* nodes, size_t count, size_t index);
 // kMaxPciNodes. Returns how many were ordered.
 size_t order_pci(const PciNode* nodes, size_t count, size_t* order, long* parent);
 
+// Whether `claimant` may take a PCI function whose record names `holder` as
+// its driver and is in `state` (enum sxn_device_state). A function nobody
+// holds, or one its driver gave back (UNBOUND), is free; a driver may take
+// its own function again; any other holder keeps it, including one that
+// FAILED, since a driver that gave up may still own the device's DMA. An
+// empty or missing claimant is never granted.
+bool claim_allowed(const char* holder, uint32_t state, const char* claimant);
+
 // NUL-terminated, cut to fit.
 void copy_text(char* out, size_t capacity, const char* text);
 // "PCI 00:1f.2".

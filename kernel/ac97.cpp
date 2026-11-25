@@ -436,7 +436,9 @@ void initialize() {
         return;
     }
     // Taken from here on; started once the codec answers and DMA is set.
-    inventory::pci_claim(g_pci, "ac97");
+    if (!inventory::pci_claim(g_pci, "ac97")) {
+        return;
+    }
     if (!map_io_bars()) {
         console::write_line("ac97: I/O BARs missing or invalid");
         return;

@@ -327,6 +327,16 @@ SCENARIOS: dict[str, Scenario] = {
         "inventory with USB devices attached",
         usb=True,
     ),
+    # D3: PCI ownership is exclusive. The kernel's self-test runs once every
+    # driver has started, on the inventory's records alone.
+    "inventory-claims": _qemu_scenario(
+        "uname",
+        "inventory: selftest passed",
+        "inventory: selftest failed",
+        "Exclusive PCI claims: a started function refuses a second driver, a free one is taken, "
+        "refused, retaken by its holder and given back",
+        boot_options="inventory-selftest",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",

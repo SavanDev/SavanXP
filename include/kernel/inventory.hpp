@@ -32,13 +32,24 @@ uint32_t root_id();
 // Something listed changed: an instance came, went or changed state.
 void changed();
 
-// A driver took the PCI function and is starting it. Until pci_started()
-// it is listed as FAILED (START_FAILED), so every early return of a start
-// path reads as the failure it is without the driver saying so. A class
-// other than SXN_DEVICE_CLASS_UNKNOWN replaces the one its class codes give
-// (virtio-rng's class code says nothing).
-void pci_claim(const pci::DeviceInfo& device, const char* driver,
+// A driver takes the PCI function to start it, before it touches anything
+// of the function (sizing a BAR with pci::bar_info() included). Ownership
+// is exclusive: false when another driver holds it (claim_allowed() in
+// inventory_rules.hpp), and the driver leaves the function alone. On true,
+// until pci_started() it is listed as FAILED (START_FAILED), so every early
+// return of a start path reads as the failure it is without the driver
+// saying so. A class other than SXN_DEVICE_CLASS_UNKNOWN replaces the one
+// its class codes give (virtio-rng's class code says nothing). The calls
+// below that report on a function are for its holder only.
+[[nodiscard]] bool pci_claim(const pci::DeviceInfo& device, const char* driver,
     uint32_t device_class = SXN_DEVICE_CLASS_UNKNOWN);
+// The holder gives the function back, quiet, with nothing of it in use: it
+// is listed as UNBOUND (NOT_CLAIMED) and any driver may take it. False, and
+// nothing changes, when `driver` is not the holder.
+bool pci_release(const pci::DeviceInfo& device, const char* driver);
+// Who holds the function and in what state; false when it was not scanned.
+// `driver` is empty when nobody does.
+bool pci_holder(const pci::DeviceInfo& device, const char*& driver, uint32_t& state, uint32_t& reason);
 void pci_started(const pci::DeviceInfo& device);
 // Taken, then lost: a NIC that does not come up when asked.
 void pci_failed(const pci::DeviceInfo& device);
@@ -72,5 +83,12 @@ uint32_t platform_add(const PlatformDevice& device);
 
 // Every instance, parents first, into `sink`. Returns sink.total.
 size_t snapshot(Sink& sink);
+
+// Boot option `inventory-selftest`, once every driver has started: a held
+// function refuses another driver and stays as it was, a free one is taken,
+// refused to a second driver, taken again by its own and given back. Only
+// the records change; no device is touched. Logs `inventory: selftest
+// passed` or the step that failed.
+void selftest();
 
 } // namespace inventory

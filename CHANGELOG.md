@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **A PCI function has one driver at a time.** `inventory::pci_claim` refuses a
+  function another driver holds and `pci_release` gives one back; boot option
+  `inventory-selftest` and `smoke inventory-claims` check it. [Ownership](docs/kernel/DEVICE_INVENTORY.md#ownership).
+
 - **The Xash3D client plays sound.** The engine's mix reaches `audiod`, or
   `/dev/audio0` without the daemon. [Port notes](ports/xash3d/README.md#graphical-client).
 
@@ -338,6 +342,9 @@ changes not released yet; each released version has its own file in
   DISPI mode changes pass the same check. FB1b of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
 
 ### Fixed
+
+- **Device Manager no longer lists QEMU's virtio sound card as a failed `ac97`.**
+  The AC'97 driver matched it by class code and took it over; it is now refused.
 
 - **`shoot.sh --scenario startmenu` passes on a gradient wallpaper.** It no longer
   mistakes a Programs cascade that fits the screen for one with scroll arrows.

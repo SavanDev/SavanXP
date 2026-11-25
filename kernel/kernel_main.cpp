@@ -532,6 +532,12 @@ namespace
     // The system runs from its disk. Without one, the initramfs under /rescue
     // still holds an init and a shell (docs/kernel/FILESYSTEMS.md).
     const char* init_path = disk_mounted ? "/bin/init" : "/rescue/bin/init";
+    // Every driver has started: exclusive PCI claims, on the records alone
+    // (docs/kernel/DEVICE_INVENTORY.md).
+    if (boot::has_option(boot_info.cmdline, "inventory-selftest"))
+    {
+        inventory::selftest();
+    }
     console::printf(
         "handoff: starting %s (%s, root %s)\n",
         init_path,

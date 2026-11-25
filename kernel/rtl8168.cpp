@@ -760,7 +760,9 @@ bool probe() {
     if (!find_device(g_pci_device)) {
         return false;
     }
-    inventory::pci_claim(g_pci_device, "rtl8168");
+    if (!inventory::pci_claim(g_pci_device, "rtl8168")) {
+        return false;
+    }
 
     prepare_pci();
     if (!map_registers()) {

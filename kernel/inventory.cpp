@@ -3,6 +3,7 @@
 
 #include "kernel/inventory.hpp"
 
+#include "kernel/console.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/string.hpp"
 #include "kernel/usb.hpp"
@@ -186,14 +187,47 @@ void changed() {
     ++g_generation;
 }
 
-void pci_claim(const pci::DeviceInfo& device, const char* driver, uint32_t device_class) {
+bool pci_claim(const pci::DeviceInfo& device, const char* driver, uint32_t device_class) {
     PciBinding* binding = binding_of(device);
     if (binding == nullptr) {
-        return;
+        // Before initialize() or off the scan: nothing to record, nothing
+        // anyone else can hold.
+        return driver != nullptr && driver[0] != 0;
+    }
+    if (!claim_allowed(binding->driver, binding->state, driver)) {
+        console::printf("inventory: %s refused at %x:%x.%u, held by %s\n", driver != nullptr ? driver : "?",
+            static_cast<unsigned>(device.bus), static_cast<unsigned>(device.slot),
+            static_cast<unsigned>(device.function), binding->driver);
+        return false;
     }
     copy_text(binding->driver, sizeof(binding->driver), driver);
     binding->device_class = device_class;
     set_state(*binding, SXN_DEVICE_FAILED, SXN_DEVICE_REASON_START_FAILED);
+    return true;
+}
+
+bool pci_release(const pci::DeviceInfo& device, const char* driver) {
+    PciBinding* binding = binding_of(device);
+    if (binding == nullptr || driver == nullptr || binding->driver[0] == 0 ||
+        strcmp(binding->driver, driver) != 0) {
+        return false;
+    }
+    binding->driver[0] = 0;
+    binding->name[0] = 0;
+    binding->device_class = SXN_DEVICE_CLASS_UNKNOWN;
+    set_state(*binding, SXN_DEVICE_UNBOUND, SXN_DEVICE_REASON_NOT_CLAIMED);
+    return true;
+}
+
+bool pci_holder(const pci::DeviceInfo& device, const char*& driver, uint32_t& state, uint32_t& reason) {
+    const PciBinding* binding = binding_of(device);
+    if (binding == nullptr) {
+        return false;
+    }
+    driver = binding->driver;
+    state = binding->state;
+    reason = binding->reason;
+    return true;
 }
 
 void pci_started(const pci::DeviceInfo& device) {
@@ -280,6 +314,103 @@ size_t snapshot(Sink& sink) {
     describe_platform(sink);
     usb::describe(sink);
     return sink.total;
+}
+
+} // namespace inventory
+
+namespace {
+
+bool selftest_fail(const char* step) {
+    console::printf("inventory: selftest failed: %s\n", step);
+    return false;
+}
+
+bool selftest_record(const pci::DeviceInfo& device, const char* driver, uint32_t state, uint32_t reason) {
+    const char* holder = nullptr;
+    uint32_t current_state = 0;
+    uint32_t current_reason = 0;
+    return inventory::pci_holder(device, holder, current_state, current_reason) && strcmp(holder, driver) == 0 &&
+        current_state == state && current_reason == reason;
+}
+
+bool run_selftest() {
+    constexpr char kFirst[] = "selftest-a";
+    constexpr char kSecond[] = "selftest-b";
+    pci::DeviceInfo held = {};
+    pci::DeviceInfo idle = {};
+    bool have_held = false;
+    bool have_idle = false;
+    for (size_t index = 0; index < g_pci_count; ++index) {
+        pci::DeviceInfo info = {};
+        if (!pci::device_info(index, info)) {
+            continue;
+        }
+        const PciBinding& binding = g_pci[index];
+        if (!have_held && binding.state == SXN_DEVICE_STARTED && binding.driver[0] != 0 &&
+            (binding.flags & SXN_DEVICE_FIRMWARE) == 0) {
+            held = info;
+            have_held = true;
+        }
+        if (!have_idle && binding.state == SXN_DEVICE_UNBOUND && binding.driver[0] == 0) {
+            idle = info;
+            have_idle = true;
+        }
+    }
+    if (!have_held || !have_idle) {
+        return selftest_fail("no started function and no free one to test with");
+    }
+
+    const char* holder = nullptr;
+    uint32_t state = 0;
+    uint32_t reason = 0;
+    (void)inventory::pci_holder(held, holder, state, reason);
+    char held_driver[SXN_DEVICE_DRIVER_CAPACITY];
+    inventory::copy_text(held_driver, sizeof(held_driver), holder);
+    const uint32_t generation = g_generation;
+    if (inventory::pci_claim(held, kFirst)) {
+        return selftest_fail("a started function was taken by another driver");
+    }
+    if (inventory::pci_release(held, kFirst)) {
+        return selftest_fail("a driver released a function it does not hold");
+    }
+    if (!selftest_record(held, held_driver, SXN_DEVICE_STARTED, SXN_DEVICE_REASON_NONE) ||
+        g_generation != generation) {
+        return selftest_fail("a refused claim changed the record");
+    }
+
+    if (!inventory::pci_claim(idle, kFirst) ||
+        !selftest_record(idle, kFirst, SXN_DEVICE_FAILED, SXN_DEVICE_REASON_START_FAILED)) {
+        return selftest_fail("a free function was not taken");
+    }
+    if (inventory::pci_claim(idle, kSecond) || !selftest_record(idle, kFirst, SXN_DEVICE_FAILED,
+            SXN_DEVICE_REASON_START_FAILED)) {
+        return selftest_fail("a second driver took a function in its start");
+    }
+    if (!inventory::pci_claim(idle, kFirst)) {
+        return selftest_fail("a driver could not take its own function again");
+    }
+    if (!inventory::pci_release(idle, kFirst) ||
+        !selftest_record(idle, "", SXN_DEVICE_UNBOUND, SXN_DEVICE_REASON_NOT_CLAIMED)) {
+        return selftest_fail("the holder could not give the function back");
+    }
+    if (!inventory::pci_claim(idle, kSecond) || !inventory::pci_release(idle, kSecond)) {
+        return selftest_fail("a function given back was not free");
+    }
+    console::printf("inventory: refused %x:%x.%u, held by %s; took and gave back %x:%x.%u\n",
+        static_cast<unsigned>(held.bus), static_cast<unsigned>(held.slot), static_cast<unsigned>(held.function),
+        held_driver, static_cast<unsigned>(idle.bus), static_cast<unsigned>(idle.slot),
+        static_cast<unsigned>(idle.function));
+    return true;
+}
+
+} // namespace
+
+namespace inventory {
+
+void selftest() {
+    if (run_selftest()) {
+        console::write_line("inventory: selftest passed");
+    }
 }
 
 } // namespace inventory

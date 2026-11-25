@@ -3,8 +3,9 @@
 > **Status: open.** Native drivers, per-class registries and USB hotplug exist.
 > **D1 and the initial D2 window landed 2026-11-24**: the hardware inventory
 > ([DEVICE_INVENTORY.md](../../kernel/DEVICE_INVENTORY.md)) and a read-only
-> Device Manager ([DEVICE_MANAGER.md](../../userland/DEVICE_MANAGER.md)). General
-> Plug and Play lifecycle (D3-D7) is planned, not implemented. The application
+> Device Manager ([DEVICE_MANAGER.md](../../userland/DEVICE_MANAGER.md)). **D3's
+> first slice, exclusive PCI claims, landed 2026-11-24.** The rest of the
+> lifecycle (D3-D7) is planned, not implemented. The application
 > is a SUN program inspired by Windows XP's Device Manager; it does not depend
 > on the Win32 subsystem, MMC or Windows driver compatibility.
 
@@ -204,6 +205,22 @@ information is visibly honest. Follow the repository's `sxgui-smoke` verificatio
 rule for a drawing program change.
 
 ## D3 — instance binding, resources and lifecycle
+
+**First slice landed 2026-11-24: exclusive PCI ownership**
+([DEVICE_INVENTORY.md](../../kernel/DEVICE_INVENTORY.md#ownership)).
+`inventory::pci_claim` refuses a function another driver holds, every driver
+claims before it touches the function and backs off a refusal, and
+`pci_release` gives one back (`ata` when no disk answers on the legacy ports).
+`smoke inventory-claims` proves it on the records. Still open, in order:
+
+1. Drivers that take the first match go on to the next instance, so several
+   supported instances stay independent (`ahci`, `rtl8139`, `rtl8168`, `ac97`
+   each drive one today).
+2. Claims for MMIO ranges, I/O ports and interrupt routes, recorded for the
+   inventory; legacy ports with no PCI function behind them (`ata`, `ps2`) as
+   platform claims.
+3. Start/quiesce/stop/remove/recover contracts, with references, and failure
+   injected at each start stage.
 
 **Open design work; builds on D1, independent of the D2 window.** Bind a driver
 to a specific discovered instance rather than letting unrelated probes find the

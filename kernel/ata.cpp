@@ -432,21 +432,28 @@ const block::DeviceOps kOps = {
 };
 
 // The legacy ports belong to the PCI IDE function whose primary channel is in
-// compatibility mode (programming interface bit 0 clear): the one the
-// inventory shows this driver on, once it found a disk behind them.
-void claim_ide_function() {
+// compatibility mode (programming interface bit 0 clear). False when there is
+// none: a machine with only the legacy ports.
+bool find_ide_function(pci::DeviceInfo& found) {
     for (size_t index = 0; index < pci::device_count(); ++index) {
         pci::DeviceInfo info = {};
         if (pci::device_info(index, info) && info.class_code == 0x01 && info.subclass == 0x01 &&
             (info.prog_if & 0x01u) == 0) {
-            inventory::pci_claim(info, "ata");
-            inventory::pci_started(info);
-            return;
+            found = info;
+            return true;
         }
     }
+    return false;
 }
 
 void enumerate() {
+    // The ports are the function's, so it is taken before they are probed
+    // and given back when no disk answers on them.
+    pci::DeviceInfo ide = {};
+    const bool has_ide = find_ide_function(ide);
+    if (has_ide && !inventory::pci_claim(ide, "ata")) {
+        return;
+    }
     bool found = false;
     for (size_t index = 0; index < kSlotCount; ++index) {
         if (identify(g_slots[index])) {
@@ -459,8 +466,13 @@ void enumerate() {
         }
         io_wait();
     }
+    if (!has_ide) {
+        return;
+    }
     if (found) {
-        claim_ide_function();
+        inventory::pci_started(ide);
+    } else {
+        (void)inventory::pci_release(ide, "ata");
     }
 }
 

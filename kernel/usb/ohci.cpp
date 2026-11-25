@@ -357,6 +357,10 @@ void release_from_firmware(Controller& controller) {
 bool start_controller(const pci::DeviceInfo& info, Controller& controller) {
     controller = {};
     controller.pci = info;
+    // Before bar_info(), which sizes the BAR on the device itself.
+    if (!usb::hc::claim_pci(info, "ohci")) {
+        return false;
+    }
     pci::BarInfo bar = {};
     if (!pci::bar_info(info, 0, bar) || bar.io_space || bar.base == 0) {
         console::write_line("ohci: controller without a memory BAR");

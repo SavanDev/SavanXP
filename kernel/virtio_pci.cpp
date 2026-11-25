@@ -137,11 +137,14 @@ static const char* inventory_driver_name(const pci::DeviceInfo& info, uint32_t& 
 
 bool initialize_device(const pci::DeviceInfo& pci_device, bool require_device_cfg, Device& device) {
     // Taken from here on: DRIVER_OK says it started, fail_device() that it
-    // did not.
+    // did not. Refused, `device` stays cleared, so a fail_device() on it
+    // reports nothing about a function another driver holds.
+    memset(&device, 0, sizeof(device));
     uint32_t device_class = SXN_DEVICE_CLASS_UNKNOWN;
     const char* driver = inventory_driver_name(pci_device, device_class);
-    inventory::pci_claim(pci_device, driver, device_class);
-    memset(&device, 0, sizeof(device));
+    if (!inventory::pci_claim(pci_device, driver, device_class)) {
+        return false;
+    }
     device.pci_device = pci_device;
     device.msix_vector = kVirtioMsiNoVector;
 

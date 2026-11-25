@@ -572,7 +572,9 @@ void finish_disks(size_t first, const char* model, const char* serial) {
 // nvme_attach(), without the SCSI bus, the sensors and the interrupt.
 void attach(const pci::DeviceInfo& device) {
     // Taken from here on; started once its I/O queue exists.
-    inventory::pci_claim(device, "nvme");
+    if (!inventory::pci_claim(device, "nvme")) {
+        return;
+    }
     pci::BarInfo bar = {};
     if (!pci::bar_info(device, kBarIndex, bar) || bar.io_space || bar.base == 0) {
         console::write_line("nvme: controller without a memory BAR0");

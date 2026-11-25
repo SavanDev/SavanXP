@@ -414,7 +414,10 @@ bool probe() {
         return false;
     }
     // Recognized; bring_up() brings the link when asked.
-    inventory::pci_claim(g_pci_device, "rtl8139");
+    if (!inventory::pci_claim(g_pci_device, "rtl8139")) {
+        g_present = false;
+        return false;
+    }
     inventory::pci_started(g_pci_device);
 
     g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);

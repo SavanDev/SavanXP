@@ -343,6 +343,10 @@ RunResult run(Controller& controller, size_t count, uint32_t timeout_ms) {
 bool start_controller(const pci::DeviceInfo& info, Controller& controller) {
     controller = {};
     controller.pci = info;
+    // Before bar_info(), which sizes the BAR on the device itself.
+    if (!usb::hc::claim_pci(info, "uhci")) {
+        return false;
+    }
     pci::BarInfo bar = {};
     if (!pci::bar_info(info, 4, bar) || !bar.io_space || bar.base == 0 || bar.base > 0xffff) {
         console::write_line("uhci: controller without an I/O BAR");

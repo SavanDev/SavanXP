@@ -5,7 +5,8 @@ first cut (2026-11-24).** The kernel keeps one list of the hardware it found
 and of the driver using each piece, and hands it out whole through
 `SXN_SYS_DEVICE_SNAPSHOT` (SUN) and `SAVANXP_SYS_DEVICE_SNAPSHOT` (POSIX).
 Its first consumer is [Device Manager](../userland/DEVICE_MANAGER.md). It
-lists; it controls nothing: binding, lifecycle and removal policy are D3 to D6.
+lists, and since D3's first slice it also decides who owns a PCI function
+([Ownership](#ownership)); lifecycle and removal policy are the rest of D3 to D6.
 
 ## What is listed
 
@@ -68,9 +69,13 @@ The rule is that a driver reports what it took, at the points it already
 has, and listing never reprobes anything:
 
 - `inventory::pci_claim(device, "name")` where a driver decides the function
-  is its own. **From then until `pci_started()` the function reads as
-  `FAILED`**, so every early return of a start path is reported as the failure
-  it is without the driver saying so.
+  is its own, and before it touches anything of it. It returns false when
+  another driver holds the function ([Ownership](#ownership)). **From then
+  until `pci_started()` the function reads as `FAILED`**, so every early
+  return of a start path is reported as the failure it is without the driver
+  saying so.
+- `pci_release(device, "name")` when the holder gives the function back,
+  quiet: it reads as `UNBOUND`/`NOT_CLAIMED` again and its name is cleared.
 - `pci_started()` once it works, `pci_failed()` when it stops working later (a
   NIC that does not come up when asked), `pci_unsupported()` for the HD Audio
   case, `pci_name()` for what the hardware calls itself (an NVMe model, the
@@ -79,13 +84,46 @@ has, and listing never reprobes anything:
   (the driver name comes from the virtio device type), `DRIVER_OK` starts and
   `fail_device()` fails every virtio driver; `usb::hc::prepare_pci` claims and
   `add_controller()` starts every USB host controller.
-- `ata` claims the PCI IDE function in compatibility mode once it found a disk
-  on the legacy ports, since those ports are that function's.
+- `ata` claims the PCI IDE function in compatibility mode before it probes the
+  legacy ports, since those ports are that function's, and gives it back when
+  no disk answers. A machine with no such function has its ports probed as
+  before, with nothing to claim.
 
 Where each driver does it: `ahci`, `nvme`, `ata`, `rtl8139`, `rtl8168`,
 `virtio-net` (started at probe; `DRIVER_OK` waits for bring-up), `ac97`,
 `azalia`, the virtio family, the USB controllers, `ps2`, `ramdisk`, and the
 framebuffer in `kernel_main`.
+
+## Ownership
+
+A PCI function has one holder at a time: the driver whose name its record
+carries. `pci_claim` grants it when the record names nobody, when its driver
+gave it back (`UNBOUND`, whatever the reason), or when the claimant is the
+holder itself (a driver retrying its own function, as virtio-input does when
+a device turns out not to be a pointer). Any other holder keeps it, `FAILED`
+included, because a driver that gave up may still own the device's DMA. The
+host and PCI-to-PCI bridges are held by `pci`. A refusal logs
+`inventory: <driver> refused at <bus>:<slot>.<function>, held by <holder>`
+and changes nothing, generation included. The rule is
+`inventory::claim_allowed()` in `inventory_rules.hpp`.
+
+What it means for a driver:
+
+- **The claim comes first.** `pci::bar_info()` sizes a BAR by turning decoding
+  off and writing all ones to it, so it is the claimant's to call, never a
+  probe's. The USB host controllers claim at the top of `start_controller`
+  (`usb::hc::claim_pci`) for that reason.
+- **Refused means hands off**: the driver returns without mapping, enabling or
+  reporting on the function. `pci_started()`, `pci_failed()`,
+  `pci_unsupported()` and `pci_name()` are for the holder alone; virtio's
+  `initialize_device` clears its `Device` before claiming, so a
+  `fail_device()` after a refusal reports nothing.
+- `pci_holder()` says who holds a function and in what state.
+
+Not covered yet: drivers that find their device by taking the first match
+(`rtl8139`, `rtl8168`, `ahci`, `ac97`) do not go on to the next one when the
+first is refused, and claims cover whole functions, not the MMIO ranges, I/O
+ports and interrupt routes inside them. Both are later D3 slices.
 
 ## Resources
 
@@ -142,3 +180,11 @@ SUN: `sxn_device_snapshot(out, capacity)` in `include/sxn/sxn.h`.
 - `smoke` (POSIX): `device_snapshot` in order with a started virtio-rng.
 - `smoke devmgmt-smoke`: Device Manager's self-test over the live inventory
   with USB devices attached.
+- `device-inventory-test` also covers `claim_allowed()`: free, given back,
+  held while started or failed, the bridges, the holder again, names that
+  share a prefix, an empty claimant.
+- `smoke inventory-claims`: boot option `inventory-selftest`, after every
+  driver started. A started function refuses another driver and its record
+  and generation stay; a free one is taken, refused to a second driver,
+  taken again by its holder, given back and taken by the second. Only the
+  records change; no device is touched.

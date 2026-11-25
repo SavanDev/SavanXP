@@ -396,7 +396,9 @@ void enumerate() {
         return;
     }
     // Taken from here on; started once its ports were looked at.
-    inventory::pci_claim(hba, "ahci");
+    if (!inventory::pci_claim(hba, "ahci")) {
+        return;
+    }
 
     pci::BarInfo abar = {};
     if (!pci::bar_info(hba, kAbarIndex, abar) || abar.io_space || abar.base == 0) {

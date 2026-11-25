@@ -435,7 +435,7 @@ bool probe() {
         if (!pci::device_info(index,dev) || dev.class_code != 4 || dev.subclass != 3) continue;
         // Taken from here on: started once its command rings run, released
         // if no codec on it has an analog path.
-        inventory::pci_claim(dev,"azalia");
+        if (!inventory::pci_claim(dev,"azalia")) continue;
         pci::BarInfo bar;
         if (!pci::bar_info(dev,0,bar) || !bar.present || bar.io_space || !bar.base) continue;
         void* mapped = nullptr;

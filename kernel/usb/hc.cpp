@@ -78,9 +78,11 @@ const char* controller_name(uint8_t controller) {
     return g_controllers[controller].ops->name;
 }
 
+bool claim_pci(const pci::DeviceInfo& info, const char* name) {
+    return inventory::pci_claim(info, name);
+}
+
 void prepare_pci(const pci::DeviceInfo& info, const char* name, bool io_space) {
-    // Taken from here on; add_controller() says it started.
-    inventory::pci_claim(info, name);
     uint16_t command = pci::read_config_u16(info.bus, info.slot, info.function, kPciCommandOffset);
     command = static_cast<uint16_t>(command | (io_space ? kPciCommandIo : kPciCommandMemory) | kPciCommandBusMaster |
         kPciCommandInterruptDisable);

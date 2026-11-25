@@ -160,6 +160,20 @@ size_t order_pci(const PciNode* nodes, size_t count, size_t* order, long* parent
     return written;
 }
 
+bool claim_allowed(const char* holder, uint32_t state, const char* claimant) {
+    if (claimant == nullptr || claimant[0] == 0) {
+        return false;
+    }
+    if (holder == nullptr || holder[0] == 0 || state == SXN_DEVICE_UNBOUND) {
+        return true;
+    }
+    size_t index = 0;
+    while (holder[index] != 0 && holder[index] == claimant[index]) {
+        ++index;
+    }
+    return holder[index] == claimant[index];
+}
+
 void copy_text(char* out, size_t capacity, const char* text) {
     if (capacity == 0) {
         return;

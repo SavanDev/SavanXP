@@ -203,6 +203,21 @@ void test_text() {
     check(std::strcmp(location, "PCI ab:03.7") == 0, "PCI location, high bus");
 }
 
+void test_claims() {
+    check(inventory::claim_allowed("", SXN_DEVICE_UNBOUND, "ahci"), "a free function is granted");
+    check(inventory::claim_allowed(nullptr, SXN_DEVICE_UNBOUND, "ahci"), "no holder at all is granted");
+    check(inventory::claim_allowed("azalia", SXN_DEVICE_UNBOUND, "ac97"), "a function given back is free");
+    check(!inventory::claim_allowed("virtio-net", SXN_DEVICE_STARTED, "rtl8139"), "a started holder keeps it");
+    check(!inventory::claim_allowed("nvme", SXN_DEVICE_FAILED, "ahci"), "a failed holder keeps it");
+    check(!inventory::claim_allowed("pci", SXN_DEVICE_STARTED, "xhci"), "a bridge stays with pci");
+    check(inventory::claim_allowed("virtio-input", SXN_DEVICE_FAILED, "virtio-input"),
+        "a driver takes its own function again");
+    check(!inventory::claim_allowed("ehci", SXN_DEVICE_STARTED, "ehci2"), "a longer name is another driver");
+    check(!inventory::claim_allowed("ehci2", SXN_DEVICE_STARTED, "ehci"), "a shorter name is another driver");
+    check(!inventory::claim_allowed("", SXN_DEVICE_UNBOUND, ""), "an empty claimant is refused");
+    check(!inventory::claim_allowed("", SXN_DEVICE_UNBOUND, nullptr), "a missing claimant is refused");
+}
+
 } // namespace
 
 int main() {
@@ -213,6 +228,7 @@ int main() {
     test_pci_tree();
     test_sink();
     test_text();
+    test_claims();
     std::printf("device-inventory-test: %d checks passed\n", g_checks);
     return 0;
 }
