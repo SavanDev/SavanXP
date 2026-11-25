@@ -23,7 +23,10 @@ int main(int argc, char** argv) {
             if (savanxp_waitpid((int)pid, status) != pid || *status != 23) return 4;
         }
     } else {
-        sleep_ms(5000);
+        // Stay resident until the parent has filled the process table and
+        // sampled free memory: under TCG with four vCPUs, spawning 60
+        // children took 12 s, and an early exit changed the sample.
+        sleep_ms(30000);
     }
     return g_memory[0] == 19 && g_memory[sizeof(g_memory) - 1] == 37 ? 43 : 2;
 }

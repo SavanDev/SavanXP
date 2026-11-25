@@ -128,6 +128,9 @@ Cut-off notes:
 
 ### Changed
 
+- **i386 boots through the v0.4.0 stages in the reference order.** The splash now
+  reads firmware, ACPI, PCI, input, userland, display, devices, storage, session.
+
 - **`smoke shared-memory` boots with 36 MiB instead of 32 MiB.** The CPIO root now
   carries the v0.4.0 diagnostics; `smoke memory` keeps its 32 MiB profile.
 

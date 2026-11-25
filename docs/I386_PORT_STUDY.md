@@ -2648,3 +2648,101 @@ ICR. Four CPUs scheduled. The `qemu32` runs of `smp`, `smp-boot`,
 this change both guests use the same APIC mode on every CPU model in
 section 31, so the review no longer has an APIC justification pending.
 The remaining timing difference belongs to the performance comparison.
+
+## 35. Side-by-side captures of the desktop and applications
+
+`tools/parity_capture.py` drives the same `shoot_session` scenario on
+the two BIOS ISOs from section 25, one guest after the other. The
+guests use the `pc` profile with `qemu64` and one vCPU. Each guest boots
+from a clean build of its own tree, so both disks hold only that tree's
+userland and no installed port. Each guest reads glyphs from its own
+`libsxgfx.so.0.4`. The tool compares captures with the same name pixel
+by pixel and reports the bounding box of any difference. `--mask-edition`
+excludes the wallpaper's edition label. For example:
+
+```sh
+python3 tools/parity_capture.py --scenario calc --mask-edition \
+    --reference-root "$audit/reference/build" --i386-root "$audit/i386/build" \
+    --out "$audit/runs/calc"
+```
+
+Three new scenarios cover rows that had no capture. `dialogs` opens
+Notepad's Open, unsaved-changes and Save As dialogs and cancels each
+with Esc. `cut` cuts a selection and pastes it twice. `volume` opens
+the taskbar popup, sets 50 %, toggles mute and closes it. The fourth new
+scenario, `diagnostics`, opens each Diagnostics program in turn and
+closes it with Alt+F4. `shell` now also runs a command with arguments.
+
+The first pass found the two differences fixed in section 33: the
+keypad in `calc` and the extra `/lib` entry in `files`. After those
+fixes, these scenarios were pixel-identical: `desktop`, `taskbar`,
+`startmenu`, `kbdlayout`, `clipboard`, `cut`, `alttab`, `window-keys`,
+`wheel`, `notepadwheel`, `dialogs`, `volume`, `appwiz`, `calc` and
+`diagnostics`. That covers Program Manager, the taskbar and its popups,
+the Start menu, Notepad, the Calculator, Add/Remove Programs, Gears,
+Gfx Demo, Key Test, Mouse Test and the widgets demo. The remaining
+differences have known causes:
+
+| Scenario | Difference | Cause |
+| --- | --- | --- |
+| `files` | Status-bar byte total, 661 against 798 | The i386 `/README` is the English text for the GRUB path |
+| `shell` | 16 pixels in the last capture | Caret blink phase |
+| `mines` | Board cells and counters after the first click | Boards are seeded from the clock; window, menus, dialogs and Alt+F4 are identical |
+| `gears` | Gear outlines | The rotation angle follows elapsed time; the same gears render identically in `diagnostics` |
+| `system` | Install block text | Edition, loader name, usable RAM and disk contents |
+
+The System Properties install block showed one avoidable difference.
+v0.4.0 names BIOS firmware `x86 BIOS`, while i386 said `BIOS`. The i386
+boot information now uses the reference name. The other install lines
+remain different for documented reasons. The edition is deliberate. The
+loader is GRUB 2.16 instead of Limine. Limine reports 968 MiB usable
+from the same 1 GiB because it reserves its kernel and modules, while
+GRUB's map reports 1023 MiB. The disk lines count each tree's userland.
+The Task Manager tabs were identical apart from that window behind
+them.
+
+## 36. The reference boot stages
+
+The splash status line names each boot stage. In v0.4.0 the sequence
+is: Preparing CPU, Initializing physical memory, Initializing heap,
+Enabling virtual memory, Detecting firmware, Starting ACPI, Scanning PCI
+bus, Initializing input, Loading userland, Preparing display,
+Initializing devices, Mounting storage and Starting session. i386 had
+grown its own order during bring-up. It scanned PCI, mounted storage
+and loaded the initramfs before reading the firmware tables. It started
+ACPI and the devices inside one call labelled "Initializing input", and
+it initialized input after the display. Both splashes showed the same
+labels, but in a different order and with different work behind them.
+
+`kernel_main.cpp` defines the reference order, and nothing in the i386
+dependencies requires another one. The timer, IOAPIC and AP startup
+need only the firmware tables. The reference already brings uACPI up
+before the PCI scan, and drivers resolve `_PRT` routes only when they
+bind, after both have run. Storage only
+needs PCI and the heap. The device services need the VFS for their
+device nodes. `services::initialize` is now split into `start_acpi`, for
+the SCI and uACPI, and `initialize_devices`, for audio, NIC, network,
+power, PC speaker, clipboard and serial device. The VFS loads the
+initramfs at "Loading userland". The root mount moves after the devices
+and keeps its "Mounting storage" stage. PS/2 and virtio-input start at
+"Initializing input", before the display binds, using the bootloader
+framebuffer extent. As on x86_64, the display binding updates that
+extent.
+
+One stage remains absent. Limine hands x86_64 a kernel already in long
+mode, and `vm::initialize` builds the kernel page tables after the
+heap. i386 must enable paging in `main32.cpp` before it can map the
+framebuffer at all, so that work finishes before the splash exists.
+"Enabling virtual memory" therefore has nothing to label. The other
+twelve stages appear in the reference order.
+
+`boot-screen`, `desktop`, `live-desktop`, `storage-smoke`,
+`partition-smoke`, `services`, `audio-smoke`, `net-smoke`,
+`power-smoke`, `virtio-smoke`, `sxgui-smoke --virtio`, `smoke`, `boot`
+and `hardening --smp 4` passed with the new order. `smp --smp 4` then
+failed once in `multitest32`'s memory-pressure step, at "failed load
+rollback". Each `memhog32` child slept five seconds before exiting.
+Under TCG with four vCPUs, spawning 60 of them took twelve seconds, so
+the first children exited and freed pages between the parent's
+free-memory samples. The children now stay resident for 30 seconds;
+the parent collects them after sampling.

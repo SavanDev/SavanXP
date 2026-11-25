@@ -30,7 +30,8 @@ evidence, and link the scenario, capture or measurement that supports it.
 
 | Capability | Status | i386 evidence | Comparison still required |
 | --- | --- | --- | --- |
-| Splash: logo, fade-in, marquee, status line | Ported | `smoke boot-screen` | Frame captures against the reference timing |
+| Splash: logo, fade-in, marquee, status line | Ported | `smoke boot-screen`; stages in the reference order ([study §36](I386_PORT_STUDY.md#36-the-reference-boot-stages)) | Frame captures against the reference timing |
+| Splash stage "Enabling virtual memory" | Justified | [Study §36](I386_PORT_STUDY.md#36-the-reference-boot-stages) | i386 enables paging before the framebuffer can be mapped, so the stage ends before the splash exists |
 | Handoff from splash to compositor | Ported | `smoke boot-screen` | Same capture sequence on both builds |
 | Desktop reached on `pc` and `virtio` | Matched | Study §25; `parity_capture.py --scenario desktop` differs only in the edition label ([study §32](I386_PORT_STUDY.md#32-the-reference-core-smoke-and-the-remaining-scenario-names)) | — |
 | Edition string (System Properties, desktop corner) | Justified | `SAVANXP_EDITION` | Reference reads "Alpha"; the branch deliberately reads "Legacy Edition" |
@@ -38,28 +39,33 @@ evidence, and link the scenario, capture or measurement that supports it.
 
 ## Desktop and applications
 
+Captures from `tools/parity_capture.py` on the matched `pc` profile; the
+per-scenario results are in [study §35](I386_PORT_STUDY.md#35-side-by-side-captures-of-the-desktop-and-applications). "Identical" means pixel-identical with the
+edition label masked.
+
 | Capability | Status | i386 evidence | Comparison still required |
 | --- | --- | --- | --- |
-| `windowd` compositor, WM protocol v4, 12 windows | Ported | `windowd-smoke` | Damage region and frame statistics against the reference |
-| Program Manager, auto-listed programs | Ported | `desktop`, `live-desktop`, `progman-smoke` | Layout capture |
-| Taskbar: window list, activation, minimize | Ported | `taskbar` | Capture comparison |
-| Taskbar ES/EN layout selector and popup | Matched | `kbdlayout`, [study §30](I386_PORT_STUDY.md#30-desktop-shortcuts-and-power-in-qemu) | — |
-| Taskbar volume button, per-app sliders | Partial | `audio-smoke`, `audiod-smoke`, `volume-smoke` | Popup and slider capture |
-| Task List (Ctrl+Esc), Alt+Tab, Alt+F4 | Matched | `window-keys`, [study §30](I386_PORT_STUDY.md#30-desktop-shortcuts-and-power-in-qemu) | — |
-| Dialogs as windows, fixed-size windows | Gap in evidence | — | Interaction scenario |
-| SxGUI: selection, clipboard, tabs, wheel/scrollbar | Partial | `sxgui-smoke` (glyphs, wheel), matched selection, copy and paste in [study §30](I386_PORT_STUDY.md#30-desktop-shortcuts-and-power-in-qemu) | Cut and tab captures |
-| Files, with per-type icons and associations | Ported | `filesapp-smoke` | `shoot.sh files` capture |
-| Notepad | Partial | `sxgui-smoke` editor | Wheel/scrollbar and editing capture |
-| Shell window | Gap in evidence | — | Command with arguments, repaint timing |
-| Calculator (`libmath.so.0.4`) | Ported | `calc-smoke` | Capture comparison |
-| Minesweeper | Ported | `mines-smoke` | Capture |
-| Gears | Gap in evidence | — | Capture and frame rate |
-| Add/Remove Programs | Ported | `appwiz-smoke` with Doom restored | Capture |
-| System Properties | Gap in evidence | — | Capture (edition difference is justified above) |
-| Task Manager: live CPU/memory per process | Ported | `idle`, `taskmgr-smoke` | Capture |
+| `windowd` compositor, WM protocol v4, 12 windows | Ported | `windowd-smoke`; every capture below composes identically | Damage region and frame statistics (performance) |
+| Program Manager, auto-listed programs | Matched | `desktop`, `diagnostics`, `system` captures identical | — |
+| Taskbar: window list, activation, minimize | Matched | `taskbar` captures identical | — |
+| Taskbar ES/EN layout selector and popup | Matched | `kbdlayout` identical, [study §30](I386_PORT_STUDY.md#30-desktop-shortcuts-and-power-in-qemu) | — |
+| Taskbar volume button, per-app sliders | Matched | `volume` captures identical (popup, 50 %, mute, close); `audiod-smoke`, `volume-smoke` | — |
+| Task List (Ctrl+Esc), Alt+Tab, Alt+F4 | Matched | `window-keys`, `alttab` identical | — |
+| Dialogs as windows, fixed-size windows | Matched | `dialogs` identical (Open, unsaved-changes, Save As) | — |
+| SxGUI: selection, clipboard, tabs, wheel/scrollbar | Matched | `clipboard`, `cut`, `wheel`, `notepadwheel` and the `system` tabs identical | — |
+| Files, with per-type icons and associations | Matched | `files` identical except the status-bar byte total | The total counts the English `/README` (661 bytes against 798), see the README row |
+| Notepad | Matched | `notepadwheel`, `dialogs`, `clipboard`, `cut` identical | — |
+| Shell window | Matched | `shell` identical, including `echo hola mundo`; only the caret blink phase differs | — |
+| Calculator (`libmath.so.0.4`) | Matched | `calc` identical after the PS/2 keypad fix ([study §33](I386_PORT_STUDY.md#33-the-reference-ps2-driver-behind-the-i386-input-queues)) | — |
+| Minesweeper | Matched | `mines` window, menus, dialogs and Alt+F4 identical | Boards differ by design: `mines_random_seed_from_clock` |
+| Gears | Matched | `gears`, `diagnostics` | Rotation phase follows elapsed time; frame rate is in the performance table |
+| Add/Remove Programs | Matched | `appwiz` identical | — |
+| System Properties | Matched | `system` General and Hardware tabs identical | Install block differs only in justified rows: edition, loader name, RAM the loader leaves usable, disk contents |
+| Task Manager: live CPU/memory per process | Matched | `system` Task Manager tabs identical apart from the System Properties window behind it; `idle`, `taskmgr-smoke` | — |
 | Media Player decode selftest, GPU frame and missing-library feedback | Matched | [Study §28](I386_PORT_STUDY.md#28-port-specific-smoke-scenarios-and-the-reference-failure-paths) | — |
 | Media Player icon, category and file associations | Ported | `filesapp-smoke`, `mediaplayer-noport` | Compare normal launch from Files and Program Manager |
-| Gfx Demo, widgets demo, diagnostics | Gap in evidence | — | Captures |
+| Gfx Demo, widgets demo, diagnostics | Matched | `diagnostics` identical (Gears, Gfx Demo, Key Test, Mouse Test, Widgets) | — |
+| Root `/README` text | Justified | `rootfs/README` | English, as the repository language rule requires, and describes the GRUB/BIOS path |
 
 ## Ports and external applications
 
@@ -128,7 +134,7 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Per-CPU idle and CPU accounting | Ported | `idle` | Task Manager capture |
 | 1000 Hz timer, monotonic deadlines | Ported | `clock-smoke` | — |
 | MADT/IOAPIC routing, AML `_PRT` | Ported | `net-smoke`, `power-smoke` | — |
-| xAPIC instead of x2APIC on `-cpu max` | Justified (pending) | [Study §31](I386_PORT_STUDY.md#31-timing-with-the-apic-mode-controlled) | Both guests schedule four CPUs in xAPIC mode. Isolate interrupt-delivery cost. |
+| x2APIC when CPUID advertises it, xAPIC otherwise | Matched | `hardening --smp 4` (x2APIC), `smp` (xAPIC), [study §34](I386_PORT_STUDY.md#34-x2apic-when-the-cpu-advertises-it) | — |
 | ACPI shutdown, reboot, power button | Matched | `power-smoke`, [study §30](I386_PORT_STUDY.md#30-desktop-shortcuts-and-power-in-qemu) | — |
 | Idle halt when nothing runs | Matched | QMP `HLT=1` on both builds, [study §31](I386_PORT_STUDY.md#31-timing-with-the-apic-mode-controlled) | — |
 

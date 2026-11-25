@@ -62,11 +62,11 @@ uint32_t initialize_firmware(uint32_t information) {
     acpi::initialize(boot);
     return boot.acpi_rsdp_address;
 }
-void initialize(uint32_t rsdp_physical) {
+void start_acpi(uint32_t rsdp_physical) {
     acpi::start_sci();
-    boot_screen::show("Starting ACPI");
     uacpi_glue::bringup(rsdp_physical);
-    boot_screen::show("Initializing devices");
+}
+void initialize_devices() {
     audio::register_driver(ac97::driver());
     audio::register_driver(virtio_sound::driver());
     audio::bind_best();

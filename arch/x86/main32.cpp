@@ -256,8 +256,6 @@ void report_block_devices() {
 // selects virtio, direct ATA, then the optional LiveCD RAM image.
 void mount_root_filesystem() {
     const auto& boot = boot_state::state();
-    vfs::initialize(reinterpret_cast<const void*>(boot.initramfs_address + paging::kDirectMapBase), boot.initramfs_size);
-    if (!vfs::ready()) halt_with("vfs: invalid initramfs");
     block::register_driver(ata::driver());
     block::register_driver(virtio_blk::driver());
     block::register_driver(ramdisk::driver());
@@ -460,20 +458,27 @@ void savanxp_i386_bootstrap(uint32_t magic, uint32_t info_address) {
     heap::initialize();
     if (!heap::ready()) halt_with("memory: cannot initialize kernel heap");
 
-    // PCI storage needs discovery before probing and mounting the root.
-    boot_screen::show("Scanning PCI bus");
-    pci::initialize();
-    boot_screen::show("Loading userland");
-    mount_root_filesystem();
-    device::initialize();
+    // The stages follow v0.4.0's kernel_main. Paging is already on: i386 needs
+    // it to map the framebuffer before the boot screen can draw.
     boot_screen::show("Detecting firmware");
     const uint32_t rsdp_physical = services::initialize_firmware(info_address);
     timer::adopt_pm_timer();
     i386::smp::initialize(info_address);
     timer::initialize(1000);
     ioapic::initialize();
+    boot_screen::show("Starting ACPI");
+    services::start_acpi(rsdp_physical);
+    boot_screen::show("Scanning PCI bus");
+    pci::initialize();
     boot_screen::show("Initializing input");
-    services::initialize(rsdp_physical);
+    virtio_input::initialize(framebuffer);
+    // As in v0.4.0, PS/2 follows virtio-input so it can yield to a virtio keyboard.
+    ps2_32::initialize();
+    boot_screen::show("Loading userland");
+    vfs::initialize(reinterpret_cast<const void*>(boot_state::state().initramfs_address + paging::kDirectMapBase),
+                    boot_state::state().initramfs_size);
+    if (!vfs::ready()) halt_with("vfs: invalid initramfs");
+    device::initialize();
     boot_screen::show("Preparing display");
     display::register_driver(fb_gpu::driver());
     display::register_driver(virtio_gpu::driver());
@@ -481,10 +486,10 @@ void savanxp_i386_bootstrap(uint32_t magic, uint32_t info_address) {
     ui::sync_framebuffer_geometry();
     framebuffer.width = display::framebuffer_info().width;
     framebuffer.height = display::framebuffer_info().height;
-    virtio_input::initialize(framebuffer);
-    // As in v0.4.0, PS/2 follows virtio-input so it can yield to a virtio keyboard.
-    ps2_32::initialize();
     gpu_device::initialize();
+    boot_screen::show("Initializing devices");
+    services::initialize_devices();
+    mount_root_filesystem();
     io::initialize();
 
     serial::write("I386 BOOT OK\n");
