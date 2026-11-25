@@ -48,10 +48,26 @@ class SpecScenario:
     remove_paths: tuple[str, ...] = ()
     required_output: str = ""
     visual_scenario: str = ""
+    # Deliberate user faults, such as stacktest's overflow into the stack guard.
+    allowed_faults: int = 0
 
 
 # Commands, tokens, timeouts and preparation follow the v0.4.0 catalog.
 SPEC_SCENARIOS: dict[str, SpecScenario] = {
+    # `./build.sh smoke smoke` chains this core spec after the i386 console checks.
+    "smoke": SpecScenario("smoke", "SMOKE PASS", "SMOKE FAIL", 120.0, allowed_faults=1),
+    "needstest-missing": SpecScenario("needstest", "NEEDSTEST SURVIVED", "NEEDSTEST OK",
+                                      remove_paths=("lib/libneeded.so.0.4",)),
+    "brokentest": SpecScenario("brokentest", "BROKENTEST DIAGNOSED", "BROKENTEST OK"),
+    "missingtest": SpecScenario("missingtest", "MISSINGTEST DIAGNOSED", "MISSINGTEST OK"),
+    "slottest": SpecScenario("slottest", "SLOTTEST CAPPED", "SLOTTEST OK"),
+    "diamondtest": SpecScenario("diamondtest", "DIAMONDTEST ONCED", "DIAMONDTEST OK"),
+    "ffmpegload": SpecScenario("ffmpegload", "FFMPEGLOAD OK", "FFMPEGLOAD FAIL", 240.0,
+                               prepare=FFMPEG_PREPARE, isolated_disk=True),
+    "ccleste-selftest": SpecScenario("ccleste-selftest", "CCLESTE SELFTEST PASS", "CCLESTE SELFTEST FAIL",
+                                     prepare=("./ports/ccleste/build.sh",), isolated_disk=True),
+    "native-hello": SpecScenario("nativehello", "NATIVE HELLO PASS", "NATIVE HELLO FAIL", prepare=(
+        "./subsystems/native/build.sh --name nativehello --source haxe --install",), isolated_disk=True),
     "progman-smoke": SpecScenario("progman-selftest", "PROGMAN SMOKE PASS", "PROGMAN SMOKE FAIL",
                                   900.0, prepare=("./tools/restore_doom.sh",)),
     "appwiz-smoke": SpecScenario("appwiz-selftest", "APPWIZ SMOKE PASS", "APPWIZ SMOKE FAIL",
@@ -225,7 +241,7 @@ def run(name: str, iso: Path, disk: Path, artifacts: Path, accel: str,
                     raise RuntimeError(f"{match[0]}; see {serial}")
                 if not driven or scenario.required_output not in text:
                     raise RuntimeError(f"missing expected scenario output or QMP action; see {serial}")
-                if "user: exception #" in text:
+                if text.count("user: exception #") > scenario.allowed_faults:
                     raise RuntimeError("a process faulted during the spec; see serial.log")
             finally:
                 guest.terminate()

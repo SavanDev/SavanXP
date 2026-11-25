@@ -2482,3 +2482,61 @@ timer windows in the headless run reported average handler times of
 resolved to the timer's process and I/O scans or 64-bit division.
 The sample identifies paths to profile and leaves the cost of each
 path to be measured.
+
+## 32. The reference core smoke and the remaining scenario names
+
+The parity review listed `libctest` as the evidence for the libc row,
+but an audit of a clean i386 disk showed that it had never been built.
+Twelve v0.4.0 programs were missing: `smoke`, `libctest`, `forktest`,
+`polltest`, `sectiontest`, `stacktest`, `imagetest`, `badptr`, `spawnloop`,
+`ticker`, `demo` and `ffmpegload`. The branch's working disk still held
+ELF64 copies from earlier master builds, so a listing of that disk hid
+the gap. Only a clean image or a check of each file's ELF class shows
+it. The reference `./build.sh smoke` boots `/SMOKE=smoke`, and init then
+runs `/disk/bin/smoke`. That runner spawns 40 programs, including these
+twelve, BusyBox and `fscheck`. The i386 smoke typed its own checks into
+the console shell instead and never ran this path.
+
+The sources were unchanged since the tag. Eleven programs join the
+static ELF32 test list, and `ffmpegload` uses the reference PIE profile
+with `libmath`. Two tests contain constants for the x86_64 address
+space. `sectiontest` asked `map_view_at` for `0x2000000000` and expected
+a refusal over the image at `0x400000`. On i386 these become
+`0x38000000`, inside the section range that ends at `0x40000000`, and
+the `0x08000000` image base. `imagetest` stored 64-bit patterns in an
+`unsigned long`, which i386 truncated, so its `.data` check could not
+pass. It now uses 32-bit patterns under `__i386__`. The x86_64 code is
+unchanged in both tests.
+
+The first run of the spec passed every step. The harness still failed
+it because `stacktest` overflows into the stack guard on purpose. The
+guest printed `user: exception #14` with `cr2 0x0eeffc34`, inside the
+guard page at `0x0eeff000`. The parent requires that exit status. The
+spec harness rejected any user exception, so specs now declare how many
+deliberate faults they expect. The core spec allows one.
+`./build.sh smoke` runs this reference spec between the i386 console
+checks and the SxGUI capture.
+
+The remaining reference catalog names were loader diagnostics
+(`brokentest`, `missingtest`, `slottest`, `diamondtest`,
+`needstest-missing`), `ffmpegload`, `ccleste-selftest`, `native-hello`
+and three names for checks that i386 already ran under other names.
+The diagnostics use their reference tokens, and `needstest-missing`
+removes `libneeded.so.0.4` from a disposable disk copy. The port-backed
+specs install their port on an isolated copy first. `taskbar-smoke`
+and `doom-music-smoke` alias `taskbar` and `doom`, and `ffmpeg-smoke`
+runs the port's two-phase script. All passed in QEMU. `ffmpegload`
+reported 1870 ms to load the FFmpeg library in that run.
+
+The audit also found two tooling differences. The kernel never printed
+the reference `boot ready:` and `handoff: starting /bin/init` lines, so
+the reference `shoot_session` driver waited for a line that never came.
+`tools/shoot.sh` accepted only `desktop`. The i386 entry now prints both
+lines before init, from the boot memory totals, framebuffer size, NIC
+presence and SxFS mount state. `shoot.sh` follows the reference script
+with the GRUB ISO in place of the Limine image root. A disposable disk
+copy replaces its UEFI variable copy, which the BIOS boot does not use.
+`tools/parity_capture.py` runs one `shoot_session` scenario on both
+matched ISOs from section 25. It compares captures with the same name
+and can mask the documented edition label. The `desktop` captures differ
+only in that label.

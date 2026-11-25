@@ -22,7 +22,9 @@
 #include "cpu.hpp"
 #include "egatext.hpp"
 #include "fb32.hpp"
+#include "kernel/console.hpp"
 #include "kernel/display.hpp"
+#include "kernel/net.hpp"
 #include "kernel/device.hpp"
 #include "kernel/fb_gpu.hpp"
 #include "kernel/gpu_device.hpp"
@@ -485,6 +487,18 @@ void savanxp_i386_bootstrap(uint32_t magic, uint32_t info_address) {
     io::initialize();
 
     serial::write("I386 BOOT OK\n");
+
+    // The reference handoff lines: automation and boot timing key on them.
+    console::printf(
+        "boot ready: %u MiB usable, %u MiB reclaimable, video %ux%u\n",
+        static_cast<unsigned>(boot_state::state().memory_usable_bytes / (1024ull * 1024ull)),
+        static_cast<unsigned>(boot_state::state().memory_reclaimable_bytes / (1024ull * 1024ull)),
+        static_cast<unsigned>(framebuffer.width),
+        static_cast<unsigned>(framebuffer.height));
+    console::printf(
+        "handoff: starting /bin/init (%s, /disk %s)\n",
+        net::present() ? "net online" : "net absent",
+        boot_state::state().sxfs_mounted ? "mounted" : "offline");
 
     // Userland init owns boot policy; the kernel only starts its first process.
     if (boot_state::state().sxfs_mounted) {

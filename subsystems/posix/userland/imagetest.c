@@ -41,9 +41,17 @@ static const unsigned char g_pattern[IMAGE_PATTERN_BYTES] = {
 /* .bss: no viaja en el archivo, el loader lo tiene que dejar en cero. */
 static unsigned char g_zeroed[IMAGE_BSS_BYTES];
 
-/* .data: viaja en el archivo y ademas es escribible. */
+/* .data: carried in the file and also writable. The patterns fill a whole
+ * unsigned long on each ABI (32 bits on i386). */
+#if defined(__i386__)
+#define IMAGE_DATA0 0x89abcdefUL
+#define IMAGE_DATA1 0x76543210UL
+#else
+#define IMAGE_DATA0 0x0123456789abcdefUL
+#define IMAGE_DATA1 0xfedcba9876543210UL
+#endif
 static unsigned long g_initialized[8] = {
-    0x0123456789abcdefUL, 0xfedcba9876543210UL, 1UL, 2UL, 3UL, 4UL, 5UL, 6UL};
+    IMAGE_DATA0, IMAGE_DATA1, 1UL, 2UL, 3UL, 4UL, 5UL, 6UL};
 
 static int g_failures = 0;
 
@@ -93,7 +101,7 @@ int main(void) {
     check(mismatches == 0, "bss en cero (memory_size mas alla de file_size)");
 
     /* 3. .data con sus valores iniciales, y escribible. */
-    check(g_initialized[0] == 0x0123456789abcdefUL && g_initialized[1] == 0xfedcba9876543210UL,
+    check(g_initialized[0] == IMAGE_DATA0 && g_initialized[1] == IMAGE_DATA1,
           "data con sus valores iniciales");
     g_initialized[0] = 0xdeadbeefUL;
     check(g_initialized[0] == 0xdeadbeefUL, "data escribible");

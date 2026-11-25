@@ -194,6 +194,10 @@ changes, and record implementation/verification evidence as work lands.
    The remaining Media Player and optional Haxe scenarios also run on i386.
    [Evidence](I386_PORT_STUDY.md#28-port-specific-smoke-scenarios-and-the-reference-failure-paths).
 
+   **Core smoke and catalog names.** The reference `/disk/bin/smoke` spec and its
+   twelve missing diagnostics run on i386, and every v0.4.0 catalog name is accepted.
+   [Evidence](I386_PORT_STUDY.md#32-the-reference-core-smoke-and-the-remaining-scenario-names).
+
    **Boot and session handoff.** The GRUB framebuffer shows the reference
    splash, including the startup logo, fade, marquee and status. The compositor
    takes ownership at graphics-session acquisition. [Evidence](I386_GRAPHICS.md).

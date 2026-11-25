@@ -17,10 +17,14 @@ SERVICE_SCENARIOS = ("services", "device-smoke", "clock-smoke", "audio-smoke", "
 # v0.4.0 host scenarios that run an existing CTest target.
 HOST_SCENARIOS = {"sxfs-smoke": "sxfs-volume-test", "sxmidi-smoke": "sxmidi-test",
                   "gfx2d-test": "gfx2d-test", "audio-test": "audio-test"}
-SPEC_SCENARIOS = tuple(i386_spec_test.SPEC_SCENARIOS)
+# `smoke` keeps the i386 console checks and runs the reference core spec after them.
+SPEC_SCENARIOS = tuple(name for name in i386_spec_test.SPEC_SCENARIOS if name != "smoke")
 GRAPHICS_SCENARIOS = ("boot-screen", "desktop", "sxgui-smoke", "taskbar", "window-keys",
                       "calc-smoke", "doom", "ccleste", "live-desktop")
-SCENARIOS = SPEC_SCENARIOS + tuple(HOST_SCENARIOS) + SERVICE_SCENARIOS + GRAPHICS_SCENARIOS + (
+# v0.4.0 scenario names whose i386 check already exists under another name.
+GRAPHICS_ALIASES = {"taskbar-smoke": "taskbar", "doom-music-smoke": "doom"}
+PORT_SCENARIOS = {"ffmpeg-smoke": "./ports/ffmpeg/smoke.sh"}
+SCENARIOS = SPEC_SCENARIOS + tuple(HOST_SCENARIOS) + tuple(GRAPHICS_ALIASES) + tuple(PORT_SCENARIOS) + SERVICE_SCENARIOS + GRAPHICS_SCENARIOS + (
     "smp-boot", "smp", "idle", "kernel-preempt", "wakeup", "hardening", "smoke", "boot",
     "processes", "memory", "posix", "shared", "shared-memory", "windowd-smoke",
 )
@@ -48,6 +52,11 @@ def main() -> int:
         if args.smp < 2 and args.scenario not in ("idle", "kernel-preempt", "wakeup", "hardening"): parser.error("smp-boot requires --smp 2..32")
         return i386_smp_test.run(args.iso, args.disk_image, args.artifacts,
                                 args.smp, args.virtio, args.accel, args.timeout, scheduling=args.scenario == "smp", idle=args.scenario == "idle", kernel_preempt=args.scenario == "kernel-preempt", wakeup=args.scenario == "wakeup", hardening=args.scenario == "hardening")
+    if args.scenario in GRAPHICS_ALIASES:
+        args.scenario = GRAPHICS_ALIASES[args.scenario]
+    if args.scenario in PORT_SCENARIOS:
+        command = [PORT_SCENARIOS[args.scenario], "--accel", args.accel, "--smp", str(args.smp)]
+        return subprocess.run(command, cwd=Path(__file__).resolve().parent.parent).returncode
     if args.scenario in HOST_SCENARIOS:
         build = args.iso.resolve().parent / "linux-i386"
         return subprocess.run(["ctest", "--test-dir", str(build), "--output-on-failure",
@@ -78,6 +87,9 @@ def main() -> int:
         command += ["--memory-mib", "32"]
     sys.argv = [sys.argv[0], *command]
     result = legacy_boot_test.main()
+    if result == 0 and args.scenario == "smoke":
+        result = i386_spec_test.run("smoke", args.iso, args.disk_image, args.artifacts / "core",
+                                    args.accel, None, False, args.smp)
     if result == 0 and args.scenario == "smoke":
         return i386_graphics_test.run(args.iso, args.disk_image, args.artifacts / "sxgui",
                                       "sxgui-smoke", args.accel, args.timeout, smp=args.smp)

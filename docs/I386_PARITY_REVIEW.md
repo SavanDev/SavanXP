@@ -32,7 +32,7 @@ evidence, and link the scenario, capture or measurement that supports it.
 | --- | --- | --- | --- |
 | Splash: logo, fade-in, marquee, status line | Ported | `smoke boot-screen` | Frame captures against the reference timing |
 | Handoff from splash to compositor | Ported | `smoke boot-screen` | Same capture sequence on both builds |
-| Desktop reached on `pc` and `virtio` | Matched | Study §25 | — |
+| Desktop reached on `pc` and `virtio` | Matched | Study §25; `parity_capture.py --scenario desktop` differs only in the edition label ([study §32](I386_PORT_STUDY.md#32-the-reference-core-smoke-and-the-remaining-scenario-names)) | — |
 | Edition string (System Properties, desktop corner) | Justified | `SAVANXP_EDITION` | Reference reads "Alpha"; the branch deliberately reads "Legacy Edition" |
 | Loader: GRUB2/Multiboot2 + BIOS instead of Limine + UEFI | Justified | `./build.sh iso` | Architectural; keep loader time separate in measurements |
 
@@ -78,7 +78,7 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Reference `sh`, eleven BusyBox applets, pipes, redirection | Ported | `posix` | Transcript comparison |
 | Descriptors, poll, canonical TTY, `exec` | Ported | `posix`, `wakeup` | — beyond transcripts |
 | Signals: limited reference contract, `SIGCHLD` | Ported | [I386_POSIX.md](I386_POSIX.md) | Transcript comparison |
-| libc/libm surface, `%f/%e/%g`, `strtod`, SSE | Ported | `smoke` (libctest), `float-smoke` | — |
+| libc/libm surface, `%f/%e/%g`, `strtod`, SSE | Ported | `smoke` (reference core spec with `libctest`, [study §32](I386_PORT_STUDY.md#32-the-reference-core-smoke-and-the-remaining-scenario-names)), `float-smoke` | — |
 | 128 arguments and 8191 bytes of strings for `spawn`/`exec` | Matched | `processes`, [study §29](I386_PORT_STUDY.md#29-argument-budgets-and-adoption-of-orphaned-children) | — |
 | Reaping children orphaned before or after their exit | Matched | [study §29](I386_PORT_STUDY.md#29-argument-budgets-and-adoption-of-orphaned-children) | — |
 | Sockets: UDP, TCP with loss and reordering | Ported | `net-smoke`, `tcp-smoke` | Throughput comparison |
@@ -92,7 +92,7 @@ evidence, and link the scenario, capture or measurement that supports it.
 | Randomized view placement | Ported | [I386_MEMORY.md](I386_MEMORY.md) | — |
 | Growing heap, 1 MiB demand stack with guard | Ported | `shared`, `memory` | — |
 | PIE, `PT_INTERP`, embedded loader, 32 libraries | Ported | `shared` | — |
-| Loader diagnostics (`brokentest`, `missingtest`, …) | Ported | `legacy_boot_test.py` | — |
+| Loader diagnostics (`brokentest`, `missingtest`, …) | Ported | `legacy_boot_test.py` and the reference specs of the same names | — |
 | SXE stamping and resources | Ported | `sxe-smoke`, `filesapp-smoke` | — |
 | 64 process slots | Ported | `windowd-smoke`, `smp` | — |
 | RAM allocation limited to the first GiB | Justified | [I386_MEMORY.md](I386_MEMORY.md) | 32-bit direct map; reference QEMU machine uses 1 GiB, so no visible loss |
@@ -162,7 +162,12 @@ records the first compositor and pipe measurements.
 
 ## Reference scenarios
 
-The five scenarios that were still missing now have i386 counterparts.
+Every v0.4.0 smoke catalog name now runs on i386. The core `smoke` spec,
+the loader diagnostics, `ffmpegload`, `ccleste-selftest`, `native-hello`
+and three aliases were the last ones; see
+[study §32](I386_PORT_STUDY.md#32-the-reference-core-smoke-and-the-remaining-scenario-names).
+
+Before that, five scenarios still lacked i386 counterparts.
 `mediaplayer-display` invokes the port's frame callback, `mediaplayer-nolib`
 and `mediaplayer-noport` remove the engine from an isolated SxFS copy, and
 `native-guihost` and `native-sxgui` build their optional clients. The

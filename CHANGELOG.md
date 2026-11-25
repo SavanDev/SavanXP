@@ -12,6 +12,18 @@ Cut-off notes:
 
 ### Added
 
+- **i386 builds the remaining v0.4.0 diagnostics and runs the reference core spec.**
+  `libctest`, `forktest`, `polltest`, `sectiontest`, `stacktest`, `imagetest` and the
+  `/disk/bin/smoke` runner are ELF32; `./build.sh smoke` now includes that spec.
+
+- **Every v0.4.0 smoke scenario name runs on i386,** adding `brokentest`, `missingtest`,
+  `slottest`, `diamondtest`, `needstest-missing`, `ffmpegload`, `ccleste-selftest`,
+  `native-hello` and the `taskbar-smoke`, `doom-music-smoke` and `ffmpeg-smoke` aliases.
+
+- **`tools/shoot.sh` accepts the v0.4.0 visual scenarios again,** with `--virtio`,
+  `--boot-wait` and `--keep-running`. `tools/parity_capture.py` runs one scenario on
+  the v0.4.0 reference and on i386 and compares the captures.
+
 - **i386 runs the remaining Media Player and Haxe smoke scenarios from v0.4.0.**
   The Media Player checks cover decoding, frame presentation and missing-library
   feedback. The Haxe checks build and run the native GUI and SxGUI hosts.
@@ -173,6 +185,9 @@ Cut-off notes:
   Use `master` for x86_64; unported shared modules remain as porting material.
 
 ### Fixed
+
+- **i386 prints the reference `boot ready:` and `handoff: starting /bin/init` lines**
+  before starting init, which the v0.4.0 visual and timing tools wait for.
 
 - **i386 accepts the v0.4.0 argument budget for `spawn`, `spawn_fd` and `exec`.**
   These calls accept 128 arguments and 8191 bytes of string data including
