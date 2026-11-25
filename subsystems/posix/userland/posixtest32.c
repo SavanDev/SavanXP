@@ -44,6 +44,18 @@ static void number(char* text, unsigned int value) {
 }
 
 static int worker(int argc, char** argv) {
+    /* The v0.4.0 ES layout has no key for '<' or '>'. The console transcript
+     * selects EN through the reference ioctl, as the taskbar selector does. */
+    if (strcmp(argv[1], "layout") == 0 && argc == 3 &&
+        (strcmp(argv[2], "en") == 0 || strcmp(argv[2], "es") == 0)) {
+        const int english = strcmp(argv[2], "en") == 0;
+        long input = savanxp_open_mode("/dev/input0", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
+        if (input < 0 || input_set_layout((int)input, english ? SAVANXP_KEYBOARD_LAYOUT_EN
+                                                              : SAVANXP_KEYBOARD_LAYOUT_ES) < 0) return 1;
+        savanxp_close((int)input);
+        puts_out(english ? "POSIX layout en\n" : "POSIX layout es\n");
+        return 0;
+    }
     if (strcmp(argv[1], "persist-write") == 0 || strcmp(argv[1], "persist-read") == 0) {
         const char* path = "/disk/posix-persistent";
         const char* text = "SavanXP i386 persistent file\n";

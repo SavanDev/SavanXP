@@ -83,8 +83,12 @@ def main() -> int:
         command += ["--expect-posix"]
     if args.scenario in ("smoke", "processes", "memory"):
         command += ["--expect-processes"]
-    if args.scenario in ("memory", "shared-memory"):
+    if args.scenario == "memory":
         command += ["--memory-mib", "32"]
+    if args.scenario == "shared-memory":
+        # heaptest keeps 6 MiB of arenas alive beside the reference CPIO root,
+        # which now carries every v0.4.0 diagnostic as the tag's does.
+        command += ["--memory-mib", "36"]
     sys.argv = [sys.argv[0], *command]
     result = legacy_boot_test.main()
     if result == 0 and args.scenario == "smoke":

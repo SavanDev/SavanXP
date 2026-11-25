@@ -128,6 +128,12 @@ Cut-off notes:
 
 ### Changed
 
+- **`smoke shared-memory` boots with 36 MiB instead of 32 MiB.** The CPIO root now
+  carries the v0.4.0 diagnostics; `smoke memory` keeps its 32 MiB profile.
+
+- **i386 enables x2APIC when the CPU advertises it, as v0.4.0 does.** The boot log
+  reports `cpu: local APIC in x2APIC mode`; CPUs without it keep xAPIC.
+
 - **i386 randomizes kernel and per-process stack guards and enables SMEP.**
   Guards come from RDRAND or the reference TSC fallback; an AP that cannot
   match the BSP's SMEP stays offline. `smoke hardening` checks it on `-cpu max`.
@@ -185,6 +191,13 @@ Cut-off notes:
   Use `master` for x86_64; unported shared modules remain as porting material.
 
 ### Fixed
+
+- **i386 uses the v0.4.0 PS/2 keyboard and mouse driver.** NumLock and the keypad,
+  Caps Lock, AltGr (`@`, `~` and `\` in the ES layout), keyboard LEDs, Pause and
+  Print Screen now work; the ISO `<`/`>` key is unmapped in ES, as in v0.4.0.
+
+- **The i386 initramfs root lists only `/bin` and `/README`, as in v0.4.0.**
+  Shared libraries load from `/disk/lib`, as before.
 
 - **i386 prints the reference `boot ready:` and `handoff: starting /bin/init` lines**
   before starting init, which the v0.4.0 visual and timing tools wait for.

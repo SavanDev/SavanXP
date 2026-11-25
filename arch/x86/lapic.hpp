@@ -10,6 +10,8 @@ bool start_timer();
 bool initialize(uint32_t address);
 bool initialize_secondary();
 bool ready();
+// v0.4.0 mode selection: x2APIC whenever CPUID advertises it.
+bool x2apic_mode();
 uint32_t id();
 uint32_t initial_id();
 void acknowledge();

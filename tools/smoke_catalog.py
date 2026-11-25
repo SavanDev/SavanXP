@@ -14,7 +14,7 @@ SCENARIOS = {
     "boot-screen": "reference splash artwork, fade, marquee and desktop handoff",
     "processes": "concurrent ELF32 workers, contexts and spawn/wait/exit",
     "shared": "memory objects, heap, fork, SDK integer ABI and ELF32 library calls",
-    "shared-memory": "memory objects and ELF32 libraries with 32 MiB RAM",
+    "shared-memory": "memory objects and ELF32 libraries with 36 MiB RAM",
     "posix": "reference shell, BusyBox, file descriptors, pipes, inheritance and cleanup",
     "memory": "32 MiB RAM, user fault isolation, page protection and ENOMEM rollback",
     "desktop": "reference window manager, Program Manager and taskbar",

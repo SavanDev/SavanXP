@@ -34,6 +34,14 @@ bool register_irq_handler(uint8_t irq, IrqHandler handler) {
     return i386::cpu::register_shared_irq_handler(irq, handler);
 }
 void enable_irq(uint8_t irq) { i386::cpu::enable_irq(irq); }
+uint64_t save_and_disable_interrupts() {
+    uint32_t flags;
+    asm volatile("pushf; pop %0; cli" : "=r"(flags) : : "memory");
+    return flags;
+}
+void restore_interrupts(uint64_t flags) {
+    if ((flags & (1u << 9)) != 0) asm volatile("sti" : : : "memory");
+}
 void disable_interrupts() { i386::cpu::disable_interrupts(); }
 [[noreturn]] void halt_forever() { i386::cpu::halt_forever(); }
 }

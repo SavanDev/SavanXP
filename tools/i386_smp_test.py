@@ -101,8 +101,10 @@ def run(iso: Path, disk: Path, artifacts: Path, smp: int, virtio: bool, accel: s
                     wait_serial(serial, r"MULTITASK PASS.*?savanxp:/\$ ", timeout=timeout)
                 text = serial.read_text(errors="replace")
                 aps = smp - 1
+                # As in v0.4.0, -cpu max runs x2APIC; qemu32 has no x2APIC.
+                apic_mode = "x2APIC" if hardening else "xAPIC"
                 required = ("timer: local APIC target_hz=1000",
-                    f"smp: reported={smp} online={smp} scheduling=1 (xAPIC)",
+                    f"smp: reported={smp} online={smp} scheduling=1 ({apic_mode})",
                     f"smp: private TSS {aps}/{aps}, targeted IPI {2 * aps}/{2 * aps} PASS",
                     f"smp: scheduling={smp} online={smp} (local APIC timers)",
                     *(("smp: lazy kernel TLB PASS",) if smp > 1 else ()))

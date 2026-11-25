@@ -180,9 +180,12 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                     raise RuntimeError("the disk partition was not enumerated")
                 commands = []
                 if scenario in ("storage-smoke", "virtio-services") or scenario.startswith("partition-"):
+                    # v0.4.0's ES layout cannot type '>'; select EN for the redirection.
                     commands += [("fscheck", "result: clean"),
+                                 ("posixtest32 layout en", "POSIX layout en"),
                                  ("echo live-ramdisk > /disk/live-test.txt", "process exited with status 0"),
-                                 ("cat /disk/live-test.txt", "live-ramdisk")]
+                                 ("cat /disk/live-test.txt", "live-ramdisk"),
+                                 ("posixtest32 layout es", "POSIX layout es")]
                 if scenario == "clock-smoke":
                     boot_log = serial.read_text(errors="replace")
                     for token in ("backend: local apic", "frequency_hz: 1000"):
@@ -212,11 +215,14 @@ def run(iso: Path, disk: Path, artifacts: Path, scenario: str, timeout: float = 
                                  ("nativeguihost", "NATIVEGUI HOST PASS"),
                                  ("nativesxguihost", "SXGUI HOST PASS")]
                 stream_peaks = {}
+                layout = "es"
                 for command, token in commands:
                     offset = len(serial.read_text(errors="replace"))
                     capture = artifacts / "audio.wav"
                     capture_start = capture.stat().st_size if capture.exists() else 44
-                    type_shell(qmp, (command,))
+                    type_shell(qmp, (command,), layout)
+                    if command.startswith("posixtest32 layout "):
+                        layout = command.rsplit(" ", 1)[1]
                     wait_serial(serial, re.escape(REFERENCE_PROMPT), offset, timeout=timeout)
                     text = serial.read_text(errors="replace")[offset:]
                     if token not in text or not re.search(r"process exited with status 0,", text):

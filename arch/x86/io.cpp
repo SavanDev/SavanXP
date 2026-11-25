@@ -570,6 +570,7 @@ void recheck_poll_waiters() {
 void service() {
     display::poll();
     virtio_input::poll();
+    ps2_32::poll();
     net::poll();
     bool raw_reader = ui::graphics_active();
     for (uint32_t index = 0; index < process::kCapacity; ++index) {

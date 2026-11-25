@@ -127,13 +127,14 @@ profiles, compiling the SDK runtime with the appropriate units removed. `libtest
 excludes static math and declares a real `DT_NEEDED` on `libmath.so.0.4`.
 `tools/check_shared_libs.py` runs on staged build artifacts and rejects a program
 that duplicates a library it declares. LLVM `nm` (or host `nm`) is discovered
-through CMake, alongside LLVM readelf. Libraries stage below `/disk/lib` and
-CPIO `/lib`; synchronization remains additive and preserves external files.
+through CMake, alongside LLVM readelf. Libraries stage below `/disk/lib`, where
+the loader looks for them; as in v0.4.0 the CPIO root carries only `/bin` and
+`/README`. Synchronization remains additive and preserves external files.
 
 ```sh
 ./build.sh build
 ./build.sh smoke shared
-./build.sh smoke shared-memory  # 32 MiB, mandatory section/fork ENOMEM rollback
+./build.sh smoke shared-memory  # 36 MiB, mandatory section/fork ENOMEM rollback
 ./build.sh smoke
 ./build.sh smoke memory
 ./build.sh test
@@ -145,8 +146,10 @@ python3 tools/verify_posix_persistence.py
 diamond/slot/missing-symbol/dependency tests and two focused native regressions. `vmtest32` checks zeroing,
 aliases, grants, RX execution, range overflow, immutable file sharing/mutation,
 queued-handle cleanup, 256 live global objects, 64 simultaneous views, stack
-fault recovery and exec cleanup. On 32 MiB it also requires exact free-page
+fault recovery and exec cleanup. On 36 MiB it also requires exact free-page
 recovery after partially allocated 64 MiB sections and failed private-view fork.
+The low-memory profile was 32 MiB until the CPIO root gained the remaining
+v0.4.0 diagnostics; `heaptest` keeps 6 MiB of arenas alive beside it.
 `dyntest32` proves implicit nonzero absolute addends, PC-relative data, weak
 symbols, imported functions, shared text across simultaneously live processes,
 private spawned/forked data, all 61 nonstandard descriptors free after loading,

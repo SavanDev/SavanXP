@@ -228,7 +228,8 @@ void initialize(uint32_t information) {
     }
     g_ipi_ok = received == expected && selectors == g_online - 1;
     if (g_ipi_ok && !selftest_tlb()) g_ipi_ok = false;
-    console::printf("smp: reported=%u online=%u scheduling=1 (xAPIC)\n", g_reported, g_online);
+    console::printf("smp: reported=%u online=%u scheduling=1 (%s)\n", g_reported, g_online,
+                    lapic::x2apic_mode() ? "x2APIC" : "xAPIC");
     console::printf("smp: private TSS %u/%u, targeted IPI %u/%u %s\n", selectors,
                     g_online - 1, received, expected, g_ipi_ok ? "PASS" : "FAIL");
 }

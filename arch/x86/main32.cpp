@@ -129,9 +129,9 @@ void store_bootloader(const uint8_t* tag) {
             state.bootloader_name[split] = '\0';
         }
     }
-    /* "BIOS" porque esta ISO solo arranca por BIOS: GRUB2 no expone una
-     * etiqueta de firmware y el camino UEFI no existe todavia en i386. */
-    const char firmware[] = "BIOS";
+    /* This ISO boots only through BIOS, and GRUB2 exposes no firmware tag;
+     * use the reference name for that firmware type. */
+    const char firmware[] = "x86 BIOS";
     for (size_t index = 0; index < sizeof(state.firmware) - 1 && firmware[index] != '\0'; ++index) {
         state.firmware[index] = firmware[index];
     }
@@ -473,7 +473,6 @@ void savanxp_i386_bootstrap(uint32_t magic, uint32_t info_address) {
     timer::initialize(1000);
     ioapic::initialize();
     boot_screen::show("Initializing input");
-    ps2_32::initialize();
     services::initialize(rsdp_physical);
     boot_screen::show("Preparing display");
     display::register_driver(fb_gpu::driver());
@@ -483,6 +482,8 @@ void savanxp_i386_bootstrap(uint32_t magic, uint32_t info_address) {
     framebuffer.width = display::framebuffer_info().width;
     framebuffer.height = display::framebuffer_info().height;
     virtio_input::initialize(framebuffer);
+    // As in v0.4.0, PS/2 follows virtio-input so it can yield to a virtio keyboard.
+    ps2_32::initialize();
     gpu_device::initialize();
     io::initialize();
 

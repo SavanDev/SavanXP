@@ -2540,3 +2540,111 @@ copy replaces its UEFI variable copy, which the BIOS boot does not use.
 matched ISOs from section 25. It compares captures with the same name
 and can mask the documented edition label. The `desktop` captures differ
 only in that label.
+
+## 33. The reference PS/2 driver behind the i386 input queues
+
+The first side-by-side `calc` capture differed in the display. The
+reference showed `15.625` after keypad `1`, `2`, `5`, `/`, `8` and
+Enter. i386 showed `Cannot divide by zero`. `calc-smoke` passed, because
+the selftest calls the calculator engine without the keyboard. The
+cause was the keyboard driver. i386 had replaced `kernel/ps2.cpp` with
+`arch/x86/ps2_32.cpp` during bring-up. That decoder had ES and EN main
+blocks, Shift, Ctrl and Alt, but no NumLock, keypad digits, Caps Lock,
+AltGr, LEDs, Pause or Print Screen. The keypad digits produced no event,
+so the operand stayed zero. The same gap meant that `@` (AltGr+2) and
+`~` could not be typed in the default ES layout.
+
+Two adaptations were considered. Adding the missing tables and lock
+state to the bring-up decoder would have duplicated the reference
+driver a second time. The reference driver depends only on port I/O,
+legacy IRQ registration, the IOAPIC router and two interrupt-flag
+helpers. The port already provides those for the other retained
+drivers through the `arch::x86_64` boundary, except for
+`save_and_disable_interrupts` and `restore_interrupts`. Those now wrap
+`pushf`/`cli` and restore `IF` on i386. `kernel/ps2.cpp` is linked
+unchanged. It owns controller setup, IRQ 1 and 12 routing, the layouts,
+lock keys, LEDs, keypad and IntelliMouse packets. Its events reach
+`input::submit_key_event` and `input::submit_mouse_event`.
+
+On x86_64 `kernel/input.cpp` hands those calls to the kernel UI or the
+TTY. i386 has neither. Its descriptor layer reads `/dev/input0`, the
+pointer device and the canonical TTY from native queues. `ps2_32.cpp`
+is now only that adapter. It defines the two `input::` entry points,
+queues key and mouse records, moves the framebuffer pointer and keeps
+the i386 serial traces. The record follows the reference contract: the
+key code of a printable key is its ASCII value, and ASCII travels only
+with a press. As in v0.4.0, the IRQ handlers queue raw bytes and
+`ps2::poll()` decodes them; i386 calls it from `io::service()` beside
+`virtio_input::poll()`. PS/2 initialization now follows
+`virtio_input::initialize`, as in the reference, so the driver skips
+the 8042 keyboard or mouse when a virtio device replaces it.
+
+The console boot check previously required the raw `ps2: scan` trace,
+which the reference decoder does not print. It now requires the
+decoded `ps2: tecla down` line for each typed key.
+
+The bring-up decoder also had one mapping that no reference version
+has: scancode `0x56`, the ISO key beside left Shift, produced `<` and
+`>`. The v0.4.0, v0.4.1 and later tables stop at the space bar, so the
+reference ES layout cannot type either character from PS/2. The i386
+`posix` transcript typed `>` through that key and failed once the
+reference driver was linked. Keeping the extension would mean editing a
+shared reference file for behavior that is not architectural. Instead,
+`posixtest32 layout en` selects the EN layout through the same
+`input_set_layout` ioctl as the taskbar selector. The transcript then
+types its redirections with the EN keys, where v0.4.0 maps both
+characters.
+
+The `files` capture found one more difference in the same audit. The
+i386 initramfs carried a copy of every shared library under `/lib`, so
+Files listed five root entries instead of the reference's four. The
+loader only searches `/disk/lib`, and nothing read the copy. The CPIO
+root now holds `/bin` and `/README`, as in v0.4.0.
+
+The repeated `calc` capture now matches the reference pixel for pixel,
+and the `files` listing differs only in the total byte count of the
+translated `README`. The input gates passed with the reference driver:
+`kbd-smoke`, `sxgui-smoke` on both profiles, `window-keys`, `taskbar`,
+`pointer-smoke --virtio`, `posix`, `storage-smoke`, `partition-smoke` and
+the full `smoke`. The `kbdlayout` and `clipboard` captures were identical
+on both builds.
+
+The CPIO root also gained the diagnostics from section 32, as the tag's
+does, and boot RAM dropped by 135 pages. `smoke shared-memory` was a
+32 MiB i386 profile that the reference never ran. Its `heaptest` keeps
+6 MiB of arenas alive and had already failed once at a similar margin.
+It now boots with 36 MiB; `smoke memory` keeps 32 MiB and passed.
+
+## 34. x2APIC when the CPU advertises it
+
+Section 31 recorded that with `-cpu max` the reference used x2APIC while
+i386 retained xAPIC, and the review marked that row as a pending
+justification. The difference is not architectural. x2APIC registers
+are model-specific registers at `0x800 + offset/16`, and `rdmsr` and
+`wrmsr` work the same in protected mode. Section 31's pipe timings on
+the reference overlapped with either APIC mode, so the mode did not
+explain the i386 timings either. The i386 driver had simply been
+written for the MMIO page only.
+
+`arch/x86/lapic.cpp` now follows v0.4.0's selection in
+`arch/x86_64/cpu_init.cpp`. When CPUID leaf 1 sets ECX bit 21, the BSP
+enables the APIC and then sets `IA32_APIC_BASE.EXTD`, since only an
+enabled xAPIC may enter x2APIC mode. The driver then uses the MSR
+interface instead of mapping the MMIO page. Each AP makes the same
+transition when it starts. The 32-bit register helpers choose MSR or
+MMIO. As in the reference, the ID is the whole x2APIC ID register
+rather than bits 31:24. An IPI writes destination and command in one
+64-bit ICR MSR. There is no delivery-status bit to poll, and the 8-bit
+destination limit applies only to xAPIC. CPUs without x2APIC, such as
+`qemu32` in the default SMP smokes, keep the MMIO path. The boot log
+reports `cpu: local APIC in x2APIC mode`, and the SMP summary names the
+active mode.
+
+`./build.sh smoke hardening --smp 4` boots `-cpu max`, which advertises
+x2APIC. The BSP reported x2APIC mode, all three APs came online, and
+the six startup IPIs and the targeted IPIs succeeded through the 64-bit
+ICR. Four CPUs scheduled. The `qemu32` runs of `smp`, `smp-boot`,
+`idle`, `wakeup` and `kernel-preempt` still use xAPIC and passed. With
+this change both guests use the same APIC mode on every CPU model in
+section 31, so the review no longer has an APIC justification pending.
+The remaining timing difference belongs to the performance comparison.

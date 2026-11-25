@@ -40,9 +40,9 @@ SH32_TOKEN = "sh32: listo"
 # El prompt del shell: lo escribe al arrancar y al volver de cada comando.
 SH32_PROMPT = "sh32> "
 
-# Scancodes set 1 (make) de las teclas que el test sabe teclear. El kernel los
-# imprime tal cual (ps2: scan), y con la decodificacion encima exige el ascii
-# que el shell/userland reporta.
+# Set 1 make scancodes of the keys this test can type. The kernel traces each
+# decoded press, and the test also requires the ASCII that the shell or
+# userland reports.
 KEY_SCANCODES = {
     "j": 0x24,
     "q": 0x10,
@@ -85,6 +85,8 @@ KEY_SCANCODES = {
     "enter": 0x1C,
     "space": 0x39,
 }
+# Key codes of the non-character keys in the table (savanxp/syscall.h).
+KEY_CODES = {"enter": 13, "space": 0x20}
 KEY_ASCII = {
     "a": 97,
     "b": 98,
@@ -205,7 +207,18 @@ def shell_session_pattern(commands: tuple[str, ...]) -> str:
     return r".*?".join(parts)
 
 
-def type_shell(qmp_socket: Path | None, commands: tuple[str, ...]) -> None:
+# Symbols by guest layout: a qcode names the physical key, which the guest
+# translates with its active layout (kernel/ps2.cpp tables).
+LAYOUT_SYMBOLS = {
+    "es": {"/": ("shift", "7"), "|": (None, "grave_accent"), '"': ("shift", "2"),
+           "&": ("shift", "6"), "-": (None, "slash")},
+    "en": {"/": (None, "slash"), "<": ("shift", "comma"), ">": ("shift", "dot"),
+           "|": ("shift", "backslash"), '"': ("shift", "apostrophe"), "&": ("shift", "7"),
+           "-": (None, "minus")},
+}
+
+
+def type_shell(qmp_socket: Path | None, commands: tuple[str, ...], layout: str = "es") -> None:
     """Type complete commands through QMP, allowing the guest to consume each line."""
     if qmp_socket is None:
         raise RuntimeError("no QMP socket to type on")
@@ -215,18 +228,13 @@ def type_shell(qmp_socket: Path | None, commands: tuple[str, ...]) -> None:
     with QmpClient(str(qmp_socket), timeout=10.0) as client:
         for command in commands:
             for name, _scancode in command_to_keys(command):
-                if name == "/":
-                    client.chord("shift", "7")
-                elif name == "<":
-                    client.tap("less")
-                elif name == ">":
-                    client.chord("shift", "less")
-                elif name == "|":
-                    client.tap("grave_accent")
-                elif name == '"':
-                    client.chord("shift", "2")
-                elif name == "&":
-                    client.chord("shift", "6")
+                symbol = LAYOUT_SYMBOLS[layout].get(name)
+                if symbol is not None and symbol[0]:
+                    client.chord(symbol[0], symbol[1])
+                elif symbol is not None:
+                    client.tap(symbol[1], hold=0.05, pause=0.06)
+                elif name in ("<", ">"):
+                    raise RuntimeError(f"the {layout} layout has no key for {name!r}")
                 else:
                     client.tap(KEY_QMP_NAMES.get(name, name), hold=0.05, pause=0.06)
                 time.sleep(0.04)
@@ -317,6 +325,8 @@ def check_posix(qmp_socket: Path, serial: Path) -> None:
         ("seektest", r"seektest: ok.*?savanxp:/\$ "),
         ("renametest", r"renametest: ok.*?savanxp:/\$ "),
         ("truncatetest", r"truncatetest: ok.*?savanxp:/\$ "),
+        # v0.4.0's ES layout cannot type '<' or '>'; the rest uses EN keys.
+        ("posixtest32 layout en", r"POSIX layout en.*?savanxp:/\$ "),
         ("echo typed | cat > /disk/typed", r"savanxp:/\$ "),
         ("cat /disk/typed", r"typed\r?\n.*?savanxp:/\$ "),
         ("errtest redirected > /disk/out 2>&1", r"savanxp:/\$ "),
@@ -326,11 +336,16 @@ def check_posix(qmp_socket: Path, serial: Path) -> None:
         ("cd /", r"savanxp:/\$ "),
         ("sh -c \"exec echo executed\"", r"executed\r?\n.*?savanxp:/\$ "),
         ("exit", r"Type 'help' for commands.*?savanxp:/\$ "),
+        # Later phases type with the default ES keys.
+        ("posixtest32 layout es", r"POSIX layout es.*?savanxp:/\$ "),
     )
+    layout = "es"
     for command, pattern in commands:
         offset = len(serial.read_text(errors="replace"))
-        type_shell(qmp_socket, (command,))
+        type_shell(qmp_socket, (command,), layout)
         wait_serial(serial, pattern, offset, timeout=120 if command == "posixtest32" else 30)
+        if command.startswith("posixtest32 layout "):
+            layout = command.rsplit(" ", 1)[1]
     text = serial.read_text(errors="replace")
     for token in ("POSIX files and paths PASS", "POSIX inheritance and exec PASS",
                   "POSIX pipes and poll PASS", "POSIX BusyBox applets PASS", "POSIX descriptor exhaustion PASS"):
@@ -722,8 +737,10 @@ def main() -> int:
                     f"unknown key(s) {unknown}; supported: {', '.join(sorted(KEY_SCANCODES))}"
                 )
             keys = tuple((key, KEY_SCANCODES[key]) for key in args.expect_key)
-            # El kernel imprime el scancode crudo en hexadecimal de ocho digitos.
-            require += tuple(f"ps2: scan 0x{scancode:08x}" for _key, scancode in keys)
+            # The kernel traces each decoded press: printable keys carry their
+            # ASCII as the key code, Enter its SAVANXP_KEY_ENTER value.
+            require += tuple(f"ps2: tecla down 0x{KEY_CODES.get(key, ord(key[0])):08x}"
+                             for key, _scancode in keys)
             require += (VIDEO_TOKEN,)
             detail = f" (keyboard: {', '.join(name for name, _code in keys)})"
             if qmp_socket is None:

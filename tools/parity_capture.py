@@ -85,6 +85,70 @@ def boot_and_run(version, iso, disk, root, scenario, out, profile, boot_wait, cp
         shutil.rmtree(socket_dir, ignore_errors=True)
 
 
+BANNER = "SavanXP v0.4.0 booting"
+
+
+def measure_boot(version, iso, disk, out, profile, cpu, smp, runs):
+    """Host-side boot milestones in seconds from QEMU start.
+
+    `serial` is the first serial byte, before which only firmware and the
+    loader run; `banner` is the kernel's version line; `handoff` precedes
+    init; `desktop` is the first screendump whose first taskbar button is
+    sunken, the focused Program Manager.
+    """
+    sys.path.insert(0, str(TOOLS))
+    from PIL import Image
+    import shoot_session
+    results = []
+    for run in range(runs):
+        target = out / f"boot-{run}"
+        target.mkdir(parents=True, exist_ok=True)
+        serial = target / "serial.log"
+        if serial.exists():
+            serial.unlink()
+        socket_dir = Path(tempfile.mkdtemp(prefix="sx-parity."))
+        args = build_qemu_args(
+            iso=iso, disk_image=disk, debug_log=target / "debugcon.log", accel="tcg",
+            smp=smp, headless=True, virtio=profile == "virtio", snapshot=True,
+            serial_path=serial, qmp_path=socket_dir / "qmp", cpu=cpu)
+        args[0] = "qemu-system-x86_64"
+        start = time.monotonic()
+        qemu = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        marks = {}
+        try:
+            qmp = shoot_session.Qmp(socket_dir / "qmp")
+            frame = socket_dir / "frame.ppm"
+            while time.monotonic() - start < 240 and "desktop" not in marks:
+                text = serial.read_text(errors="replace") if serial.exists() else ""
+                now = time.monotonic() - start
+                if text and "serial" not in marks:
+                    marks["serial"] = now
+                for key, token in (("banner", BANNER), ("handoff", HANDOFF)):
+                    if key not in marks and token in text:
+                        marks[key] = now
+                if "handoff" in marks:
+                    qmp.cmd("screendump", filename=str(frame))
+                    try:
+                        image = Image.open(frame).convert("RGB")
+                        shoot_session.expect_taskbar_present(image, "boot")
+                        shoot_session.expect_button(image, 0, True, "boot")
+                        marks["desktop"] = time.monotonic() - start
+                    except (shoot_session.Failure, OSError):
+                        pass
+                time.sleep(0.1)
+        finally:
+            qemu.terminate()
+            try:
+                qemu.wait(10)
+            except subprocess.TimeoutExpired:
+                qemu.kill()
+            shutil.rmtree(socket_dir, ignore_errors=True)
+        entry = {"version": version, "run": run, **{k: round(v, 2) for k, v in marks.items()}}
+        print(json.dumps(entry), flush=True)
+        results.append(entry)
+    return results
+
+
 def compare(ref_dir, i386_dir, diff_dir, mask_edition):
     from PIL import Image, ImageChops
     diff_dir.mkdir(parents=True, exist_ok=True)
@@ -116,7 +180,9 @@ def compare(ref_dir, i386_dir, diff_dir, mask_edition):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--scenario", required=True)
+    parser.add_argument("--scenario")
+    parser.add_argument("--measure-boot", type=int, metavar="RUNS",
+                        help="time the boot milestones RUNS times per guest instead of a scenario")
     parser.add_argument("--reference-root", type=Path, required=True,
                         help="the reference tree's build/ (SavanXP-parity.iso, disk.img, diskfs)")
     parser.add_argument("--i386-root", type=Path, default=TOOLS.parent / "build")
@@ -135,6 +201,17 @@ def main():
         "reference": (opts.reference_root / "SavanXP-parity.iso", opts.reference_root),
         "i386": (opts.i386_root / "SavanXP.iso", opts.i386_root),
     }
+    if opts.measure_boot:
+        report = []
+        for version, (iso, root) in guests.items():
+            if not opts.only or opts.only == version:
+                report += measure_boot(version, iso.resolve(), (root / "disk.img").resolve(),
+                                       opts.out / version, opts.profile, cpu, opts.smp, opts.measure_boot)
+        opts.out.mkdir(parents=True, exist_ok=True)
+        (opts.out / "boot.json").write_text(json.dumps(report, indent=2))
+        return 0
+    if not opts.scenario:
+        parser.error("--scenario or --measure-boot is required")
     status = 0
     for version, (iso, root) in guests.items():
         if opts.only and opts.only != version:

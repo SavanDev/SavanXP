@@ -728,6 +728,10 @@ def scenario_shell(s):
     s.qmp.type_text("help")
     s.qmp.tap("ret", pause=4.0)
     s.shot("shell-scroll")
+    # A command with arguments: the shell splits them and echo prints both.
+    s.qmp.type_text("echo hola mundo")
+    s.qmp.tap("ret", pause=3.0)
+    s.shot("shell-argumentos")
 
 
 def scenario_system(s):
@@ -1515,6 +1519,97 @@ def scenario_doom(s):
         )
 
 
+def scenario_dialogs(s):
+    """Notepad's three dialogs open as fixed-size windows and Esc cancels them.
+
+    F3 on an untouched document goes straight to Open; with unsaved text it asks
+    first through the confirmation dialog. F2 on a document without a path opens
+    Save As. Each dialog is captured open and again after Esc.
+    """
+    s.open_notepad()
+    s.shot("notepad")
+    s.qmp.tap("f3", pause=1.5)
+    s.shot("open-dialog")
+    s.qmp.tap("esc", pause=1.5)
+    s.shot("open-cancelled")
+    s.qmp.type_text("abc")
+    time.sleep(1.0)
+    s.qmp.tap("f3", pause=1.5)
+    s.shot("confirm-dialog")
+    s.qmp.tap("esc", pause=1.5)
+    s.qmp.tap("f2", pause=1.5)
+    s.shot("save-as-dialog")
+    s.qmp.tap("esc", pause=1.5)
+    s.shot("dialogs-closed")
+
+
+def scenario_cut(s):
+    """Ctrl+X removes the selection and Ctrl+V puts it back twice."""
+    s.open_notepad()
+    s.qmp.type_text("hola mundo")
+    time.sleep(1.0)
+    s.qmp.chord("shift", "home")
+    time.sleep(1.0)
+    s.qmp.chord("ctrl", "x")
+    time.sleep(1.0)
+    s.shot("cortado")
+    s.qmp.chord("ctrl", "v")
+    time.sleep(0.8)
+    s.qmp.chord("ctrl", "v")
+    time.sleep(2.0)
+    s.shot("pegado-dos-veces")
+
+
+# Volume popup geometry, mirrored from windowd.c (WINDOWD_VOLUME_POPUP_*) and
+# volumepopup.c: anchored 4 px from the strip's right edge, right above it.
+VOLUME_BUTTON = (1228, 786)
+VOLUME_POPUP = (1280 - 4 - 144, 772 - 140)
+
+
+def scenario_volume(s):
+    """The taskbar volume button opens the popup; the slider and mute apply.
+
+    The master trough starts 8 px into the popup at y 32 and is 128 px wide;
+    the mute row spans the top 20 px below the 2 px margin.
+    """
+    px, py = VOLUME_POPUP
+    s.shot("desktop")
+    s.qmp.move_to(*VOLUME_BUTTON)
+    s.qmp.click()
+    time.sleep(1.5)
+    s.shot("popup-abierto")
+    s.qmp.move_to(px + 8 + 64, py + 32 + 6)
+    s.qmp.click()
+    time.sleep(1.5)
+    s.shot("volumen-medio")
+    s.qmp.move_to(px + 72, py + 2 + 10)
+    s.qmp.click()
+    time.sleep(1.5)
+    s.shot("silenciado")
+    s.qmp.move_to(640, 400)
+    s.qmp.click()
+    time.sleep(1.5)
+    s.shot("popup-cerrado")
+
+
+def scenario_diagnostics(s):
+    """Each program in the Diagnostics group, opened in turn and closed.
+
+    The group is the second tab: Gears, Gfx Demo, Key Test, Mouse Test and
+    Widgets in the launcher's alphabetical order. Alt+F4 closes each one and
+    returns focus to Program Manager, whose selection stays where it was.
+    """
+    names = ("gears", "gfxdemo", "keytest", "mousetest", "widgets")
+    for index, name in enumerate(names):
+        if index == 0:
+            s.launch(0, groups=1)
+        else:
+            s.launch_sibling(1)
+        s.shot(name)
+        s.qmp.chord("alt", "f4")
+        time.sleep(2.0)
+
+
 SCENARIOS = {
     "doom": scenario_doom,
     "desktop": scenario_desktop,
@@ -1538,6 +1633,10 @@ SCENARIOS = {
     "spin": scenario_spin,
     "gears": scenario_gears,
     "ccleste": scenario_ccleste,
+    "dialogs": scenario_dialogs,
+    "cut": scenario_cut,
+    "volume": scenario_volume,
+    "diagnostics": scenario_diagnostics,
 }
 
 

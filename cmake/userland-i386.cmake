@@ -200,20 +200,13 @@ foreach(name IN LISTS SAVANXP_I386_ROOT_PROGRAMS)
     list(APPEND SAVANXP_I386_ROOT_STRIP_COMMANDS
         COMMAND "${SAVANXP_OBJCOPY}" --strip-unneeded "${SAVANXP_ROOTFS_ROOT}/bin/${name}")
 endforeach()
-foreach(name IN LISTS SAVANXP_I386_LIBRARIES)
-    if(name STREQUAL "libffmpeg.so.0.4")
-        continue() # Optional codec engine is loaded from the persistent disk.
-    endif()
-    list(APPEND SAVANXP_I386_ROOT_STRIP_COMMANDS
-        COMMAND "${SAVANXP_OBJCOPY}" --strip-unneeded "${SAVANXP_ROOTFS_ROOT}/lib/${name}")
-endforeach()
+# As in v0.4.0 the CPIO root holds only /bin and /README: the loader resolves
+# shared libraries from /disk/lib.
 add_custom_target(savanxp_i386_initramfs
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${SAVANXP_ROOTFS_ROOT}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_ROOTFS_ROOT}/bin" "${SAVANXP_ROOTFS_ROOT}/lib"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_ROOTFS_ROOT}/bin"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SAVANXP_DISKFS_ROOT}/bin" "${SAVANXP_ROOTFS_ROOT}/bin"
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${SAVANXP_DISKFS_ROOT}/lib" "${SAVANXP_ROOTFS_ROOT}/lib"
     COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/rootfs/README" "${SAVANXP_ROOTFS_ROOT}/README"
-    COMMAND "${CMAKE_COMMAND}" -E rm -f "${SAVANXP_ROOTFS_ROOT}/lib/libffmpeg.so.0.4"
     ${SAVANXP_I386_ROOT_STRIP_COMMANDS}
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mkinitramfs.py"
         --source "${SAVANXP_ROOTFS_ROOT}" --output "${SAVANXP_INITRAMFS}"

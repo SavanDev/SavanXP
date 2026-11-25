@@ -165,7 +165,7 @@ set(SAVANXP_KERNEL_SOURCES ${SAVANXP_KERNEL_ARCH_SOURCES}
     kernel/nic.cpp kernel/rtl8139.cpp kernel/net.cpp kernel/acpi.cpp kernel/ioapic.cpp kernel/power.cpp
     kernel/uacpi_glue.cpp
     kernel/virtio_pci.cpp kernel/virtio_blk.cpp kernel/virtio_net.cpp kernel/virtio_sound.cpp
-    kernel/virtio_gpu.cpp kernel/virtio_input.cpp
+    kernel/virtio_gpu.cpp kernel/virtio_input.cpp kernel/ps2.cpp
     kernel/pcspeaker.cpp kernel/clipboard.cpp kernel/serial_dev.cpp kernel/rtc.cpp)
 
 add_library(savanxp_kernel_objects OBJECT ${SAVANXP_KERNEL_SOURCES})
