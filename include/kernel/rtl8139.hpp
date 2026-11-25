@@ -2,6 +2,10 @@
 
 #include "kernel/nic.hpp"
 
+namespace lifecycle {
+struct Subject;
+}
+
 namespace rtl8139 {
 
 // Driver del Realtek RTL8139 (PCI 10ec:8139), el NIC que emulan QEMU y
@@ -16,12 +20,8 @@ const nic::Driver& driver();
  * before the card is brought up. */
 void leave_transmit_buffer_unmapped(bool leave);
 
-/* Boot option `lifecycle-selftest`, before nic:: takes the card
- * (docs/kernel/DRIVER_LIFECYCLE.md): a failure injected at each stage of the
- * start, then four starts and stops, one brought up, each checked for pages,
- * claims and the interrupt handler left behind. The card ends free for
- * nic:: to take as usual. Logs `lifecycle: selftest passed` or the step
- * that failed. */
-void lifecycle_selftest();
+/* Its start and stop, for `lifecycle-selftest=rtl8139`
+ * (docs/kernel/DRIVER_LIFECYCLE.md). */
+const lifecycle::Subject& lifecycle_subject();
 
 } // namespace rtl8139

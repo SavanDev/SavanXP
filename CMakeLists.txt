@@ -250,6 +250,7 @@ set(SAVANXP_KERNEL_SOURCES
     kernel/inventory.cpp
     kernel/inventory_rules.cpp
     kernel/lifecycle.cpp
+    kernel/lifecycle_selftest.cpp
     kernel/input.cpp
     kernel/keyboard.cpp
     kernel/tty.cpp

@@ -25,6 +25,7 @@
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
 #include "kernel/inventory.hpp"
+#include "kernel/lifecycle_selftest.hpp"
 #include "kernel/ioapic.hpp"
 #include "kernel/iommu.hpp"
 #include "kernel/net.hpp"
@@ -348,6 +349,15 @@ namespace
     power::initialize();
     clipboard::initialize();
     serial_dev::initialize();
+    // Before any class core takes a device: the drivers written to the start
+    // and stop contracts, started and stopped over and over
+    // (docs/kernel/DRIVER_LIFECYCLE.md).
+    size_t lifecycle_length = 0;
+    if (const char* lifecycle_names =
+            boot::option_value(boot_info.cmdline, "lifecycle-selftest", lifecycle_length))
+    {
+        lifecycle::run_boot_selftest(lifecycle_names, lifecycle_length);
+    }
     // Probe all audio backends; priority sets the initial defaults only.
     // audio_device registers /dev/audio0 when either PCM direction is available.
     audio::register_driver(virtio_sound::driver());
@@ -369,10 +379,6 @@ namespace
     // when someone issues NET_IOC_UP on /dev/net0.
     nic::register_driver(virtio_net::driver());
     rtl8139::leave_transmit_buffer_unmapped(boot::has_option(boot_info.cmdline, "rtl8139-unmapped-tx"));
-    if (boot::has_option(boot_info.cmdline, "lifecycle-selftest"))
-    {
-        rtl8139::lifecycle_selftest();
-    }
     nic::register_driver(rtl8139::driver());
     nic::register_driver(rtl8168::driver());
     if (const nic::Driver* bound = nic::bind_best())

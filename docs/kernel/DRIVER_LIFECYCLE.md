@@ -77,20 +77,31 @@ self-test will be a management action (D6).
 
 ## The self-test
 
-Boot option `lifecycle-selftest` runs `rtl8139::lifecycle_selftest()` before
-`nic::` takes the card:
+One test for every driver written to the contracts
+(`kernel/lifecycle_selftest.cpp`). A driver hands it a `lifecycle::Subject`:
+its name, how many stages its start has, and its own `find`, `start`,
+`bring_up` (as far as its class core would take it; optional), `stop`,
+`idle` (none of its own state left) and `vector` (where its interrupt is,
+0 when it polls). Adding a driver is one entry in `kSubjects`.
 
-- A failure injected at each of the five stages: the start returns false,
-  the free page count is what it was, no range is claimed, and the card is
-  listed `UNBOUND`, with `START_FAILED` and `rtl8139` from stage 2 on (stage 1
-  fails before the claim, so the card is as it was).
-- Four starts and stops, the third brought up through the real reset path:
-  after each stop the pages, the claims and the state are back, and the
-  vector's chain is one handler shorter.
-- The card is then taken by `nic::` as usual, and the scenario's `netsmoke`
-  must pass over it, interrupts included.
+Boot option `lifecycle-selftest=<driver>[,<driver>...]` runs it before any
+class core takes a device. Each named driver must have a device to test, or
+the test fails; a name not in `kSubjects` fails too. For each:
 
-`smoke lifecycle-rtl8139` runs it on the default machine;
+- A failure injected at each stage: the start returns false, the free page
+  count is what it was, no range is claimed, the driver is idle, and the
+  device is listed `UNBOUND`, with `START_FAILED` and the driver's name from
+  stage 2 on (stage 1 fails before the claim, so the device is as it was).
+- Four starts and stops, the third brought up when the driver can be: after
+  each stop the pages, the claims and the state are back, the driver is
+  idle, and its vector's chain is one handler shorter.
+- The device is then taken by its class core as usual, and the scenario
+  must pass over it: `netsmoke` for the RTL8139, interrupts included.
+
+The log ends in `lifecycle: selftest passed`, or `lifecycle: selftest failed:
+<driver>: <step>`.
+
+`smoke lifecycle-rtl8139` runs `lifecycle-selftest=rtl8139` on the default machine;
 `smoke lifecycle-rtl8139-iommu` with AMD-Vi translating, where each cycle
 also creates and destroys the card's domain and its page tables, which the
 page count covers. The pure part has `lifecycle-test` on the host.

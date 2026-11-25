@@ -361,7 +361,7 @@ SCENARIOS: dict[str, Scenario] = {
         "lifecycle: selftest failed",
         "RTL8139 start and stop: injected failures and repeated cycles leave nothing behind, then the network works",
         180.0,
-        boot_options="lifecycle-selftest",
+        boot_options="lifecycle-selftest=rtl8139",
     ),
     # The same with AMD-Vi translating: every start creates the card's
     # domain and every stop destroys it.
@@ -372,7 +372,7 @@ SCENARIOS: dict[str, Scenario] = {
         "RTL8139 start and stop with AMD-Vi: the card's domain comes and goes with it, then the network works",
         180.0,
         iommu="amd",
-        boot_options="iommu lifecycle-selftest",
+        boot_options="iommu lifecycle-selftest=rtl8139",
     ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",

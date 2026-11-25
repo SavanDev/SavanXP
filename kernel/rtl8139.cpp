@@ -12,6 +12,7 @@
 #include "kernel/ioapic.hpp"
 #include "kernel/iommu.hpp"
 #include "kernel/lifecycle.hpp"
+#include "kernel/lifecycle_selftest.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -640,97 +641,27 @@ void leave_transmit_buffer_unmapped(bool leave) { g_leave_tx_unmapped = leave; }
 
 namespace {
 
-bool selftest_fail(const char* step) {
-    console::printf("lifecycle: selftest failed: %s\n", step);
-    return false;
-}
-
-// Nothing of the card left behind: the pages, the claims, the handler.
-bool nothing_left(const pci::DeviceInfo& card, uint64_t free_pages, const char* state_driver, uint32_t state,
-    uint32_t reason) {
-    const char* holder = nullptr;
-    uint32_t current_state = 0;
-    uint32_t current_reason = 0;
-    if (memory::free_page_count() != free_pages) {
-        console::printf("lifecycle: %llu free pages, %llu before\n", memory::free_page_count(), free_pages);
-        return false;
-    }
-    if (inventory::pci_claim_count(card) != 0) {
-        console::printf("lifecycle: %u ranges still claimed\n", static_cast<unsigned>(inventory::pci_claim_count(card)));
-        return false;
-    }
-    if (!inventory::pci_holder(card, holder, current_state, current_reason) || strcmp(holder, state_driver) != 0 ||
-        current_state != state || current_reason != reason) {
-        console::printf("lifecycle: the card reads as %s/%u/%u\n", holder != nullptr ? holder : "?",
-            static_cast<unsigned>(current_state), static_cast<unsigned>(current_reason));
-        return false;
-    }
+bool idle() {
     return !g_started && g_acquired.count() == 0 && !g_domain.valid();
 }
 
-bool run_selftest() {
-    pci::DeviceInfo card = {};
-    if (!find_card(card)) {
-        return selftest_fail("no RTL8139 to test with");
-    }
-    const uint64_t free_pages = memory::free_page_count();
-
-    // A failure injected at each stage of start(): it gives back exactly
-    // what the stages before took.
-    for (unsigned stage = 1; stage <= kStartStages; ++stage) {
-        lifecycle::inject_failure(kDriverName, stage);
-        if (start(card)) {
-            lifecycle::inject_failure(nullptr, 0);
-            return selftest_fail("a start went through an injected failure");
-        }
-        // Stage 1 fails before the claim: the card is as it was.
-        const bool claimed = stage > 1;
-        if (!nothing_left(card, free_pages, claimed ? kDriverName : "", SXN_DEVICE_UNBOUND,
-                claimed ? SXN_DEVICE_REASON_START_FAILED : SXN_DEVICE_REASON_NOT_CLAIMED)) {
-            console::printf("lifecycle: after a failure injected at stage %u\n", stage);
-            return selftest_fail("a failed start left something behind");
-        }
-    }
-
-    // Started and stopped again and again, brought up in between once.
-    uint8_t handlers = 0;
-    for (unsigned cycle = 0; cycle < 4; ++cycle) {
-        if (!start(card)) {
-            return selftest_fail("the card did not start");
-        }
-        if (inventory::pci_claim_count(card) == 0) {
-            return selftest_fail("a started card claims nothing");
-        }
-        const uint8_t vector = g_vector;
-        if (vector != 0) {
-            handlers = arch::interrupt_handler_count(vector);
-        }
-        if (cycle == 2 && !bring_up()) {
-            return selftest_fail("the card did not come up");
-        }
-        if (!stop()) {
-            return selftest_fail("the card did not stop");
-        }
-        if (vector != 0 && arch::interrupt_handler_count(vector) != static_cast<uint8_t>(handlers - 1)) {
-            return selftest_fail("the handler is still on its line");
-        }
-        if (!nothing_left(card, free_pages, "", SXN_DEVICE_UNBOUND, SXN_DEVICE_REASON_NOT_CLAIMED)) {
-            console::printf("lifecycle: after stop %u\n", cycle + 1);
-            return selftest_fail("a stop left something behind");
-        }
-    }
-    console::printf("lifecycle: rtl8139 %x:%x.%u: %u injected failures and 4 start/stop cycles, nothing left\n",
-        static_cast<unsigned>(card.bus), static_cast<unsigned>(card.slot), static_cast<unsigned>(card.function),
-        kStartStages);
-    return true;
+uint8_t vector() {
+    return g_vector;
 }
+
+const lifecycle::Subject kSubject = {
+    kDriverName,
+    kStartStages,
+    &find_card,
+    &start,
+    &bring_up,
+    &stop,
+    &idle,
+    &vector,
+};
 
 } // namespace
 
-void lifecycle_selftest() {
-    if (run_selftest()) {
-        console::write_line("lifecycle: selftest passed");
-    }
-}
+const lifecycle::Subject& lifecycle_subject() { return kSubject; }
 
 } // namespace rtl8139
