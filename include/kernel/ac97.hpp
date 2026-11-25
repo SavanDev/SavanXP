@@ -2,6 +2,10 @@
 
 #include "kernel/audio.hpp"
 
+namespace lifecycle {
+struct Subject;
+}
+
 namespace ac97 {
 
 // Driver del controlador Intel AC'97 (ICH, clase PCI 0x04 / subclase 0x01), el
@@ -14,5 +18,8 @@ bool ready();
 const audio::Backend& backend();
 // Descriptor para el registro de audio::. Su probe hace el initialize.
 const audio::Driver& driver();
+/* Its start and stop, for `lifecycle-selftest=ac97`
+ * (docs/kernel/DRIVER_LIFECYCLE.md). */
+const lifecycle::Subject& lifecycle_subject();
 
 } // namespace ac97

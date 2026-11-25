@@ -229,7 +229,8 @@ guarantee that none runs afterwards; the RTL8139 is the first driver on them
 (`smoke lifecycle-rtl8139`, `lifecycle-rtl8139-iommu`). Still open:
 
 1. Every other driver on the same contracts, one at a time, and their
-   interrupt claims made to fail a start as the RTL8139's does.
+   interrupt claims made to fail a start as the RTL8139's does. Done: the
+   RTL8139 and the AC'97 (`smoke lifecycle-ac97`), on one shared self-test.
 2. References held by handles, class sessions, queued operations and
    callbacks, so a stop can refuse or wait while a device is in use.
 3. `remove` (surprise removal, with D5) and `recover`.

@@ -1,8 +1,8 @@
 # Driver start and stop
 
-Status: **D3 of [DRIVERS_ROADMAP.md](../roadmaps/open/DRIVERS_ROADMAP.md),
-first driver (2026-11-24).** The contracts below are common; the RTL8139
-(`kernel/rtl8139.cpp`) is the first driver written to them. Every other driver
+Status: **D3 of [DRIVERS_ROADMAP.md](../roadmaps/open/DRIVERS_ROADMAP.md)
+(2026-11-24).** The contracts below are common. Written to them: the RTL8139
+(`kernel/rtl8139.cpp`) and the AC'97 (`kernel/ac97.cpp`). Every other driver
 still starts once at boot and never stops. It builds on the inventory's
 ownership and claims ([DEVICE_INVENTORY.md](DEVICE_INVENTORY.md)).
 
@@ -75,6 +75,27 @@ pending status, turns bus mastering off, and checks all three.
 running system stops it yet. The first caller of `stop()` outside the
 self-test will be a management action (D6).
 
+## The AC'97
+
+`start()` has five stages:
+
+1. **claim**: `inventory::pci_claim`.
+2. **registers**: the mixer (NAM) and bus master (NABM) I/O BARs, claimed
+   with their lengths; port decoding on.
+3. **codec**: cold reset until the primary codec reports ready, then the
+   mixer unmuted. Nothing to give back: a codec that never answers just
+   fails the stage.
+4. **buffers**: the BDL page and the 32 period buffers, one contiguous
+   allocation; the release is recorded first.
+5. **engine**: bus mastering on, the PCM out engine halted and reset, and
+   the BDL's address programmed.
+
+It has no interrupt: the driver polls CIV, and no BDL entry asks for one.
+`quiesce()` halts the engine (run bit off, then the register reset), turns
+bus mastering off, and reads back the run bit, the DMA-halted status bit and
+the bus master bit. A stream (`ac97_configure`, which `audio::` asks for)
+still comes after `start`, and `stop()` ends it first.
+
 ## The self-test
 
 One test for every driver written to the contracts
@@ -104,7 +125,9 @@ The log ends in `lifecycle: selftest passed`, or `lifecycle: selftest failed:
 `smoke lifecycle-rtl8139` runs `lifecycle-selftest=rtl8139` on the default machine;
 `smoke lifecycle-rtl8139-iommu` with AMD-Vi translating, where each cycle
 also creates and destroys the card's domain and its page tables, which the
-page count covers. The pure part has `lifecycle-test` on the host.
+page count covers. `smoke lifecycle-ac97` runs `lifecycle-selftest=ac97` on
+QEMU's AC97, its third cycle playing silence when it stops, then plays a
+stream. The pure part has `lifecycle-test` on the host.
 
 ## Not covered yet
 

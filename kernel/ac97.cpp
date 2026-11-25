@@ -7,6 +7,8 @@
 #include "kernel/audio.hpp"
 #include "kernel/console.hpp"
 #include "kernel/inventory.hpp"
+#include "kernel/lifecycle.hpp"
+#include "kernel/lifecycle_selftest.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/process.hpp"
@@ -151,11 +153,17 @@ bool map_io_bars() {
     return g_nam_base != 0 && g_nabm_base != 0;
 }
 
-void enable_pci_io_and_busmaster() {
-    // Command register (offset 0x04): bit0 I/O space, bit2 bus master enable.
-    uint16_t command = pci::read_config_u16(g_pci.bus, g_pci.slot, g_pci.function, 0x04);
-    command = static_cast<uint16_t>(command | 0x0005u);
-    pci::write_config_u16(g_pci.bus, g_pci.slot, g_pci.function, 0x04, command);
+// Command register (offset 0x04): bit0 I/O space, bit2 bus master enable.
+constexpr uint8_t kPciCommandOffset = 0x04u;
+constexpr uint16_t kPciCommandIo = 0x0001u;
+constexpr uint16_t kPciCommandBusMaster = 0x0004u;
+
+uint16_t pci_command() {
+    return pci::read_config_u16(g_pci.bus, g_pci.slot, g_pci.function, kPciCommandOffset);
+}
+
+void set_pci_command(uint16_t command) {
+    pci::write_config_u16(g_pci.bus, g_pci.slot, g_pci.function, kPciCommandOffset, command);
 }
 
 // Saca al controlador del cold reset y espera a que el codec primario reporte
@@ -423,53 +431,130 @@ const audio::Backend g_backend = {
     .capture_stop = nullptr,
 };
 
-} // namespace
+/* ---- start and stop (docs/kernel/DRIVER_LIFECYCLE.md) ---------------------
+ *
+ * start() takes the controller in stages, each pushing onto g_acquired how
+ * to give back what it took; a failed stage unwinds exactly that, and stop()
+ * unwinds the rest once quiesce() has proved the DMA engine halted. A stream
+ * is set up later by ac97_configure(), as before. */
 
-namespace ac97 {
+constexpr char kDriverName[] = "ac97";
+// claim, registers, codec, buffers, engine.
+constexpr unsigned kStartStages = 5;
+// PCM out status: DMA controller halted.
+constexpr uint16_t kSrDmaHalted = 0x0001u;
 
-void initialize() {
+lifecycle::Acquired g_acquired;
+bool g_started = false;
+// Set while a failed start unwinds: the function is then given back as a
+// failed start, not as a clean stop.
+bool g_start_failing = false;
+
+void release_function(void*) {
+    if (g_start_failing) {
+        (void)inventory::pci_release_failed(g_pci, kDriverName);
+    } else {
+        (void)inventory::pci_release(g_pci, kDriverName);
+    }
+    g_nam_base = 0;
+    g_nabm_base = 0;
+}
+
+void release_buffers(void*) {
+    if (g_dma.physical_address != 0) {
+        (void)memory::free_allocation(g_dma);
+        g_dma = {};
+    }
+    g_bdl = nullptr;
+    g_buffers = nullptr;
+    g_buffers_phys = 0;
+}
+
+bool stage_failed(unsigned stage, const char* name) {
+    if (!lifecycle::injected(kDriverName, stage)) {
+        return false;
+    }
+    console::printf("ac97: start stage %u (%s) failed by injection\n", stage, name);
+    return true;
+}
+
+// The controller's registers, its codec, its DMA memory and its PCM out
+// engine, in that order. False with everything given back; the controller
+// is left alone if another driver holds it.
+bool start(const pci::DeviceInfo& controller) {
+    g_pci = controller;
     g_ready = false;
     g_prepared = false;
     g_head = 0;
     g_tail = 0;
     g_in_flight = 0;
 
-    if (!pci::ready() || !find_controller(g_pci)) {
-        return;
-    }
+    unsigned stage = 1;
     // Taken from here on; started once the codec answers and DMA is set.
-    if (!inventory::pci_claim(g_pci, "ac97")) {
-        return;
+    if (stage_failed(stage, "claim") || !inventory::pci_claim(g_pci, kDriverName)) {
+        return false;
     }
-    if (!map_io_bars()) {
-        console::write_line("ac97: I/O BARs missing or invalid");
-        return;
+    bool ok = g_acquired.push("claim", &release_function, nullptr);
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "registers");
+        if (ok && !map_io_bars()) {
+            console::write_line("ac97: I/O BARs missing or invalid");
+            ok = false;
+        }
+        if (ok) {
+            set_pci_command(static_cast<uint16_t>(pci_command() | kPciCommandIo));
+        }
     }
-
-    enable_pci_io_and_busmaster();
-    if (!cold_reset_and_wait_codec()) {
-        console::write_line("ac97: the primary codec never reported ready");
-        return;
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "codec");
+        if (ok && !cold_reset_and_wait_codec()) {
+            console::write_line("ac97: the primary codec never reported ready");
+            ok = false;
+        }
+        if (ok) {
+            unmute_mixer();
+        }
     }
-    unmute_mixer();
-
-    // BDL (256 bytes) + 32 buffers de kPeriodBytes, fisicamente contiguos. El BDL
-    // vive en la primera pagina; los buffers arrancan en la pagina siguiente para
-    // que cada uno quede alineado a pagina.
-    const uint64_t needed_bytes = memory::kPageSize + kRingBytes;
-    const uint64_t page_count = (needed_bytes + memory::kPageSize - 1) / memory::kPageSize;
-    if (!memory::allocate_contiguous_pages(page_count, g_dma)) {
-        console::write_line("ac97: could not allocate DMA memory");
-        return;
+    if (ok) {
+        // The BDL (256 bytes) and 32 buffers of kPeriodBytes, physically
+        // contiguous. The BDL takes the first page and the buffers start on
+        // the next, so each one is page aligned. The release is recorded
+        // first, so a failed allocation leaves nothing.
+        ++stage;
+        ok = !stage_failed(stage, "buffers") && g_acquired.push("buffers", &release_buffers, nullptr);
+        if (ok) {
+            const uint64_t needed_bytes = memory::kPageSize + kRingBytes;
+            const uint64_t page_count = (needed_bytes + memory::kPageSize - 1) / memory::kPageSize;
+            if (!memory::allocate_contiguous_pages(page_count, g_dma)) {
+                console::write_line("ac97: could not allocate DMA memory");
+                ok = false;
+            }
+        }
     }
-
-    g_bdl = reinterpret_cast<volatile BdlEntry*>(g_dma.virtual_address);
-    g_buffers = reinterpret_cast<uint8_t*>(g_dma.virtual_address) + memory::kPageSize;
-    g_buffers_phys = g_dma.physical_address + memory::kPageSize;
-    memset(const_cast<BdlEntry*>(g_bdl), 0, sizeof(BdlEntry) * kRingSlots);
-
-    halt_engine();
-    out32(static_cast<uint16_t>(g_nabm_base + kPoBdbar), static_cast<uint32_t>(g_dma.physical_address));
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "engine");
+        if (ok) {
+            g_bdl = reinterpret_cast<volatile BdlEntry*>(g_dma.virtual_address);
+            g_buffers = reinterpret_cast<uint8_t*>(g_dma.virtual_address) + memory::kPageSize;
+            g_buffers_phys = g_dma.physical_address + memory::kPageSize;
+            memset(const_cast<BdlEntry*>(g_bdl), 0, sizeof(BdlEntry) * kRingSlots);
+            set_pci_command(static_cast<uint16_t>(pci_command() | kPciCommandBusMaster));
+            halt_engine();
+            out32(static_cast<uint16_t>(g_nabm_base + kPoBdbar), static_cast<uint32_t>(g_dma.physical_address));
+        }
+    }
+    if (!ok) {
+        console::printf("ac97: could not start at %x:%x.%u (stage %u); everything it took is given back\n",
+            static_cast<unsigned>(controller.bus), static_cast<unsigned>(controller.slot),
+            static_cast<unsigned>(controller.function), stage);
+        g_start_failing = true;
+        g_acquired.unwind();
+        g_start_failing = false;
+        return false;
+    }
 
     g_info = {
         .sample_rate_hz = kSampleRateHz,
@@ -482,6 +567,7 @@ void initialize() {
         .flags = 0,
     };
     g_ready = true;
+    g_started = true;
     inventory::pci_started(g_pci);
 
     console::printf(
@@ -495,6 +581,72 @@ void initialize() {
         static_cast<unsigned>(kChannels),
         static_cast<unsigned>(kBitsPerSample)
     );
+    return true;
+}
+
+// The PCM out engine halted and bus mastering off, both read back: true only
+// when the controller can no longer reach memory. It raises no interrupt:
+// the driver polls and no BDL entry asks for one.
+bool quiesce() {
+    g_ready = false;
+    g_prepared = false;
+    halt_engine();
+    set_pci_command(static_cast<uint16_t>(pci_command() & ~kPciCommandBusMaster));
+    const bool stopped = (in8(static_cast<uint16_t>(g_nabm_base + kPoCr)) & kCrRunPause) == 0;
+    const bool halted = (in16(static_cast<uint16_t>(g_nabm_base + kPoSr)) & kSrDmaHalted) != 0;
+    const bool no_master = (pci_command() & kPciCommandBusMaster) == 0;
+    return stopped && halted && no_master;
+}
+
+// Quiet, then everything start() took given back. A controller that will
+// not quiesce keeps all of it and is listed as failed: its buffers may still
+// be read.
+bool stop() {
+    if (!g_started) {
+        return true;
+    }
+    if (!quiesce()) {
+        console::write_line("ac97: the controller did not quiesce; it keeps its buffers");
+        inventory::pci_failed(g_pci);
+        return false;
+    }
+    g_acquired.unwind();
+    g_started = false;
+    g_head = 0;
+    g_tail = 0;
+    g_in_flight = 0;
+    return true;
+}
+
+bool idle() {
+    return !g_started && g_acquired.count() == 0 && g_dma.physical_address == 0;
+}
+
+bool bring_up() {
+    // A stream as audio:: would set one up: the engine playing silence.
+    return ac97_configure();
+}
+
+const lifecycle::Subject kSubject = {
+    kDriverName,
+    kStartStages,
+    &find_controller,
+    &start,
+    &bring_up,
+    &stop,
+    &idle,
+    nullptr,
+};
+
+} // namespace
+
+namespace ac97 {
+
+void initialize() {
+    pci::DeviceInfo controller = {};
+    if (pci::ready() && find_controller(controller)) {
+        (void)start(controller);
+    }
 }
 
 bool ready() {
@@ -523,5 +675,7 @@ const audio::Driver kDriver = {
 } // namespace
 
 const audio::Driver& driver() { return kDriver; }
+
+const lifecycle::Subject& lifecycle_subject() { return kSubject; }
 
 } // namespace ac97

@@ -3,6 +3,7 @@
 #include "kernel/lifecycle_selftest.hpp"
 
 #include "arch/cpu.hpp"
+#include "kernel/ac97.hpp"
 #include "kernel/console.hpp"
 #include "kernel/inventory.hpp"
 #include "kernel/lifecycle.hpp"
@@ -21,6 +22,7 @@ struct Entry {
 
 const Entry kSubjects[] = {
     {"rtl8139", &rtl8139::lifecycle_subject},
+    {"ac97", &ac97::lifecycle_subject},
 };
 
 constexpr unsigned kCycles = 4;

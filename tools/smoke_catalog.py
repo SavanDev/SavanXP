@@ -374,6 +374,18 @@ SCENARIOS: dict[str, Scenario] = {
         iommu="amd",
         boot_options="iommu lifecycle-selftest=rtl8139",
     ),
+    # The AC'97 on the same contracts: its fifth cycle-free check is that the
+    # stream still plays once audio:: takes the controller back.
+    "lifecycle-ac97": _qemu_scenario(
+        "audiostream",
+        "AUDIO STREAM PASS",
+        "lifecycle: selftest failed",
+        "AC'97 start and stop: injected failures and repeated cycles, one playing, leave nothing behind; "
+        "then a stream plays",
+        120.0,
+        audio_device="ac97",
+        boot_options="lifecycle-selftest=ac97",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",
