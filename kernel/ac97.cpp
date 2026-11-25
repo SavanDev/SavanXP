@@ -107,7 +107,6 @@ uint32_t g_max_gap_ms = 0;     // hueco mas largo entre dos escrituras
 uint64_t g_report_start_ms = 0;
 bool g_ready = false;
 bool g_prepared = false;   // motor DMA preparado para la sesion de escritura actual
-bool g_running = false;    // RPBM activo
 
 inline void compiler_barrier() {
     __atomic_signal_fence(__ATOMIC_SEQ_CST);
@@ -196,7 +195,6 @@ void halt_engine() {
         }
         compiler_barrier();
     }
-    g_running = false;
 }
 
 // Reclama las ranuras que el hardware ya termino de reproducir. CIV apunta al
@@ -254,7 +252,6 @@ void publish(uint8_t lvi) {
     if ((control & kCrRunPause) == 0) {
         out8(static_cast<uint16_t>(g_nabm_base + kPoCr), static_cast<uint8_t>(control | kCrRunPause));
     }
-    g_running = true;
 }
 
 // Encola kPrimePeriods de silencio para arrancar con un colchon de audio.
@@ -305,7 +302,6 @@ bool ac97_configure() {
     g_max_gap_ms = 0;
     g_last_write_ms = 0;
     g_report_start_ms = 0;
-    g_running = false;
     prime_silence();
     g_prepared = true;
     return true;
@@ -431,7 +427,6 @@ namespace ac97 {
 void initialize() {
     g_ready = false;
     g_prepared = false;
-    g_running = false;
     g_head = 0;
     g_tail = 0;
     g_in_flight = 0;
