@@ -35,7 +35,7 @@ HANDOFF = "handoff: starting /bin/init"
 EDITION_BOX = (1080, 690, 1280, 772)
 
 
-def boot_and_run(version, iso, disk, root, scenario, out, profile, boot_wait, cpu, smp):
+def boot_and_run(version, iso, disk, root, scenario, out, profile, boot_wait, cpu, smp, audio=False):
     out.mkdir(parents=True, exist_ok=True)
     for stale in out.glob("*.png"):
         stale.unlink()
@@ -52,6 +52,10 @@ def boot_and_run(version, iso, disk, root, scenario, out, profile, boot_wait, cp
         serial_path=serial, qmp_path=qmp, cpu=cpu,
     )
     args[0] = "qemu-system-x86_64"
+    wav = out / "audio.wav"
+    if audio:
+        # Record the guest's sound device output for the audio comparison.
+        args[args.index("none,id=audio0")] = f"wav,id=audio0,path={wav},out.frequency=48000"
     qemu = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=(out / "qemu-err.log").open("w"))
     try:
         deadline = time.time() + 240
@@ -70,10 +74,10 @@ def boot_and_run(version, iso, disk, root, scenario, out, profile, boot_wait, cp
             "import sys; sys.path.insert(0, %r)\n"
             "import shoot_session as s\n"
             "try:\n"
-            "    s.run_scenario(%r, %r, %r, boot_wait=%r, abs_pointer=%r)\n"
+            "    s.run_scenario(%r, %r, %r, boot_wait=%r, abs_pointer=%r, audio_path=%r)\n"
             "except s.Failure as f:\n"
             "    print('FAILURE:', f); sys.exit(1)\n"
-        ) % (str(TOOLS), scenario, str(qmp), str(out), boot_wait, virtio)
+        ) % (str(TOOLS), scenario, str(qmp), str(out), boot_wait, virtio, str(wav) if audio else None)
         result = subprocess.run([sys.executable, "-c", code], env=env)
         return result.returncode
     finally:
@@ -88,7 +92,11 @@ def boot_and_run(version, iso, disk, root, scenario, out, profile, boot_wait, cp
 BANNER = "SavanXP v0.4.0 booting"
 
 
-def measure_boot(version, iso, disk, out, profile, cpu, smp, runs):
+# Program Manager positions in the first group (see Session.launch).
+LAUNCH_APPS = {"calc": 0, "files": 1, "shell": -1}
+
+
+def measure_boot(version, iso, disk, out, profile, cpu, smp, runs, launch=None):
     """Host-side boot milestones in seconds from QEMU start.
 
     `serial` is the first serial byte, before which only firmware and the
@@ -133,9 +141,28 @@ def measure_boot(version, iso, disk, out, profile, cpu, smp, runs):
                         shoot_session.expect_taskbar_present(image, "boot")
                         shoot_session.expect_button(image, 0, True, "boot")
                         marks["desktop"] = time.monotonic() - start
-                    except (shoot_session.Failure, OSError):
-                        pass
+                    except (shoot_session.Failure, OSError) as error:
+                        if os.environ.get("SAVANXP_PARITY_DEBUG"):
+                            print("boot probe:", error, file=sys.stderr)
                 time.sleep(0.1)
+            if launch and "desktop" in marks:
+                # Settle, select the icon, then time Enter until the new
+                # window's taskbar button appears focused.
+                time.sleep(5)
+                steps = LAUNCH_APPS[launch]
+                for _ in range(abs(steps)):
+                    qmp.tap("right" if steps > 0 else "left", pause=0.4)
+                time.sleep(1)
+                pressed = time.monotonic()
+                qmp.tap("ret", pause=0)
+                while time.monotonic() - pressed < 60:
+                    qmp.cmd("screendump", filename=str(frame))
+                    try:
+                        shoot_session.expect_button(Image.open(frame).convert("RGB"), 1, True, "launch")
+                        marks["launch_" + launch] = time.monotonic() - pressed
+                        break
+                    except (shoot_session.Failure, OSError):
+                        time.sleep(0.05)
         finally:
             qemu.terminate()
             try:
@@ -183,6 +210,8 @@ def main():
     parser.add_argument("--scenario")
     parser.add_argument("--measure-boot", type=int, metavar="RUNS",
                         help="time the boot milestones RUNS times per guest instead of a scenario")
+    parser.add_argument("--launch", choices=sorted(LAUNCH_APPS),
+                        help="with --measure-boot, also time this program's launch to its taskbar button")
     parser.add_argument("--reference-root", type=Path, required=True,
                         help="the reference tree's build/ (SavanXP-parity.iso, disk.img, diskfs)")
     parser.add_argument("--i386-root", type=Path, default=TOOLS.parent / "build")
@@ -195,6 +224,9 @@ def main():
                         help="ignore the wallpaper edition label, the documented difference")
     parser.add_argument("--allow-diff", action="store_true")
     parser.add_argument("--only", choices=("reference", "i386"))
+    parser.add_argument("--reference-disk", type=Path, help="disk image instead of the reference build's")
+    parser.add_argument("--i386-disk", type=Path, help="disk image instead of the i386 build's")
+    parser.add_argument("--audio", action="store_true", help="record each guest's audio to audio.wav")
     opts = parser.parse_args()
     cpu = opts.cpu or ("max" if opts.profile == "virtio" else "qemu64")
     guests = {
@@ -206,7 +238,8 @@ def main():
         for version, (iso, root) in guests.items():
             if not opts.only or opts.only == version:
                 report += measure_boot(version, iso.resolve(), (root / "disk.img").resolve(),
-                                       opts.out / version, opts.profile, cpu, opts.smp, opts.measure_boot)
+                                       opts.out / version, opts.profile, cpu, opts.smp, opts.measure_boot,
+                                       opts.launch)
         opts.out.mkdir(parents=True, exist_ok=True)
         (opts.out / "boot.json").write_text(json.dumps(report, indent=2))
         return 0
@@ -217,8 +250,10 @@ def main():
         if opts.only and opts.only != version:
             continue
         print(f"== {version}: {opts.scenario} ({opts.profile}, {cpu}, {opts.smp} vCPU)", flush=True)
-        code = boot_and_run(version, iso.resolve(), (root / "disk.img").resolve(), root.resolve(),
-                            opts.scenario, opts.out / version, opts.profile, opts.boot_wait, cpu, opts.smp)
+        disk = (opts.reference_disk if version == "reference" else opts.i386_disk) or root / "disk.img"
+        code = boot_and_run(version, iso.resolve(), disk.resolve(), root.resolve(),
+                            opts.scenario, opts.out / version, opts.profile, opts.boot_wait, cpu, opts.smp,
+                            opts.audio)
         print(f"== {version}: scenario exit {code}", flush=True)
         status |= code
     if opts.only:

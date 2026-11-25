@@ -8,13 +8,13 @@ This branch progressively ports SavanXP to **i386 (32-bit x86), legacy BIOS and
 GRUB2/Multiboot2**. All normal build and run commands target i386. The original
 x86_64 system is maintained on [`master`](https://github.com/SavanDev/SavanXP/tree/master).
 
-The active goal is **parity with SavanXP v0.4.0**, preserving its visuals,
-behavior and internal design with the fewest changes required by 32-bit x86.
-After reaching that target, work advances to v0.4.1 and then later parity
-targets. The restored desktop is an intermediate stage; see the
+The branch follows SavanXP release by release, preserving each version's
+visuals, behavior and internal design with the fewest changes required by
+32-bit x86. Parity with **v0.4.0** is reached in emulation
+([review](docs/I386_PARITY_REVIEW.md)); the active goal is now **v0.4.1**. See the
 [parity policy and roadmap](docs/I386_PORT.md).
 
-Current parity target: `v0.4.0` (in progress) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+Current parity target: `v0.4.1` (v0.4.0 reached) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
 
 ## Quick start
 
@@ -79,7 +79,7 @@ Memory sections, heap growth, fork and ELF32 shared libraries are supported;
 see [the memory contract](docs/I386_MEMORY.md) and
 [graphics contract](docs/I386_GRAPHICS.md). PCI, RTL8139 networking, AC'97 audio,
 ACPI power and external applications are covered by the
-[device-service contract](docs/I386_SERVICES.md). v0.4.0 parity remains in progress.
+[device-service contract](docs/I386_SERVICES.md). v0.4.0 parity is reached in emulation.
 Retained source and older design documents are porting material until verified.
 See the [ordered porting roadmap](docs/I386_PORT.md) and
 [process implementation and limits](docs/I386_PROCESSES.md).

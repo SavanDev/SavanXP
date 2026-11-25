@@ -3,11 +3,11 @@
 ## Branch scope
 
 - This branch targets i386 only. The x86_64 system lives on `master`.
-- The active parity target is SavanXP `v0.4.0`, the branch's original baseline.
-  Preserve its visuals, behavior and internal design with the smallest possible
+- The active parity target is SavanXP `v0.4.1`. `v0.4.0`, the branch's original
+  baseline, was reached in emulation (`docs/I386_PARITY_REVIEW.md`). Preserve its visuals, behavior and internal design with the smallest possible
   changes; reuse the reference implementation and justify architecture-specific
   differences. Bring-up shortcuts are temporary, not final replacements.
-- Advance to `v0.4.1` only after `v0.4.0` parity is reached. Do not follow the
+- Advance to a later version only after the active target's parity is reached. Do not follow the
   moving `master` tip as the current specification.
 - Match the reference version's validation scope: use emulation for `v0.4.0`
   and `v0.4.1`; physical-machine bring-up and validation begin when the active

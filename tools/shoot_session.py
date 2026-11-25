@@ -297,7 +297,9 @@ class Session(object):
         # en una imagen sin Celeste la seleccion da la vuelta y el mismo step
         # cae igual en Minesweeper, no en Doom. El escenario que necesita Doom
         # lo exige antes (equal to appwiz/system).
-        self.launch(1, groups=2)
+        # A disk with Doom but no Celeste lists Doom first:
+        # SAVANXP_DOOM_INDEX=0 selects it there.
+        self.launch(int(os.environ.get("SAVANXP_DOOM_INDEX", "1")), groups=2)
 
     def open_appwiz(self):
         # Grupo System: la cuarta solapa. Games existe siempre desde que el
@@ -1610,6 +1612,15 @@ def scenario_diagnostics(s):
         time.sleep(2.0)
 
 
+def scenario_mediaplayer(s):
+    """Media Player opened from Program Manager with the FFmpeg engine installed."""
+    s.open_mediaplayer()
+    s.shot("mediaplayer")
+    s.qmp.chord("alt", "f4")
+    time.sleep(2.0)
+    s.shot("mediaplayer-cerrado")
+
+
 SCENARIOS = {
     "doom": scenario_doom,
     "desktop": scenario_desktop,
@@ -1637,6 +1648,7 @@ SCENARIOS = {
     "cut": scenario_cut,
     "volume": scenario_volume,
     "diagnostics": scenario_diagnostics,
+    "mediaplayer": scenario_mediaplayer,
 }
 
 

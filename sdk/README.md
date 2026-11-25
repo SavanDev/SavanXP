@@ -40,6 +40,8 @@ sources and local headers. A directory source is compiled recursively, with
 - `sdk/udptest/main.c`: local IPv4 UDP self-test
 - `sdk/tcpget/main.c`: minimal HTTP client over IPv4 TCP
 - `sdk/multifile/`: an external application with several source files
+- `sdk/paritybench/main.c`: disk and TCP throughput figures of the
+  [v0.4.0 parity review](../docs/I386_PARITY_REVIEW.md#performance)
 - `sdk/template/main.c`: minimal starting point for a new application
 
 Applications normally include:

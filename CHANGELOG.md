@@ -12,6 +12,10 @@ Cut-off notes:
 
 ### Added
 
+- **The i386 branch reaches v0.4.0 parity in emulation; v0.4.1 is the next target.**
+  `tools/parity_capture.py` adds `--launch`, `--audio` and alternate disks, `shoot_session`
+  adds `mediaplayer`, and `sdk/paritybench` measures disk and TCP throughput on both builds.
+
 - **i386 builds the remaining v0.4.0 diagnostics and runs the reference core spec.**
   `libctest`, `forktest`, `polltest`, `sectiontest`, `stacktest`, `imagetest` and the
   `/disk/bin/smoke` runner are ELF32; `./build.sh smoke` now includes that spec.

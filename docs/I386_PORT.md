@@ -24,6 +24,10 @@ advance the active target automatically or excuse unfinished v0.4.0 behavior.
 The baseline version is a compatibility target, not a claim that the current
 i386 prototype has already reached it.
 
+The [v0.4.0 parity review](I386_PARITY_REVIEW.md) closed on 2026-11-25 with
+every capability Matched or Justified in emulation, so **v0.4.1 is now the
+active target**.
+
 Validation follows the same version sequence. The v0.4.0 and v0.4.1 targets
 are assessed in emulation; physical-machine bring-up and validation begin
 with the v0.4.2 target. Laptop-specific BIOS/E820, ATA, framebuffer, peripheral
@@ -152,7 +156,7 @@ changes, and record implementation/verification evidence as work lands.
    alongside memory, graphics and persistence gates. [Contracts and evidence](I386_SERVICES.md).
    Optional virtio backends remain in milestone 6; physical-machine coverage
    begins with the v0.4.2 target.
-6. **Capacity and remaining reference parity in emulation — in progress.** Port the
+6. **Capacity and remaining reference parity in emulation — completed.** Port the
    reference SMP and optional virtio support, and assess performance, power
    mechanisms and the remaining internal/visual gaps against v0.4.0 in QEMU.
    Complete the feature-by-feature parity review before advancing to v0.4.1.
@@ -174,8 +178,6 @@ changes, and record implementation/verification evidence as work lands.
    resolves root-bus PCI INTx through `_PRT` and link `_CRS`. The BSP and APs
    use the reference 1000 Hz timer with monotonic process deadlines.
    [Contracts and evidence](I386_SMP.md).
-   The remaining internal/visual parity review follows. These intermediate
-   results do not complete milestone 6 or the v0.4.0 target.
 
    **Section views.** Spawn and exec choose a randomized starting page in
    the i386 section window. Fork preserves the parent's views and cursor.
@@ -202,12 +204,12 @@ changes, and record implementation/verification evidence as work lands.
    splash, including the startup logo, fade, marquee and status. The compositor
    takes ownership at graphics-session acquisition. [Evidence](I386_GRAPHICS.md).
 
-   **Remaining v0.4.0 review.** Compare the resulting system feature by
-   feature in QEMU, including power and performance, and record evidence or
-   justified i386 differences before changing the target. The [matched QEMU
+   **v0.4.0 review.** The [matched QEMU
    boots](I386_PORT_STUDY.md#25-matched-qemu-boots-for-the-v040-review)
-   establish the reference and i386 comparison environment; the
-   [parity review](I386_PARITY_REVIEW.md) tracks each capability's status.
+   compare both builds feature by feature, including power and performance.
+   Every row of the [parity review](I386_PARITY_REVIEW.md) is Matched or
+   Justified, so the v0.4.0 target is met in emulation and the branch moves
+   to v0.4.1. [Evidence](I386_PORT_STUDY.md#37-catalog-ports-and-performance-against-v040).
 
 The detailed laptop analysis and earlier completed milestones are in
 [REAL_HARDWARE.md](REAL_HARDWARE.md); its physical-machine work is preparation

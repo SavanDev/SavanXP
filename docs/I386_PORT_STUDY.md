@@ -2746,3 +2746,81 @@ Under TCG with four vCPUs, spawning 60 of them took twelve seconds, so
 the first children exited and freed pages between the parent's
 free-memory samples. The children now stay resident for 30 seconds;
 the parent collects them after sampling.
+
+## 37. Catalog, ports and performance against v0.4.0
+
+The last review rows needed the same check run on both builds rather
+than an i386 regression alone. Three kinds of evidence close them.
+
+**The catalog on both builds.** Every name in the v0.4.0 smoke catalog
+ran on i386 and passed, 35 of 35. The reference passed 34 with its own
+`run_smoke.py`. Its `filesapp-smoke` expects Media Player, which a clean
+reference build does not install, and a clean i386 disk fails the same
+way. With both ports disks prepared (FFmpeg, Media Player, Ccleste and
+Doom installed by each tree's own port scripts), `filesapp-smoke`,
+`ffmpegload`, `ccleste-selftest` and `mediaplayer-selftest` pass on both.
+The reference runner plants `/SMOKE` only when its CMake cache sets
+`SAVANXP_SMOKE_COMMAND`; writing the file into `build/rootfs` by hand is
+removed again by the build.
+
+**Ports side by side.** `tools/parity_capture.py` accepts
+`--reference-disk` and `--i386-disk` for the ports disks and `--audio` to
+record each guest's sound card to `audio.wav` through QEMU's `wav`
+audiodev. On a disk with Doom and no Celeste, Program Manager lists Doom
+first, so `SAVANXP_DOOM_INDEX=0` selects it. In `doom`, the closed-game
+capture is identical; the title and level frames differ by the demo
+loop's phase. Both builds played the `GENMIDI` music (RMS 0.123 and
+0.132 of full scale in the tail of the recording) and were silent after
+Doom closed. Game speed under TCG was 13–23 frames per second on the
+reference and 12–19 on i386. In `ccleste` the room capture is identical
+and the other two differ by animation phase. The 78-second recordings
+have the same 27 audible seconds, with RMS 0.0363 and 0.0355 and the same
+per-second envelope. The new `mediaplayer` scenario opens Media Player
+from Program Manager and closes it; its captures are identical.
+
+**Timing.** `parity_capture.py --measure-boot RUNS` records host-side
+milestones from QEMU start: the first serial byte, the kernel banner,
+the `handoff` line and the first screendump whose first taskbar button
+is sunken, which is the focused Program Manager. `--launch calc|files|shell`
+then selects that icon and times Enter until the new window's taskbar
+button is focused. Across nine runs per guest, the banner arrived after
+4.9–5.4 seconds with Limine and 1.8–2.7 seconds with GRUB. From banner to
+`handoff` took 2.3–3.3 seconds on both, except one i386 run at 5.3
+seconds, and from `handoff` to Program Manager 3.6–5.3 seconds on the
+reference and 4.3–5.1 on i386, except that same run at 10.9 seconds,
+which overlapped other host work. Launches took 0.31–0.41 and
+0.33–0.40 seconds.
+
+`sdk/paritybench` measures disk and TCP throughput. It is built
+unchanged with each tree's SDK as `/disk/bin/smoke` and boots with
+`/SMOKE=smoke`, with `tools/tcp_echo_server.py --port 40100` on the
+host. It writes a 512 KiB file in 64 KiB chunks and syncs it, reads and
+verifies it, then receives 4 MiB (`BULK`) and echoes 1 MiB (`ECHO`). The
+reference ran under its own runner (`q35`, UEFI, `-cpu max`, ATA on
+`isa-ide`) and i386 under `run_smoke.py` with the same ATA and RTL8139
+devices:
+
+| Measurement | v0.4.0 | i386 (two runs) |
+| --- | ---: | ---: |
+| Write + sync, 512 KiB | 358 392 ms | 372 726 / 443 628 ms |
+| Read, 512 KiB | 162 ms | 145 / 157 ms |
+| TCP receive, 4 MiB | 581 ms | 488 ms |
+| TCP echo, 1 MiB | 2016 ms | 2118 ms |
+
+Writes take about a second per KiB on both. Each write grows the file
+and commits the SxFS metadata through ATA PIO, the same path in both
+trees, so the cost is the shared file system and not the port.
+`ffmpegload` mapped FFmpeg in 2202 ms on the reference and 2128 ms on
+i386.
+
+The compositor, pipe and idle samples in section 31 remain slower on
+i386. Those paths are dominated by copies and 64-bit arithmetic: the
+framebuffer sync and pipe transfers move four bytes per instruction, and
+the monotonic clock, read twice on every timer tick, divides 64-bit
+values through `libgcc` helpers. The review records these rows as
+justified by the 32-bit target, with the figures kept as the baseline
+for later optimization.
+
+With the 30-second `memhog32` residency from section 36, `smp --smp 4`
+passed five consecutive runs, so the rollback failure was that sampling
+race and not a fault in the reordered boot.
