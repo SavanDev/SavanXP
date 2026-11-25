@@ -627,14 +627,31 @@ bool bring_up() {
     return ac97_configure();
 }
 
+// One device each: the self-test's calls on that device.
+bool subject_find(size_t nth, pci::DeviceInfo& device) {
+    return nth == 0 && find_controller(device);
+}
+
+bool subject_bring_up(const pci::DeviceInfo&) {
+    return bring_up();
+}
+
+bool subject_stop(const pci::DeviceInfo&) {
+    return stop();
+}
+
+bool subject_idle(const pci::DeviceInfo&) {
+    return idle();
+}
+
 const lifecycle::Subject kSubject = {
     kDriverName,
     kStartStages,
-    &find_controller,
+    &subject_find,
     &start,
-    &bring_up,
-    &stop,
-    &idle,
+    &subject_bring_up,
+    &subject_stop,
+    &subject_idle,
     nullptr,
 };
 

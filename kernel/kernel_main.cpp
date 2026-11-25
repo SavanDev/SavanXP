@@ -277,6 +277,15 @@ namespace
     {
         iommu::selftest();
     }
+    // Before any class core takes a device: the drivers written to the start
+    // and stop contracts, started and stopped over and over
+    // (docs/kernel/DRIVER_LIFECYCLE.md).
+    size_t lifecycle_length = 0;
+    if (const char* lifecycle_names =
+            boot::option_value(boot_info.cmdline, "lifecycle-selftest", lifecycle_length))
+    {
+        lifecycle::run_boot_selftest(lifecycle_names, lifecycle_length);
+    }
     // USB before input and storage: its class drivers register keyboards,
     // pointers and disks like any other driver (docs/roadmaps/done/USB_ROADMAP.md).
     boot_screen::show("Starting USB");
@@ -349,15 +358,6 @@ namespace
     power::initialize();
     clipboard::initialize();
     serial_dev::initialize();
-    // Before any class core takes a device: the drivers written to the start
-    // and stop contracts, started and stopped over and over
-    // (docs/kernel/DRIVER_LIFECYCLE.md).
-    size_t lifecycle_length = 0;
-    if (const char* lifecycle_names =
-            boot::option_value(boot_info.cmdline, "lifecycle-selftest", lifecycle_length))
-    {
-        lifecycle::run_boot_selftest(lifecycle_names, lifecycle_length);
-    }
     // Probe all audio backends; priority sets the initial defaults only.
     // audio_device registers /dev/audio0 when either PCM direction is available.
     audio::register_driver(virtio_sound::driver());

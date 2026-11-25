@@ -65,18 +65,14 @@ bool nothing_left(const lifecycle::Subject& subject, const pci::DeviceInfo& devi
             static_cast<unsigned>(current_reason));
         return false;
     }
-    if (!subject.idle()) {
+    if (!subject.idle(device)) {
         console::printf("lifecycle: %s: the driver still holds state of its own\n", subject.driver);
         return false;
     }
     return true;
 }
 
-bool run(const lifecycle::Subject& subject) {
-    pci::DeviceInfo device = {};
-    if (!subject.find(device)) {
-        return fail(subject, "no device to test with");
-    }
+bool run_device(const lifecycle::Subject& subject, const pci::DeviceInfo& device) {
     // A first start and stop before counting: a driver may map register
     // windows it keeps for the rest of the boot (vm::map_device_registers),
     // and the page tables under them stay. Every later start reuses them, so
@@ -84,7 +80,7 @@ bool run(const lifecycle::Subject& subject) {
     if (!subject.start(device)) {
         return fail(subject, "the device did not start");
     }
-    if (!subject.stop()) {
+    if (!subject.stop(device)) {
         return fail(subject, "the device did not stop");
     }
     const uint64_t free_pages = memory::free_page_count();
@@ -113,12 +109,12 @@ bool run(const lifecycle::Subject& subject) {
         if (inventory::pci_claim_count(device) == 0) {
             return fail(subject, "a started device claims nothing");
         }
-        const uint8_t vector = subject.vector != nullptr ? subject.vector() : 0;
+        const uint8_t vector = subject.vector != nullptr ? subject.vector(device) : 0;
         const uint8_t handlers = vector != 0 ? arch::interrupt_handler_count(vector) : 0;
-        if (cycle == kBroughtUpCycle && subject.bring_up != nullptr && !subject.bring_up()) {
+        if (cycle == kBroughtUpCycle && subject.bring_up != nullptr && !subject.bring_up(device)) {
             return fail(subject, "the device did not come up");
         }
-        if (!subject.stop()) {
+        if (!subject.stop(device)) {
             return fail(subject, "the device did not stop");
         }
         if (vector != 0 && arch::interrupt_handler_count(vector) != static_cast<uint8_t>(handlers - 1)) {
@@ -133,6 +129,20 @@ bool run(const lifecycle::Subject& subject) {
         subject.driver, static_cast<unsigned>(device.bus), static_cast<unsigned>(device.slot),
         static_cast<unsigned>(device.function), subject.stages, kCycles);
     return true;
+}
+
+// Every device the driver could take, one at a time; each ends free again,
+// so the next one is found the same way.
+bool run(const lifecycle::Subject& subject) {
+    size_t tested = 0;
+    pci::DeviceInfo device = {};
+    while (subject.find(tested, device)) {
+        if (!run_device(subject, device)) {
+            return false;
+        }
+        ++tested;
+    }
+    return tested != 0 || fail(subject, "no device to test with");
 }
 
 const lifecycle::Subject* subject_named(const char* name, size_t length) {

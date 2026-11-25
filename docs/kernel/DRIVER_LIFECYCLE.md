@@ -172,14 +172,18 @@ period (every one is dropped as the TX ring fills) and its `STOP` and
 
 One test for every driver written to the contracts
 (`kernel/lifecycle_selftest.cpp`). A driver hands it a `lifecycle::Subject`:
-its name, how many stages its start has, and its own `find`, `start`,
-`bring_up` (as far as its class core would take it; optional), `stop`,
-`idle` (none of its own state left) and `vector` (where its interrupt is,
-0 when it polls). Adding a driver is one entry in `kSubjects`.
+its name, how many stages its start has, and its own `find` (the nth device
+it could take), `start`, `bring_up` (as far as its class core would take
+it; optional), `stop`, `idle` (none of its state for that device left) and
+`vector` (where its interrupt is, 0 when it polls). Every call but `find`
+names the device, so a driver with several instances is tested one at a
+time. Adding a driver is one entry in `kSubjects`.
 
-Boot option `lifecycle-selftest=<driver>[,<driver>...]` runs it before any
-class core takes a device. Each named driver must have a device to test, or
-the test fails; a name not in `kSubjects` fails too. For each:
+Boot option `lifecycle-selftest=<driver>[,<driver>...]` runs it right after
+`inventory::initialize()`, before USB, input or any other class core takes
+a device. Each named driver must have at least one device to test, or the
+test fails; a name not in `kSubjects` fails too. Every device its `find`
+returns is tested, each left free before the next is looked for:
 
 - One start and stop first, before anything is counted: it must work, and it
   maps the register windows the driver keeps for the rest of the boot, whose

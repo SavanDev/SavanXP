@@ -649,15 +649,36 @@ uint8_t vector() {
     return g_vector;
 }
 
+// One device each: the self-test's calls on that device.
+bool subject_find(size_t nth, pci::DeviceInfo& device) {
+    return nth == 0 && find_card(device);
+}
+
+bool subject_bring_up(const pci::DeviceInfo&) {
+    return bring_up();
+}
+
+bool subject_stop(const pci::DeviceInfo&) {
+    return stop();
+}
+
+bool subject_idle(const pci::DeviceInfo&) {
+    return idle();
+}
+
+uint8_t subject_vector(const pci::DeviceInfo&) {
+    return vector();
+}
+
 const lifecycle::Subject kSubject = {
     kDriverName,
     kStartStages,
-    &find_card,
+    &subject_find,
     &start,
-    &bring_up,
-    &stop,
-    &idle,
-    &vector,
+    &subject_bring_up,
+    &subject_stop,
+    &subject_idle,
+    &subject_vector,
 };
 
 } // namespace
