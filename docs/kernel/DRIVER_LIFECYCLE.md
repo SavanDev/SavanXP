@@ -17,6 +17,9 @@ the inventory's ownership and claims ([DEVICE_INVENTORY.md](DEVICE_INVENTORY.md)
 | `virtio-blk` | transport, features, capacity, queue, driver ok | sector 0 read through the queue | `lifecycle-virtio-blk` (`--virtio`) |
 | `virtio-sound` | transport, features, queues, driver ok, streams, events | a stream playing silence | `lifecycle-virtio-sound` |
 | `virtio-input` | transport, classify, features, ranges, queue, driver ok; tablet and keyboard each | none | `lifecycle-virtio-input` (`--virtio`) |
+| `virtio-gpu` | transport, features, interrupt (MSI-X), queues, driver ok (INTx fallback), capset | `GET_DISPLAY_INFO` through the control queue | `lifecycle-virtio-gpu` (`--virtio`) |
+
+The whole virtio family is on the contracts.
 
 A scenario marked `--virtio` needs the virtio machine:
 `./build.sh smoke <scenario> --virtio`; without it the scenario refuses to
@@ -182,6 +185,30 @@ given back clean (`NOT_CLAIMED`), as one this driver does not use; before,
 it was claimed and listed as failed. `find_device()` passes over functions
 the driver drives already, since `pci_available` would grant it its own.
 
+## virtio-gpu
+
+`start()` takes the device up to `DRIVER_OK`: the transport, the features
+(virgl when offered), MSI-X when it can be had (its handler on vector 49,
+then the table entry; the queues are set up after it so they bind to it),
+the control and cursor queues (the cursor one optional), `DRIVER_OK` with
+the INTx fallback when there is no MSI-X (its PIC line now claimed before
+the handler goes on it, and polling if the claim is refused), and the virgl
+capset when virgl was negotiated (static memory, nothing to give back).
+`stop()` resets, then frees the queues, disables MSI-X (`virtio_pci::
+disable_msix`: entry masked, function masked, enable off) and takes the
+handler back, or takes the PIC handler back and masks the line
+(`arch::unregister_irq_handler`).
+
+**The display is not part of `start()`.** The scanout, the primary surface
+and the console redirected to it stay in `initialize()`, after `start()`,
+the way `vblk0` stays with `block::`. A surface is RAM mapped with
+`map_kernel_pages` into the same window that never reuses an address, so a
+start that mapped one would grow it, and its page tables, every cycle; and
+taking the console back from a surface needs the display core. Only the
+self-test, which runs before `display::` probes, stops the device. Before
+this, a vector handler registered for MSI-X stayed on vector 49 when
+`enable_msix` failed; now it is taken back.
+
 ## The self-test
 
 One test for every driver written to the contracts
@@ -236,7 +263,13 @@ generator was seeded from it. The pure part has `lifecycle-test` on the host.
   the RTL8139 did. Drivers that touch shared state at start (USB host
   controllers and their children, the block devices `partition` hangs off)
   need their class core's help to stop.
-- **PIC lines.** `arch::unregister_interrupt_handler` covers a PIC vector too,
-  but nothing masks the PIC line when its last handler goes; no driver
-  written to these contracts uses one.
-- **MSI and MSI-X**, which no driver here takes back yet.
+- **Devices a class core holds.** `vblk0` and the virtio-gpu display stay
+  started once `block::` and `display::` take them: neither core can give a
+  device back yet. Stopping them needs that, and the display a way to map
+  and unmap surfaces without growing the kernel's mapping window.
+- **IOMMU interrupt entries.** `iommu::allow_interrupt` has no counterpart:
+  an MSI-X vector a stopped device was allowed stays allowed in the
+  remapping table. With bus mastering and MSI-X off the device cannot use
+  it; a revoke call comes with the first driver that moves between vectors.
+- **PIC lines** are taken back and masked (`arch::unregister_irq_handler`),
+  but no driver here uses one on QEMU, so that path is unexercised.

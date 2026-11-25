@@ -174,6 +174,12 @@ void release_queue(Queue& queue);
 // subsequent setup_queue() calls bind the queues to that vector. Returns false
 // (leaving device.msix_vector at kVirtioMsiNoVector) if MSI-X is unavailable.
 bool enable_msix(Device& device, uint8_t apic_vector);
+// enable_msix undone: table entry 0 masked, MSI-X off with the function
+// masked, device.msix_vector back to kVirtioMsiNoVector. The vector's
+// handler is the caller's to take back. The IOMMU's entry for the vector
+// stays (there is no call to revoke one yet); with MSI-X off the device
+// cannot use it.
+void disable_msix(Device& device);
 volatile CommonCfg* common_cfg(Device& device);
 const volatile CommonCfg* common_cfg(const Device& device);
 uint8_t* device_cfg_base(Device& device);

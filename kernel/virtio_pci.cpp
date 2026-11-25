@@ -266,6 +266,30 @@ bool enable_msix(Device& device, uint8_t apic_vector) {
     return true;
 }
 
+void disable_msix(Device& device) {
+    uint8_t cap = 0;
+    if (device.msix_vector == kVirtioMsiNoVector || !pci::find_capability(device.pci_device, kPciCapabilityMsix, cap)) {
+        device.msix_vector = kVirtioMsiNoVector;
+        return;
+    }
+    const uint8_t bus = device.pci_device.bus;
+    const uint8_t slot = device.pci_device.slot;
+    const uint8_t function = device.pci_device.function;
+    const uint16_t control = pci::read_config_u16(bus, slot, function, static_cast<uint8_t>(cap + 2));
+    const uint32_t table = pci::read_config_u32(bus, slot, function, static_cast<uint8_t>(cap + 4));
+    MappedBar* mapped_bar = nullptr;
+    if (map_bar(device, static_cast<uint8_t>(table & kMsixTableBirMask), mapped_bar) && mapped_bar != nullptr) {
+        // Entry 0's vector control: masked.
+        volatile uint32_t* entry =
+            reinterpret_cast<volatile uint32_t*>(mapped_bar->base + (table & ~kMsixTableBirMask));
+        entry[3] = 1u;
+        memory_barrier();
+    }
+    pci::write_config_u16(bus, slot, function, static_cast<uint8_t>(cap + 2),
+        static_cast<uint16_t>((control | kMsixControlFunctionMask) & ~kMsixControlEnable));
+    device.msix_vector = kVirtioMsiNoVector;
+}
+
 volatile CommonCfg* common_cfg(Device& device) {
     return reinterpret_cast<volatile CommonCfg*>(device.common_view.base);
 }

@@ -6,6 +6,8 @@
 #include "arch/cpu.hpp"
 #include "kernel/console.hpp"
 #include "kernel/inventory.hpp"
+#include "kernel/lifecycle.hpp"
+#include "kernel/lifecycle_selftest.hpp"
 #include "kernel/device.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
@@ -3704,6 +3706,284 @@ void log_init_stage(const char* stage) {
     }
 }
 
+/* ---- start and stop (docs/kernel/DRIVER_LIFECYCLE.md) ---------------------
+ *
+ * start() takes the device up to DRIVER_OK with its interrupt, its queues
+ * and its virgl capset. The scanout, the primary surface and the console
+ * redirected to it come after, in initialize(): mapping a surface takes
+ * address space the kernel never reuses, so a start that did it would grow
+ * the kernel's mapping window every cycle. Only the self-test, which runs
+ * before display:: probes, stops the device. */
+
+constexpr char kDriverName[] = "virtio-gpu";
+// transport, features, interrupt, queues, driver ok, capset.
+constexpr unsigned kStartStages = 6;
+
+lifecycle::Acquired g_acquired;
+bool g_started = false;
+// Set while a failed start unwinds: the function is then given back as a
+// failed start, not as a clean stop.
+bool g_start_failing = false;
+// The PIC line the INTx fallback registered on; 0 when it did not.
+uint8_t g_legacy_irq_line = 0;
+
+void release_transport(void*) {
+    virtio_pci::release_device(g_device, kDriverName, g_start_failing);
+}
+
+void release_msix(void*) {
+    virtio_pci::disable_msix(g_device);
+    (void)arch::unregister_interrupt_handler(kGpuMsixVector, gpu_irq);
+    g_gpu_msix_enabled = false;
+    g_irq_registered = false;
+}
+
+void release_queues(void*) {
+    virtio_pci::release_queue(g_control_queue);
+    virtio_pci::release_queue(g_cursor_queue);
+}
+
+void release_legacy_irq(void*) {
+    (void)arch::unregister_irq_handler(g_legacy_irq_line, gpu_irq);
+    g_legacy_irq_line = 0;
+    g_irq_registered = false;
+}
+
+bool stage_failed(unsigned stage, const char* name) {
+    if (!lifecycle::injected(kDriverName, stage)) {
+        return false;
+    }
+    console::printf("virtio-gpu: start stage %u (%s) failed by injection\n", stage, name);
+    return true;
+}
+
+// Everything a start or a stop leaves behind, back to nothing.
+void reset_runtime() {
+    reset_adapter_state();
+    reset_present_tracking();
+    atomic_set_flag(g_irq_work_pending, false);
+    atomic_set_flag(g_scanout_refresh_pending, false);
+    atomic_store_u32(g_background_service_active, 0u);
+    atomic_store_u32(g_control_queue_access_active, 0u);
+    atomic_store_u32(g_cursor_queue_access_active, 0u);
+}
+
+// The first virtio-gpu no other driver holds.
+bool find_device(pci::DeviceInfo& found) {
+    size_t from = 0;
+    size_t index = 0;
+    pci::DeviceInfo candidate = {};
+    while (pci::ready() && virtio_pci::find_modern_device_from(from, kVirtioGpuModernDevice,
+               kVirtioGpuSubsystemDevice, candidate, index)) {
+        if (inventory::pci_available(candidate, kDriverName)) {
+            found = candidate;
+            return true;
+        }
+        from = index + 1;
+    }
+    return false;
+}
+
+// The transport, the features, MSI-X when it can be had, the control and
+// cursor queues, DRIVER_OK with the INTx fallback, and the virgl capset when
+// virgl was negotiated. False with everything given back.
+bool start(const pci::DeviceInfo& pci_device) {
+    reset_runtime();
+    unsigned stage = 1;
+    if (stage_failed(stage, "transport")) {
+        return false;
+    }
+    if (!virtio_pci::initialize_device(pci_device, true, g_device)) {
+        console::write_line("virtio-gpu: missing required MMIO capabilities");
+        // Given back if it was taken here; left alone if another driver has it.
+        (void)inventory::pci_release_failed(pci_device, kDriverName);
+        return false;
+    }
+    g_present = true;
+    log_init_stage("mmio ready");
+    bool ok = g_acquired.push("transport", &release_transport, nullptr);
+
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "features");
+        if (ok) {
+            virtio_pci::set_device_status(g_device, 0);
+            virtio_pci::memory_barrier();
+            virtio_pci::set_device_status(g_device,
+                static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
+            g_adapter.virgl.negotiated = device_offers_virgl();
+            ok = virtio_pci::negotiate_features(g_device, driver_features_word0(), virtio_pci::kFeatureVersion1Bit);
+            if (!ok) {
+                console::write_line("virtio-gpu: feature negotiation failed");
+            } else {
+                log_init_stage("features negotiated");
+            }
+        }
+    }
+    if (ok) {
+        // MSI-X first: it delivers completions straight to a local-APIC
+        // vector, and the queues must be set up after it to bind to it.
+        // Without it the INTx fallback comes after DRIVER_OK, or polling.
+        ++stage;
+        ok = !stage_failed(stage, "interrupt");
+        if (ok && arch::register_interrupt_handler(kGpuMsixVector, gpu_irq, arch::InterruptEoi::local_apic)) {
+            if (virtio_pci::enable_msix(g_device, kGpuMsixVector)) {
+                g_gpu_msix_enabled = true;
+                g_irq_registered = true;
+                g_irq_line = kGpuMsixVector;
+                console::printf("virtio-gpu: msi-x vector %u armed\n", static_cast<unsigned>(kGpuMsixVector));
+                ok = g_acquired.push("interrupt", &release_msix, nullptr);
+                if (!ok) {
+                    release_msix(nullptr);
+                }
+            } else {
+                (void)arch::unregister_interrupt_handler(kGpuMsixVector, gpu_irq);
+            }
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "queues") && g_acquired.push("queues", &release_queues, nullptr);
+        if (ok && !setup_control_queue()) {
+            console::write_line("virtio-gpu: failed to setup control queue");
+            ok = false;
+        }
+        if (ok) {
+            log_init_stage("control queue ready");
+            if (!setup_cursor_queue()) {
+                virtio_pci::release_queue(g_cursor_queue);
+                console::write_line("virtio-gpu: cursor queue unavailable, using software cursor fallback");
+            } else {
+                log_init_stage("cursor queue ready");
+            }
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "driver ok");
+        if (ok) {
+            virtio_pci::set_device_status(g_device,
+                static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
+            g_ready = true;
+            if (g_gpu_msix_enabled) {
+                // MSI-X already armed above; nothing else to wire up.
+            } else if (g_device.isr_view.valid && pci_device.irq_line != 0 && pci_device.irq_line != 0xff &&
+                pci_device.irq_line < 16 &&
+                inventory::pci_claim_resource(pci_device, SXN_DEVICE_RESOURCE_IRQ, pci_device.irq_line, 1,
+                    SXN_DEVICE_RESOURCE_SHARED) &&
+                arch::register_irq_handler(pci_device.irq_line, gpu_irq)) {
+                arch::enable_irq(pci_device.irq_line);
+                g_irq_line = pci_device.irq_line;
+                g_legacy_irq_line = pci_device.irq_line;
+                g_irq_registered = true;
+                console::printf("virtio-gpu: irq line %u armed\n", static_cast<unsigned>(g_irq_line));
+                ok = g_acquired.push("legacy interrupt", &release_legacy_irq, nullptr);
+                if (!ok) {
+                    release_legacy_irq(nullptr);
+                }
+            } else {
+                console::write_line("virtio-gpu: IRQ unavailable, keeping polling fallback");
+            }
+            log_init_stage("driver ok");
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "capset");
+        if (ok) {
+            if (!g_adapter.virgl.negotiated) {
+                console::write_line("virtio-gpu: virgl not offered, 2d only");
+            } else if (load_virgl_capset()) {
+                console::printf("virtio-gpu: virgl capset=%u version=%u size=%u\n",
+                    static_cast<unsigned>(g_adapter.virgl.capset_id),
+                    static_cast<unsigned>(g_adapter.virgl.capset_version),
+                    static_cast<unsigned>(g_adapter.virgl.capset_size));
+            } else {
+                console::printf("virtio-gpu: virgl negotiated but no usable capset (count=%u), 2d only\n",
+                    static_cast<unsigned>(g_adapter.virgl.capset_count));
+            }
+        }
+    }
+    if (!ok) {
+        console::printf("virtio-gpu: could not start at %x:%x.%u (stage %u); everything it took is given back\n",
+            static_cast<unsigned>(pci_device.bus), static_cast<unsigned>(pci_device.slot),
+            static_cast<unsigned>(pci_device.function), stage);
+        // Reset first: a queue the device may still use is never freed.
+        (void)virtio_pci::quiesce_device(g_device);
+        g_start_failing = true;
+        g_acquired.unwind();
+        g_start_failing = false;
+        reset_runtime();
+        return false;
+    }
+    g_started = true;
+    return true;
+}
+
+// Reset and read back, then the queues, the interrupt and the function
+// given back. Only before the display was configured: see above.
+bool stop() {
+    if (!g_started) {
+        return true;
+    }
+    g_ready = false;
+    if (!virtio_pci::quiesce_device(g_device)) {
+        console::write_line("virtio-gpu: the device did not reset; it keeps its queues");
+        inventory::pci_failed(g_device.pci_device);
+        return false;
+    }
+    g_acquired.unwind();
+    g_started = false;
+    reset_runtime();
+    return true;
+}
+
+bool idle() {
+    return !g_started && g_acquired.count() == 0 && g_control_queue.allocation.physical_address == 0 &&
+        g_cursor_queue.allocation.physical_address == 0 && !g_gpu_msix_enabled && g_legacy_irq_line == 0;
+}
+
+// One command through the control queue, with its completion: the display
+// information, as initialize() asks for it next.
+bool bring_up() {
+    VirtioGpuRespDisplayInfo display_info = {};
+    return get_display_info(display_info);
+}
+
+// One device: the self-test's calls on it.
+bool subject_find(size_t nth, pci::DeviceInfo& device) {
+    return nth == 0 && find_device(device);
+}
+
+bool subject_bring_up(const pci::DeviceInfo&) {
+    return bring_up();
+}
+
+bool subject_stop(const pci::DeviceInfo&) {
+    return stop();
+}
+
+bool subject_idle(const pci::DeviceInfo&) {
+    return idle();
+}
+
+// The MSI-X vector's chain is checked; the INTx fallback's PIC line is not
+// (QEMU's device always has MSI-X).
+uint8_t subject_vector(const pci::DeviceInfo&) {
+    return g_gpu_msix_enabled ? kGpuMsixVector : 0;
+}
+
+const lifecycle::Subject kSubject = {
+    kDriverName,
+    kStartStages,
+    &subject_find,
+    &start,
+    &subject_bring_up,
+    &subject_stop,
+    &subject_idle,
+    &subject_vector,
+};
+
 } // namespace
 
 namespace virtio_gpu {
@@ -3711,90 +3991,17 @@ namespace virtio_gpu {
 void initialize(const boot::FramebufferInfo& framebuffer) {
     DriverBusyGuard guard;
     log_init_stage("probe");
-    reset_adapter_state();
-    reset_present_tracking();
-
     pci::DeviceInfo pci_device = {};
-    if (!pci::ready() || !virtio_pci::find_modern_device(kVirtioGpuModernDevice, kVirtioGpuSubsystemDevice, pci_device)) {
+    if (!find_device(pci_device)) {
         return;
     }
-    g_present = true;
     log_init_stage("pci found");
-
-    if (!virtio_pci::initialize_device(pci_device, true, g_device)) {
-        console::write_line("virtio-gpu: missing required MMIO capabilities");
+    if (!start(pci_device)) {
         return;
     }
-    log_init_stage("mmio ready");
 
-    virtio_pci::set_device_status(g_device, 0);
-    virtio_pci::memory_barrier();
-    virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
-
-    g_adapter.virgl.negotiated = device_offers_virgl();
-    if (!virtio_pci::negotiate_features(g_device, driver_features_word0(), virtio_pci::kFeatureVersion1Bit)) {
-        fail_device("feature negotiation failed");
-        return;
-    }
-    log_init_stage("features negotiated");
-
-    // Prefer MSI-X: it delivers completions straight to a local-APIC vector. The
-    // legacy INTx path below is a fallback this kernel cannot actually route on
-    // q35 (no IOAPIC), so without MSI-X the driver falls back to polling. This
-    // must happen before queue setup so the queues bind to the MSI-X vector.
-    if (arch::register_interrupt_handler(kGpuMsixVector, gpu_irq, arch::InterruptEoi::local_apic) &&
-        virtio_pci::enable_msix(g_device, kGpuMsixVector)) {
-        g_gpu_msix_enabled = true;
-        g_irq_registered = true;
-        g_irq_line = kGpuMsixVector;
-        console::printf("virtio-gpu: msi-x vector %u armed\n", static_cast<unsigned>(kGpuMsixVector));
-    }
-
-    if (!setup_control_queue()) {
-        fail_device("failed to setup control queue");
-        return;
-    }
-    log_init_stage("control queue ready");
-    if (!setup_cursor_queue()) {
-        virtio_pci::release_queue(g_cursor_queue);
-        console::write_line("virtio-gpu: cursor queue unavailable, using software cursor fallback");
-    } else {
-        log_init_stage("cursor queue ready");
-    }
-
-    virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
-    g_ready = true;
-    if (g_gpu_msix_enabled) {
-        // MSI-X already armed above; nothing else to wire up.
-    } else if (g_device.isr_view.valid &&
-        pci_device.irq_line != 0 &&
-        pci_device.irq_line != 0xff &&
-        pci_device.irq_line < 16 &&
-        arch::register_irq_handler(pci_device.irq_line, gpu_irq)) {
-        arch::enable_irq(pci_device.irq_line);
-        g_irq_line = pci_device.irq_line;
-        g_irq_registered = true;
-        // A record: the handler is registered by now.
-        (void)inventory::pci_claim_resource(pci_device, SXN_DEVICE_RESOURCE_IRQ, pci_device.irq_line, 1,
-            SXN_DEVICE_RESOURCE_SHARED);
-        console::printf("virtio-gpu: irq line %u armed\n", static_cast<unsigned>(g_irq_line));
-    } else {
-        console::write_line("virtio-gpu: IRQ unavailable, keeping polling fallback");
-    }
-    log_init_stage("driver ok");
-
-    if (!g_adapter.virgl.negotiated) {
-        console::write_line("virtio-gpu: virgl not offered, 2d only");
-    } else if (load_virgl_capset()) {
-        console::printf("virtio-gpu: virgl capset=%u version=%u size=%u\n",
-            static_cast<unsigned>(g_adapter.virgl.capset_id),
-            static_cast<unsigned>(g_adapter.virgl.capset_version),
-            static_cast<unsigned>(g_adapter.virgl.capset_size));
-    } else {
-        console::printf("virtio-gpu: virgl negotiated but no usable capset (count=%u), 2d only\n",
-            static_cast<unsigned>(g_adapter.virgl.capset_count));
-    }
-
+    // The display from here on: the scanout, the primary surface and the
+    // console on it. Not part of start(): see DRIVER_LIFECYCLE.md.
     VirtioGpuRespDisplayInfo display_info = {};
     log_init_stage("query display info");
     if (!get_display_info(display_info)) {
@@ -4516,5 +4723,7 @@ const display::Driver kDriver = {
 } // namespace
 
 const display::Driver& driver() { return kDriver; }
+
+const lifecycle::Subject& lifecycle_subject() { return kSubject; }
 
 } // namespace virtio_gpu

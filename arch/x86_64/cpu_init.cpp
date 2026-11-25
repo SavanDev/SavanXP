@@ -1349,6 +1349,20 @@ uint8_t interrupt_handler_count(uint8_t vector) {
     return vector < kIdtEntryCount ? g_external_handlers[vector].count : 0;
 }
 
+bool unregister_irq_handler(uint8_t irq, IrqHandler handler) {
+    if (irq >= kIrqCount) {
+        return false;
+    }
+    const uint8_t vector = static_cast<uint8_t>(kPicVectorBase + irq);
+    if (!unregister_interrupt_handler(vector, handler)) {
+        return false;
+    }
+    if (g_external_handlers[vector].count == 0) {
+        disable_irq(irq);
+    }
+    return true;
+}
+
 bool initialize_local_apic() {
     uint32_t eax = 0;
     uint32_t ebx = 0;

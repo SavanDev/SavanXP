@@ -8,7 +8,7 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
-- **Drivers can start and stop cleanly: the RTL8139, the AC'97, virtio-rng, -net, -blk, -sound and -input first.** A
+- **Drivers can start and stop cleanly: the RTL8139, the AC'97 and every virtio driver.** A
   failed start gives back what it took; a stop quiesces, then releases. Boot option
   `lifecycle-selftest=<driver>`. [Driver start and stop](docs/kernel/DRIVER_LIFECYCLE.md).
 

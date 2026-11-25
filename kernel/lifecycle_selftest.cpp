@@ -12,6 +12,7 @@
 #include "kernel/rtl8139.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_blk.hpp"
+#include "kernel/virtio_gpu.hpp"
 #include "kernel/virtio_input.hpp"
 #include "kernel/virtio_net.hpp"
 #include "kernel/virtio_rng.hpp"
@@ -33,6 +34,7 @@ const Entry kSubjects[] = {
     {"virtio-blk", &virtio_blk::lifecycle_subject},
     {"virtio-sound", &virtio_sound::lifecycle_subject},
     {"virtio-input", &virtio_input::lifecycle_subject},
+    {"virtio-gpu", &virtio_gpu::lifecycle_subject},
 };
 
 constexpr unsigned kCycles = 4;

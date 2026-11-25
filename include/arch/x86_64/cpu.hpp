@@ -135,6 +135,9 @@ bool register_interrupt_handler(uint8_t vector, IrqHandler handler, InterruptEoi
 bool unregister_interrupt_handler(uint8_t vector, IrqHandler handler);
 // How many handlers the vector's chain holds.
 uint8_t interrupt_handler_count(uint8_t vector);
+// register_irq_handler undone, with the same guarantee: the PIC line's
+// handler off its vector, and the line masked once no handler is left.
+bool unregister_irq_handler(uint8_t irq, IrqHandler handler);
 bool initialize_local_apic();
 bool local_apic_ready();
 bool local_apic_x2apic_mode();

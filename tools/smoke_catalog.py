@@ -447,6 +447,19 @@ SCENARIOS: dict[str, Scenario] = {
         requires_virtio=True,
         boot_options="lifecycle-selftest=virtio-input",
     ),
+    # virtio-gpu on the virtio machine (run with --virtio): its MSI-X vector
+    # and queues come and go each cycle; then the display must come up on it
+    # and the desktop draw (sxgui-smoke's self-test).
+    "lifecycle-virtio-gpu": _qemu_scenario(
+        "smoke",
+        "SMOKE PASS",
+        "lifecycle: selftest failed",
+        "virtio-gpu start and stop up to DRIVER_OK: injected failures and repeated cycles, one querying "
+        "the display, leave nothing behind; then the display comes up on it and smoke passes",
+        180.0,
+        requires_virtio=True,
+        boot_options="lifecycle-selftest=virtio-gpu",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",

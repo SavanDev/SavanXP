@@ -6,12 +6,19 @@
 #include "kernel/display.hpp"
 #include "abi/savanxp_abi.h"
 
+namespace lifecycle {
+struct Subject;
+}
+
 namespace virtio_gpu {
 
 void initialize(const boot::FramebufferInfo& framebuffer);
 const display::Backend& backend();
 // Descriptor para el registro de display::. Su probe hace el initialize.
 const display::Driver& driver();
+/* Its start and stop, up to DRIVER_OK and the capset, for
+ * `lifecycle-selftest=virtio-gpu` (docs/kernel/DRIVER_LIFECYCLE.md). */
+const lifecycle::Subject& lifecycle_subject();
 bool ready();
 bool present();
 void poll();
