@@ -433,6 +433,20 @@ SCENARIOS: dict[str, Scenario] = {
         audio_device="virtio",
         boot_options="lifecycle-selftest=virtio-sound",
     ),
+    # virtio-input on the virtio machine (run with --virtio): the tablet and
+    # the keyboard, each its own instance, then the pointer path must work.
+    "lifecycle-virtio-input": _qemu_scenario(
+        "mousetest --selftest",
+        "POINTER SMOKE PASS",
+        "lifecycle: selftest failed",
+        "virtio-input start and stop, tablet and keyboard: injected failures and repeated cycles leave "
+        "nothing behind; then the tablet drives the pointer",
+        120.0,
+        ready="POINTER SMOKE READY",
+        qmp_driver="pointer",
+        requires_virtio=True,
+        boot_options="lifecycle-selftest=virtio-input",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",

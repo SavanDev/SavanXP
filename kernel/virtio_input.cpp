@@ -4,6 +4,9 @@
 #include <stdint.h>
 
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
+#include "kernel/lifecycle.hpp"
+#include "kernel/lifecycle_selftest.hpp"
 #include "kernel/input.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_pci.hpp"
@@ -390,108 +393,224 @@ void process_keyboard_event(const VirtioInputEvent& event) {
     }
 }
 
-void fail_device(const char* reason) {
-    virtio_pci::fail_device(g_device);
-    if (reason != nullptr) {
-        console::printf("virtio-input: %s\n", reason);
-    }
-    g_ready = false;
+/* ---- start and stop (docs/kernel/DRIVER_LIFECYCLE.md) ---------------------
+ *
+ * Tablet and keyboard are the same virtio-input device and subsystem pair:
+ * QEMU offers them as two PCI functions (virtio-tablet-pci and
+ * virtio-keyboard-pci), told apart only by what each says it supports. So
+ * each function is one instance, and start() gives it a role once its
+ * transport is up and its EV_ABS bit read: the pointer if it has absolute
+ * axes, the keyboard if not. Each role keeps its own record of what it
+ * acquired. */
+
+constexpr char kDriverName[] = "virtio-input";
+// transport, classify, features, ranges (the pointer's only), queue,
+// driver ok.
+constexpr unsigned kStartStages = 6;
+
+struct Role {
+    const char* name;
+    virtio_pci::Device* device;
+    virtio_pci::Queue* queue;
+    bool* ready;
+    lifecycle::Acquired acquired;
+    bool started;
+    // Set while a failed start unwinds: the function is then given back as
+    // a failed start, not as a clean stop.
+    bool start_failing;
+};
+
+Role g_pointer_role = {"tablet", &g_device, &g_event_queue, &g_ready, {}, false, false};
+Role g_keyboard_role = {"keyboard", &g_keyboard_device, &g_keyboard_event_queue, &g_keyboard_ready, {}, false, false};
+
+void release_transport(void* context) {
+    Role& role = *static_cast<Role*>(context);
+    virtio_pci::release_device(*role.device, kDriverName, role.start_failing);
 }
 
-void fail_keyboard_device(const char* reason) {
-    virtio_pci::fail_device(g_keyboard_device);
-    if (reason != nullptr) {
-        console::printf("virtio-input: %s\n", reason);
-    }
-    g_keyboard_ready = false;
+void release_queue(void* context) {
+    Role& role = *static_cast<Role*>(context);
+    virtio_pci::release_queue(*role.queue);
 }
 
-// true si reclamo pci_device para el puntero (tablet). false sin tocar estado
-// global si el device resulta ser de otro tipo (deja el virtio reseteado a
-// status=0, listo para que try_initialize_keyboard lo vuelva a intentar).
-bool try_initialize_pointer(const pci::DeviceInfo& pci_device) {
-    virtio_pci::Device device = {};
-    if (!virtio_pci::initialize_device(pci_device, true, device)) {
+bool stage_failed(unsigned stage, const char* name) {
+    if (!lifecycle::injected(kDriverName, stage)) {
         return false;
     }
-
-    virtio_pci::set_device_status(device, 0);
-    virtio_pci::memory_barrier();
-    virtio_pci::set_device_status(device, static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
-
-    if (!device_advertises_ev(device, kEvAbs)) {
-        virtio_pci::fail_device(device);
-        return false;
-    }
-
-    g_device = device;
-    if (!virtio_pci::negotiate_features(g_device, 0, virtio_pci::kFeatureVersion1Bit)) {
-        fail_device("feature negotiation failed");
-        return false;
-    }
-    if (!read_abs_info(g_device, kAbsX, g_abs_min_x, g_abs_max_x) ||
-        !read_abs_info(g_device, kAbsY, g_abs_min_y, g_abs_max_y)) {
-        fail_device("failed to read ABS ranges");
-        return false;
-    }
-    if (!setup_event_queue(g_device, g_event_queue)) {
-        fail_device("failed to initialize event queue");
-        return false;
-    }
-
-    virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
-    g_ready = true;
-    console::printf(
-        "virtio-input: tablet ready pci=%x:%x.%u abs_x=%d..%d abs_y=%d..%d\n",
-        static_cast<unsigned>(g_device.pci_device.bus),
-        static_cast<unsigned>(g_device.pci_device.slot),
-        static_cast<unsigned>(g_device.pci_device.function),
-        static_cast<int>(g_abs_min_x),
-        static_cast<int>(g_abs_max_x),
-        static_cast<int>(g_abs_min_y),
-        static_cast<int>(g_abs_max_y)
-    );
+    console::printf("virtio-input: start stage %u (%s) failed by injection\n", stage, name);
     return true;
 }
 
-void try_initialize_keyboard(const pci::DeviceInfo& pci_device) {
+bool same_function(const pci::DeviceInfo& left, const pci::DeviceInfo& right) {
+    return left.bus == right.bus && left.slot == right.slot && left.function == right.function;
+}
+
+// The role a started function plays; nullptr when it is not started.
+Role* role_of(const pci::DeviceInfo& pci_device) {
+    Role* const roles[] = {&g_pointer_role, &g_keyboard_role};
+    for (Role* role : roles) {
+        if (role->started && same_function(role->device->pci_device, pci_device)) {
+            return role;
+        }
+    }
+    return nullptr;
+}
+
+// The nth virtio-input function no other driver holds and this one does not
+// drive already (pci_available grants a driver its own functions).
+bool find_device(size_t nth, pci::DeviceInfo& found) {
+    size_t from = 0;
+    size_t index = 0;
+    size_t seen = 0;
+    pci::DeviceInfo candidate = {};
+    while (pci::ready() && virtio_pci::find_modern_device_from(from, kVirtioInputModernDevice,
+               kVirtioInputSubsystemDevice, candidate, index)) {
+        from = index + 1;
+        if (inventory::pci_available(candidate, kDriverName) && role_of(candidate) == nullptr && seen++ == nth) {
+            found = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The transport, the role (pointer or keyboard), the features, the
+// pointer's axis ranges, the event queue, then DRIVER_OK. False with
+// everything given back; a function with no role left (a second tablet) is
+// given back clean, as one this driver does not use.
+bool start(const pci::DeviceInfo& pci_device) {
+    unsigned stage = 1;
+    if (stage_failed(stage, "transport")) {
+        return false;
+    }
     virtio_pci::Device device = {};
     if (!virtio_pci::initialize_device(pci_device, true, device)) {
-        return;
+        console::write_line("virtio-input: missing required MMIO capabilities");
+        // Given back if it was taken here; left alone if another driver has it.
+        (void)inventory::pci_release_failed(pci_device, kDriverName);
+        return false;
     }
 
+    ++stage;
+    if (stage_failed(stage, "classify")) {
+        virtio_pci::release_device(device, kDriverName, true);
+        return false;
+    }
     virtio_pci::set_device_status(device, 0);
     virtio_pci::memory_barrier();
-    virtio_pci::set_device_status(device, static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
-
-    if (device_advertises_ev(device, kEvAbs)) {
-        // Tiene eje absoluto: es un puntero, no un teclado. Si llego hasta
-        // aca es porque try_initialize_pointer ya lo descarto por otro
-        // motivo (por ejemplo, un segundo tablet); no es candidato a teclado.
-        virtio_pci::fail_device(device);
-        return;
+    virtio_pci::set_device_status(device,
+        static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
+    const bool pointer = device_advertises_ev(device, kEvAbs);
+    Role* chosen = pointer ? &g_pointer_role : &g_keyboard_role;
+    if (chosen->started) {
+        // Another tablet or keyboard: this driver drives one of each.
+        (void)virtio_pci::quiesce_device(device);
+        virtio_pci::release_device(device, kDriverName, false);
+        return false;
+    }
+    Role& role = *chosen;
+    *role.device = device;
+    memset(role.queue, 0, sizeof(*role.queue));
+    bool ok = role.acquired.push("transport", &release_transport, &role);
+    if (!ok) {
+        virtio_pci::release_device(*role.device, kDriverName, true);
+        return false;
     }
 
-    g_keyboard_device = device;
-    if (!virtio_pci::negotiate_features(g_keyboard_device, 0, virtio_pci::kFeatureVersion1Bit)) {
-        fail_keyboard_device("feature negotiation failed");
-        return;
+    ++stage;
+    ok = !stage_failed(stage, "features") &&
+        virtio_pci::negotiate_features(*role.device, 0, virtio_pci::kFeatureVersion1Bit);
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "ranges");
+        if (ok && pointer &&
+            (!read_abs_info(*role.device, kAbsX, g_abs_min_x, g_abs_max_x) ||
+                !read_abs_info(*role.device, kAbsY, g_abs_min_y, g_abs_max_y))) {
+            console::write_line("virtio-input: failed to read ABS ranges");
+            ok = false;
+        }
     }
-    if (!setup_event_queue(g_keyboard_device, g_keyboard_event_queue)) {
-        fail_keyboard_device("failed to initialize event queue");
-        return;
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "queue") && role.acquired.push("queue", &release_queue, &role);
+        if (ok && !setup_event_queue(*role.device, *role.queue)) {
+            console::write_line("virtio-input: failed to initialize event queue");
+            ok = false;
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "driver ok");
+        if (ok) {
+            virtio_pci::set_device_status(*role.device,
+                static_cast<uint8_t>(virtio_pci::device_status(*role.device) | virtio_pci::kStatusDriverOk));
+        }
+    }
+    if (!ok) {
+        console::printf("virtio-input: could not start the %s at %x:%x.%u (stage %u); everything it took is "
+            "given back\n", role.name, static_cast<unsigned>(pci_device.bus),
+            static_cast<unsigned>(pci_device.slot), static_cast<unsigned>(pci_device.function), stage);
+        // Reset first: a queue the device may still use is never freed.
+        (void)virtio_pci::quiesce_device(*role.device);
+        role.start_failing = true;
+        role.acquired.unwind();
+        role.start_failing = false;
+        return false;
     }
 
-    virtio_pci::set_device_status(
-        g_keyboard_device, static_cast<uint8_t>(virtio_pci::device_status(g_keyboard_device) | virtio_pci::kStatusDriverOk));
-    g_keyboard_ready = true;
-    console::printf(
-        "virtio-input: keyboard ready pci=%x:%x.%u\n",
-        static_cast<unsigned>(g_keyboard_device.pci_device.bus),
-        static_cast<unsigned>(g_keyboard_device.pci_device.slot),
-        static_cast<unsigned>(g_keyboard_device.pci_device.function)
-    );
+    role.started = true;
+    *role.ready = true;
+    if (pointer) {
+        console::printf(
+            "virtio-input: tablet ready pci=%x:%x.%u abs_x=%d..%d abs_y=%d..%d\n",
+            static_cast<unsigned>(pci_device.bus),
+            static_cast<unsigned>(pci_device.slot),
+            static_cast<unsigned>(pci_device.function),
+            static_cast<int>(g_abs_min_x),
+            static_cast<int>(g_abs_max_x),
+            static_cast<int>(g_abs_min_y),
+            static_cast<int>(g_abs_max_y)
+        );
+    } else {
+        console::printf("virtio-input: keyboard ready pci=%x:%x.%u\n", static_cast<unsigned>(pci_device.bus),
+            static_cast<unsigned>(pci_device.slot), static_cast<unsigned>(pci_device.function));
+    }
+    return true;
 }
+
+// Reset and read back, then the queue and the function given back. A
+// device that does not reset keeps everything and is listed as failed.
+bool stop(const pci::DeviceInfo& pci_device) {
+    Role* role = role_of(pci_device);
+    if (role == nullptr) {
+        return true;
+    }
+    *role->ready = false;
+    if (!virtio_pci::quiesce_device(*role->device)) {
+        console::printf("virtio-input: the %s did not reset; it keeps its queue\n", role->name);
+        inventory::pci_failed(pci_device);
+        return false;
+    }
+    role->acquired.unwind();
+    role->started = false;
+    return true;
+}
+
+bool idle(const pci::DeviceInfo& pci_device) {
+    return role_of(pci_device) == nullptr && (g_pointer_role.started || g_pointer_role.acquired.count() == 0) &&
+        (g_keyboard_role.started || g_keyboard_role.acquired.count() == 0);
+}
+
+const lifecycle::Subject kSubject = {
+    kDriverName,
+    kStartStages,
+    &find_device,
+    &start,
+    nullptr,
+    &stop,
+    &idle,
+    nullptr,
+};
 
 void poll_pointer_queue() {
     if (!g_ready || !g_event_queue.enabled || g_event_queue.size == 0) {
@@ -558,12 +677,6 @@ void set_screen_extent(uint32_t width, uint32_t height);
 void reset_pointer();
 
 void initialize(const boot::FramebufferInfo& framebuffer) {
-    memset(&g_device, 0, sizeof(g_device));
-    memset(&g_event_queue, 0, sizeof(g_event_queue));
-    memset(&g_keyboard_device, 0, sizeof(g_keyboard_device));
-    memset(&g_keyboard_event_queue, 0, sizeof(g_keyboard_event_queue));
-    g_ready = false;
-    g_keyboard_ready = false;
     g_buttons = 0;
     g_pending_wheel = 0;
     g_have_abs_x = false;
@@ -572,25 +685,14 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     g_framebuffer_width = framebuffer.available ? static_cast<uint32_t>(framebuffer.width) : 0u;
     g_framebuffer_height = framebuffer.available ? static_cast<uint32_t>(framebuffer.height) : 0u;
 
-    if (!pci::ready()) {
-        return;
-    }
-
-    // Tablet y teclado son el mismo par device/subsystem virtio-input; QEMU
-    // los expone como dos PCI functions separadas (-device virtio-tablet-pci
-    // y -device virtio-keyboard-pci), asi que hay que recorrer todos los
-    // matches -- find_modern_device se hubiera quedado con el primero nada
-    // mas -- y clasificar cada uno por lo que declara soportar.
-    size_t search_from = 0;
+    // Every function is tried: each start finds its role (see start()), and
+    // one this driver has no role left for is given back. A function started
+    // is no longer available, so the next one is always index 0.
     pci::DeviceInfo pci_device = {};
-    size_t found_index = 0;
-    while (virtio_pci::find_modern_device_from(search_from, kVirtioInputModernDevice, kVirtioInputSubsystemDevice, pci_device, found_index)) {
-        search_from = found_index + 1;
-        if (!g_ready && try_initialize_pointer(pci_device)) {
-            continue;
-        }
-        if (!g_keyboard_ready) {
-            try_initialize_keyboard(pci_device);
+    size_t skipped = 0;
+    while (find_device(skipped, pci_device)) {
+        if (!start(pci_device)) {
+            ++skipped;
         }
     }
 
@@ -621,5 +723,7 @@ void set_screen_extent(uint32_t width, uint32_t height) {
 void reset_pointer() {
     g_have_screen_position = false;
 }
+
+const lifecycle::Subject& lifecycle_subject() { return kSubject; }
 
 } // namespace virtio_input

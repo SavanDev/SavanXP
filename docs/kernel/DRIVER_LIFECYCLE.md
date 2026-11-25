@@ -16,6 +16,7 @@ the inventory's ownership and claims ([DEVICE_INVENTORY.md](DEVICE_INVENTORY.md)
 | `virtio-net` | transport, features (and the MAC) | the queues and `DRIVER_OK` (`NET_IOC_UP`) | `lifecycle-virtio-net` (`--virtio`) |
 | `virtio-blk` | transport, features, capacity, queue, driver ok | sector 0 read through the queue | `lifecycle-virtio-blk` (`--virtio`) |
 | `virtio-sound` | transport, features, queues, driver ok, streams, events | a stream playing silence | `lifecycle-virtio-sound` |
+| `virtio-input` | transport, classify, features, ranges, queue, driver ok; tablet and keyboard each | none | `lifecycle-virtio-input` (`--virtio`) |
 
 A scenario marked `--virtio` needs the virtio machine:
 `./build.sh smoke <scenario> --virtio`; without it the scenario refuses to
@@ -167,6 +168,19 @@ Resetting QEMU's device (QEMU 11.1) with a stream running leaves that
 stream wedged on the host: after a start again, the first stream plays no
 period (every one is dropped as the TX ring fills) and its `STOP` and
 `RELEASE` fail. The reset alone is not enough for this device.
+
+## virtio-input
+
+QEMU's tablet and keyboard are the same virtio-input device and subsystem
+pair, two PCI functions told apart only by what each says it supports. Each
+function is an instance: `start()` gives it a role once its transport is up
+and its `EV_ABS` bit read (the **classify** stage), the pointer if it has
+absolute axes, the keyboard if not, and each role keeps its own record of
+what it acquired. The **ranges** stage reads the pointer's axes and does
+nothing for the keyboard. A function with no role left, a second tablet, is
+given back clean (`NOT_CLAIMED`), as one this driver does not use; before,
+it was claimed and listed as failed. `find_device()` passes over functions
+the driver drives already, since `pci_available` would grant it its own.
 
 ## The self-test
 

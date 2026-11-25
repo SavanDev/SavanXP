@@ -230,7 +230,7 @@ guarantee that none runs afterwards; the RTL8139 is the first driver on them
 
 1. Every other driver on the same contracts, one at a time, and their
    interrupt claims made to fail a start as the RTL8139's does. Done: the
-   RTL8139, the AC'97, virtio-rng, -net, -blk and -sound
+   RTL8139, the AC'97, virtio-rng, -net, -blk, -sound and -input
    ([the list](../../kernel/DRIVER_LIFECYCLE.md#drivers-on-the-contracts)), on one
    shared self-test; register windows are
    kept across a stop (`vm::map_device_registers`), and the virtio transport
