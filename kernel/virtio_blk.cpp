@@ -4,6 +4,9 @@
 #include <stdint.h>
 
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
+#include "kernel/lifecycle.hpp"
+#include "kernel/lifecycle_selftest.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_pci.hpp"
 
@@ -222,72 +225,200 @@ const block::DeviceOps kOps = {
     /*deferred_writes=*/true,
 };
 
-void fail_device(const char* reason) {
-    virtio_pci::fail_device(g_device);
-    if (reason != nullptr) {
-        console::printf("virtio-blk: %s\n", reason);
-    }
-    g_ready = false;
+/* ---- start and stop (docs/kernel/DRIVER_LIFECYCLE.md) ---------------------
+ *
+ * start() takes the device up to DRIVER_OK with its request queue; enumerate()
+ * then registers the disk with block::, which has no way yet to take one
+ * back, so only the self-test, before block:: probes, ever stops it. */
+
+constexpr char kDriverName[] = "virtio-blk";
+// transport, features, capacity, queue, driver ok.
+constexpr unsigned kStartStages = 5;
+
+lifecycle::Acquired g_acquired;
+bool g_started = false;
+// Set while a failed start unwinds: the function is then given back as a
+// failed start, not as a clean stop.
+bool g_start_failing = false;
+uint64_t g_capacity_sectors = 0;
+bool g_read_only = false;
+
+void release_transport(void*) {
+    virtio_pci::release_device(g_device, kDriverName, g_start_failing);
 }
 
-void enumerate() {
+void release_queue(void*) {
+    virtio_pci::release_queue(g_request_queue);
+}
+
+bool stage_failed(unsigned stage, const char* name) {
+    if (!lifecycle::injected(kDriverName, stage)) {
+        return false;
+    }
+    console::printf("virtio-blk: start stage %u (%s) failed by injection\n", stage, name);
+    return true;
+}
+
+// The first virtio-blk no other driver holds.
+bool find_device(pci::DeviceInfo& found) {
+    size_t from = 0;
+    size_t index = 0;
+    pci::DeviceInfo candidate = {};
+    while (pci::ready() && virtio_pci::find_modern_device_from(from, kVirtioBlkModernDevice,
+               kVirtioBlkSubsystemDevice, candidate, index)) {
+        if (inventory::pci_available(candidate, kDriverName)) {
+            found = candidate;
+            return true;
+        }
+        from = index + 1;
+    }
+    return false;
+}
+
+// The transport, the features, the capacity, the request queue, then
+// DRIVER_OK. False with everything given back.
+bool start(const pci::DeviceInfo& pci_device) {
     memset(&g_device, 0, sizeof(g_device));
     memset(&g_request_queue, 0, sizeof(g_request_queue));
     g_ready = false;
     g_flush_supported = false;
+    g_capacity_sectors = 0;
+    g_read_only = false;
 
-    pci::DeviceInfo pci_device = {};
-    if (!pci::ready() || !virtio_pci::find_modern_device(kVirtioBlkModernDevice, kVirtioBlkSubsystemDevice, pci_device)) {
-        return;
+    unsigned stage = 1;
+    if (stage_failed(stage, "transport")) {
+        return false;
     }
-
     if (!virtio_pci::initialize_device(pci_device, true, g_device)) {
         console::write_line("virtio-blk: missing required MMIO capabilities");
-        return;
+        // Given back if it was taken here; left alone if another driver has it.
+        (void)inventory::pci_release_failed(pci_device, kDriverName);
+        return false;
     }
+    bool ok = g_acquired.push("transport", &release_transport, nullptr);
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "features");
+        if (ok) {
+            virtio_pci::set_device_status(g_device, 0);
+            virtio_pci::memory_barrier();
+            virtio_pci::set_device_status(g_device,
+                static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
 
-    virtio_pci::set_device_status(g_device, 0);
-    virtio_pci::memory_barrier();
-    virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
-
-    // Se piden RO/FLUSH solo si el device los anuncia: negotiate_features
-    // rechaza el paquete entero si algun bit pedido no esta en device_feature.
-    volatile virtio_pci::CommonCfg* cfg = virtio_pci::common_cfg(g_device);
-    cfg->device_feature_select = 0;
-    virtio_pci::memory_barrier();
-    const uint32_t device_features_word0 = cfg->device_feature;
-    const bool read_only = (device_features_word0 & kFeatureRoBit) != 0;
-    const uint32_t requested_word0 = device_features_word0 & (kFeatureRoBit | kFeatureFlushBit);
-
-    if (!virtio_pci::negotiate_features(g_device, requested_word0, virtio_pci::kFeatureVersion1Bit)) {
-        fail_device("feature negotiation failed");
-        return;
+            // RO and FLUSH are asked for only when the device offers them:
+            // negotiate_features refuses the whole set if any bit asked for is
+            // missing from device_feature.
+            volatile virtio_pci::CommonCfg* cfg = virtio_pci::common_cfg(g_device);
+            cfg->device_feature_select = 0;
+            virtio_pci::memory_barrier();
+            const uint32_t device_features_word0 = cfg->device_feature;
+            g_read_only = (device_features_word0 & kFeatureRoBit) != 0;
+            const uint32_t requested_word0 = device_features_word0 & (kFeatureRoBit | kFeatureFlushBit);
+            ok = virtio_pci::negotiate_features(g_device, requested_word0, virtio_pci::kFeatureVersion1Bit);
+            if (!ok) {
+                console::write_line("virtio-blk: feature negotiation failed");
+            }
+            g_flush_supported = ok && (requested_word0 & kFeatureFlushBit) != 0;
+        }
     }
-    g_flush_supported = (requested_word0 & kFeatureFlushBit) != 0;
-
-    const uint64_t capacity_sectors = virtio_pci::read_mmio_u64(device_cfg()->capacity);
-    if (capacity_sectors == 0 || capacity_sectors > 0xffffffffu) {
-        fail_device("unsupported capacity");
-        return;
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "capacity");
+        if (ok) {
+            g_capacity_sectors = virtio_pci::read_mmio_u64(device_cfg()->capacity);
+            if (g_capacity_sectors == 0 || g_capacity_sectors > 0xffffffffu) {
+                console::write_line("virtio-blk: unsupported capacity");
+                ok = false;
+            }
+        }
     }
-
-    if (!virtio_pci::setup_queue(g_device, kRequestQueueIndex, kRequestQueueDescriptorLimit, kExtraBytes, 16, g_request_queue)) {
-        fail_device("failed to initialize request queue");
-        return;
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "queue") && g_acquired.push("queue", &release_queue, nullptr);
+        if (ok && !virtio_pci::setup_queue(g_device, kRequestQueueIndex, kRequestQueueDescriptorLimit, kExtraBytes, 16,
+                g_request_queue)) {
+            console::write_line("virtio-blk: failed to initialize request queue");
+            ok = false;
+        }
     }
-
-    virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "driver ok");
+        if (ok) {
+            virtio_pci::set_device_status(g_device,
+                static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
+        }
+    }
+    if (!ok) {
+        console::printf("virtio-blk: could not start at %x:%x.%u (stage %u); everything it took is given back\n",
+            static_cast<unsigned>(pci_device.bus), static_cast<unsigned>(pci_device.slot),
+            static_cast<unsigned>(pci_device.function), stage);
+        // Reset first: a queue the device may still use is never freed.
+        (void)virtio_pci::quiesce_device(g_device);
+        g_start_failing = true;
+        g_acquired.unwind();
+        g_start_failing = false;
+        return false;
+    }
     g_ready = true;
+    g_started = true;
+    return true;
+}
 
-    g_identity.full_sectors = capacity_sectors;
-    (void)block::register_device(kOps, nullptr, static_cast<uint32_t>(capacity_sectors), !read_only, "vblk0", &g_identity);
+// Reset and read back, then the queue and the function given back. A device
+// that does not reset keeps its queue and is listed as failed.
+bool stop() {
+    if (!g_started) {
+        return true;
+    }
+    g_ready = false;
+    if (!virtio_pci::quiesce_device(g_device)) {
+        console::write_line("virtio-blk: the device did not reset; it keeps its queue");
+        inventory::pci_failed(g_device.pci_device);
+        return false;
+    }
+    g_acquired.unwind();
+    g_started = false;
+    return true;
+}
+
+bool idle() {
+    return !g_started && g_acquired.count() == 0 && g_request_queue.allocation.physical_address == 0;
+}
+
+// The first sector read, through the request queue, as block:: would.
+bool bring_up() {
+    static uint8_t sector[block::kSectorSize];
+    return rw_sectors(nullptr, 0, 1, sector, false);
+}
+
+const lifecycle::Subject kSubject = {
+    kDriverName,
+    kStartStages,
+    &find_device,
+    &start,
+    &bring_up,
+    &stop,
+    &idle,
+    nullptr,
+};
+
+void enumerate() {
+    pci::DeviceInfo pci_device = {};
+    if (!find_device(pci_device) || !start(pci_device)) {
+        return;
+    }
+
+    g_identity.full_sectors = g_capacity_sectors;
+    (void)block::register_device(kOps, nullptr, static_cast<uint32_t>(g_capacity_sectors), !g_read_only, "vblk0",
+        &g_identity);
 
     console::printf(
         "virtio-blk: ready pci=%x:%x.%u capacity=%u sectors flush=%s\n",
         static_cast<unsigned>(g_device.pci_device.bus),
         static_cast<unsigned>(g_device.pci_device.slot),
         static_cast<unsigned>(g_device.pci_device.function),
-        static_cast<unsigned>(capacity_sectors),
+        static_cast<unsigned>(g_capacity_sectors),
         g_flush_supported ? "yes" : "no"
     );
 }
@@ -310,5 +441,7 @@ const block::Driver kDriver = {
 namespace virtio_blk {
 
 const block::Driver& driver() { return kDriver; }
+
+const lifecycle::Subject& lifecycle_subject() { return kSubject; }
 
 } // namespace virtio_blk

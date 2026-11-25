@@ -14,6 +14,7 @@ the inventory's ownership and claims ([DEVICE_INVENTORY.md](DEVICE_INVENTORY.md)
 | `ac97` | claim, registers, codec, buffers, engine | a stream playing silence | `lifecycle-ac97` |
 | `virtio-rng` | transport, features, queue, driver ok | one request filled and taken | `lifecycle-virtio-rng` |
 | `virtio-net` | transport, features (and the MAC) | the queues and `DRIVER_OK` (`NET_IOC_UP`) | `lifecycle-virtio-net` (`--virtio`) |
+| `virtio-blk` | transport, features, capacity, queue, driver ok | sector 0 read through the queue | `lifecycle-virtio-blk` (`--virtio`) |
 
 A scenario marked `--virtio` needs the virtio machine:
 `./build.sh smoke <scenario> --virtio`; without it the scenario refuses to
@@ -143,6 +144,15 @@ runs on `NET_IOC_UP`; when it creates them it pushes their release onto the
 same record, so `stop()` gives back whatever the device got. A `bring_up`
 that cannot create them resets the device, frees what it got and lists the
 device as failed, instead of leaving half a queue allocated.
+
+## virtio-blk
+
+`start()` takes the device up to `DRIVER_OK` with its request queue; the disk
+is registered with `block::` (`vblk0`) by `enumerate()` after it. `block::`
+has no way yet to take a disk back, so nothing but the self-test, which runs
+before `block::probe_all()`, ever stops it. A disk can stop only once the
+block layer can drop it and its partitions and volumes first: references,
+D5.
 
 ## The self-test
 

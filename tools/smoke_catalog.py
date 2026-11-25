@@ -409,6 +409,18 @@ SCENARIOS: dict[str, Scenario] = {
         requires_virtio=True,
         boot_options="lifecycle-selftest=virtio-net",
     ),
+    # virtio-blk on the virtio machine (run with --virtio), where it holds the
+    # system disk: a sector read in one cycle, then the system boots from it.
+    "lifecycle-virtio-blk": _qemu_scenario(
+        "smoke",
+        "SMOKE PASS",
+        "lifecycle: selftest failed",
+        "virtio-blk start and stop: injected failures and repeated cycles, one reading a sector, leave "
+        "nothing behind; then the system disk mounts from it and smoke passes",
+        180.0,
+        requires_virtio=True,
+        boot_options="lifecycle-selftest=virtio-blk",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",
