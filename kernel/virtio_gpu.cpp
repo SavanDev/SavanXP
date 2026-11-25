@@ -3823,7 +3823,9 @@ bool start(const pci::DeviceInfo& pci_device) {
     if (ok) {
         // MSI-X first: it delivers completions straight to a local-APIC
         // vector, and the queues must be set up after it to bind to it.
-        // Without it the INTx fallback comes after DRIVER_OK, or polling.
+        // Without it the INTx fallback comes after DRIVER_OK, on the PIC
+        // line, which this kernel cannot actually route on q35 (the IOAPIC
+        // owns delivery there), so the driver ends up polling.
         ++stage;
         ok = !stage_failed(stage, "interrupt");
         if (ok && arch::register_interrupt_handler(kGpuMsixVector, gpu_irq, arch::InterruptEoi::local_apic)) {

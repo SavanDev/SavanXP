@@ -271,5 +271,9 @@ generator was seeded from it. The pure part has `lifecycle-test` on the host.
   an MSI-X vector a stopped device was allowed stays allowed in the
   remapping table. With bus mastering and MSI-X off the device cannot use
   it; a revoke call comes with the first driver that moves between vectors.
-- **PIC lines** are taken back and masked (`arch::unregister_irq_handler`),
-  but no driver here uses one on QEMU, so that path is unexercised.
+- **PIC lines** are taken back and masked (`arch::unregister_irq_handler`).
+  virtio-gpu's INTx fallback was run once by hand, QEMU's `virtio-vga` with
+  `vectors=0`: every start arms line 10, the self-test passes with nothing
+  left, and the display comes up; but no interrupt arrives on the line, since
+  the kernel cannot route the PIC fallback on q35, so the driver polls, as it
+  did before. No scenario covers it.
