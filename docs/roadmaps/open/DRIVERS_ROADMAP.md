@@ -216,13 +216,17 @@ several instances.** Drivers pass over held functions (`pci_available`) and go
 on to the next match; `ahci` drives every free HBA (`smoke ahci-two-hba`), and
 `ac97` no longer matches virtio-sound. Single-instance drivers stay single
 where their class core selects one device (`rtl8139`, `rtl8168`) or their
-state is one controller's (`ac97`, `virtio-blk`). Still open, in order:
+state is one controller's (`ac97`, `virtio-blk`). **Third slice, same day:
+resource claims** ([DEVICE_INVENTORY.md](../../kernel/DEVICE_INVENTORY.md#claims)).
+Drivers claim the BARs they map, the INTx lines they route and the legacy
+ports they drive; an overlapping exclusive range is refused, and the listing
+shows each claim with its length. Interrupt claims are records until handlers
+can be taken back. Still open:
 
-1. Claims for MMIO ranges, I/O ports and interrupt routes, recorded for the
-   inventory; legacy ports with no PCI function behind them (`ata`, `ps2`) as
-   platform claims.
-2. Start/quiesce/stop/remove/recover contracts, with references, and failure
-   injected at each start stage.
+1. Start/quiesce/stop/remove/recover contracts, with references, and failure
+   injected at each start stage; interrupt handlers taken back with the
+   guarantee that none runs against released state, so a refused line can
+   fail a start.
 
 **Open design work; builds on D1, independent of the D2 window.** Bind a driver
 to a specific discovered instance rather than letting unrelated probes find the

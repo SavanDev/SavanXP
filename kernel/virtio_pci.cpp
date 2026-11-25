@@ -70,7 +70,8 @@ static bool map_bar(Device& device, uint8_t bar_index, MappedBar*& mapped) {
         return true;
     }
 
-    if (!pci::bar_info(device.pci_device, bar_index, bar.info) || bar.info.io_space) {
+    if (!pci::bar_info(device.pci_device, bar_index, bar.info) || bar.info.io_space ||
+        !inventory::pci_claim_bar(device.pci_device, bar.info)) {
         return false;
     }
 

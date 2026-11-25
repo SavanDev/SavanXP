@@ -438,6 +438,7 @@ bool probe() {
         if (!inventory::pci_claim(dev,"azalia")) continue;
         pci::BarInfo bar;
         if (!pci::bar_info(dev,0,bar) || !bar.present || bar.io_space || !bar.base) continue;
+        if (!inventory::pci_claim_bar(dev,bar)) continue;
         void* mapped = nullptr;
         if (!vm::map_kernel_mmio(bar.base,bar.size ? bar.size : 0x4000,
             vm::kPageWriteThrough|vm::kPageCacheDisable,&mapped)) continue;

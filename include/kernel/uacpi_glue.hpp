@@ -17,11 +17,12 @@ bool bringup(uint64_t rsdp_from_bootinfo, uint64_t hhdm_offset);
 // namespace cargado (bringup). Investigacion previa al routing real de INTx.
 void dump_pci_routing();
 
-// Resuelve la INTx de un dispositivo PCI (bus/dev/func) via _PRT + _CRS del link
-// y la rutea al IOAPIC con el handler dado. Devuelve el vector asignado, o 0 si el
-// dispositivo no usa INTx / no se pudo resolver o rutear. Asume que el dispositivo
-// cuelga del root bus (el _PRT es del root, keyed por device).
+// Resolves a PCI function's INTx (bus/dev/func) through _PRT and the link's
+// _CRS and routes it to the IOAPIC with the given handler. Returns the vector,
+// or 0 when the function uses no INTx or it could not be resolved or routed;
+// on success *gsi_out, when given, is the GSI it reached. Assumes the function
+// sits on the root bus (the _PRT is the root's, keyed by device).
 uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
-                       arch::IrqHandler handler);
+                       arch::IrqHandler handler, uint32_t* gsi_out = nullptr);
 
 } // namespace uacpi_glue

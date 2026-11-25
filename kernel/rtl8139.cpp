@@ -433,12 +433,24 @@ bool probe() {
     }
     inventory::pci_started(g_pci_device);
 
+    pci::BarInfo io = {};
+    if (!pci::bar_info(g_pci_device, 0, io) || !io.io_space || !inventory::pci_claim_bar(g_pci_device, io)) {
+        g_present = false;
+        return false;
+    }
     g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
     // Route INTx through _PRT/IOAPIC once at probe. The device asserts it
     // only after prepare enables IMR; failed routing retains polling.
+    uint32_t gsi = 0;
     const uint8_t vec = uacpi_glue::route_pci_intx(
-        g_pci_device.bus, g_pci_device.slot, g_pci_device.function, &irq_handler);
+        g_pci_device.bus, g_pci_device.slot, g_pci_device.function, &irq_handler, &gsi);
     g_irq_routed = (vec != 0);
+    // A record for now: the handler is already chained, and there is no way
+    // yet to take it back if the line was refused.
+    if (g_irq_routed) {
+        (void)inventory::pci_claim_resource(g_pci_device, SXN_DEVICE_RESOURCE_IRQ, gsi, 1,
+            SXN_DEVICE_RESOURCE_SHARED);
+    }
     return true;
 }
 

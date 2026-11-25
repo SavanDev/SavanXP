@@ -81,9 +81,10 @@ Four tabs of what the record holds; a field that was not recorded says so.
 - **Details**: the bus, instance and parent ids, the hardware ids (PCI
   vendor:device, subsystem, class code and revision; USB vendor:product,
   class, versions, interface number, speed) and the flags.
-- **Resources**: memory and I/O ranges and IRQs as recorded. A PCI BAR's size
-  is not recorded (reading it writes to the device), so a range shows its base;
-  the tab says why.
+- **Resources**: memory and I/O ranges and IRQs as recorded. A range its
+  driver claimed shows where it ends, and one used by other devices too says
+  "(shared)". A BAR no driver claimed has no recorded size (reading it writes
+  to the device), so it shows its base, and the tab says why.
 
 The sheet shows a copy of the record taken when it opened, so it stays
 readable if the device goes away meanwhile. Its title is "`<name>`

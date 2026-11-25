@@ -23,6 +23,7 @@
 
 #include "arch/cpu.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -476,6 +477,9 @@ bool start_controller(const pci::DeviceInfo& info, Controller& controller) {
     pci::BarInfo bar = {};
     if (!pci::bar_info(info, 0, bar) || bar.io_space || bar.base == 0) {
         console::write_line("ehci: controller without a memory BAR");
+        return false;
+    }
+    if (!inventory::pci_claim_bar(info, bar)) {
         return false;
     }
     usb::hc::prepare_pci(info, "ehci", false);

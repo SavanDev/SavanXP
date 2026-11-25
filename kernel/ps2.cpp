@@ -907,7 +907,15 @@ void list_device(bool keyboard, bool started) {
     device.resources[1] = {SXN_DEVICE_RESOURCE_IO_PORT, 0, kStatusPort, 1};
     device.resources[2] = {SXN_DEVICE_RESOURCE_IRQ, 0, keyboard ? 1u : 12u, 1};
     device.resource_count = 3;
-    (void)inventory::platform_add(device);
+    const uint32_t id = inventory::platform_add(device);
+    if (id == 0 || !started) {
+        return;
+    }
+    // The 8042's ports serve both of its devices; each line is one device's.
+    // A record: the handler is routed by now.
+    (void)inventory::claim_resource(id, SXN_DEVICE_RESOURCE_IO_PORT, kDataPort, 1, SXN_DEVICE_RESOURCE_SHARED);
+    (void)inventory::claim_resource(id, SXN_DEVICE_RESOURCE_IO_PORT, kStatusPort, 1, SXN_DEVICE_RESOURCE_SHARED);
+    (void)inventory::claim_resource(id, SXN_DEVICE_RESOURCE_IRQ, keyboard ? 1u : 12u, 1);
 }
 
 void keyboard_irq() {

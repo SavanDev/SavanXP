@@ -580,6 +580,9 @@ void attach(const pci::DeviceInfo& device) {
         console::write_line("nvme: controller without a memory BAR0");
         return;
     }
+    if (!inventory::pci_claim_bar(device, bar)) {
+        return;
+    }
     void* registers = nullptr;
     if (!vm::map_kernel_mmio(bar.base, static_cast<size_t>(bar.size),
             vm::kPageWriteThrough | vm::kPageCacheDisable, &registers)) {

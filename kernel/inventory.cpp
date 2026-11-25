@@ -44,10 +44,67 @@ PciBinding g_pci[inventory::kMaxPciNodes] = {};
 Platform g_platform[kMaxPlatform] = {};
 size_t g_platform_count = 0;
 
+// What drivers claimed inside their instances (docs/kernel/DEVICE_INVENTORY.md,
+// "Resources"): a few per started driver.
+constexpr size_t kMaxClaims = 256;
+inventory::ResourceClaim g_claims[kMaxClaims] = {};
+size_t g_claim_count = 0;
+
 // The scratch of a snapshot; the kernel lock keeps it to one at a time.
 inventory::PciNode g_nodes[inventory::kMaxPciNodes] = {};
 size_t g_order[inventory::kMaxPciNodes] = {};
 long g_parent[inventory::kMaxPciNodes] = {};
+
+void drop_claims(uint32_t owner) {
+    size_t kept = 0;
+    for (size_t index = 0; index < g_claim_count; ++index) {
+        if (g_claims[index].owner != owner) {
+            g_claims[kept++] = g_claims[index];
+        }
+    }
+    g_claim_count = kept;
+}
+
+// The driver of whichever instance has this id, for a log line.
+const char* driver_of(uint32_t id);
+
+const char* kind_name(uint32_t kind) {
+    switch (kind) {
+        case SXN_DEVICE_RESOURCE_MEMORY: return "memory";
+        case SXN_DEVICE_RESOURCE_IO_PORT: return "I/O";
+        case SXN_DEVICE_RESOURCE_IRQ: return "IRQ";
+        default: return "resource";
+    }
+}
+
+bool record_claim(uint32_t owner, const char* driver, uint32_t kind, uint64_t start, uint64_t length, uint32_t flags) {
+    const inventory::ResourceClaim candidate = {owner, kind, flags & SXN_DEVICE_RESOURCE_SHARED, start, length};
+    const long conflict = inventory::resource_conflict(g_claims, g_claim_count, candidate);
+    if (conflict != -1) {
+        console::printf("inventory: %s cannot claim %s 0x%llx+0x%llx%s%s\n", driver, kind_name(kind),
+            start, length, conflict >= 0 ? ", held by " : "",
+            conflict >= 0 ? driver_of(g_claims[conflict].owner) : "");
+        return false;
+    }
+    for (size_t index = 0; index < g_claim_count; ++index) {
+        const inventory::ResourceClaim& held = g_claims[index];
+        if (held.owner == owner && held.kind == kind && held.start == start) {
+            // Claimed again (a driver retrying its own function): the latest
+            // length stands.
+            g_claims[index] = candidate;
+            inventory::changed();
+            return true;
+        }
+    }
+    if (g_claim_count >= kMaxClaims) {
+        console::printf("inventory: %s cannot claim %s 0x%llx, the table is full\n", driver, kind_name(kind),
+            start);
+        return false;
+    }
+    g_claims[g_claim_count++] = candidate;
+    inventory::changed();
+    return true;
+}
 
 PciBinding* binding_of(const pci::DeviceInfo& device) {
     if (!g_ready) {
@@ -119,6 +176,8 @@ void describe_pci(inventory::Sink& sink) {
             irq.start = info.irq_line;
             irq.length = 1;
         }
+        record.resource_count = static_cast<uint32_t>(inventory::apply_claims(record.resources,
+            record.resource_count, SXN_DEVICE_MAX_RESOURCES, g_claims, g_claim_count, record.id));
         inventory::emit(sink, record);
     }
 }
@@ -141,8 +200,24 @@ void describe_platform(inventory::Sink& sink) {
         for (uint32_t resource = 0; resource < device.resource_count; ++resource) {
             record.resources[resource] = device.resources[resource];
         }
+        record.resource_count = static_cast<uint32_t>(inventory::apply_claims(record.resources,
+            record.resource_count, SXN_DEVICE_MAX_RESOURCES, g_claims, g_claim_count, record.id));
         inventory::emit(sink, record);
     }
+}
+
+const char* driver_of(uint32_t id) {
+    for (size_t index = 0; index < g_pci_count; ++index) {
+        if (g_pci[index].id == id) {
+            return g_pci[index].driver;
+        }
+    }
+    for (size_t index = 0; index < g_platform_count; ++index) {
+        if (g_platform[index].id == id) {
+            return g_platform[index].driver;
+        }
+    }
+    return "?";
 }
 
 } // namespace
@@ -215,8 +290,37 @@ bool pci_release(const pci::DeviceInfo& device, const char* driver) {
     binding->driver[0] = 0;
     binding->name[0] = 0;
     binding->device_class = SXN_DEVICE_CLASS_UNKNOWN;
+    drop_claims(binding->id);
     set_state(*binding, SXN_DEVICE_UNBOUND, SXN_DEVICE_REASON_NOT_CLAIMED);
     return true;
+}
+
+bool pci_claim_resource(const pci::DeviceInfo& device, uint32_t kind, uint64_t start, uint64_t length,
+    uint32_t flags) {
+    PciBinding* binding = binding_of(device);
+    if (binding == nullptr) {
+        // Off the scan: nothing to record it against.
+        return true;
+    }
+    if (binding->driver[0] == 0 || binding->state == SXN_DEVICE_UNBOUND) {
+        console::printf("inventory: a resource of %x:%x.%u claimed with no driver holding it\n",
+            static_cast<unsigned>(device.bus), static_cast<unsigned>(device.slot),
+            static_cast<unsigned>(device.function));
+        return false;
+    }
+    return record_claim(binding->id, binding->driver, kind, start, length, flags);
+}
+
+bool pci_claim_bar(const pci::DeviceInfo& device, const pci::BarInfo& bar) {
+    if (!bar.present || bar.base == 0 || bar.size == 0) {
+        return true;
+    }
+    return pci_claim_resource(device, bar.io_space ? SXN_DEVICE_RESOURCE_IO_PORT : SXN_DEVICE_RESOURCE_MEMORY,
+        bar.base, bar.size);
+}
+
+bool claim_resource(uint32_t id, uint32_t kind, uint64_t start, uint64_t length, uint32_t flags) {
+    return record_claim(id, driver_of(id), kind, start, length, flags);
 }
 
 bool pci_available(const pci::DeviceInfo& device, const char* driver) {
@@ -252,6 +356,7 @@ void pci_failed(const pci::DeviceInfo& device) {
 
 void pci_unsupported(const pci::DeviceInfo& device) {
     if (PciBinding* binding = binding_of(device)) {
+        drop_claims(binding->id);
         set_state(*binding, SXN_DEVICE_UNBOUND, SXN_DEVICE_REASON_UNSUPPORTED);
     }
 }
@@ -341,6 +446,44 @@ bool selftest_record(const pci::DeviceInfo& device, const char* driver, uint32_t
         current_state == state && current_reason == reason;
 }
 
+// A range no machine decodes: far above any physical address.
+constexpr uint64_t kSelftestRange = 0x7fff000000000000ull;
+
+struct Capture {
+    uint32_t id;
+    bool found;
+    sxn_device_info record;
+};
+
+bool capture_take(const sxn_device_info& record, size_t, void* context) {
+    Capture& capture = *static_cast<Capture*>(context);
+    if (record.id == capture.id) {
+        capture.record = record;
+        capture.found = true;
+    }
+    return true;
+}
+
+// The listed length of the self-test's range on `device`, or 0 when it is
+// not listed claimed.
+uint64_t selftest_listed(const pci::DeviceInfo& device) {
+    Capture capture = {};
+    capture.id = inventory::pci_id(device.bus, device.slot, device.function);
+    inventory::Sink sink = {&capture_take, &capture, 0, 0, false};
+    (void)inventory::snapshot(sink);
+    if (!capture.found) {
+        return 0;
+    }
+    for (uint32_t index = 0; index < capture.record.resource_count && index < SXN_DEVICE_MAX_RESOURCES; ++index) {
+        const sxn_device_resource& resource = capture.record.resources[index];
+        if (resource.kind == SXN_DEVICE_RESOURCE_MEMORY && resource.start == kSelftestRange &&
+            (resource.flags & SXN_DEVICE_RESOURCE_CLAIMED) != 0) {
+            return resource.length;
+        }
+    }
+    return 0;
+}
+
 bool run_selftest() {
     constexpr char kFirst[] = "selftest-a";
     constexpr char kSecond[] = "selftest-b";
@@ -386,9 +529,19 @@ bool run_selftest() {
         return selftest_fail("a refused claim changed the record");
     }
 
+    if (inventory::pci_claim_resource(idle, SXN_DEVICE_RESOURCE_MEMORY, kSelftestRange, 0x1000)) {
+        return selftest_fail("a range was claimed on a function nobody holds");
+    }
     if (!inventory::pci_claim(idle, kFirst) ||
         !selftest_record(idle, kFirst, SXN_DEVICE_FAILED, SXN_DEVICE_REASON_START_FAILED)) {
         return selftest_fail("a free function was not taken");
+    }
+    if (!inventory::pci_claim_resource(idle, SXN_DEVICE_RESOURCE_MEMORY, kSelftestRange, 0x1000) ||
+        selftest_listed(idle) != 0x1000) {
+        return selftest_fail("the holder's range was not listed claimed with its length");
+    }
+    if (inventory::pci_claim_resource(held, SXN_DEVICE_RESOURCE_MEMORY, kSelftestRange + 0x800, 0x1000)) {
+        return selftest_fail("another instance claimed an overlapping range");
     }
     if (inventory::pci_claim(idle, kSecond) || !selftest_record(idle, kFirst, SXN_DEVICE_FAILED,
             SXN_DEVICE_REASON_START_FAILED)) {
@@ -401,8 +554,13 @@ bool run_selftest() {
         !selftest_record(idle, "", SXN_DEVICE_UNBOUND, SXN_DEVICE_REASON_NOT_CLAIMED)) {
         return selftest_fail("the holder could not give the function back");
     }
-    if (!inventory::pci_claim(idle, kSecond) || !inventory::pci_release(idle, kSecond)) {
-        return selftest_fail("a function given back was not free");
+    if (selftest_listed(idle) != 0) {
+        return selftest_fail("a released function still lists its range");
+    }
+    if (!inventory::pci_claim(idle, kSecond) ||
+        !inventory::pci_claim_resource(idle, SXN_DEVICE_RESOURCE_MEMORY, kSelftestRange, 0x1000) ||
+        !inventory::pci_release(idle, kSecond)) {
+        return selftest_fail("a function given back, or its range, was not free");
     }
     console::printf("inventory: refused %x:%x.%u, held by %s; took and gave back %x:%x.%u\n",
         static_cast<unsigned>(held.bus), static_cast<unsigned>(held.slot), static_cast<unsigned>(held.function),

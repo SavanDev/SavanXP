@@ -174,6 +174,69 @@ bool claim_allowed(const char* holder, uint32_t state, const char* claimant) {
     return holder[index] == claimant[index];
 }
 
+long resource_conflict(const ResourceClaim* claims, size_t count, const ResourceClaim& candidate) {
+    if (candidate.length == 0 || candidate.start + candidate.length < candidate.start) {
+        return -2;
+    }
+    const uint64_t end = candidate.start + candidate.length;
+    for (size_t index = 0; index < count; ++index) {
+        const ResourceClaim& held = claims[index];
+        if (held.owner == candidate.owner || held.kind != candidate.kind) {
+            continue;
+        }
+        if ((held.flags & candidate.flags & SXN_DEVICE_RESOURCE_SHARED) != 0) {
+            continue;
+        }
+        if (candidate.start < held.start + held.length && held.start < end) {
+            return static_cast<long>(index);
+        }
+    }
+    return -1;
+}
+
+size_t apply_claims(sxn_device_resource* resources, size_t count, size_t capacity, const ResourceClaim* claims,
+    size_t claim_count, uint32_t owner) {
+    bool claimed_irq = false;
+    for (size_t index = 0; index < claim_count; ++index) {
+        if (claims[index].owner == owner && claims[index].kind == SXN_DEVICE_RESOURCE_IRQ) {
+            claimed_irq = true;
+        }
+    }
+    if (claimed_irq) {
+        size_t kept = 0;
+        for (size_t index = 0; index < count; ++index) {
+            if (resources[index].kind != SXN_DEVICE_RESOURCE_IRQ) {
+                resources[kept++] = resources[index];
+            }
+        }
+        count = kept;
+    }
+    for (size_t index = 0; index < claim_count; ++index) {
+        const ResourceClaim& claim = claims[index];
+        if (claim.owner != owner) {
+            continue;
+        }
+        const uint32_t added = SXN_DEVICE_RESOURCE_CLAIMED | (claim.flags & SXN_DEVICE_RESOURCE_SHARED);
+        bool matched = false;
+        for (size_t listed = 0; listed < count; ++listed) {
+            if (resources[listed].kind == claim.kind && resources[listed].start == claim.start) {
+                resources[listed].length = claim.length;
+                resources[listed].flags |= added;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched && count < capacity) {
+            sxn_device_resource& resource = resources[count++];
+            resource.kind = claim.kind;
+            resource.flags = added;
+            resource.start = claim.start;
+            resource.length = claim.length;
+        }
+    }
+    return count;
+}
+
 void copy_text(char* out, size_t capacity, const char* text) {
     if (capacity == 0) {
         return;

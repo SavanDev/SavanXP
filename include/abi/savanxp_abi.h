@@ -499,6 +499,8 @@ struct savanxp_storage_device {
 #define SAVANXP_DEVICE_RESOURCE_IRQ 3u
 #define SAVANXP_DEVICE_RESOURCE_64BIT (1u << 0)
 #define SAVANXP_DEVICE_RESOURCE_PREFETCHABLE (1u << 1)
+#define SAVANXP_DEVICE_RESOURCE_CLAIMED (1u << 2)
+#define SAVANXP_DEVICE_RESOURCE_SHARED (1u << 3)
 #define SAVANXP_DEVICE_MAX_RESOURCES 8u
 struct savanxp_device_resource {
     uint32_t kind;

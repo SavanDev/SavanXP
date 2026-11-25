@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Drivers claim the resources they use, and Device Manager shows them (SDK 2.0).**
+  Claimed ranges have their length and `SXN_DEVICE_RESOURCE_CLAIMED`, shared ones
+  `..._SHARED`; overlaps are refused. [Claims](docs/kernel/DEVICE_INVENTORY.md#claims).
+
 - **Disks on every AHCI controller are found, not only the first one's.** Up to
   four HBAs and eight disks, numbered in PCI scan order; `smoke ahci-two-hba`.
   [Several controllers](docs/kernel/AHCI.md#several-controllers).

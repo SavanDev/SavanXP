@@ -402,6 +402,9 @@ void attach(const pci::DeviceInfo& hba) {
         console::write_line("ahci: HBA without a memory ABAR");
         return;
     }
+    if (!inventory::pci_claim_bar(hba, abar)) {
+        return;
+    }
     void* abar_virtual = nullptr;
     if (!vm::map_kernel_mmio(abar.base, static_cast<size_t>(abar.size),
             vm::kPageWriteThrough | vm::kPageCacheDisable, &abar_virtual)) {

@@ -47,7 +47,8 @@ static int storage_lists_the_root(void) {
 
 /* The hardware inventory through POSIX (docs/kernel/DEVICE_INVENTORY.md),
  * SUN's DEVICE_SNAPSHOT: the computer first, every parent before its
- * children, one generation, and the smoke machine's virtio-rng started. */
+ * children, one generation, and the smoke machine's virtio-rng started with
+ * the memory range its driver claimed. */
 static int devices_list_the_machine(void) {
     static struct savanxp_device_info devices[256];
     long count = device_snapshot(devices, 256);
@@ -71,11 +72,19 @@ static int devices_list_the_machine(void) {
             return 0;
         }
         if (strcmp(devices[index].driver, "virtio-rng") == 0 && devices[index].state == SAVANXP_DEVICE_STARTED) {
-            rng_started = 1;
+            unsigned int resource;
+            for (resource = 0; resource < devices[index].resource_count &&
+                 resource < SAVANXP_DEVICE_MAX_RESOURCES; ++resource) {
+                const struct savanxp_device_resource* range = &devices[index].resources[resource];
+                if (range->kind == SAVANXP_DEVICE_RESOURCE_MEMORY &&
+                    (range->flags & SAVANXP_DEVICE_RESOURCE_CLAIMED) != 0u && range->length != 0u) {
+                    rng_started = 1;
+                }
+            }
         }
     }
     if (!rng_started) {
-        puts_out("smoke: device_snapshot has no started virtio-rng\n");
+        puts_out("smoke: device_snapshot has no started virtio-rng with a claimed range\n");
         return 0;
     }
     if (device_snapshot((struct savanxp_device_info*)16, 1) != -SAVANXP_EINVAL) {

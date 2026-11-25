@@ -3935,7 +3935,8 @@ static void test_random(void) {
  * generator must say so and hand out nothing. */
 /* DEVICE_SNAPSHOT (D1 of docs/roadmaps/open/DRIVERS_ROADMAP.md): the
  * hardware inventory Device Manager lists. The scenario boots from a disk, so
- * some storage controller is started; whatever else QEMU attached only has to
+ * some storage controller is started, and since D3 it lists the range its
+ * driver claimed, with its length; whatever else QEMU attached only has to
  * keep the inventory's rules. */
 static struct sxn_device_info g_devices[512];
 
@@ -3945,6 +3946,7 @@ static void test_device_snapshot(void) {
     long index;
     long other;
     int storage_started = 0;
+    int storage_claimed = 0;
     int pci_seen = 0;
 
     check(count >= 2);
@@ -3981,6 +3983,17 @@ static void test_device_snapshot(void) {
         check(device->state != SXN_DEVICE_FAILED || device->reason == SXN_DEVICE_REASON_START_FAILED);
         check(device->state != SXN_DEVICE_UNBOUND || device->reason != SXN_DEVICE_REASON_NONE);
         check(device->resource_count <= SXN_DEVICE_MAX_RESOURCES);
+        for (other = 0; other < (long)device->resource_count && other < (long)SXN_DEVICE_MAX_RESOURCES; ++other) {
+            const struct sxn_device_resource* resource = &device->resources[other];
+
+            /* A claimed range has the length its driver measured. */
+            check((resource->flags & SXN_DEVICE_RESOURCE_CLAIMED) == 0u || resource->length != 0u);
+            if (device->device_class == SXN_DEVICE_CLASS_STORAGE && device->state == SXN_DEVICE_STARTED &&
+                (resource->flags & SXN_DEVICE_RESOURCE_CLAIMED) != 0u &&
+                resource->kind != SXN_DEVICE_RESOURCE_IRQ) {
+                storage_claimed = 1;
+            }
+        }
         check(memchr(device->name, '\0', sizeof(device->name)) != 0 &&
             memchr(device->driver, '\0', sizeof(device->driver)) != 0 &&
             memchr(device->location, '\0', sizeof(device->location)) != 0);
@@ -4002,7 +4015,7 @@ static void test_device_snapshot(void) {
             }
         }
     }
-    check(pci_seen && storage_started);
+    check(pci_seen && storage_started && storage_claimed);
 
     /* Short of room: the count, and only what fits. */
     memset(g_devices, 0xa5, sizeof(g_devices));

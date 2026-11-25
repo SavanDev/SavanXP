@@ -702,6 +702,9 @@ bool map_registers() {
         if (!pci::bar_info(g_pci_device, bar_index, bar) || !bar.present || bar.io_space || bar.base == 0) {
             continue;
         }
+        if (!inventory::pci_claim_bar(g_pci_device, bar)) {
+            return false;
+        }
         void* virtual_base = nullptr;
         const size_t size = bar.size < memory::kPageSize ? memory::kPageSize : static_cast<size_t>(bar.size);
         if (vm::map_kernel_mmio(bar.base, size, vm::kPageWriteThrough | vm::kPageCacheDisable, &virtual_base)) {
@@ -710,7 +713,8 @@ bool map_registers() {
         }
     }
     pci::BarInfo io = {};
-    if (pci::bar_info(g_pci_device, 0, io) && io.present && io.io_space && io.base != 0) {
+    if (pci::bar_info(g_pci_device, 0, io) && io.present && io.io_space && io.base != 0 &&
+        inventory::pci_claim_bar(g_pci_device, io)) {
         g_io_base = static_cast<uint16_t>(io.base);
         return true;
     }
@@ -775,9 +779,16 @@ bool probe() {
     // walk bridges, so behind a PCIe root port it would resolve the wrong
     // line: route only devices on bus 0 and poll everything else.
     if (g_pci_device.bus == 0) {
+        uint32_t gsi = 0;
         const uint8_t vector = uacpi_glue::route_pci_intx(
-            g_pci_device.bus, g_pci_device.slot, g_pci_device.function, &irq_handler);
+            g_pci_device.bus, g_pci_device.slot, g_pci_device.function, &irq_handler, &gsi);
         g_irq_routed = vector != 0;
+        // A record for now: the handler is already chained, and there is no
+        // way yet to take it back if the line was refused.
+        if (g_irq_routed) {
+            (void)inventory::pci_claim_resource(g_pci_device, SXN_DEVICE_RESOURCE_IRQ, gsi, 1,
+                SXN_DEVICE_RESOURCE_SHARED);
+        }
     }
 
     uint16_t command = pci::read_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset);

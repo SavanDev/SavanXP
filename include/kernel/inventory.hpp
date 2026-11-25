@@ -16,6 +16,7 @@
 
 namespace pci {
 struct DeviceInfo;
+struct BarInfo;
 }
 
 namespace inventory {
@@ -47,6 +48,20 @@ void changed();
 // is listed as UNBOUND (NOT_CLAIMED) and any driver may take it. False, and
 // nothing changes, when `driver` is not the holder.
 bool pci_release(const pci::DeviceInfo& device, const char* driver);
+// The holder claims a range inside its function: a BAR it is about to map,
+// the interrupt line it routed (SXN_DEVICE_RESOURCE_SHARED when other
+// instances use it too: an INTx line, the 8042's ports for its two devices). False when another instance holds
+// an overlapping range of the same kind, or no driver holds the function:
+// the driver treats it as a failure to start. Claims are listed with their
+// length and SXN_DEVICE_RESOURCE_CLAIMED, and go when the function is
+// released or found unsupported; a FAILED holder keeps them. A range is
+// recorded, never reassigned.
+[[nodiscard]] bool pci_claim_resource(const pci::DeviceInfo& device, uint32_t kind, uint64_t start,
+    uint64_t length, uint32_t flags = 0);
+// The BAR as pci::bar_info() measured it; true for a BAR with nothing to claim.
+[[nodiscard]] bool pci_claim_bar(const pci::DeviceInfo& device, const pci::BarInfo& bar);
+// The same for an instance off any bus: `id` from platform_add().
+[[nodiscard]] bool claim_resource(uint32_t id, uint32_t kind, uint64_t start, uint64_t length, uint32_t flags = 0);
 // Whether pci_claim(device, driver) would be granted, without claiming or
 // logging: how a driver looking for its device passes over the functions
 // other drivers hold and goes on to the next one. pci_claim still decides.

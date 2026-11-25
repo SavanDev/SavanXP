@@ -446,13 +446,34 @@ bool find_ide_function(pci::DeviceInfo& found) {
     return false;
 }
 
+// The four legacy ranges: each channel's command block and its control port.
+struct PortRange {
+    uint16_t start;
+    uint16_t length;
+};
+constexpr PortRange kPortRanges[] = {
+    {kPrimaryIoBase, 8},
+    {kPrimaryControlBase, 1},
+    {kSecondaryIoBase, 8},
+    {kSecondaryControlBase, 1},
+};
+
 void enumerate() {
-    // The ports are the function's, so it is taken before they are probed
-    // and given back when no disk answers on them.
+    // The ports are the function's, so it is taken, with them, before they
+    // are probed, and given back when no disk answers on them.
     pci::DeviceInfo ide = {};
     const bool has_ide = find_ide_function(ide);
-    if (has_ide && !inventory::pci_claim(ide, "ata")) {
-        return;
+    if (has_ide) {
+        if (!inventory::pci_claim(ide, "ata")) {
+            return;
+        }
+        for (const PortRange& range : kPortRanges) {
+            if (!inventory::pci_claim_resource(ide, SXN_DEVICE_RESOURCE_IO_PORT, range.start, range.length)) {
+                // Nothing was touched yet: give it back whole.
+                (void)inventory::pci_release(ide, "ata");
+                return;
+            }
+        }
     }
     bool found = false;
     for (size_t index = 0; index < kSlotCount; ++index) {
@@ -467,6 +488,24 @@ void enumerate() {
         io_wait();
     }
     if (!has_ide) {
+        // Nothing on PCI owns the ports (an ISA-era board, QEMU's isa-ide):
+        // the channels are listed as a device of their own once a disk
+        // answered, and its ports recorded against it.
+        if (found) {
+            inventory::PlatformDevice device = {};
+            device.device_class = SXN_DEVICE_CLASS_STORAGE;
+            device.state = SXN_DEVICE_STARTED;
+            device.reason = SXN_DEVICE_REASON_NONE;
+            device.name = "ATA channels";
+            device.driver = "ata";
+            device.location = "Legacy ports";
+            const uint32_t id = inventory::platform_add(device);
+            for (const PortRange& range : kPortRanges) {
+                if (id != 0) {
+                    (void)inventory::claim_resource(id, SXN_DEVICE_RESOURCE_IO_PORT, range.start, range.length);
+                }
+            }
+        }
         return;
     }
     if (found) {

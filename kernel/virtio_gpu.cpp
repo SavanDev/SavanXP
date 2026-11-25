@@ -5,6 +5,7 @@
 
 #include "arch/cpu.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/device.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/input.hpp"
@@ -3780,6 +3781,9 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         arch::enable_irq(pci_device.irq_line);
         g_irq_line = pci_device.irq_line;
         g_irq_registered = true;
+        // A record: the handler is registered by now.
+        (void)inventory::pci_claim_resource(pci_device, SXN_DEVICE_RESOURCE_IRQ, pci_device.irq_line, 1,
+            SXN_DEVICE_RESOURCE_SHARED);
         console::printf("virtio-gpu: irq line %u armed\n", static_cast<unsigned>(g_irq_line));
     } else {
         console::write_line("virtio-gpu: IRQ unavailable, keeping polling fallback");

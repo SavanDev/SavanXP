@@ -129,22 +129,63 @@ What it means for a driver:
   only with I/O BARs 0 and 1, read as the boot scan left them, so another
   audio function of that class (virtio-sound's BARs are memory) is not its.
 
-Not covered yet: claims cover whole functions, not the MMIO ranges, I/O ports
-and interrupt routes inside them. That is a later D3 slice.
-
 ## Resources
 
 Only what was recorded, never measured at listing time:
 
 - A PCI function's BARs as the boot scan read them: kind (memory or I/O),
-  base, 64-bit and prefetchable flags. **The length is 0, "not recorded"**:
-  sizing a BAR writes all ones to it, which a listing must not do to a working
-  device. A bridge lists its two BARs; CardBus none.
+  base, 64-bit and prefetchable flags. **The length is 0, "not recorded"**,
+  until a driver claims the BAR: sizing a BAR writes all ones to it, which a
+  listing must not do to a working device. A bridge lists its two BARs;
+  CardBus none.
 - The interrupt line the firmware wrote, when the function has an INTx pin.
   It is the assignment, not a claim that the driver uses it: most drivers here
   poll.
 - Platform devices list what their driver knows: the 8042's ports and IRQ 1
   or 12, the framebuffer's physical range.
+
+### Claims
+
+A driver claims the ranges it uses inside its instance, and the listing
+shows them with `SXN_DEVICE_RESOURCE_CLAIMED` and the length the driver
+measured when it took them:
+
+- `inventory::pci_claim_bar(device, bar)` after `pci::bar_info()` and before
+  mapping, or `pci_claim_resource(device, kind, start, length, flags)` for
+  anything else; `claim_resource(id, ...)` for a platform device. False means
+  another instance holds an overlapping range of the same kind, or nobody
+  holds the function, and the driver fails to start. A refusal logs
+  `inventory: <driver> cannot claim <kind> 0x<start>+0x<length>, held by
+  <holder>`.
+- **Two instances may use one range only when both say
+  `SXN_DEVICE_RESOURCE_SHARED`**: an INTx line, which the kernel chains
+  handlers on, or the 8042's ports, which the PS/2 keyboard and mouse both
+  drive. An exclusive claim collides with a shared one. The rule is
+  `inventory::resource_conflict()`; how claims are folded into a record
+  (`apply_claims()`) is in `inventory_rules.hpp`. A claimed line replaces the
+  firmware's in the listing, since the claimed one is in use.
+- Claims go with the function: `pci_release()` and `pci_unsupported()` drop
+  them; a `FAILED` holder keeps them. Nothing is ever reassigned: a
+  collision is reported, not resolved.
+
+Who claims what: every BAR a driver maps (`ahci`, `nvme`, `rtl8139`,
+`rtl8168`, `ac97`, `azalia`, the USB host controllers, and every virtio driver
+through `virtio_pci`); the INTx line routed through `_PRT` (`rtl8139`,
+`rtl8168`, the GSI it reached, from `route_pci_intx`) or registered on the PIC
+(`virtio-gpu`); the four legacy ATA ranges (on the PCI IDE function when there
+is one, before the ports are probed; otherwise on an "ATA channels" platform
+device listed once a disk answered); the 8042's ports and each PS/2 device's
+line.
+
+Not covered yet:
+
+- **An interrupt claim is a record.** The GSI is known only once the line is
+  routed and the handler chained, and nothing can take a handler back yet, so
+  a refused line is logged and the driver keeps it. Taking handlers back, and
+  knowing none runs against released state, belongs to the lifecycle slice.
+- MSI and MSI-X vectors (virtio-gpu, virtio-sound) are not listed, since
+  they are not lines; nor are the legacy devices other drivers poke without
+  an instance (the PIT, the RTC, the PC speaker, the serial port).
 
 ## The call
 
@@ -195,5 +236,13 @@ SUN: `sxn_device_snapshot(out, capacity)` in `include/sxn/sxn.h`.
 - `smoke inventory-claims`: boot option `inventory-selftest`, after every
   driver started. A started function refuses another driver and its record
   and generation stay; a free one is taken, refused to a second driver,
-  taken again by its holder, given back and taken by the second. Only the
-  records change; no device is touched.
+  taken again by its holder, given back and taken by the second. A range
+  cannot be claimed on a function nobody holds; the holder's range is listed
+  claimed with its length, an overlapping one is refused to the other
+  function, and a release drops it. Only the records change, on a range no
+  machine decodes; no device is touched.
+- `device-inventory-test` also covers `resource_conflict()` (edges, kinds,
+  shared and exclusive, no length, a wrapping range) and `apply_claims()`.
+- `nativetest`: every claimed range has a length, and a started storage
+  controller lists one. `smoke` (POSIX): the started virtio-rng lists its
+  claimed memory range.

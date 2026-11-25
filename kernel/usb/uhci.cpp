@@ -18,6 +18,7 @@
 #include "arch/cpu.hpp"
 #include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -350,6 +351,9 @@ bool start_controller(const pci::DeviceInfo& info, Controller& controller) {
     pci::BarInfo bar = {};
     if (!pci::bar_info(info, 4, bar) || !bar.io_space || bar.base == 0 || bar.base > 0xffff) {
         console::write_line("uhci: controller without an I/O BAR");
+        return false;
+    }
+    if (!inventory::pci_claim_bar(info, bar)) {
         return false;
     }
     controller.io = static_cast<uint16_t>(bar.base);

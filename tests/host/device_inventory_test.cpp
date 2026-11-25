@@ -218,6 +218,80 @@ void test_claims() {
     check(!inventory::claim_allowed("", SXN_DEVICE_UNBOUND, nullptr), "a missing claimant is refused");
 }
 
+void test_resource_conflicts() {
+    using inventory::ResourceClaim;
+    const ResourceClaim held[] = {
+        {5, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0x1f0, 8},
+        {5, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0x3f6, 1},
+        {7, SXN_DEVICE_RESOURCE_MEMORY, 0, 0xfebf0000u, 0x1000},
+        {7, SXN_DEVICE_RESOURCE_IRQ, SXN_DEVICE_RESOURCE_SHARED, 11, 1},
+        {9, SXN_DEVICE_RESOURCE_IRQ, 0, 1, 1},
+    };
+    const size_t count = sizeof(held) / sizeof(held[0]);
+    check(inventory::resource_conflict(held, count, {6, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0x1f7, 1}) == 0,
+        "the last port of a range collides");
+    check(inventory::resource_conflict(held, count, {6, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0x1e8, 8}) == -1,
+        "the range just below is free");
+    check(inventory::resource_conflict(held, count, {6, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0x1f8, 8}) == -1,
+        "the range just above is free");
+    check(inventory::resource_conflict(held, count, {6, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0x3f0, 0x10}) == 1,
+        "a range around a single port collides");
+    check(inventory::resource_conflict(held, count, {5, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0x1f0, 8}) == -1,
+        "an owner never collides with itself");
+    check(inventory::resource_conflict(held, count, {6, SXN_DEVICE_RESOURCE_MEMORY, 0, 0x1f0, 8}) == -1,
+        "memory and ports are different spaces");
+    check(inventory::resource_conflict(held, count, {6, SXN_DEVICE_RESOURCE_MEMORY, 0, 0xfebf0800u, 0x1000}) == 2,
+        "overlapping memory collides");
+    check(inventory::resource_conflict(held, count,
+              {6, SXN_DEVICE_RESOURCE_IRQ, SXN_DEVICE_RESOURCE_SHARED, 11, 1}) == -1,
+        "two shared lines coexist");
+    check(inventory::resource_conflict(held, count, {6, SXN_DEVICE_RESOURCE_IRQ, 0, 11, 1}) == 3,
+        "an exclusive claim of a shared line collides");
+    check(inventory::resource_conflict(held, count,
+              {6, SXN_DEVICE_RESOURCE_IRQ, SXN_DEVICE_RESOURCE_SHARED, 1, 1}) == 4,
+        "sharing an exclusive line collides");
+    check(inventory::resource_conflict(held, count, {6, SXN_DEVICE_RESOURCE_MEMORY, 0, 0x1000, 0}) == -2,
+        "no length is refused");
+    check(inventory::resource_conflict(held, count,
+              {6, SXN_DEVICE_RESOURCE_MEMORY, 0, ~static_cast<uint64_t>(0) - 1, 4}) == -2,
+        "a range that wraps is refused");
+    check(inventory::resource_conflict(nullptr, 0, {6, SXN_DEVICE_RESOURCE_MEMORY, 0, 0x1000, 1}) == -1,
+        "nothing held, nothing collides");
+}
+
+void test_apply_claims() {
+    using inventory::ResourceClaim;
+    sxn_device_resource resources[4] = {};
+    resources[0] = {SXN_DEVICE_RESOURCE_MEMORY, SXN_DEVICE_RESOURCE_64BIT, 0xfe000000u, 0};
+    resources[1] = {SXN_DEVICE_RESOURCE_IO_PORT, 0, 0xc000, 0};
+    resources[2] = {SXN_DEVICE_RESOURCE_IRQ, 0, 11, 1};
+    const ResourceClaim claims[] = {
+        {3, SXN_DEVICE_RESOURCE_MEMORY, 0, 0xfe000000u, 0x4000},
+        {4, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0xc000, 0x100},
+        {3, SXN_DEVICE_RESOURCE_IRQ, SXN_DEVICE_RESOURCE_SHARED, 16, 1},
+        {3, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0x60, 1},
+        {3, SXN_DEVICE_RESOURCE_IO_PORT, 0, 0x64, 1},
+    };
+    const size_t count = inventory::apply_claims(resources, 3, 4, claims, 5, 3);
+    check(count == 4, "the firmware line goes, a claimed line and one port come, the last does not fit");
+    check(resources[0].length == 0x4000 &&
+            resources[0].flags == (SXN_DEVICE_RESOURCE_64BIT | SXN_DEVICE_RESOURCE_CLAIMED),
+        "a claimed BAR gets its length and keeps its flags");
+    check(resources[1].length == 0 && resources[1].flags == 0, "another owner's claim changes nothing");
+    check(resources[2].kind == SXN_DEVICE_RESOURCE_IRQ && resources[2].start == 16 &&
+            resources[2].flags == (SXN_DEVICE_RESOURCE_CLAIMED | SXN_DEVICE_RESOURCE_SHARED),
+        "the claimed line replaces the firmware's, shared");
+    check(resources[3].kind == SXN_DEVICE_RESOURCE_IO_PORT && resources[3].start == 0x60 &&
+            resources[3].length == 1,
+        "a claim with no listed match is appended");
+
+    sxn_device_resource lines[2] = {};
+    lines[0] = {SXN_DEVICE_RESOURCE_IRQ, 0, 10, 1};
+    check(inventory::apply_claims(lines, 1, 2, claims, 5, 4) == 2 && lines[0].kind == SXN_DEVICE_RESOURCE_IRQ &&
+            lines[0].start == 10 && lines[0].flags == 0 && lines[1].start == 0xc000,
+        "an owner without a claimed line keeps the firmware's");
+}
+
 } // namespace
 
 int main() {
@@ -229,6 +303,8 @@ int main() {
     test_sink();
     test_text();
     test_claims();
+    test_resource_conflicts();
+    test_apply_claims();
     std::printf("device-inventory-test: %d checks passed\n", g_checks);
     return 0;
 }

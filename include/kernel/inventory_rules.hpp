@@ -59,6 +59,31 @@ size_t order_pci(const PciNode* nodes, size_t count, size_t* order, long* parent
 // empty or missing claimant is never granted.
 bool claim_allowed(const char* holder, uint32_t state, const char* claimant);
 
+// A range a driver claimed for an instance: a BAR it mapped, legacy ports it
+// drives, an interrupt line it routed. `owner` is the instance's id.
+struct ResourceClaim {
+    uint32_t owner;
+    uint32_t kind;  // enum sxn_device_resource_kind
+    uint32_t flags; // SHARED when other instances use it too (an INTx line, the 8042's ports)
+    uint64_t start;
+    uint64_t length;
+};
+
+// The index of the claim in `claims` that `candidate` collides with, or -1
+// when it can be recorded: same kind, overlapping ranges, another owner, and
+// not both SHARED. An owner never collides with itself. A candidate with no
+// length, or whose end wraps past 2^64, collides with everything (-2).
+long resource_conflict(const ResourceClaim* claims, size_t count, const ResourceClaim& candidate);
+
+// Folds the claims of `owner` into a record's resources: a claim with the
+// kind and start of a listed one gives it its length and CLAIMED (and
+// SHARED); one with no listed match is appended while there is room. When
+// the owner claimed an interrupt line, the lines nobody claimed (the one the
+// firmware wrote in configuration space) are dropped, since the claimed one
+// is the one in use. Returns the new count.
+size_t apply_claims(sxn_device_resource* resources, size_t count, size_t capacity, const ResourceClaim* claims,
+    size_t claim_count, uint32_t owner);
+
 // NUL-terminated, cut to fit.
 void copy_text(char* out, size_t capacity, const char* text);
 // "PCI 00:1f.2".

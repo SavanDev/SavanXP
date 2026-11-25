@@ -143,6 +143,9 @@ bool map_io_bars() {
     if (!nam.present || !nam.io_space || !nabm.present || !nabm.io_space) {
         return false;
     }
+    if (!inventory::pci_claim_bar(g_pci, nam) || !inventory::pci_claim_bar(g_pci, nabm)) {
+        return false;
+    }
     g_nam_base = static_cast<uint16_t>(nam.base);
     g_nabm_base = static_cast<uint16_t>(nabm.base);
     return g_nam_base != 0 && g_nabm_base != 0;

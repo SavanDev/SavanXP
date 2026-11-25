@@ -996,6 +996,7 @@ static void fill_properties(const struct dv_inventory *inventory, int index, int
     const int category = device_category(inventory, index);
     const int parent = find_device(inventory, device->parent_id);
     uint32_t resource;
+    int unmeasured = 0;
 
     g_prop_count = 0;
     switch (tab)
@@ -1133,11 +1134,13 @@ static void fill_properties(const struct dv_inventory *inventory, int index, int
             case SXN_DEVICE_RESOURCE_MEMORY:
                 if (entry->length != 0u)
                 {
-                    snprintf(text, sizeof(text), "%08llx-%08llx", (unsigned long long)entry->start,
-                             (unsigned long long)(entry->start + entry->length - 1u));
+                    snprintf(text, sizeof(text), "%08llx-%08llx%s", (unsigned long long)entry->start,
+                             (unsigned long long)(entry->start + entry->length - 1u),
+                             (entry->flags & SXN_DEVICE_RESOURCE_SHARED) != 0u ? " (shared)" : "");
                 }
                 else
                 {
+                    unmeasured = 1;
                     snprintf(text, sizeof(text), "%08llx%s%s", (unsigned long long)entry->start,
                              (entry->flags & SXN_DEVICE_RESOURCE_64BIT) != 0u ? ", 64-bit" : "",
                              (entry->flags & SXN_DEVICE_RESOURCE_PREFETCHABLE) != 0u ? ", prefetchable" : "");
@@ -1145,19 +1148,26 @@ static void fill_properties(const struct dv_inventory *inventory, int index, int
                 prop("Memory range:", text);
                 break;
             case SXN_DEVICE_RESOURCE_IO_PORT:
+                if (entry->length == 0u)
+                {
+                    unmeasured = 1;
+                }
                 if (entry->length > 1u)
                 {
-                    snprintf(text, sizeof(text), "%04llx-%04llx", (unsigned long long)entry->start,
-                             (unsigned long long)(entry->start + entry->length - 1u));
+                    snprintf(text, sizeof(text), "%04llx-%04llx%s", (unsigned long long)entry->start,
+                             (unsigned long long)(entry->start + entry->length - 1u),
+                             (entry->flags & SXN_DEVICE_RESOURCE_SHARED) != 0u ? " (shared)" : "");
                 }
                 else
                 {
-                    snprintf(text, sizeof(text), "%04llx", (unsigned long long)entry->start);
+                    snprintf(text, sizeof(text), "%04llx%s", (unsigned long long)entry->start,
+                             (entry->flags & SXN_DEVICE_RESOURCE_SHARED) != 0u ? " (shared)" : "");
                 }
                 prop("I/O range:", text);
                 break;
             case SXN_DEVICE_RESOURCE_IRQ:
-                snprintf(text, sizeof(text), "%llu", (unsigned long long)entry->start);
+                snprintf(text, sizeof(text), "%llu%s", (unsigned long long)entry->start,
+                         (entry->flags & SXN_DEVICE_RESOURCE_SHARED) != 0u ? " (shared)" : "");
                 prop("IRQ:", text);
                 break;
             default:
@@ -1165,11 +1175,13 @@ static void fill_properties(const struct dv_inventory *inventory, int index, int
                 break;
             }
         }
-        if (device->bus == SXN_DEVICE_BUS_PCI)
+        if (unmeasured)
         {
             prop("", "");
-            prop_sentence("As the firmware assigned them. A range's size is");
-            prop_sentence("not recorded: reading it writes to the device.");
+            prop_sentence("A range shown by its base alone is as the");
+            prop_sentence("firmware assigned it, and no driver claimed it:");
+            prop_sentence("its size is not recorded, as reading it writes");
+            prop_sentence("to the device.");
         }
         return;
     }
@@ -2170,11 +2182,19 @@ static int build_fixture(void)
     device->class_code = 0x01;
     device->subclass = 0x06;
     device->protocol = 0x01;
-    device->resource_count = 2;
+    /* The ABAR its driver claimed, the line it routed, and a BAR nobody
+     * claimed, listed by its base alone. */
+    device->resource_count = 3;
     device->resources[0].kind = SXN_DEVICE_RESOURCE_MEMORY;
+    device->resources[0].flags = SXN_DEVICE_RESOURCE_CLAIMED;
     device->resources[0].start = 0xfebf0000u;
+    device->resources[0].length = 0x800u;
     device->resources[1].kind = SXN_DEVICE_RESOURCE_IRQ;
-    device->resources[1].start = 10;
+    device->resources[1].flags = SXN_DEVICE_RESOURCE_CLAIMED | SXN_DEVICE_RESOURCE_SHARED;
+    device->resources[1].start = 16;
+    device->resources[1].length = 1;
+    device->resources[2].kind = SXN_DEVICE_RESOURCE_MEMORY;
+    device->resources[2].start = 0xfebf1000u;
     /* An unknown function from an unknown vendor, with nothing recorded. */
     device = fixture(3, 4, 1, SXN_DEVICE_BUS_PCI, SXN_DEVICE_CLASS_UNKNOWN, SXN_DEVICE_UNBOUND,
                      SXN_DEVICE_REASON_NOT_CLAIMED, "", "");
@@ -2183,6 +2203,12 @@ static int build_fixture(void)
     device = fixture(4, 5, 1, SXN_DEVICE_BUS_PCI, SXN_DEVICE_CLASS_NETWORK, SXN_DEVICE_FAILED,
                      SXN_DEVICE_REASON_START_FAILED, "rtl8168", "RTL8168H");
     device->vendor_id = 0x10ec;
+    /* Everything measured: a failed driver keeps what it claimed. */
+    device->resource_count = 1;
+    device->resources[0].kind = SXN_DEVICE_RESOURCE_IO_PORT;
+    device->resources[0].flags = SXN_DEVICE_RESOURCE_CLAIMED;
+    device->resources[0].start = 0xc000u;
+    device->resources[0].length = 0x100u;
     device = fixture(5, 6, 1, SXN_DEVICE_BUS_PCI, SXN_DEVICE_CLASS_SYSTEM, SXN_DEVICE_STARTED, 0, "pci", "");
     device->class_code = 0x06;
     device->subclass = 0x04;
@@ -2346,11 +2372,11 @@ static void check_views(const struct dv_inventory *inventory, const char *label)
     g_view = saved_view;
 }
 
-static int general_says(const struct dv_inventory *inventory, int index, const char *text)
+static int tab_says(const struct dv_inventory *inventory, int index, int tab, const char *text)
 {
     int line;
 
-    fill_properties(inventory, index, DV_TAB_GENERAL);
+    fill_properties(inventory, index, tab);
     for (line = 0; line < g_prop_count; ++line)
     {
         if (strstr(g_prop_values[line], text) != 0)
@@ -2359,6 +2385,11 @@ static int general_says(const struct dv_inventory *inventory, int index, const c
         }
     }
     return 0;
+}
+
+static int general_says(const struct dv_inventory *inventory, int index, const char *text)
+{
+    return tab_says(inventory, index, DV_TAB_GENERAL, text);
 }
 
 static void selftest_fixtures(void)
@@ -2403,8 +2434,16 @@ static void selftest_fixtures(void)
     expect(g_prop_count == 1 && strstr(g_prop_values[0], "no recorded resources") != 0,
            "a device without resources says so");
     fill_properties(&inventory, 2, DV_TAB_RESOURCES);
-    expect(g_prop_count >= 2 && strcmp(g_prop_names[0], "Memory range:") == 0 && strcmp(g_prop_names[1], "IRQ:") == 0,
+    expect(g_prop_count >= 3 && strcmp(g_prop_names[0], "Memory range:") == 0 && strcmp(g_prop_names[1], "IRQ:") == 0,
            "recorded resources are listed");
+    expect(g_prop_count >= 3 && strcmp(g_prop_values[0], "febf0000-febf07ff") == 0,
+           "a claimed range shows where it ends");
+    expect(g_prop_count >= 3 && strcmp(g_prop_values[1], "16 (shared)") == 0, "a shared line says so");
+    expect(g_prop_count >= 3 && strcmp(g_prop_values[2], "febf1000") == 0, "an unclaimed BAR shows its base");
+    expect(tab_says(&inventory, 2, DV_TAB_RESOURCES, "not recorded"), "a base alone is explained");
+    fill_properties(&inventory, 4, DV_TAB_RESOURCES);
+    expect(g_prop_count == 1 && strcmp(g_prop_values[0], "c000-c0ff") == 0,
+           "every range measured: no explanation");
 
     /* Groups with a problem start open; the rest closed. */
     memset(g_category_seen, 0, sizeof(g_category_seen));

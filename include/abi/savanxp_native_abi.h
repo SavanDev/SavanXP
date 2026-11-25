@@ -790,11 +790,14 @@ enum sxn_device_resource_kind {
 enum sxn_device_resource_flags {
     SXN_DEVICE_RESOURCE_64BIT = 1u << 0,
     SXN_DEVICE_RESOURCE_PREFETCHABLE = 1u << 1,
+    SXN_DEVICE_RESOURCE_CLAIMED = 1u << 2, /* the driver claimed it: in use, length exact */
+    SXN_DEVICE_RESOURCE_SHARED = 1u << 3,  /* used by other devices too: an INTx line, the 8042's ports */
 };
 
 /* An assignment as recorded: a PCI BAR's base as the firmware programmed it,
  * an interrupt line, a legacy port range. length 0 = not recorded (reading a
- * BAR's size writes to the device, which a listing never does). */
+ * BAR's size writes to the device, which a listing never does); a CLAIMED
+ * resource has the length its driver measured when it took it. */
 struct sxn_device_resource {
     uint32_t kind;  /* enum sxn_device_resource_kind */
     uint32_t flags; /* enum sxn_device_resource_flags */

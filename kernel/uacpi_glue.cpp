@@ -299,7 +299,7 @@ uacpi_iteration_decision route_find_cb(void* user, uacpi_namespace_node* node, u
 }
 
 uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
-                       arch::IrqHandler handler) {
+                       arch::IrqHandler handler, uint32_t* gsi_out) {
     const uint8_t pin = pci::read_config_u8(bus, dev, func, 0x3D); // Interrupt Pin
     if (pin < 1 || pin > 4) {
         return 0; // el dispositivo no usa INTx
@@ -327,6 +327,9 @@ uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
                     static_cast<unsigned>(dev), static_cast<char>('A' + ctx.target_pin),
                     static_cast<unsigned>(ctx.result.gsi), vec ? "routed" : "FAILED",
                     static_cast<unsigned>(vec));
+    if (vec != 0 && gsi_out != nullptr) {
+        *gsi_out = ctx.result.gsi;
+    }
     return vec;
 }
 } // namespace uacpi_glue
