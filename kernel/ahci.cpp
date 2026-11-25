@@ -96,7 +96,11 @@ constexpr uint64_t kBouncePages = kBounceBytes / memory::kPageSize;
 constexpr uint32_t kCommandSpins = 200000000u;
 constexpr uint32_t kEngineSpins = 1000000u;
 
-constexpr size_t kMaxDisks = 4;
+// HBAs and disks across all of them; disks are named ahci0 to ahci7 in the
+// order they are found, HBAs in PCI scan order: an add-in card on a lower
+// bus or slot than the board's controller names its disks first.
+constexpr size_t kMaxControllers = 4;
+constexpr size_t kMaxDisks = 8;
 
 struct [[gnu::packed]] CommandHeader {
     uint16_t flags;          // CFL in bits 0-4, W (write) bit 6
@@ -116,6 +120,11 @@ struct [[gnu::packed]] PrdtEntry {
 };
 static_assert(sizeof(PrdtEntry) == 16);
 
+struct Controller {
+    volatile uint8_t* abar;
+    bool s64a; // 64-bit DMA addresses
+};
+
 struct Disk {
     volatile uint8_t* port;
     memory::PageAllocation port_memory;
@@ -125,8 +134,10 @@ struct Disk {
     block::DeviceIdentity identity;
 };
 
-volatile uint8_t* g_abar = nullptr;
-bool g_s64a = false;
+Controller g_controllers[kMaxControllers] = {};
+size_t g_controller_count = 0;
+// One bounce buffer for every disk: requests are polled to completion one at
+// a time, whichever HBA they go to.
 memory::PageAllocation g_bounce = {};
 Disk g_disks[kMaxDisks] = {};
 size_t g_disk_count = 0;
@@ -152,8 +163,8 @@ bool wait_clear(volatile uint8_t* base, uint32_t offset, uint32_t mask, uint32_t
     return true;
 }
 
-bool address_fits(uint64_t physical) {
-    return g_s64a || (physical >> 32) == 0;
+bool address_fits(const Controller& controller, uint64_t physical) {
+    return controller.s64a || (physical >> 32) == 0;
 }
 
 // Stops the command list and FIS receive engines (AHCI 1.3, 10.1.2).
@@ -293,18 +304,18 @@ const block::DeviceOps kOps = {
 };
 
 // Takes the HBA from the firmware if it advertises BIOS/OS handoff.
-void claim_from_firmware() {
-    if ((read_reg(g_abar, kHbaCap2) & kCap2BiosHandoff) == 0) {
+void claim_from_firmware(volatile uint8_t* abar) {
+    if ((read_reg(abar, kHbaCap2) & kCap2BiosHandoff) == 0) {
         return;
     }
-    write_reg(g_abar, kHbaBohc, read_reg(g_abar, kHbaBohc) | kBohcOsOwned);
-    (void)wait_clear(g_abar, kHbaBohc, kBohcBiosOwned, kEngineSpins);
+    write_reg(abar, kHbaBohc, read_reg(abar, kHbaBohc) | kBohcOsOwned);
+    (void)wait_clear(abar, kHbaBohc, kBohcBiosOwned, kEngineSpins);
 }
 
 // Points the port at our command list and FIS area, and starts it. Returns
 // false for anything that is not a SATA disk ready to take commands.
-bool bring_up_port(uint8_t port_index, Disk& disk) {
-    volatile uint8_t* port = g_abar + kPortBase + static_cast<uint32_t>(port_index) * kPortStride;
+bool bring_up_port(const Controller& controller, uint8_t port_index, Disk& disk) {
+    volatile uint8_t* port = controller.abar + kPortBase + static_cast<uint32_t>(port_index) * kPortStride;
     if ((read_reg(port, kPxSsts) & 0x0fu) != kSstsDetPresent || read_reg(port, kPxSig) != kSigSataDisk) {
         return false;
     }
@@ -314,7 +325,7 @@ bool bring_up_port(uint8_t port_index, Disk& disk) {
     }
 
     memory::PageAllocation port_memory = {};
-    if (!memory::allocate_page(port_memory) || !address_fits(port_memory.physical_address)) {
+    if (!memory::allocate_page(port_memory) || !address_fits(controller, port_memory.physical_address)) {
         return false;
     }
     memset(port_memory.virtual_address, 0, memory::kPageSize);
@@ -376,25 +387,11 @@ bool bring_up_port(uint8_t port_index, Disk& disk) {
     return true;
 }
 
-bool find_hba(pci::DeviceInfo& hba) {
-    const size_t count = pci::device_count();
-    for (size_t index = 0; index < count; ++index) {
-        pci::DeviceInfo info = {};
-        if (pci::device_info(index, info) && info.class_code == kClassMassStorage &&
-            info.subclass == kSubclassSata && info.prog_if == kProgIfAhci) {
-            hba = info;
-            return true;
-        }
-    }
-    return false;
+bool is_hba(const pci::DeviceInfo& info) {
+    return info.class_code == kClassMassStorage && info.subclass == kSubclassSata && info.prog_if == kProgIfAhci;
 }
 
-void enumerate() {
-    g_disk_count = 0;
-    pci::DeviceInfo hba = {};
-    if (!pci::ready() || !find_hba(hba)) {
-        return;
-    }
+void attach(const pci::DeviceInfo& hba) {
     // Taken from here on; started once its ports were looked at.
     if (!inventory::pci_claim(hba, "ahci")) {
         return;
@@ -411,29 +408,38 @@ void enumerate() {
         console::write_line("ahci: cannot map ABAR");
         return;
     }
-    g_abar = static_cast<volatile uint8_t*>(abar_virtual);
+    Controller& controller = g_controllers[g_controller_count];
+    controller = {};
+    controller.abar = static_cast<volatile uint8_t*>(abar_virtual);
 
     uint16_t command = pci::read_config_u16(hba.bus, hba.slot, hba.function, kPciCommandOffset);
     command = static_cast<uint16_t>((command | kPciCommandMemory | kPciCommandBusMaster) | kPciCommandInterruptDisable);
     pci::write_config_u16(hba.bus, hba.slot, hba.function, kPciCommandOffset, command);
 
-    claim_from_firmware();
-    g_s64a = (read_reg(g_abar, kHbaCap) & kCapS64a) != 0;
+    claim_from_firmware(controller.abar);
+    controller.s64a = (read_reg(controller.abar, kHbaCap) & kCapS64a) != 0;
     // AHCI mode, interrupts off: requests are completed by polling.
-    write_reg(g_abar, kHbaGhc, (read_reg(g_abar, kHbaGhc) | kGhcAhciEnable) & ~kGhcInterruptEnable);
+    write_reg(controller.abar, kHbaGhc,
+        (read_reg(controller.abar, kHbaGhc) | kGhcAhciEnable) & ~kGhcInterruptEnable);
 
-    if (!memory::allocate_contiguous_pages(kBouncePages, g_bounce) || !address_fits(g_bounce.physical_address)) {
+    if (g_bounce.virtual_address == nullptr && !memory::allocate_contiguous_pages(kBouncePages, g_bounce)) {
         console::write_line("ahci: no memory for the DMA buffer");
         return;
     }
+    if (!address_fits(controller, g_bounce.physical_address)) {
+        console::printf("ahci: %x:%x.%u cannot reach the DMA buffer above 4 GiB\n", static_cast<unsigned>(hba.bus),
+            static_cast<unsigned>(hba.slot), static_cast<unsigned>(hba.function));
+        return;
+    }
+    ++g_controller_count;
 
-    const uint32_t implemented = read_reg(g_abar, kHbaPortsImplemented);
+    const uint32_t implemented = read_reg(controller.abar, kHbaPortsImplemented);
     for (uint8_t port_index = 0; port_index < 32 && g_disk_count < kMaxDisks; ++port_index) {
         if ((implemented & (1u << port_index)) == 0) {
             continue;
         }
         Disk& disk = g_disks[g_disk_count];
-        if (!bring_up_port(port_index, disk)) {
+        if (!bring_up_port(controller, port_index, disk)) {
             continue;
         }
         ++g_disk_count;
@@ -443,6 +449,22 @@ void enumerate() {
             disk.identity.model, disk.identity.serial);
     }
     inventory::pci_started(hba);
+}
+
+// Every AHCI function no other driver holds, each with its own ports.
+void enumerate() {
+    g_controller_count = 0;
+    g_disk_count = 0;
+    if (!pci::ready()) {
+        return;
+    }
+    const size_t count = pci::device_count();
+    for (size_t index = 0; index < count && g_controller_count < kMaxControllers; ++index) {
+        pci::DeviceInfo info = {};
+        if (pci::device_info(index, info) && is_hba(info) && inventory::pci_available(info, "ahci")) {
+            attach(info);
+        }
+    }
 }
 
 // Above ata (100), below virtio-blk (110): the three never serve the same disk,

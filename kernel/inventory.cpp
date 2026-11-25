@@ -219,6 +219,14 @@ bool pci_release(const pci::DeviceInfo& device, const char* driver) {
     return true;
 }
 
+bool pci_available(const pci::DeviceInfo& device, const char* driver) {
+    const PciBinding* binding = binding_of(device);
+    if (binding == nullptr) {
+        return driver != nullptr && driver[0] != 0;
+    }
+    return claim_allowed(binding->driver, binding->state, driver);
+}
+
 bool pci_holder(const pci::DeviceInfo& device, const char*& driver, uint32_t& state, uint32_t& reason) {
     const PciBinding* binding = binding_of(device);
     if (binding == nullptr) {

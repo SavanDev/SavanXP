@@ -24,6 +24,23 @@ block: 3 device(s) ahci0(rw) ahci1(rw) ahci0p1(rw)
 driver claims it, and `fs::mount_any` takes the first device SxFS recognizes.
 ATAPI ports and empty ports are skipped.
 
+## Several controllers
+
+Every AHCI function no other driver holds is driven, up to four HBAs and eight
+disks in all; each HBA keeps its own register window and its own `CAP.S64A`
+([DEVICE_INVENTORY.md](DEVICE_INVENTORY.md#ownership)). Disks are numbered
+across them in PCI scan order, so an add-in card on a lower bus or slot than
+the board's controller names its disks first and the board's move up: nothing
+in the boot path goes by those names (the root is the first SxFS volume, or
+`root=PARTUUID=`). `smoke ahci-two-hba` puts a blank disk alone on a second
+QEMU `ahci` controller:
+
+```text
+ahci: ahci0 port 0, 32768 sectors, "QEMU HARDDISK" serial "SXBLANK0"
+ahci: ahci1 port 0, 1032192 sectors, "QEMU HARDDISK" serial "QM00001"
+ahci: ahci2 port 1, 2097152 sectors, "QEMU HARDDISK" serial "QM00003"
+```
+
 `SAVANXP_DISK_BUS=ide` (or `run_qemu.py --disk-bus ide`) attaches the disk to
 `isa-ide` instead, which is how the `ata` driver keeps being exercised. `--virtio`
 uses virtio-blk and ignores the setting.
@@ -41,7 +58,9 @@ request by polling, like `ata` and `virtio-blk`:
 2. A request uses command slot 0: an H2D register FIS with `READ DMA EXT` or
    `WRITE DMA EXT`, one PRDT entry, then a write to `PxCI` and a spin until the
    HBA clears the bit. Data goes through a 128 KiB physically contiguous bounce
-   buffer, so callers never have to hand in DMA-able memory.
+   buffer, so callers never have to hand in DMA-able memory. Every HBA shares
+   it, since a request is polled to completion before the next one starts; an
+   HBA without `CAP.S64A` that cannot reach it is left failed.
 3. `block::flush` is `FLUSH CACHE EXT`.
 4. A task-file error or a fatal interrupt status stops the port, clears
    `PxSERR`/`PxIS` and starts it again, so the next request can run; the failed

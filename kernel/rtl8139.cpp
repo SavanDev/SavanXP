@@ -408,8 +408,21 @@ bool bring_up() {
 
 // Recognize hardware without starting it. NET_IOC_UP runs bring_up; native
 // socket calls advance reset and setup through prepare.
+// The first RTL8139 no other driver holds. One card: nic:: drives one NIC.
+bool find_card(pci::DeviceInfo& found) {
+    for (size_t index = 0; index < pci::device_count(); ++index) {
+        pci::DeviceInfo info = {};
+        if (pci::device_info(index, info) && info.vendor_id == kVendorRealtek && info.device_id == kDeviceRtl8139 &&
+            inventory::pci_available(info, "rtl8139")) {
+            found = info;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool probe() {
-    g_present = pci::find_device(kVendorRealtek, kDeviceRtl8139, g_pci_device);
+    g_present = find_card(g_pci_device);
     if (!g_present) {
         return false;
     }

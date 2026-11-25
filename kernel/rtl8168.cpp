@@ -685,7 +685,7 @@ bool find_device(pci::DeviceInfo& found) {
     for (size_t index = 0; index < count; ++index) {
         pci::DeviceInfo info = {};
         if (pci::device_info(index, info) && info.vendor_id == kVendorRealtek &&
-            supported_device(info.device_id)) {
+            supported_device(info.device_id) && inventory::pci_available(info, "rtl8168")) {
             found = info;
             return true;
         }

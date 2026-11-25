@@ -240,6 +240,9 @@ def main() -> int:
     parser.add_argument("--extra-disk-mib", type=int, default=0,
                         help="Attach a blank disk of this size (serial SXBLANK0) for the "
                              "scenario to write: Disk Management's.")
+    parser.add_argument("--second-ahci", action="store_true",
+                        help="Put the extra disks on a second AHCI controller instead of "
+                             "the board's: a machine with two HBAs.")
     parser.add_argument("--fat-disk-mib", type=int, default=0,
                         help="Attach a FAT disk of this size (serial SXFAT0), built by "
                              "--fat-image with /hello.txt on it: Disk Management's.")
@@ -433,6 +436,7 @@ def main() -> int:
         capture_fixture=args.capture_fixture,
         wav_path=wav_path,
         extra_disks=extra_disks,
+        second_ahci=args.second_ahci,
         usb=args.usb,
         usb_stick=usb_stick,
         ps2=not args.no_ps2,

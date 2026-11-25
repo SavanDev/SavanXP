@@ -113,9 +113,12 @@ inline void compiler_barrier() {
     __atomic_signal_fence(__ATOMIC_SEQ_CST);
 }
 
-// Localiza el controlador AC'97 por clase PCI (0x04 multimedia / 0x01 audio),
-// que cubre tanto QEMU (-device AC97) como VirtualBox. La subclase 0x03 seria
-// HD Audio, que este driver no maneja.
+// The first AC'97 controller no other driver holds: PCI class 0x04
+// multimedia, subclass 0x01 audio (QEMU's -device AC97 and VirtualBox's;
+// 0x03 would be HD Audio), with the mixer (NAM) and bus master (NABM)
+// registers as I/O BARs 0 and 1. The class alone also matches other audio
+// devices, virtio-sound among them, whose BARs are memory. The BARs are read
+// as the boot scan left them: sizing one would write to the device.
 bool find_controller(pci::DeviceInfo& out) {
     const size_t count = pci::device_count();
     for (size_t index = 0; index < count; ++index) {
@@ -123,7 +126,8 @@ bool find_controller(pci::DeviceInfo& out) {
         if (!pci::device_info(index, info)) {
             continue;
         }
-        if (info.class_code == 0x04u && info.subclass == 0x01u) {
+        if (info.class_code == 0x04u && info.subclass == 0x01u && (info.bar[0] & 0x1u) != 0 &&
+            (info.bar[1] & 0x1u) != 0 && inventory::pci_available(info, "ac97")) {
             out = info;
             return true;
         }

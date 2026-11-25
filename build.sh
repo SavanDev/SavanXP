@@ -299,6 +299,7 @@ if [[ "$COMMAND" == smoke ]]; then
         SMOKE_NO_RNG=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_rng)
         SMOKE_NO_DISK=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field no_disk)
         SMOKE_EXTRA_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field extra_disk_mib)
+        SMOKE_SECOND_AHCI=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field second_ahci)
         SMOKE_FAT_DISK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field fat_disk_mib)
         SMOKE_USB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb)
         SMOKE_USB_STICK_MIB=$(python3 "$ROOT/tools/smoke_catalog.py" "$SMOKE_SCENARIO" --field usb_stick_mib)
@@ -632,6 +633,7 @@ case "$COMMAND" in
         [[ "$SMOKE_NO_RNG" == True ]] && SMOKE_ARGS+=(--no-rng)
         [[ "$SMOKE_NO_DISK" == True ]] && SMOKE_ARGS+=(--no-disk)
         [[ "$SMOKE_EXTRA_DISK_MIB" == 0 ]] || SMOKE_ARGS+=(--extra-disk-mib "$SMOKE_EXTRA_DISK_MIB")
+        [[ "$SMOKE_SECOND_AHCI" == True ]] && SMOKE_ARGS+=(--second-ahci)
         if [[ "$SMOKE_FAT_DISK_MIB" != 0 ]]; then
             build_target savanxp_fat_image
             SMOKE_ARGS+=(--fat-disk-mib "$SMOKE_FAT_DISK_MIB" --fat-image "$OUTPUT_ROOT/tools/fat-image")

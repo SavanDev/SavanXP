@@ -120,10 +120,17 @@ What it means for a driver:
   `fail_device()` after a refusal reports nothing.
 - `pci_holder()` says who holds a function and in what state.
 
-Not covered yet: drivers that find their device by taking the first match
-(`rtl8139`, `rtl8168`, `ahci`, `ac97`) do not go on to the next one when the
-first is refused, and claims cover whole functions, not the MMIO ranges, I/O
-ports and interrupt routes inside them. Both are later D3 slices.
+- **A driver looking for its device passes over held functions** with
+  `pci_available()`, the claim's rule without claiming or logging, and goes on
+  to the next match; `pci_claim` still decides. `ahci` drives every free HBA;
+  `rtl8139`, `rtl8168` and `ac97` take the first free match and drive one,
+  since `nic::` selects one NIC and `ac97` keeps one controller's state.
+- **A match is checked without side effects.** `ac97` matches class 04/01
+  only with I/O BARs 0 and 1, read as the boot scan left them, so another
+  audio function of that class (virtio-sound's BARs are memory) is not its.
+
+Not covered yet: claims cover whole functions, not the MMIO ranges, I/O ports
+and interrupt routes inside them. That is a later D3 slice.
 
 ## Resources
 
@@ -183,6 +190,8 @@ SUN: `sxn_device_snapshot(out, capacity)` in `include/sxn/sxn.h`.
 - `device-inventory-test` also covers `claim_allowed()`: free, given back,
   held while started or failed, the bridges, the holder again, names that
   share a prefix, an empty claimant.
+- `smoke ahci-two-hba`: a disk alone on a second AHCI controller is found
+  next to the board's.
 - `smoke inventory-claims`: boot option `inventory-selftest`, after every
   driver started. A started function refuses another driver and its record
   and generation stay; a free one is taken, refused to a second driver,

@@ -140,6 +140,7 @@ def build_qemu_args(
     wav_path: Path | None = None,
     disk_bus: str | None = None,
     extra_disks: tuple[tuple[Path, str], ...] = (),
+    second_ahci: bool = False,
     usb: bool = False,
     usb_stick: Path | None = None,
     network: bool = True,
@@ -165,7 +166,8 @@ def build_qemu_args(
 
     extra_disks are (image, serial) pairs put on the next AHCI ports, for the
     scenarios that need a disk of their own to write (Disk Management's). The
-    serial is how the guest tells them from the system's disk.
+    serial is how the guest tells them from the system's disk. second_ahci puts
+    them on an AHCI controller of their own instead, for a machine with two HBAs.
 
     usb adds a USB host controller (xHCI unless usb_host says otherwise, see
     USB_HOSTS) with a keyboard and a pointer on it (a tablet, or a relative
@@ -300,12 +302,15 @@ def build_qemu_args(
             disk_devices = ["-drive", drive, *disk_devices]
         if extra_disks and disk_bus == "ide":
             raise SystemExit("extra disks go on the AHCI controller: run without SAVANXP_DISK_BUS=ide")
+        if second_ahci and extra_disks:
+            disk_devices += ["-device", "ahci,id=svahci"]
         for index, (path, serial) in enumerate(extra_disks):
+            bus = f"svahci.{index}" if second_ahci else f"ide.{2 + index}"
             disk_devices += [
                 "-drive",
                 f"if=none,id=svextra{index},media=disk,format=raw,file={path}",
                 "-device",
-                f"ide-hd,drive=svextra{index},bus=ide.{2 + index},serial={serial}",
+                f"ide-hd,drive=svextra{index},bus={bus},serial={serial}",
             ]
         args_list += [
             *(["-device", "rtl8139,netdev=net0"] if network else []),

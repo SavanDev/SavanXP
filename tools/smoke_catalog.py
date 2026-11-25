@@ -39,6 +39,7 @@ class Scenario:
     no_rng: bool = False
     no_disk: bool = False
     extra_disk_mib: int = 0
+    second_ahci: bool = False
     fat_disk_mib: int = 0
     usb: bool = False
     usb_stick_mib: int = 0
@@ -84,6 +85,7 @@ def _qemu_scenario(
     no_rng: bool = False,
     no_disk: bool = False,
     extra_disk_mib: int = 0,
+    second_ahci: bool = False,
     fat_disk_mib: int = 0,
     usb: bool = False,
     usb_stick_mib: int = 0,
@@ -121,6 +123,7 @@ def _qemu_scenario(
         no_rng=no_rng,
         no_disk=no_disk,
         extra_disk_mib=extra_disk_mib,
+        second_ahci=second_ahci,
         fat_disk_mib=fat_disk_mib,
         usb=usb,
         usb_stick_mib=usb_stick_mib,
@@ -336,6 +339,17 @@ SCENARIOS: dict[str, Scenario] = {
         "Exclusive PCI claims: a started function refuses a second driver, a free one is taken, "
         "refused, retaken by its holder and given back",
         boot_options="inventory-selftest",
+    ),
+    # D3: several supported instances stay independent. The board's AHCI
+    # controller holds the boot and system disks, a second one only the blank
+    # disk, which a driver that stops at its first HBA never sees.
+    "ahci-two-hba": _qemu_scenario(
+        "uname",
+        'serial "SXBLANK0"',
+        "inventory: ahci refused",
+        "Two AHCI controllers: the disk on the second one is found alongside the board's",
+        extra_disk_mib=16,
+        second_ahci=True,
     ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
@@ -1478,6 +1492,7 @@ def main() -> int:
             "no_rng",
             "no_disk",
             "extra_disk_mib",
+            "second_ahci",
             "fat_disk_mib",
             "usb",
             "usb_stick_mib",

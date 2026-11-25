@@ -47,6 +47,10 @@ void changed();
 // is listed as UNBOUND (NOT_CLAIMED) and any driver may take it. False, and
 // nothing changes, when `driver` is not the holder.
 bool pci_release(const pci::DeviceInfo& device, const char* driver);
+// Whether pci_claim(device, driver) would be granted, without claiming or
+// logging: how a driver looking for its device passes over the functions
+// other drivers hold and goes on to the next one. pci_claim still decides.
+bool pci_available(const pci::DeviceInfo& device, const char* driver);
 // Who holds the function and in what state; false when it was not scanned.
 // `driver` is empty when nobody does.
 bool pci_holder(const pci::DeviceInfo& device, const char*& driver, uint32_t& state, uint32_t& reason);

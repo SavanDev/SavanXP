@@ -211,15 +211,17 @@ rule for a drawing program change.
 `inventory::pci_claim` refuses a function another driver holds, every driver
 claims before it touches the function and backs off a refusal, and
 `pci_release` gives one back (`ata` when no disk answers on the legacy ports).
-`smoke inventory-claims` proves it on the records. Still open, in order:
+`smoke inventory-claims` proves it on the records. **Second slice, same day:
+several instances.** Drivers pass over held functions (`pci_available`) and go
+on to the next match; `ahci` drives every free HBA (`smoke ahci-two-hba`), and
+`ac97` no longer matches virtio-sound. Single-instance drivers stay single
+where their class core selects one device (`rtl8139`, `rtl8168`) or their
+state is one controller's (`ac97`, `virtio-blk`). Still open, in order:
 
-1. Drivers that take the first match go on to the next instance, so several
-   supported instances stay independent (`ahci`, `rtl8139`, `rtl8168`, `ac97`
-   each drive one today).
-2. Claims for MMIO ranges, I/O ports and interrupt routes, recorded for the
+1. Claims for MMIO ranges, I/O ports and interrupt routes, recorded for the
    inventory; legacy ports with no PCI function behind them (`ata`, `ps2`) as
    platform claims.
-3. Start/quiesce/stop/remove/recover contracts, with references, and failure
+2. Start/quiesce/stop/remove/recover contracts, with references, and failure
    injected at each start stage.
 
 **Open design work; builds on D1, independent of the D2 window.** Bind a driver

@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Disks on every AHCI controller are found, not only the first one's.** Up to
+  four HBAs and eight disks, numbered in PCI scan order; `smoke ahci-two-hba`.
+  [Several controllers](docs/kernel/AHCI.md#several-controllers).
+
 - **A PCI function has one driver at a time.** `inventory::pci_claim` refuses a
   function another driver holds and `pci_release` gives one back; boot option
   `inventory-selftest` and `smoke inventory-claims` check it. [Ownership](docs/kernel/DEVICE_INVENTORY.md#ownership).
@@ -344,7 +348,8 @@ changes not released yet; each released version has its own file in
 ### Fixed
 
 - **Device Manager no longer lists QEMU's virtio sound card as a failed `ac97`.**
-  The AC'97 driver matched it by class code and took it over; it is now refused.
+  The AC'97 driver matched it by class code and took it over; it now also needs
+  AC'97's two I/O BARs.
 
 - **`shoot.sh --scenario startmenu` passes on a gradient wallpaper.** It no longer
   mistakes a Programs cascade that fits the screen for one with scroll arrows.
