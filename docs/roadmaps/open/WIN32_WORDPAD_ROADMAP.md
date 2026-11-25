@@ -98,7 +98,8 @@ tables at build time ([UI_FONTS.md](../../desktop/UI_FONTS.md)).
 
 - **A system library, not part of `gdi32`.** Fonts are loaded from files and
   rasterized at run time by a library every subsystem and the toolkit can
-  use (rule 7 of `AGENTS.md`). `gdi32` is its first consumer, not its owner.
+  use ([feature parity](../../../AGENTS.md#feature-parity-between-subsystems)
+  in `AGENTS.md`). `gdi32` is its first consumer, not its owner.
   The baked UI tables stay what the desktop draws its own interface with.
 - **FreeType is the candidate**, already used on the build host. It is
   offered under the FreeType License (BSD-style, with a credit in the
@@ -143,7 +144,8 @@ on its own account, since its programs need one too.
 
 ## What the rest of the system gets
 
-Rule 7 of `AGENTS.md` (parity) applies: what this profile adds to SSW that
+[Feature parity between subsystems](../../../AGENTS.md#feature-parity-between-subsystems)
+in `AGENTS.md` applies: what this profile adds to SSW that
 other subsystems lack is added to them too, not only to Win32.
 
 - **The clipboard.** The device already holds a set of formats with

@@ -80,7 +80,9 @@ purpose.
   **defined as UTC, always**, including in `local` mode, where the kernel
   converts at the chip. Their callers (`date`, `ntpsync`, the tests) do not
   change.
-- New calls in both subsystems (rule 7), numbers assigned when they land:
+- New calls in both subsystems
+  ([feature parity](../../../AGENTS.md#feature-parity-between-subsystems)),
+  numbers assigned when they land:
   get and set of `{tz string, rtc mode}`. POSIX gets them through the SDK,
   SUN as `sxn_timezone_get` / `sxn_timezone_set`.
 - POSIX's `TZ` environment variable overrides the system zone for one
