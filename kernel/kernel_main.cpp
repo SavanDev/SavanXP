@@ -369,6 +369,10 @@ namespace
     // when someone issues NET_IOC_UP on /dev/net0.
     nic::register_driver(virtio_net::driver());
     rtl8139::leave_transmit_buffer_unmapped(boot::has_option(boot_info.cmdline, "rtl8139-unmapped-tx"));
+    if (boot::has_option(boot_info.cmdline, "lifecycle-selftest"))
+    {
+        rtl8139::lifecycle_selftest();
+    }
     nic::register_driver(rtl8139::driver());
     nic::register_driver(rtl8168::driver());
     if (const nic::Driver* bound = nic::bind_best())

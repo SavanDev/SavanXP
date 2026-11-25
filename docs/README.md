@@ -73,8 +73,12 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   pointer speed applied to relative mice.
 - [`DEVICE_INVENTORY.md`](kernel/DEVICE_INVENTORY.md) — the hardware inventory:
   what is listed and what each instance hangs from, ids that are never reused,
-  the states and their reasons, how drivers report what they took, recorded
-  resources, and `SXN_SYS_DEVICE_SNAPSHOT`.
+  the states and their reasons, how drivers report what they took, who owns a
+  function and the ranges claimed in it, recorded resources, and
+  `SXN_SYS_DEVICE_SNAPSHOT`.
+- [`DRIVER_LIFECYCLE.md`](kernel/DRIVER_LIFECYCLE.md) — a driver's start, quiesce
+  and stop: what a failed start gives back, taking an interrupt handler back
+  safely, failure injection, and the RTL8139 as the first driver written to it.
 - [`USB_HOST_CONTROLLERS.md`](kernel/USB_HOST_CONTROLLERS.md) — xHCI, EHCI, UHCI and OHCI
   behind one controller table: start order, taking them from the firmware,
   EHCI's companion routing, each one's schedule, and what QEMU cannot test.

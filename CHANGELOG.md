@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Drivers can start and stop cleanly, the RTL8139 first.** A failed start gives back
+  what it took, and a stop quiesces, then releases. Boot option `lifecycle-selftest`;
+  `smoke lifecycle-rtl8139`. [Driver start and stop](docs/kernel/DRIVER_LIFECYCLE.md).
+
 - **Drivers claim the resources they use, and Device Manager shows them (SDK 2.0).**
   Claimed ranges have their length and `SXN_DEVICE_RESOURCE_CLAIMED`, shared ones
   `..._SHARED`; overlaps are refused. [Claims](docs/kernel/DEVICE_INVENTORY.md#claims).

@@ -221,12 +221,18 @@ resource claims** ([DEVICE_INVENTORY.md](../../kernel/DEVICE_INVENTORY.md#claims
 Drivers claim the BARs they map, the INTx lines they route and the legacy
 ports they drive; an overlapping exclusive range is refused, and the listing
 shows each claim with its length. Interrupt claims are records until handlers
-can be taken back. Still open:
+can be taken back. **Fourth slice, same day: start and stop**
+([DRIVER_LIFECYCLE.md](../../kernel/DRIVER_LIFECYCLE.md)). The start, quiesce
+and stop contracts, a record of what a start acquired given back in reverse,
+failure injection per stage, and interrupt handlers taken back with the
+guarantee that none runs afterwards; the RTL8139 is the first driver on them
+(`smoke lifecycle-rtl8139`, `lifecycle-rtl8139-iommu`). Still open:
 
-1. Start/quiesce/stop/remove/recover contracts, with references, and failure
-   injected at each start stage; interrupt handlers taken back with the
-   guarantee that none runs against released state, so a refused line can
-   fail a start.
+1. Every other driver on the same contracts, one at a time, and their
+   interrupt claims made to fail a start as the RTL8139's does.
+2. References held by handles, class sessions, queued operations and
+   callbacks, so a stop can refuse or wait while a device is in use.
+3. `remove` (surprise removal, with D5) and `recover`.
 
 **Open design work; builds on D1, independent of the D2 window.** Bind a driver
 to a specific discovered instance rather than letting unrelated probes find the

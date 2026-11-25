@@ -226,10 +226,15 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::IrqHandler hand
                 "ioapic: GSI %u shared with another polarity/trigger, keeping the original\n",
                 unsigned(gsi));
         }
+        const bool was_empty = arch::interrupt_handler_count(existing->vector) == 0;
         if (!arch::register_interrupt_handler(
                 existing->vector, handler, arch::InterruptEoi::local_apic)) {
             console::printf("ioapic: could not chain a handler on GSI %u\n", unsigned(gsi));
             return 0;
+        }
+        // unroute_gsi() masked it when its last handler went.
+        if (was_empty) {
+            set_gsi_masked(gsi, false);
         }
         return existing->vector;
     }
@@ -291,6 +296,17 @@ uint32_t spread(const uint32_t* lapic_ids, uint32_t count) {
         ++moved;
     }
     return moved;
+}
+
+bool unroute_gsi(uint32_t gsi, arch::IrqHandler handler) {
+    Routed* routed = find_routed(gsi);
+    if (routed == nullptr || !arch::unregister_interrupt_handler(routed->vector, handler)) {
+        return false;
+    }
+    if (arch::interrupt_handler_count(routed->vector) == 0) {
+        set_gsi_masked(gsi, true);
+    }
+    return true;
 }
 
 void set_gsi_masked(uint32_t gsi, bool masked) {

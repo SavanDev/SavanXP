@@ -295,6 +295,31 @@ bool pci_release(const pci::DeviceInfo& device, const char* driver) {
     return true;
 }
 
+bool pci_release_failed(const pci::DeviceInfo& device, const char* driver) {
+    PciBinding* binding = binding_of(device);
+    if (binding == nullptr || driver == nullptr || binding->driver[0] == 0 ||
+        strcmp(binding->driver, driver) != 0) {
+        return false;
+    }
+    drop_claims(binding->id);
+    set_state(*binding, SXN_DEVICE_UNBOUND, SXN_DEVICE_REASON_START_FAILED);
+    return true;
+}
+
+size_t pci_claim_count(const pci::DeviceInfo& device) {
+    const PciBinding* binding = binding_of(device);
+    if (binding == nullptr) {
+        return 0;
+    }
+    size_t count = 0;
+    for (size_t index = 0; index < g_claim_count; ++index) {
+        if (g_claims[index].owner == binding->id) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 bool pci_claim_resource(const pci::DeviceInfo& device, uint32_t kind, uint64_t start, uint64_t length,
     uint32_t flags) {
     PciBinding* binding = binding_of(device);

@@ -973,6 +973,10 @@ static void status_sentences(const struct sxn_device_info *device, const char **
             *first = "No driver is using this device.";
             *second = "Its driver found nothing on it that it supports.";
             return;
+        case SXN_DEVICE_REASON_START_FAILED:
+            *first = "No driver is using this device.";
+            *second = "Its driver gave up while starting it and gave everything back.";
+            return;
         default:
             *first = "No driver is using this device.";
             *second = "No built-in driver took it, or its class uses another device.";
@@ -2429,6 +2433,10 @@ static void selftest_fixtures(void)
     expect(general_says(&inventory, 4, "cannot start"), "failed reads as failed");
     expect(general_says(&inventory, 3, "No driver"), "unbound reads as no driver");
     expect(general_says(&inventory, 15, "nousb"), "the boot option is named");
+    /* A start that failed and gave everything back: free, and it says so. */
+    inventory.devices[3].reason = SXN_DEVICE_REASON_START_FAILED;
+    expect(general_says(&inventory, 3, "gave everything back"), "a start given back says it failed");
+    inventory.devices[3].reason = SXN_DEVICE_REASON_NOT_CLAIMED;
     expect(general_says(&inventory, 3, "Not reported"), "an unknown manufacturer says so");
     fill_properties(&inventory, 7, DV_TAB_RESOURCES);
     expect(g_prop_count == 1 && strstr(g_prop_values[0], "no recorded resources") != 0,

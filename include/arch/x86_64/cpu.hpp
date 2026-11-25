@@ -127,6 +127,14 @@ bool send_nmi(uint32_t destination_lapic_id);
 
 bool register_irq_handler(uint8_t irq, IrqHandler handler);
 bool register_interrupt_handler(uint8_t vector, IrqHandler handler, InterruptEoi eoi);
+// Takes `handler` off the vector's chain; false when it was not on it. The
+// dispatcher reads the chain under the kernel lock, so called with that lock
+// held, or during boot on the BSP before the APs run, the handler is not
+// running anywhere when this returns and never runs again
+// (docs/kernel/DRIVER_LIFECYCLE.md).
+bool unregister_interrupt_handler(uint8_t vector, IrqHandler handler);
+// How many handlers the vector's chain holds.
+uint8_t interrupt_handler_count(uint8_t vector);
 bool initialize_local_apic();
 bool local_apic_ready();
 bool local_apic_x2apic_mode();

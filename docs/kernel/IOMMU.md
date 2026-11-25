@@ -152,6 +152,11 @@ The API in `iommu.hpp`, under the kernel lock like the rest:
   in, if it is still there. The handler decides what happens; the RTL8139
   stops the card, clears its bus mastering and blocks it, and the rest of the
   system carries on without a network.
+- **A domain lives as long as its driver's start.** The RTL8139 creates its
+  domain when it starts and destroys it when it stops, which sends the card
+  to the blocked domain; started again, it gets a new one
+  ([DRIVER_LIFECYCLE.md](DRIVER_LIFECYCLE.md)). `smoke lifecycle-rtl8139-iommu`
+  creates and destroys it four times and checks every page table is freed.
 - **Domains not yet moved.** Every device a driver has not moved stays in the
   identity domain of M2. Moving the remaining TKDs, and blocking functions
   nobody drives, comes with the framework's DMA calls (F1).

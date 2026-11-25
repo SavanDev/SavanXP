@@ -9,7 +9,9 @@
 #include "arch/x86/io.hpp"
 #include "kernel/console.hpp"
 #include "kernel/inventory.hpp"
+#include "kernel/ioapic.hpp"
 #include "kernel/iommu.hpp"
+#include "kernel/lifecycle.hpp"
 #include "kernel/pci.hpp"
 #include "kernel/physical_memory.hpp"
 #include "kernel/string.hpp"
@@ -305,9 +307,11 @@ void set_up_dma() {
     }
 }
 
+// The reset in progress, across calls of prepare().
+unsigned g_phase = 0;
+uint64_t g_deadline = 0;
+
 int prepare() {
-    static unsigned phase;
-    static uint64_t deadline;
     if (!g_present || g_failed) {
         return -SX_EIO;
     }
@@ -315,43 +319,24 @@ int prepare() {
         return 0;
     }
 
-    if (phase == 0) {
-        if (g_io_base == 0) {
-            g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
-        }
-        if (g_io_base == 0) {
-            report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-            return -SX_EIO;
-        }
-
+    if (g_phase == 0) {
         uint16_t command = pci::read_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset);
         command = static_cast<uint16_t>(command | kPciCommandIo | kPciCommandBusMaster);
         pci::write_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset, command);
 
-        if (g_rx_allocation.physical_address == 0 &&
-            !memory::allocate_contiguous_pages((kRxBufferBytes + memory::kPageSize - 1) / memory::kPageSize, g_rx_allocation)) {
-            report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-            return -SX_EIO;
-        }
         memset(g_rx_allocation.virtual_address, 0, g_rx_allocation.page_count * memory::kPageSize);
-
         for (size_t index = 0; index < 4; ++index) {
-            if (g_tx_allocation[index].physical_address == 0 && !memory::allocate_page(g_tx_allocation[index])) {
-                report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
-                return -SX_EIO;
-            }
             memset(g_tx_allocation[index].virtual_address, 0, memory::kPageSize);
         }
-        set_up_dma();
 
         out8(static_cast<uint16_t>(g_io_base + kRegConfig1), 0x00);
         out8(static_cast<uint16_t>(g_io_base + kRegCommand), kCommandReset);
-        deadline = timer::monotonic_ns() + 100000000ull;
-        phase = 1;
+        g_deadline = timer::monotonic_ns() + 100000000ull;
+        g_phase = 1;
         return -SX_EAGAIN;
     }
     if ((in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & kCommandReset) != 0) {
-        if (timer::monotonic_ns() < deadline) return -SX_EAGAIN;
+        if (timer::monotonic_ns() < g_deadline) return -SX_EAGAIN;
         report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
         return -SX_EIO;
     }
@@ -374,7 +359,7 @@ int prepare() {
     g_cur_rx = 0;
     g_up = true;
 
-    // Enable ROK/TOK/RER/TER when probe routed INTx; otherwise retain polling.
+    // Enable ROK/TOK/RER/TER when start routed INTx; otherwise retain polling.
     // The interrupt mask was cleared above before resetting the device.
     if (g_irq_routed) {
         out16(static_cast<uint16_t>(g_io_base + kRegImr), 0x000F);
@@ -397,7 +382,7 @@ int prepare() {
 bool bring_up() {
     int result;
     do { result = prepare(); asm volatile("pause"); } while (result == -SX_EAGAIN);
-    // Probed is taken; up or not is what the inventory shows from here.
+    // Started is taken; up or not is what the inventory shows from here.
     if (result == 0) {
         inventory::pci_started(g_pci_device);
     } else {
@@ -406,8 +391,6 @@ bool bring_up() {
     return result == 0;
 }
 
-// Recognize hardware without starting it. NET_IOC_UP runs bring_up; native
-// socket calls advance reset and setup through prepare.
 // The first RTL8139 no other driver holds. One card: nic:: drives one NIC.
 bool find_card(pci::DeviceInfo& found) {
     for (size_t index = 0; index < pci::device_count(); ++index) {
@@ -421,37 +404,209 @@ bool find_card(pci::DeviceInfo& found) {
     return false;
 }
 
-bool probe() {
-    g_present = find_card(g_pci_device);
-    if (!g_present) {
+/* ---- start and stop (docs/kernel/DRIVER_LIFECYCLE.md) ---------------------
+ *
+ * start() takes the card in stages, each pushing onto g_acquired how to give
+ * back what it took; a failed stage unwinds exactly that, and stop() unwinds
+ * the rest once quiesce() has proved the card quiet. The reset and the
+ * receive set-up stay in prepare(), which net:: runs on NET_IOC_UP. */
+
+constexpr char kDriverName[] = "rtl8139";
+// The stages of start(), for failure injection: claim, registers,
+// interrupt, buffers, translation.
+constexpr unsigned kStartStages = 5;
+
+lifecycle::Acquired g_acquired;
+bool g_started = false;
+// Set while a failed start unwinds: the function is then given back as a
+// failed start, not as a clean stop.
+bool g_start_failing = false;
+uint32_t g_gsi = 0;
+uint8_t g_vector = 0;
+
+void release_function(void*) {
+    if (g_start_failing) {
+        (void)inventory::pci_release_failed(g_pci_device, kDriverName);
+    } else {
+        (void)inventory::pci_release(g_pci_device, kDriverName);
+    }
+    g_io_base = 0;
+}
+
+void release_interrupt(void*) {
+    if (!ioapic::unroute_gsi(g_gsi, &irq_handler)) {
+        console::printf("rtl8139: the handler was not on GSI %u\n", static_cast<unsigned>(g_gsi));
+    }
+    g_irq_routed = false;
+    g_vector = 0;
+}
+
+void release_buffers(void*) {
+    if (g_rx_allocation.physical_address != 0) {
+        (void)memory::free_allocation(g_rx_allocation);
+        g_rx_allocation = {};
+    }
+    for (size_t index = 0; index < 4; ++index) {
+        if (g_tx_allocation[index].physical_address != 0) {
+            (void)memory::free_allocation(g_tx_allocation[index]);
+            g_tx_allocation[index] = {};
+        }
+    }
+}
+
+void release_translation(void*) {
+    // The card goes to the blocked domain and the tables are freed.
+    iommu::destroy_domain(g_domain);
+}
+
+bool stage_failed(unsigned stage, const char* name) {
+    if (!lifecycle::injected(kDriverName, stage)) {
         return false;
     }
-    // Recognized; bring_up() brings the link when asked.
-    if (!inventory::pci_claim(g_pci_device, "rtl8139")) {
-        g_present = false;
+    console::printf("rtl8139: start stage %u (%s) failed by injection\n", stage, name);
+    return true;
+}
+
+// The card's registers, interrupt line, DMA buffers and IOMMU domain, in
+// that order. False with everything given back; the card is left alone if
+// another driver holds it.
+bool start(const pci::DeviceInfo& card) {
+    g_pci_device = card;
+    unsigned stage = 1;
+    bool ok = !stage_failed(stage, "claim") && inventory::pci_claim(g_pci_device, kDriverName);
+    if (!ok) {
         return false;
     }
-    inventory::pci_started(g_pci_device);
+    ok = g_acquired.push("claim", &release_function, nullptr);
 
     pci::BarInfo io = {};
-    if (!pci::bar_info(g_pci_device, 0, io) || !io.io_space || !inventory::pci_claim_bar(g_pci_device, io)) {
-        g_present = false;
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "registers") && pci::bar_info(g_pci_device, 0, io) && io.io_space &&
+            inventory::pci_claim_bar(g_pci_device, io);
+        if (ok) {
+            g_io_base = static_cast<uint16_t>(io.base);
+            // Port decoding, so quiesce() can reach the registers even if
+            // prepare() never ran; bus mastering waits for prepare().
+            const uint16_t command = pci::read_config_u16(g_pci_device.bus, g_pci_device.slot,
+                g_pci_device.function, kPciCommandOffset);
+            pci::write_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset,
+                static_cast<uint16_t>(command | kPciCommandIo));
+        }
+    }
+    if (ok) {
+        // INTx through _PRT and the IOAPIC. The device asserts it only after
+        // prepare() enables IMR; a line that cannot be routed leaves polling.
+        ++stage;
+        ok = !stage_failed(stage, "interrupt");
+        if (ok) {
+            g_vector = uacpi_glue::route_pci_intx(
+                g_pci_device.bus, g_pci_device.slot, g_pci_device.function, &irq_handler, &g_gsi);
+            g_irq_routed = g_vector != 0;
+            if (g_irq_routed) {
+                ok = g_acquired.push("interrupt", &release_interrupt, nullptr);
+                if (!ok) {
+                    release_interrupt(nullptr);
+                }
+            }
+            if (ok && g_irq_routed) {
+                ok = inventory::pci_claim_resource(g_pci_device, SXN_DEVICE_RESOURCE_IRQ, g_gsi, 1,
+                    SXN_DEVICE_RESOURCE_SHARED);
+            }
+        }
+    }
+    if (ok) {
+        // Recorded first, so a partial allocation is freed too.
+        ++stage;
+        ok = !stage_failed(stage, "buffers") && g_acquired.push("buffers", &release_buffers, nullptr);
+        if (ok) {
+            ok = memory::allocate_contiguous_pages(
+                (kRxBufferBytes + memory::kPageSize - 1) / memory::kPageSize, g_rx_allocation);
+            for (size_t index = 0; index < 4 && ok; ++index) {
+                ok = memory::allocate_page(g_tx_allocation[index]);
+            }
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "translation");
+        if (ok) {
+            set_up_dma();
+            if (g_domain.valid()) {
+                ok = g_acquired.push("translation", &release_translation, nullptr);
+                if (!ok) {
+                    release_translation(nullptr);
+                }
+            }
+        }
+    }
+    if (!ok) {
+        console::printf("rtl8139: could not start at %x:%x.%u (stage %u); everything it took is given back\n",
+            static_cast<unsigned>(card.bus), static_cast<unsigned>(card.slot),
+            static_cast<unsigned>(card.function), stage);
+        g_start_failing = true;
+        g_acquired.unwind();
+        g_start_failing = false;
         return false;
     }
-    g_io_base = static_cast<uint16_t>(g_pci_device.bar[0] & ~0x3u);
-    // Route INTx through _PRT/IOAPIC once at probe. The device asserts it
-    // only after prepare enables IMR; failed routing retains polling.
-    uint32_t gsi = 0;
-    const uint8_t vec = uacpi_glue::route_pci_intx(
-        g_pci_device.bus, g_pci_device.slot, g_pci_device.function, &irq_handler, &gsi);
-    g_irq_routed = (vec != 0);
-    // A record for now: the handler is already chained, and there is no way
-    // yet to take it back if the line was refused.
-    if (g_irq_routed) {
-        (void)inventory::pci_claim_resource(g_pci_device, SXN_DEVICE_RESOURCE_IRQ, gsi, 1,
-            SXN_DEVICE_RESOURCE_SHARED);
+    g_failed = false;
+    g_started = true;
+    g_present = true;
+    inventory::pci_started(g_pci_device);
+    return true;
+}
+
+// Interrupts masked, receive and transmit off, bus mastering off, and read
+// back: true only when the card can neither raise an interrupt nor reach
+// memory.
+bool quiesce() {
+    g_up = false;
+    out16(static_cast<uint16_t>(g_io_base + kRegImr), 0x0000);
+    out8(static_cast<uint16_t>(g_io_base + kRegCommand), 0x00);
+    clear_interrupt_status();
+    const uint16_t command =
+        pci::read_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset);
+    pci::write_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function, kPciCommandOffset,
+        static_cast<uint16_t>(command & ~kPciCommandBusMaster));
+    const bool engines_off =
+        (in8(static_cast<uint16_t>(g_io_base + kRegCommand)) & (kCommandRxEnable | kCommandTxEnable)) == 0;
+    const bool masked = in16(static_cast<uint16_t>(g_io_base + kRegImr)) == 0;
+    const bool no_master = (pci::read_config_u16(g_pci_device.bus, g_pci_device.slot, g_pci_device.function,
+        kPciCommandOffset) & kPciCommandBusMaster) == 0;
+    return engines_off && masked && no_master;
+}
+
+// Quiet, then everything start() took given back. A card that will not
+// quiesce keeps all of it and is listed as failed: its buffers may still be
+// written.
+bool stop() {
+    if (!g_started) {
+        return true;
+    }
+    if (!quiesce()) {
+        console::write_line("rtl8139: the card did not quiesce; it keeps its buffers");
+        inventory::pci_failed(g_pci_device);
+        return false;
+    }
+    g_acquired.unwind();
+    g_started = false;
+    g_present = false;
+    g_phase = 0;
+    g_cur_rx = 0;
+    g_tx_index = 0;
+    for (bool& busy : g_tx_busy) {
+        busy = false;
     }
     return true;
+}
+
+// Recognizes the card and takes it, without bringing the link up: NET_IOC_UP
+// runs bring_up(), and native socket calls advance the reset through
+// prepare().
+bool probe() {
+    pci::DeviceInfo card = {};
+    g_present = find_card(card) && start(card);
+    return g_present;
 }
 
 const nic::Nic kNic = {
@@ -482,5 +637,100 @@ namespace rtl8139 {
 const nic::Driver& driver() { return kDriver; }
 
 void leave_transmit_buffer_unmapped(bool leave) { g_leave_tx_unmapped = leave; }
+
+namespace {
+
+bool selftest_fail(const char* step) {
+    console::printf("lifecycle: selftest failed: %s\n", step);
+    return false;
+}
+
+// Nothing of the card left behind: the pages, the claims, the handler.
+bool nothing_left(const pci::DeviceInfo& card, uint64_t free_pages, const char* state_driver, uint32_t state,
+    uint32_t reason) {
+    const char* holder = nullptr;
+    uint32_t current_state = 0;
+    uint32_t current_reason = 0;
+    if (memory::free_page_count() != free_pages) {
+        console::printf("lifecycle: %llu free pages, %llu before\n", memory::free_page_count(), free_pages);
+        return false;
+    }
+    if (inventory::pci_claim_count(card) != 0) {
+        console::printf("lifecycle: %u ranges still claimed\n", static_cast<unsigned>(inventory::pci_claim_count(card)));
+        return false;
+    }
+    if (!inventory::pci_holder(card, holder, current_state, current_reason) || strcmp(holder, state_driver) != 0 ||
+        current_state != state || current_reason != reason) {
+        console::printf("lifecycle: the card reads as %s/%u/%u\n", holder != nullptr ? holder : "?",
+            static_cast<unsigned>(current_state), static_cast<unsigned>(current_reason));
+        return false;
+    }
+    return !g_started && g_acquired.count() == 0 && !g_domain.valid();
+}
+
+bool run_selftest() {
+    pci::DeviceInfo card = {};
+    if (!find_card(card)) {
+        return selftest_fail("no RTL8139 to test with");
+    }
+    const uint64_t free_pages = memory::free_page_count();
+
+    // A failure injected at each stage of start(): it gives back exactly
+    // what the stages before took.
+    for (unsigned stage = 1; stage <= kStartStages; ++stage) {
+        lifecycle::inject_failure(kDriverName, stage);
+        if (start(card)) {
+            lifecycle::inject_failure(nullptr, 0);
+            return selftest_fail("a start went through an injected failure");
+        }
+        // Stage 1 fails before the claim: the card is as it was.
+        const bool claimed = stage > 1;
+        if (!nothing_left(card, free_pages, claimed ? kDriverName : "", SXN_DEVICE_UNBOUND,
+                claimed ? SXN_DEVICE_REASON_START_FAILED : SXN_DEVICE_REASON_NOT_CLAIMED)) {
+            console::printf("lifecycle: after a failure injected at stage %u\n", stage);
+            return selftest_fail("a failed start left something behind");
+        }
+    }
+
+    // Started and stopped again and again, brought up in between once.
+    uint8_t handlers = 0;
+    for (unsigned cycle = 0; cycle < 4; ++cycle) {
+        if (!start(card)) {
+            return selftest_fail("the card did not start");
+        }
+        if (inventory::pci_claim_count(card) == 0) {
+            return selftest_fail("a started card claims nothing");
+        }
+        const uint8_t vector = g_vector;
+        if (vector != 0) {
+            handlers = arch::interrupt_handler_count(vector);
+        }
+        if (cycle == 2 && !bring_up()) {
+            return selftest_fail("the card did not come up");
+        }
+        if (!stop()) {
+            return selftest_fail("the card did not stop");
+        }
+        if (vector != 0 && arch::interrupt_handler_count(vector) != static_cast<uint8_t>(handlers - 1)) {
+            return selftest_fail("the handler is still on its line");
+        }
+        if (!nothing_left(card, free_pages, "", SXN_DEVICE_UNBOUND, SXN_DEVICE_REASON_NOT_CLAIMED)) {
+            console::printf("lifecycle: after stop %u\n", cycle + 1);
+            return selftest_fail("a stop left something behind");
+        }
+    }
+    console::printf("lifecycle: rtl8139 %x:%x.%u: %u injected failures and 4 start/stop cycles, nothing left\n",
+        static_cast<unsigned>(card.bus), static_cast<unsigned>(card.slot), static_cast<unsigned>(card.function),
+        kStartStages);
+    return true;
+}
+
+} // namespace
+
+void lifecycle_selftest() {
+    if (run_selftest()) {
+        console::write_line("lifecycle: selftest passed");
+    }
+}
 
 } // namespace rtl8139

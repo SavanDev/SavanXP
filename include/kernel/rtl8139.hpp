@@ -16,4 +16,12 @@ const nic::Driver& driver();
  * before the card is brought up. */
 void leave_transmit_buffer_unmapped(bool leave);
 
+/* Boot option `lifecycle-selftest`, before nic:: takes the card
+ * (docs/kernel/DRIVER_LIFECYCLE.md): a failure injected at each stage of the
+ * start, then four starts and stops, one brought up, each checked for pages,
+ * claims and the interrupt handler left behind. The card ends free for
+ * nic:: to take as usual. Logs `lifecycle: selftest passed` or the step
+ * that failed. */
+void lifecycle_selftest();
+
 } // namespace rtl8139

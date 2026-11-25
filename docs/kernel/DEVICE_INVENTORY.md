@@ -54,6 +54,7 @@ kernel reports three of them, each with a reason:
 | `UNBOUND` | `NOT_CLAIMED` | No built-in driver took it: none matches, or its class core chose another device (the second NIC) |
 | `UNBOUND` | `BOOT_OPTION` | A boot option kept the drivers away (`nousb` on the USB controllers) |
 | `UNBOUND` | `UNSUPPORTED` | The driver took it and found nothing it supports on it (HD Audio with no analog codec); the record keeps the driver's name |
+| `UNBOUND` | `START_FAILED` | The driver's start failed and gave back everything it took (`pci_release_failed`, [DRIVER_LIFECYCLE.md](DRIVER_LIFECYCLE.md)); the record keeps the driver's name, and any driver may take it |
 
 `DISCOVERED`, `STARTING`, `QUIESCING`, `DISABLED` and `REMOVED` are named,
 not produced. A removed instance is absent from the next snapshot, never
@@ -76,6 +77,8 @@ has, and listing never reprobes anything:
   saying so.
 - `pci_release(device, "name")` when the holder gives the function back,
   quiet: it reads as `UNBOUND`/`NOT_CLAIMED` again and its name is cleared.
+  `pci_release_failed(device, "name")` after a start that failed and gave
+  everything back: `UNBOUND`/`START_FAILED`, name kept, free.
 - `pci_started()` once it works, `pci_failed()` when it stops working later (a
   NIC that does not come up when asked), `pci_unsupported()` for the HD Audio
   case, `pci_name()` for what the hardware calls itself (an NVMe model, the

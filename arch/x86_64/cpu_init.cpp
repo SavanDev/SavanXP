@@ -1321,6 +1321,34 @@ bool register_interrupt_handler(uint8_t vector, IrqHandler handler, InterruptEoi
     return true;
 }
 
+bool unregister_interrupt_handler(uint8_t vector, IrqHandler handler) {
+    if (vector >= kIdtEntryCount || handler == nullptr) {
+        return false;
+    }
+    // IF=0 on this core keeps a nested dispatch from reading the chain while
+    // it closes up; the kernel lock keeps the other cores out of it.
+    const uint64_t flags = save_and_disable_interrupts();
+    ExternalHandlerSlot& slot = g_external_handlers[vector];
+    bool found = false;
+    for (uint8_t index = 0; index < slot.count; ++index) {
+        if (slot.handlers[index] == handler) {
+            found = true;
+        } else if (found) {
+            slot.handlers[index - 1] = slot.handlers[index];
+        }
+    }
+    if (found) {
+        slot.count = static_cast<uint8_t>(slot.count - 1);
+        slot.handlers[slot.count] = nullptr;
+    }
+    restore_interrupts(flags);
+    return found;
+}
+
+uint8_t interrupt_handler_count(uint8_t vector) {
+    return vector < kIdtEntryCount ? g_external_handlers[vector].count : 0;
+}
+
 bool initialize_local_apic() {
     uint32_t eax = 0;
     uint32_t ebx = 0;

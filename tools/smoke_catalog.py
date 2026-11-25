@@ -351,6 +351,29 @@ SCENARIOS: dict[str, Scenario] = {
         extra_disk_mib=16,
         second_ahci=True,
     ),
+    # D3: the RTL8139's start and stop (docs/kernel/DRIVER_LIFECYCLE.md). A
+    # failure injected at each start stage, then four starts and stops, each
+    # checked for pages, claims and the handler left behind; then the card is
+    # taken as usual and the network must work.
+    "lifecycle-rtl8139": _qemu_scenario(
+        "netsmoke",
+        "NET SMOKE PASS",
+        "lifecycle: selftest failed",
+        "RTL8139 start and stop: injected failures and repeated cycles leave nothing behind, then the network works",
+        180.0,
+        boot_options="lifecycle-selftest",
+    ),
+    # The same with AMD-Vi translating: every start creates the card's
+    # domain and every stop destroys it.
+    "lifecycle-rtl8139-iommu": _qemu_scenario(
+        "netsmoke",
+        "NET SMOKE PASS",
+        "lifecycle: selftest failed",
+        "RTL8139 start and stop with AMD-Vi: the card's domain comes and goes with it, then the network works",
+        180.0,
+        iommu="amd",
+        boot_options="iommu lifecycle-selftest",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",

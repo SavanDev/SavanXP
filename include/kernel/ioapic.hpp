@@ -49,6 +49,13 @@ uint8_t route_legacy_irq(uint8_t isa_irq, arch::IrqHandler handler);
 // Enmascara / desenmascara una GSI ya ruteada (bit 16 de la entrada).
 void set_gsi_masked(uint32_t gsi, bool masked);
 
+// Takes `handler` off a routed GSI, with arch::unregister_interrupt_handler's
+// guarantee: called under the kernel lock or during boot, it is not running
+// when this returns and never runs again. The last handler off masks the
+// entry; the GSI keeps its vector, and route_gsi() on it later unmasks it.
+// False when the GSI was not routed or the handler was not on it.
+bool unroute_gsi(uint32_t gsi, arch::IrqHandler handler);
+
 // Spreads every routed GSI over the cores whose LAPIC ids are given, in turn,
 // and logs where each one went. Until then route_gsi() sends each GSI to the
 // core that routes it, which during boot is the BSP. smp::start_scheduling()

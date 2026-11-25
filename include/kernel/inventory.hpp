@@ -48,6 +48,13 @@ void changed();
 // is listed as UNBOUND (NOT_CLAIMED) and any driver may take it. False, and
 // nothing changes, when `driver` is not the holder.
 bool pci_release(const pci::DeviceInfo& device, const char* driver);
+// A start that failed and gave back everything it took
+// (docs/kernel/DRIVER_LIFECYCLE.md): free like pci_release(), its claims
+// gone, but listed as UNBOUND with START_FAILED and the driver's name, so
+// the failure stays visible. False when `driver` is not the holder.
+bool pci_release_failed(const pci::DeviceInfo& device, const char* driver);
+// How many ranges are claimed on the function.
+size_t pci_claim_count(const pci::DeviceInfo& device);
 // The holder claims a range inside its function: a BAR it is about to map,
 // the interrupt line it routed (SXN_DEVICE_RESOURCE_SHARED when other
 // instances use it too: an INTx line, the 8042's ports for its two devices). False when another instance holds
