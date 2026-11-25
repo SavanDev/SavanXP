@@ -147,6 +147,14 @@ FixedRange classify_fixed_range(const VmSpace& space, uint64_t base_address, uin
 bool map_kernel_pages(const uint64_t* physical_pages, uint64_t page_count, uint64_t flags, void** virtual_base);
 bool unmap_kernel_pages(void* virtual_base, uint64_t page_count);
 bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base);
+// A device's registers, mapped for as long as the system runs, uncached like
+// map_kernel_mmio. A range inside one mapped this way before, with the same
+// flags, gets that window back instead of a new one: a driver stopped and
+// started again (docs/kernel/DRIVER_LIFECYCLE.md) reuses its window, so the
+// MMIO area does not grow with every start and no VA is ever reused. Never
+// unmapped: passing one to unmap_kernel_pages is a misuse, since another
+// start may hold the same window.
+bool map_device_registers(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base);
 // Como map_kernel_mmio pero sin forzar cache-disable: el que llama elige el
 // tipo de memoria via los bits de kPageCacheMask. Para un framebuffer eso
 // importa -- mapearlo UC lo vuelve inutilizablemente lento.

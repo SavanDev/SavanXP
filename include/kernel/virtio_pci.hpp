@@ -157,6 +157,18 @@ bool find_modern_device(uint16_t modern_device_id, uint16_t subsystem_device_id,
 // (varios devices virtio-input coexistiendo: tablet + teclado, por ejemplo).
 bool find_modern_device_from(size_t start_index, uint16_t modern_device_id, uint16_t subsystem_device_id, pci::DeviceInfo& info, size_t& found_index);
 bool initialize_device(const pci::DeviceInfo& pci_device, bool require_device_cfg, Device& device);
+// Start and stop (docs/kernel/DRIVER_LIFECYCLE.md). quiesce_device resets
+// the device, waits for its status to read back 0, after which it uses no
+// queue, and turns bus mastering off; true only when both read back. A device
+// that never initialized is quiet already.
+bool quiesce_device(Device& device);
+// Gives back the function initialize_device claimed, as a failed start when
+// `failed` (inventory::pci_release_failed), and clears `device`. Its register
+// windows stay mapped for the next start (vm::map_device_registers).
+void release_device(Device& device, const char* driver, bool failed);
+// Frees what setup_queue allocated and clears `queue`; only once the device
+// is quiet.
+void release_queue(Queue& queue);
 // Enable MSI-X on the device and route table entry 0 to the given local-APIC
 // vector (delivered to the boot CPU). On success device.msix_vector becomes 0 so
 // subsequent setup_queue() calls bind the queues to that vector. Returns false

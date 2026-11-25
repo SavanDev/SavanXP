@@ -9,6 +9,12 @@
 
 namespace virtio_pci {
 
+namespace {
+// Register reads to wait for a reset to read back: generous, since each is a
+// VM exit under virtualization.
+constexpr uint32_t kResetSpins = 1000000u;
+} // namespace
+
 void memory_barrier() {
     arch::memory_barrier();
 }
@@ -75,8 +81,10 @@ static bool map_bar(Device& device, uint8_t bar_index, MappedBar*& mapped) {
         return false;
     }
 
+    // Kept for the rest of the boot and given back on the next start
+    // (docs/kernel/DRIVER_LIFECYCLE.md).
     void* virtual_base = nullptr;
-    if (!vm::map_kernel_mmio(
+    if (!vm::map_device_registers(
             bar.info.base,
             static_cast<size_t>(bar.info.size),
             vm::kPageWriteThrough | vm::kPageCacheDisable,
@@ -165,6 +173,46 @@ bool initialize_device(const pci::DeviceInfo& pci_device, bool require_device_cf
     pci::write_config_u16(device.pci_device.bus, device.pci_device.slot, device.pci_device.function, kPciCommandOffset, command);
     device.ready = true;
     return true;
+}
+
+bool quiesce_device(Device& device) {
+    if (!device.ready) {
+        return true;
+    }
+    // A reset stops every queue: the device uses no buffer after it reads
+    // back 0 (virtio 1.x, 2.4 and 4.1.4.3.2).
+    common_cfg(device)->device_status = 0;
+    bool reset = false;
+    for (uint32_t spin = 0; spin < kResetSpins && !reset; ++spin) {
+        memory_barrier();
+        reset = common_cfg(device)->device_status == 0;
+    }
+    const pci::DeviceInfo& pci_device = device.pci_device;
+    const uint16_t command = pci::read_config_u16(pci_device.bus, pci_device.slot, pci_device.function, kPciCommandOffset);
+    pci::write_config_u16(pci_device.bus, pci_device.slot, pci_device.function, kPciCommandOffset,
+        static_cast<uint16_t>(command & ~kPciCommandBusMaster));
+    const bool no_master = (pci::read_config_u16(pci_device.bus, pci_device.slot, pci_device.function,
+        kPciCommandOffset) & kPciCommandBusMaster) == 0;
+    device.ready = false;
+    return reset && no_master;
+}
+
+void release_device(Device& device, const char* driver, bool failed) {
+    if (device.pci_device.present) {
+        if (failed) {
+            (void)inventory::pci_release_failed(device.pci_device, driver);
+        } else {
+            (void)inventory::pci_release(device.pci_device, driver);
+        }
+    }
+    memset(&device, 0, sizeof(device));
+}
+
+void release_queue(Queue& queue) {
+    if (queue.allocation.physical_address != 0) {
+        (void)memory::free_allocation(queue.allocation);
+    }
+    memset(&queue, 0, sizeof(queue));
 }
 
 bool enable_msix(Device& device, uint8_t apic_vector) {

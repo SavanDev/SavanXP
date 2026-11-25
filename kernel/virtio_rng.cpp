@@ -4,6 +4,9 @@
 #include <stdint.h>
 
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
+#include "kernel/lifecycle.hpp"
+#include "kernel/lifecycle_selftest.hpp"
 #include "kernel/random.hpp"
 #include "kernel/random_crypto.hpp"
 #include "kernel/string.hpp"
@@ -40,46 +43,167 @@ bool post_request() {
     return true;
 }
 
+/* ---- start and stop (docs/kernel/DRIVER_LIFECYCLE.md) --------------------- */
+
+constexpr char kDriverName[] = "virtio-rng";
+// transport, features, queue, driver ok.
+constexpr unsigned kStartStages = 4;
+
+lifecycle::Acquired g_acquired;
+bool g_started = false;
+// Set while a failed start unwinds: the function is then given back as a
+// failed start, not as a clean stop.
+bool g_start_failing = false;
+
+void release_transport(void*) {
+    virtio_pci::release_device(g_device, kDriverName, g_start_failing);
+}
+
+void release_queue(void*) {
+    virtio_pci::release_queue(g_queue);
+}
+
+bool stage_failed(unsigned stage, const char* name) {
+    if (!lifecycle::injected(kDriverName, stage)) {
+        return false;
+    }
+    console::printf("virtio-rng: start stage %u (%s) failed by injection\n", stage, name);
+    return true;
+}
+
+// The first virtio-rng no other driver holds.
+bool find_device(pci::DeviceInfo& found) {
+    size_t from = 0;
+    size_t index = 0;
+    pci::DeviceInfo candidate = {};
+    while (pci::ready() && virtio_pci::find_modern_device_from(from, kVirtioRngModernDevice,
+               kVirtioRngSubsystemDevice, candidate, index)) {
+        if (inventory::pci_available(candidate, kDriverName)) {
+            found = candidate;
+            return true;
+        }
+        from = index + 1;
+    }
+    return false;
+}
+
+// The transport, the features, the request queue, then DRIVER_OK and the
+// first request posted. False with everything given back.
+bool start(const pci::DeviceInfo& pci_device) {
+    memset(&g_device, 0, sizeof(g_device));
+    memset(&g_queue, 0, sizeof(g_queue));
+    g_present = false;
+    g_pending = false;
+
+    unsigned stage = 1;
+    if (stage_failed(stage, "transport")) {
+        return false;
+    }
+    // virtio-rng has no device configuration.
+    if (!virtio_pci::initialize_device(pci_device, false, g_device)) {
+        console::write_line("virtio-rng: missing required MMIO capabilities");
+        // Given back if it was taken here; left alone if another driver has it.
+        (void)inventory::pci_release_failed(pci_device, kDriverName);
+        return false;
+    }
+    bool ok = g_acquired.push("transport", &release_transport, nullptr);
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "features");
+        if (ok) {
+            virtio_pci::set_device_status(g_device, 0);
+            virtio_pci::memory_barrier();
+            virtio_pci::set_device_status(g_device,
+                static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
+            ok = virtio_pci::negotiate_features(g_device, 0, virtio_pci::kFeatureVersion1Bit);
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "queue") && g_acquired.push("queue", &release_queue, nullptr) &&
+            virtio_pci::setup_queue(g_device, kRequestQueue, kQueueLimit, kRequestBytes, 16, g_queue);
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "driver ok");
+        if (ok) {
+            virtio_pci::set_device_status(g_device,
+                static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
+            ok = post_request();
+        }
+    }
+    if (!ok) {
+        console::printf("virtio-rng: could not start at %x:%x.%u (stage %u); everything it took is given back\n",
+            static_cast<unsigned>(pci_device.bus), static_cast<unsigned>(pci_device.slot),
+            static_cast<unsigned>(pci_device.function), stage);
+        // Reset first: a queue the device may still use is never freed.
+        (void)virtio_pci::quiesce_device(g_device);
+        g_start_failing = true;
+        g_acquired.unwind();
+        g_start_failing = false;
+        g_pending = false;
+        return false;
+    }
+    g_started = true;
+    g_present = true;
+    console::printf("virtio-rng: up pci=%x:%x.%u\n", static_cast<unsigned>(pci_device.bus),
+        static_cast<unsigned>(pci_device.slot), static_cast<unsigned>(pci_device.function));
+    return true;
+}
+
+// Reset and read back, then the queue and the function given back. A device
+// that does not reset keeps its queue and is listed as failed.
+bool stop() {
+    if (!g_started) {
+        return true;
+    }
+    g_present = false;
+    if (!virtio_pci::quiesce_device(g_device)) {
+        console::write_line("virtio-rng: the device did not reset; it keeps its queue");
+        inventory::pci_failed(g_device.pci_device);
+        return false;
+    }
+    g_acquired.unwind();
+    g_started = false;
+    g_pending = false;
+    return true;
+}
+
+bool idle() {
+    return !g_started && g_acquired.count() == 0 && g_queue.allocation.physical_address == 0;
+}
+
+// One request filled and taken, as random:: would.
+bool bring_up() {
+    for (uint32_t spin = 0; spin < 10000000u; ++spin) {
+        if (virtio_rng::poll()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const lifecycle::Subject kSubject = {
+    kDriverName,
+    kStartStages,
+    &find_device,
+    &start,
+    &bring_up,
+    &stop,
+    &idle,
+    nullptr,
+};
+
 } // namespace
 
 namespace virtio_rng {
 
 bool initialize() {
     pci::DeviceInfo pci_device = {};
-
-    memset(&g_device, 0, sizeof(g_device));
-    memset(&g_queue, 0, sizeof(g_queue));
-    g_present = false;
-    g_pending = false;
-    if (!pci::ready() ||
-        !virtio_pci::find_modern_device(kVirtioRngModernDevice, kVirtioRngSubsystemDevice, pci_device)) {
-        return false;
-    }
-    // virtio-rng has no device configuration.
-    if (!virtio_pci::initialize_device(pci_device, false, g_device)) {
-        console::write_line("virtio-rng: missing required MMIO capabilities");
-        return false;
-    }
-    virtio_pci::set_device_status(g_device, 0);
-    virtio_pci::memory_barrier();
-    virtio_pci::set_device_status(g_device,
-        static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
-    if (!virtio_pci::negotiate_features(g_device, 0, virtio_pci::kFeatureVersion1Bit) ||
-        !virtio_pci::setup_queue(g_device, kRequestQueue, kQueueLimit, kRequestBytes, 16, g_queue)) {
-        console::write_line("virtio-rng: could not set the device up");
-        virtio_pci::fail_device(g_device);
-        return false;
-    }
-    virtio_pci::set_device_status(g_device,
-        static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
-    g_present = post_request();
-    if (g_present) {
-        console::printf("virtio-rng: up pci=%x:%x.%u\n", static_cast<unsigned>(g_device.pci_device.bus),
-            static_cast<unsigned>(g_device.pci_device.slot),
-            static_cast<unsigned>(g_device.pci_device.function));
-    }
-    return g_present;
+    return find_device(pci_device) && start(pci_device);
 }
+
+const lifecycle::Subject& lifecycle_subject() { return kSubject; }
 
 bool present() { return g_present; }
 

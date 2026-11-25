@@ -2,8 +2,9 @@
 
 Status: **D3 of [DRIVERS_ROADMAP.md](../roadmaps/open/DRIVERS_ROADMAP.md)
 (2026-11-24).** The contracts below are common. Written to them: the RTL8139
-(`kernel/rtl8139.cpp`) and the AC'97 (`kernel/ac97.cpp`). Every other driver
-still starts once at boot and never stops. It builds on the inventory's
+(`kernel/rtl8139.cpp`), the AC'97 (`kernel/ac97.cpp`) and virtio-rng
+(`kernel/virtio_rng.cpp`). Every other driver still starts once at boot and
+never stops. It builds on the inventory's
 ownership and claims ([DEVICE_INVENTORY.md](DEVICE_INVENTORY.md)).
 
 ## The contracts
@@ -48,6 +49,21 @@ A start and a stop leave the inventory in a known state:
   keeps its vector, and routing it again unmasks it.
 - **The inventory**: `pci_release_failed()` for a start that gave everything
   back, `pci_claim_count()` to check nothing is left claimed.
+- **Register windows are kept, not unmapped.** The kernel's MMIO area is a
+  bump allocator that never reuses a virtual address (the TLB argument in
+  [SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md)), so a driver that
+  unmapped its BARs on stop and mapped them again on start would grow it,
+  and its page tables, every cycle. `vm::map_device_registers` maps a
+  device's registers for the rest of the boot and, asked for a range inside
+  one it mapped before with the same flags, hands that window back. A stop
+  leaves its windows mapped; the next start, or another driver given the
+  same function, gets them back. They are never unmapped. `map_kernel_mmio`
+  is unchanged for callers that do unmap, such as uACPI.
+- **virtio's transport** (`virtio_pci`): `quiesce_device` resets the device
+  and waits for its status to read back 0, after which it uses no queue, then
+  turns bus mastering off and checks it; `release_queue` frees a queue;
+  `release_device` gives back the function `initialize_device` claimed. BARs
+  are mapped with `map_device_registers`, for every virtio driver.
 
 ## The RTL8139
 
@@ -96,6 +112,17 @@ bus mastering off, and reads back the run bit, the DMA-halted status bit and
 the bus master bit. A stream (`ac97_configure`, which `audio::` asks for)
 still comes after `start`, and `stop()` ends it first.
 
+## virtio-rng
+
+`start()` has four stages: **transport** (`initialize_device`: the claim,
+the capabilities, the kept BAR windows), **features**, **queue** (the release
+recorded before `setup_queue` allocates) and **driver ok** (`DRIVER_OK` and
+the first request posted). A start that fails after the transport resets the
+device before it frees anything, since a queue the device may still use is
+never freed. `stop()` is the reset, read back, then the queue and the
+function given back. Its `bring_up` waits for the first request to be filled
+and takes it, as `random::` does.
+
 ## The self-test
 
 One test for every driver written to the contracts
@@ -109,6 +136,10 @@ Boot option `lifecycle-selftest=<driver>[,<driver>...]` runs it before any
 class core takes a device. Each named driver must have a device to test, or
 the test fails; a name not in `kSubjects` fails too. For each:
 
+- One start and stop first, before anything is counted: it must work, and it
+  maps the register windows the driver keeps for the rest of the boot, whose
+  page tables stay. Every later start reuses them, so from then on the free
+  page count must come back exactly.
 - A failure injected at each stage: the start returns false, the free page
   count is what it was, no range is claimed, the driver is idle, and the
   device is listed `UNBOUND`, with `START_FAILED` and the driver's name from
@@ -127,7 +158,9 @@ The log ends in `lifecycle: selftest passed`, or `lifecycle: selftest failed:
 also creates and destroys the card's domain and its page tables, which the
 page count covers. `smoke lifecycle-ac97` runs `lifecycle-selftest=ac97` on
 QEMU's AC97, its third cycle playing silence when it stops, then plays a
-stream. The pure part has `lifecycle-test` on the host.
+stream. `smoke lifecycle-virtio-rng` runs `lifecycle-selftest=virtio-rng`,
+then `smoke`, which finds it started with its claimed range, after the
+generator was seeded from it. The pure part has `lifecycle-test` on the host.
 
 ## Not covered yet
 

@@ -11,6 +11,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/rtl8139.hpp"
 #include "kernel/string.hpp"
+#include "kernel/virtio_rng.hpp"
 
 namespace {
 
@@ -23,6 +24,7 @@ struct Entry {
 const Entry kSubjects[] = {
     {"rtl8139", &rtl8139::lifecycle_subject},
     {"ac97", &ac97::lifecycle_subject},
+    {"virtio-rng", &virtio_rng::lifecycle_subject},
 };
 
 constexpr unsigned kCycles = 4;
@@ -68,6 +70,16 @@ bool run(const lifecycle::Subject& subject) {
     pci::DeviceInfo device = {};
     if (!subject.find(device)) {
         return fail(subject, "no device to test with");
+    }
+    // A first start and stop before counting: a driver may map register
+    // windows it keeps for the rest of the boot (vm::map_device_registers),
+    // and the page tables under them stay. Every later start reuses them, so
+    // from here on the free page count must come back exactly.
+    if (!subject.start(device)) {
+        return fail(subject, "the device did not start");
+    }
+    if (!subject.stop()) {
+        return fail(subject, "the device did not stop");
     }
     const uint64_t free_pages = memory::free_page_count();
 

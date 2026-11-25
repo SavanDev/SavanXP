@@ -1,6 +1,7 @@
 #include "kernel/vmm.hpp"
 
 #include "arch/cpu.hpp"
+#include "kernel/console.hpp"
 #include "kernel/heap.hpp"
 #include "kernel/object.hpp"
 #include "kernel/panic.hpp"
@@ -1312,6 +1313,49 @@ bool map_kernel_mmio(uint64_t physical_base, size_t size, uint64_t flags, void**
     // Registros de dispositivo: siempre sin cachear.
     return map_kernel_device_memory(
         physical_base, size, flags | vm::kPageCacheDisable, virtual_base);
+}
+
+namespace {
+
+// The windows map_device_registers() handed out, to give them back.
+struct KeptWindow {
+    uint64_t physical;  // page aligned
+    uint64_t bytes;     // whole pages
+    uint64_t flags;
+    uint64_t virtual_base;
+};
+constexpr size_t kMaxKeptWindows = 64;
+KeptWindow g_kept_windows[kMaxKeptWindows] = {};
+size_t g_kept_window_count = 0;
+
+} // namespace
+
+bool map_device_registers(uint64_t physical_base, size_t size, uint64_t flags, void** virtual_base) {
+    if (virtual_base == nullptr || size == 0) {
+        return false;
+    }
+    const uint64_t effective_flags = flags | vm::kPageCacheDisable;
+    const uint64_t aligned_physical = physical_base & kPageMask;
+    const uint64_t end = align_up(physical_base + static_cast<uint64_t>(size), memory::kPageSize);
+    for (size_t index = 0; index < g_kept_window_count; ++index) {
+        const KeptWindow& window = g_kept_windows[index];
+        if (window.flags == effective_flags && aligned_physical >= window.physical &&
+            end <= window.physical + window.bytes) {
+            *virtual_base = reinterpret_cast<void*>(window.virtual_base + (physical_base - window.physical));
+            return true;
+        }
+    }
+    if (!map_kernel_mmio(physical_base, size, flags, virtual_base)) {
+        return false;
+    }
+    if (g_kept_window_count < kMaxKeptWindows) {
+        // Remembered from its page boundary, whatever offset the caller asked.
+        const uint64_t window_base = reinterpret_cast<uint64_t>(*virtual_base) - (physical_base - aligned_physical);
+        g_kept_windows[g_kept_window_count++] = {aligned_physical, end - aligned_physical, effective_flags, window_base};
+    } else {
+        console::printf("vm: device register windows full; %llx mapped without being kept\n", physical_base);
+    }
+    return true;
 }
 
 bool kernel_page_cache_flags(uint64_t virtual_address, uint64_t& flags) {

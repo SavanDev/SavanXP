@@ -3485,15 +3485,8 @@ ImportedSurface* allocate_imported_surface_slot() {
     return nullptr;
 }
 
-void release_queue(virtio_pci::Queue& queue) {
-    if (queue.allocation.page_count != 0) {
-        (void)memory::free_allocation(queue.allocation);
-    }
-    memset(&queue, 0, sizeof(queue));
-}
-
 bool setup_control_queue() {
-    release_queue(g_control_queue);
+    virtio_pci::release_queue(g_control_queue);
     if (!virtio_pci::setup_queue(g_device, kVirtioGpuControlQueue, kVirtioGpuQueueDescriptorLimit, kQueueExtraBytes, 16, g_control_queue)) {
         return false;
     }
@@ -3506,7 +3499,7 @@ bool setup_control_queue() {
 }
 
 bool setup_cursor_queue() {
-    release_queue(g_cursor_queue);
+    virtio_pci::release_queue(g_cursor_queue);
     if (!virtio_pci::setup_queue(g_device, kVirtioGpuCursorQueue, kVirtioGpuCursorQueueDescriptorLimit, kCursorQueueExtraBytes, 16, g_cursor_queue)) {
         return false;
     }
@@ -3558,7 +3551,7 @@ bool rearm_cursor_resource() {
     }
 
     console::write_line("virtio-gpu: cursor recovery failed, disabling cursor plane");
-    release_queue(g_cursor_queue);
+    virtio_pci::release_queue(g_cursor_queue);
     release_cursor_plane();
     return true;
 }
@@ -3605,7 +3598,7 @@ bool recover_device(const char* reason) {
         return false;
     }
     if (!setup_cursor_queue()) {
-        release_queue(g_cursor_queue);
+        virtio_pci::release_queue(g_cursor_queue);
     }
 
     virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
@@ -3763,7 +3756,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     }
     log_init_stage("control queue ready");
     if (!setup_cursor_queue()) {
-        release_queue(g_cursor_queue);
+        virtio_pci::release_queue(g_cursor_queue);
         console::write_line("virtio-gpu: cursor queue unavailable, using software cursor fallback");
     } else {
         log_init_stage("cursor queue ready");

@@ -357,7 +357,10 @@ What it actually took, against the plan below: **no IPI at all.**
   several silently reads freed memory. The generation check turns that back into
   a fault, and it keeps the system correct the day the window starts reusing
   addresses, which it will have to eventually: the window never gives back
-  address space, nor the page tables under ranges that were unmapped.
+  address space, nor the page tables under ranges that were unmapped. A
+  driver that stops and starts again does not grow it: its register windows
+  come from `vm::map_device_registers`, which keeps them and hands the same
+  window back ([DRIVER_LIFECYCLE.md](../../kernel/DRIVER_LIFECYCLE.md)).
 - **User space needs no mechanism, but the reasons are now rules.** The
   argument below holds, and is written down next to `sync_kernel_tlb()` in
   [`vmm.hpp`](../../../include/kernel/vmm.hpp): an address space is loaded on at most

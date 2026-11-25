@@ -386,6 +386,17 @@ SCENARIOS: dict[str, Scenario] = {
         audio_device="ac97",
         boot_options="lifecycle-selftest=ac97",
     ),
+    # virtio-rng, the first virtio driver on the contracts: its transport
+    # reset and its queue freed each cycle, one request filled in between.
+    # smoke then finds it started again with its claimed range.
+    "lifecycle-virtio-rng": _qemu_scenario(
+        "smoke",
+        "SMOKE PASS",
+        "lifecycle: selftest failed",
+        "virtio-rng start and stop: injected failures and repeated cycles leave nothing behind; "
+        "then the generator is seeded from it and smoke passes",
+        boot_options="lifecycle-selftest=virtio-rng",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",
