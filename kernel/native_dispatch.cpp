@@ -218,13 +218,14 @@ int native_wait_io(Thread& self, uint64_t user_entries, uint64_t count, int64_t 
     return detail::begin_object_wait(self, objects, count, false, timeout_ms, interests);
 }
 
-/* Open existing regular files only; query access never grants read access. */
+/* Open existing regular files only, never emptying them; query access never
+ * grants read access. */
 int native_open_file(Process& proc, uint64_t user_path, uint32_t access) {
     vfs::PathBuffer path;
     if (path == nullptr) {
         return sx::negative_error(SX_ENOMEM);
     }
-    if ((access & ~SXN_FILE_READ) != 0) {
+    if ((access & ~(SXN_FILE_READ | SXN_FILE_WRITE)) != 0) {
         return sx::negative_error(SX_EINVAL);
     }
     const sx_status copied = sx::copy_user_path_from(proc, user_path, path, path.capacity());
@@ -234,9 +235,19 @@ int native_open_file(Process& proc, uint64_t user_path, uint32_t access) {
     if (path[0] != '/') {
         return sx::negative_error(SX_EINVAL);
     }
+    if ((access & SXN_FILE_WRITE) != 0) {
+        // The type before the write open, which would give a memory node
+        // storage of its own.
+        const vfs::Vnode* existing = vfs::open(proc.credentials, path, 0, 0);
+        if (existing == nullptr) return sx::negative_error(static_cast<sx_status>(vfs::last_error()));
+        if (existing->type == vfs::NodeType::directory) return sx::negative_error(SX_EISDIR);
+        if (existing->type != vfs::NodeType::file || existing->backend == vfs::Backend::device)
+            return sx::negative_error(SX_EINVAL);
+    }
     object::IoObject* file = nullptr;
-    const sx_status status = sx::open_file(proc.credentials, path,
-        (access & SXN_FILE_READ) ? SAVANXP_OPEN_READ : 0u, 0, sx::open_accept_file, file);
+    const uint32_t flags = ((access & SXN_FILE_READ) ? SAVANXP_OPEN_READ : 0u) |
+        ((access & SXN_FILE_WRITE) ? SAVANXP_OPEN_WRITE : 0u);
+    const sx_status status = sx::open_file(proc.credentials, path, flags, 0, sx::open_accept_file, file);
     if (status != sx::kStatusOk) return sx::negative_error(status);
     const int handle = detail::allocate_fd(proc, &file->header,
         detail::object_access_for_open_flags(file->open_flags), object::handle_none);
@@ -399,7 +410,8 @@ int native_create_file(Process& proc, uint64_t user_path, uint64_t disposition) 
         return sx::negative_error(status);
     }
     const uint32_t mode = (disposition & SXN_CREATE_EXECUTABLE) != 0 ? 0700 : 0600;
-    disposition &= ~static_cast<uint64_t>(SXN_CREATE_EXECUTABLE);
+    const uint32_t read = (disposition & SXN_CREATE_READ) != 0 ? SAVANXP_OPEN_READ : 0u;
+    disposition &= ~static_cast<uint64_t>(SXN_CREATE_EXECUTABLE | SXN_CREATE_READ);
     if (disposition != SXN_CREATE_NEW && disposition != SXN_CREATE_ALWAYS) {
         return sx::negative_error(SX_EINVAL);
     }
@@ -415,7 +427,7 @@ int native_create_file(Process& proc, uint64_t user_path, uint64_t disposition) 
     }
     object::IoObject* file = nullptr;
     const sx_status opened = sx::open_file(proc.credentials, path,
-        SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE, mode, sx::open_accept_file, file);
+        read | SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE, mode, sx::open_accept_file, file);
     if (opened != sx::kStatusOk) {
         return sx::negative_error(opened);
     }
@@ -442,6 +454,76 @@ int native_flush_file(Process& proc, uint64_t handle) {
     const size_t mount = fs::owner_of(path);
     if (mount != fs::kInvalidMount && !fs::sync(mount)) return sx::negative_error(SX_EIO);
     return 0;
+}
+
+// A regular file handle of the caller, with at least `access`; nullptr for
+// any other handle.
+object::IoObject* file_handle(Process& proc, uint64_t handle, uint32_t access) {
+    object::IoObject* file = detail::fd_to_io_object(proc, handle, access);
+    if (file == nullptr || file->kind != HandleKind::vnode || file->node == nullptr) {
+        return nullptr;
+    }
+    return file;
+}
+
+// 64-bit: the position does not fit the int the other calls return.
+int64_t native_seek_file(Process& proc, uint64_t handle, uint64_t offset, uint64_t origin) {
+    object::IoObject* file = file_handle(proc, handle, object::access_query);
+    if (file == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+    sx::SeekOrigin from = sx::SeekOrigin::start;
+    switch (origin) {
+        case SXN_SEEK_START:
+            break;
+        case SXN_SEEK_CURRENT:
+            from = sx::SeekOrigin::current;
+            break;
+        case SXN_SEEK_END:
+            from = sx::SeekOrigin::end;
+            break;
+        default:
+            return sx::negative_error(SX_EINVAL);
+    }
+    uint64_t position = 0;
+    const sx_status status = sx::seek_file(*file, static_cast<int64_t>(offset), from, position);
+    return status != sx::kStatusOk ? sx::negative_error(status) : static_cast<int64_t>(position);
+}
+
+int native_set_file_size(Process& proc, uint64_t handle, uint64_t size) {
+    object::IoObject* file = file_handle(proc, handle, object::access_write);
+    if (file == nullptr || file->node->type != vfs::NodeType::file || (file->open_flags & open_write) == 0) {
+        return sx::negative_error(SX_EBADF);
+    }
+    if (size > static_cast<uint64_t>(static_cast<size_t>(-1) >> 1)) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    vfs::PathBuffer path;
+    if (path == nullptr) {
+        return sx::negative_error(SX_ENOMEM);
+    }
+    // vfs::truncate works on a name; a file unlinked while open has none.
+    if (!vfs::path_of(*file->node, path, path.capacity())) {
+        return sx::negative_error(SX_EBADF);
+    }
+    if (!vfs::truncate(proc.credentials, path, static_cast<size_t>(size))) {
+        const int error = vfs::last_error();
+        return sx::negative_error(static_cast<sx_status>(error != 0 ? error : SX_EIO));
+    }
+    return 0;
+}
+
+int native_query_file(Process& proc, uint64_t handle, uint64_t user_out, size_t size) {
+    object::IoObject* file = file_handle(proc, handle, object::access_query);
+    if (file == nullptr) {
+        return sx::negative_error(SX_EBADF);
+    }
+    if (size < SXN_FILE_INFO_V1_SIZE) {
+        return sx::negative_error(SX_EINVAL);
+    }
+    sxn_file_info info;
+    fill_file_info(*file->node, info);
+    return copy_versioned_out(proc, user_out, size, info);
 }
 
 // The open file behind a SUN lock call: a regular file, open for reading or
@@ -607,6 +689,20 @@ int native_delete_path(Process& proc, uint64_t user_path) {
     }
     const int deleted = process::unlink_path(proc, path);
     return deleted != 0 ? deleted : sync_volume_of(path);
+}
+
+int native_delete_directory(Process& proc, uint64_t user_path) {
+    vfs::PathBuffer path;
+    const sx_status status = native_absolute_path(proc, user_path, path);
+    if (status != sx::kStatusOk) {
+        return sx::negative_error(status);
+    }
+    // The root is never removable; rmdir_path would call it busy.
+    if (path[1] == '\0') {
+        return sx::negative_error(SX_EINVAL);
+    }
+    const int removed = process::rmdir_path(proc, path);
+    return removed != 0 ? removed : sync_volume_of(path);
 }
 
 /* Devices live under /dev; a native process names them without the
@@ -1736,6 +1832,18 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_DELETE_PATH:
             context->rax = static_cast<uint64_t>(native_delete_path(*caller, context->rdi));
+            return context;
+        case SXN_SYS_DELETE_DIRECTORY:
+            context->rax = static_cast<uint64_t>(native_delete_directory(*caller, context->rdi));
+            return context;
+        case SXN_SYS_SEEK_FILE:
+            context->rax = static_cast<uint64_t>(native_seek_file(*caller, context->rdi, context->rsi, context->rdx));
+            return context;
+        case SXN_SYS_SET_FILE_SIZE:
+            context->rax = static_cast<uint64_t>(native_set_file_size(*caller, context->rdi, context->rsi));
+            return context;
+        case SXN_SYS_QUERY_FILE:
+            context->rax = static_cast<uint64_t>(native_query_file(*caller, context->rdi, context->rsi, static_cast<size_t>(context->rdx)));
             return context;
         case SXN_SYS_OPEN_DEVICE:
             context->rax = static_cast<uint64_t>(native_open_device(*caller, context->rdi, static_cast<uint32_t>(context->rsi)));

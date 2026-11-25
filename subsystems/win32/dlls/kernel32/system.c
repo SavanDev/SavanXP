@@ -201,33 +201,31 @@ BOOL WINAPI TlsSetValue(DWORD dwTlsIndex, LPVOID lpTlsValue) {
 
 /* ---- Critical sections ----------------------------------------------------------- */
 
+/* ntdll's, as on Windows XP (RtlEnterCriticalSection and the rest). */
+__declspec(dllimport) u32 WINAPI RtlInitializeCriticalSection(LPCRITICAL_SECTION section);
+__declspec(dllimport) u32 WINAPI RtlDeleteCriticalSection(LPCRITICAL_SECTION section);
+__declspec(dllimport) u32 WINAPI RtlEnterCriticalSection(LPCRITICAL_SECTION section);
+__declspec(dllimport) u32 WINAPI RtlLeaveCriticalSection(LPCRITICAL_SECTION section);
+__declspec(dllimport) int WINAPI RtlTryEnterCriticalSection(LPCRITICAL_SECTION section);
+
 void WINAPI InitializeCriticalSection(LPCRITICAL_SECTION lpCriticalSection) {
-    lpCriticalSection->DebugInfo = NULL;
-    lpCriticalSection->LockCount = -1;
-    lpCriticalSection->RecursionCount = 0;
-    lpCriticalSection->OwningThread = NULL;
-    lpCriticalSection->LockSemaphore = NULL;
-    lpCriticalSection->SpinCount = 0;
+    RtlInitializeCriticalSection(lpCriticalSection);
 }
 
 void WINAPI DeleteCriticalSection(LPCRITICAL_SECTION lpCriticalSection) {
-    (void)lpCriticalSection;
+    RtlDeleteCriticalSection(lpCriticalSection);
 }
 
 void WINAPI EnterCriticalSection(LPCRITICAL_SECTION lpCriticalSection) {
-    ++lpCriticalSection->LockCount;
-    ++lpCriticalSection->RecursionCount;
-    lpCriticalSection->OwningThread = (HANDLE)GetCurrentThreadId();
+    RtlEnterCriticalSection(lpCriticalSection);
 }
 
 void WINAPI LeaveCriticalSection(LPCRITICAL_SECTION lpCriticalSection) {
-    if (lpCriticalSection->RecursionCount <= 0) {
-        return;
-    }
-    --lpCriticalSection->LockCount;
-    if (--lpCriticalSection->RecursionCount == 0) {
-        lpCriticalSection->OwningThread = NULL;
-    }
+    RtlLeaveCriticalSection(lpCriticalSection);
+}
+
+BOOL WINAPI TryEnterCriticalSection(LPCRITICAL_SECTION lpCriticalSection) {
+    return RtlTryEnterCriticalSection(lpCriticalSection);
 }
 
 /* ---- Interlocked operations ---------------------------------------------------- */
@@ -246,5 +244,15 @@ LONG WINAPI InterlockedDecrement(LPLONG lpAddend) {
 
 LONG WINAPI InterlockedExchange(LPLONG Target, LONG Value) {
     __asm__ volatile("xchgl %0, %1" : "+r"(Value), "+m"(*Target) : : "memory");
+    return Value;
+}
+
+LONG WINAPI InterlockedCompareExchange(LPLONG Destination, LONG Exchange, LONG Comparand) {
+    __asm__ volatile("lock cmpxchgl %2, %1" : "+a"(Comparand), "+m"(*Destination) : "r"(Exchange) : "memory");
+    return Comparand;
+}
+
+LONG WINAPI InterlockedExchangeAdd(LPLONG Addend, LONG Value) {
+    __asm__ volatile("lock xaddl %0, %1" : "+r"(Value), "+m"(*Addend) : : "memory");
     return Value;
 }

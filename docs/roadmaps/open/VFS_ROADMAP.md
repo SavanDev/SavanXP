@@ -53,7 +53,7 @@ The implementation baseline is `kernel/vfs.cpp`, `kernel/fs.cpp`, their headers,
 | Durability | `fsync` and `sync` are one whole-system barrier; a deferred write error is the `EIO` of whoever synchronizes next, not of the handle that wrote |
 | Mappings | File-backed sections are private copies of one content generation; no shared writable mapping and no page cache coherent with writes |
 | Large I/O | Internal offsets are `size_t`, but the seek position and transfer counts return through `int`, and the stat ABI carries a 32-bit size |
-| Native surface | SUN opens and reads an existing regular file (`sxn_open_file`, `sxn_read`), saves a whole file of up to 4096 bytes (`sxn_write_file`), queries a path (`sxn_query_path`), lists a directory (`sxn_open_directory`, `sxn_read_directory`), streams a new file (`sxn_create_file`, `sxn_write`, `sxn_flush_file`), makes a directory, renames and deletes a file (`sxn_make_directory`, `sxn_rename_path`, `sxn_delete_path`); no seek or rmdir. Native dispatch and POSIX translation open, read, write, seek and close through `sx::` (`kernel/sx_file.cpp`) |
+| Native surface | SUN opens and reads an existing regular file (`sxn_open_file`, `sxn_read`), saves a whole file of up to 4096 bytes (`sxn_write_file`), queries a path (`sxn_query_path`), lists a directory (`sxn_open_directory`, `sxn_read_directory`), streams a new file (`sxn_create_file`, `sxn_write`, `sxn_flush_file`), makes a directory, renames and deletes a file (`sxn_make_directory`, `sxn_rename_path`, `sxn_delete_path`), opens a file to write in place, seeks with a 64-bit position, sets and queries an open file's size, and removes an empty directory (`sxn_seek_file`, `sxn_set_file_size`, `sxn_query_file`, `sxn_delete_directory`). Native dispatch and POSIX translation open, read, write, seek and close through `sx::` (`kernel/sx_file.cpp`) |
 
 The contract these rows describe is
 [`FILESYSTEMS.md`](../../kernel/FILESYSTEMS.md#the-file-contract), landed with
@@ -68,7 +68,7 @@ starts. A driver test that stubs the VFS does not qualify the real VFS path.
 
 | Phase | Landed | Still open |
 | --- | --- | --- |
-| VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions; one open/read/write/seek/close path in `sx::` (`kernel/sx_file.cpp`) with `sx::IoResult`, called by native dispatch and POSIX translation (step 1) | Path operations (stat, unlink, rename, mkdir...) still return through `vfs::last_error()`; 64-bit positions and sizes; the rest of the native surface |
+| VFS-A | `fs::Status` from every driver operation; read errors distinct from EOF; `sxn_open_file`/`sxn_read` and `sxn_write_file` with their consumers and `nativetest` assertions; one open/read/write/seek/close path in `sx::` (`kernel/sx_file.cpp`) with `sx::IoResult`, called by native dispatch and POSIX translation (step 1); the native seek, size, query and rmdir (slice 31) | Path operations (stat, unlink, rename, mkdir...) still return through `vfs::last_error()`; 64-bit positions and sizes; the rest of the native surface |
 | VFS-B | Unlink while open; `release` for the last holder; generation-checked slot reuse, held over 5000 create/delete rounds by `sxfs-vfs-test`; references counted on the vnode by handles and file-backed sections, replacing the holder probe; driver `open`/`close` at the first and last holder, with FAT keeping its file open; the POSIX current directory held | Entries apart from file identity; driver state per opening; directory cursors |
 | VFS-C | Slice 1: directories published on demand (`vfs::install_volume_directory`, `fs::Driver::populate`/`forget`), FAT first. Slice 2: the bounded cache (`vfs::trim`). Slice 3: SxFS on demand; an SxFS tree larger than the pool is read whole in `sxfs-vfs-test`. Slice 4: name comparison by the driver, FAT case-insensitive; 1023-byte paths and 255-byte names (`fat-vfs-test`); `ENAMETOOLONG`. Slice 5a: enumeration cursors | Directory-relative resolution (5b) |
 | VFS-D | Replacing rename, `EXDEV`, `fsync` as the global barrier, the durable-update protocol cut at every sector on SxFS | Exclusive create, append per write, positioned I/O, per-file barriers, errors delivered to the writer, validation before every driver mutation |
@@ -126,8 +126,11 @@ settings through the same save. Metadata queries, streaming create/write and
 directory enumeration landed together with the SUN file dialog and Log
 Viewer's Save Log... as their consumers; `sxn_make_directory` and the
 replacing `sxn_rename_path` with SxBASIC's IDE (New Project, and a safe Save).
-What is missing, each slice with a consumer of its own: seek, 64-bit
-positions through the handles, and unlink and rmdir. The existing
+Seek with a 64-bit position, the size of an open file, its query and rmdir
+landed with `winhost`'s files as their consumer (slice 31 of
+[KERNEL_NATIVE_API.md](../../kernel/KERNEL_NATIVE_API.md)). What is missing,
+each slice with a consumer of its own: 64-bit sizes through the drivers, and
+setting a file's times. The existing
 `cat` is still a planned consumer of sequential reads and `cp` of streaming
 writes: migrate each separately, preserving its command name and
 behavior, rather than adding a new POSIX utility to exercise a missing native

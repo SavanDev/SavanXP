@@ -44,7 +44,12 @@
  */
 #define _GNU_SOURCE
 #include <asm/ldt.h>
+#include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <linux/futex.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -68,20 +73,29 @@
 #define TRAMPOLINE_LANDING_SERVICE 0x30u
 #define TRAMPOLINE_SVC_RET32 0x40u
 #define LINUX_CODE64 0x33u
-#define TEB_LDT_ENTRY 0
-#define TEB_SELECTOR ((TEB_LDT_ENTRY << 3) | 4 | 3) /* LDT, ring 3 */
+/* A guest thread's TEB is LDT entry `index`, ring 3. */
+#define TEB_SELECTOR(index) ((uint16_t)(((index) << 3) | 4 | 3))
 
-/* State shared with gate_x86_64.S. */
-uint64_t sxw_host_rsp;
-uint64_t sxw_host_fsbase;
-uint64_t sxw_guest_esp;
+/* A guest thread's gate state, shared with gate_x86_64.S: 64 bytes each,
+ * found by the index in its TEB. */
+typedef struct gate_state {
+    uint64_t host_rsp;
+    uint64_t host_fsbase;
+    uint64_t guest_esp;
+    uint32_t guest_regs[4];
+    uint32_t result;
+    uint32_t leave;
+    uint16_t teb_selector;
+    uint16_t reserved0[3];
+    uint32_t index;
+    uint32_t reserved1;
+} gate_state;
+_Static_assert(sizeof(gate_state) == 64, "gate_x86_64.S assumes 64-byte states");
+
+gate_state sxw_gates[SXW_MAX_THREADS];
 uint64_t sxw_svc_ret32;
-uint32_t sxw_guest_regs[4];
-uint32_t sxw_result;
-uint32_t sxw_exit_requested;
-uint16_t sxw_teb_selector = TEB_SELECTOR;
 
-uint32_t sxw_gate_enter(uint32_t entry, uint32_t guest_esp);
+uint32_t sxw_gate_enter(uint32_t entry, uint32_t guest_esp, gate_state *state);
 void sxw_gate_return(void);
 void sxw_gate_service(void);
 
@@ -90,7 +104,6 @@ static const char *g_dll_dir;
 static char g_exe_dir[4096];
 static uint64_t g_live_bytes;
 static int g_open_files;
-static uint32_t g_exit_status;
 
 /* ---- Platform ----------------------------------------------------------- */
 
@@ -240,6 +253,208 @@ static int save_registry_file(void *context, const char *text, size_t length) {
     }
     return close(fd) == 0 ? 0 : 1;
 }
+
+/* ---- Files ----------------------------------------------------------------- */
+
+static int fs_status(int error) {
+    switch (error) {
+    case ENOENT: return SXW_FS_NOT_FOUND;
+    case EEXIST: return SXW_FS_EXISTS;
+    case EACCES:
+    case EPERM:
+    case EROFS: return SXW_FS_DENIED;
+    case ENOTDIR: return SXW_FS_NOT_DIRECTORY;
+    case EISDIR: return SXW_FS_IS_DIRECTORY;
+    case ENOTEMPTY: return SXW_FS_NOT_EMPTY;
+    case EBUSY: return SXW_FS_BUSY;
+    case ENOSPC: return SXW_FS_FULL;
+    case EINVAL:
+    case ENAMETOOLONG: return SXW_FS_INVALID;
+    default: return SXW_FS_IO;
+    }
+}
+
+static void host_info(const struct stat *st, const char *path, sxw_host_info *info) {
+    info->type = S_ISDIR(st->st_mode) ? SXW_HOST_DIRECTORY : S_ISREG(st->st_mode) ? SXW_HOST_FILE : SXW_HOST_OTHER;
+    info->writable = path != NULL ? access(path, W_OK) == 0 : (st->st_mode & S_IWUSR) != 0;
+    info->size = S_ISREG(st->st_mode) ? (uint64_t)st->st_size : 0u;
+    info->mtime = st->st_mtime < 0 ? 0u : (uint64_t)st->st_mtime;
+}
+
+static int fs_stat(void *context, const char *path, sxw_host_info *info) {
+    (void)context;
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        return fs_status(errno);
+    }
+    host_info(&st, path, info);
+    return SXW_FS_OK;
+}
+
+static int fs_open(void *context, const char *path, uint32_t mode, long *file) {
+    (void)context;
+    int flags = O_CLOEXEC;
+    flags |= (mode & SXW_OPEN_READ) != 0 && (mode & SXW_OPEN_WRITE) != 0 ? O_RDWR
+             : (mode & SXW_OPEN_WRITE) != 0                             ? O_WRONLY
+                                                                         : O_RDONLY;
+    if ((mode & SXW_OPEN_CREATE) != 0) {
+        flags |= O_CREAT | ((mode & SXW_OPEN_NEW) != 0 ? O_EXCL : O_TRUNC);
+        if ((flags & O_ACCMODE) == O_RDONLY) {
+            flags = (flags & ~O_ACCMODE) | O_RDWR;
+        }
+    }
+    const int fd = open(path, flags, 0644);
+    if (fd < 0) {
+        return fs_status(errno);
+    }
+    *file = fd;
+    return SXW_FS_OK;
+}
+
+static int fs_read(void *context, long file, uint64_t position, void *buffer, uint32_t count, uint32_t *done) {
+    (void)context;
+    *done = 0;
+    while (*done < count) {
+        const ssize_t n = pread((int)file, (char *)buffer + *done, count - *done, (off_t)(position + *done));
+        if (n < 0) {
+            return fs_status(errno);
+        }
+        if (n == 0) {
+            break;
+        }
+        *done += (uint32_t)n;
+    }
+    return SXW_FS_OK;
+}
+
+static int fs_write(void *context, long file, uint64_t position, const void *buffer, uint32_t count,
+                    uint32_t *done) {
+    (void)context;
+    *done = 0;
+    while (*done < count) {
+        const ssize_t n = pwrite((int)file, (const char *)buffer + *done, count - *done, (off_t)(position + *done));
+        if (n <= 0) {
+            return n < 0 ? fs_status(errno) : SXW_FS_IO;
+        }
+        *done += (uint32_t)n;
+    }
+    return SXW_FS_OK;
+}
+
+static int fs_set_size(void *context, long file, uint64_t size) {
+    (void)context;
+    return ftruncate((int)file, (off_t)size) == 0 ? SXW_FS_OK : fs_status(errno);
+}
+
+static int fs_query(void *context, long file, sxw_host_info *info) {
+    (void)context;
+    struct stat st;
+    if (fstat((int)file, &st) != 0) {
+        return fs_status(errno);
+    }
+    host_info(&st, NULL, info);
+    return SXW_FS_OK;
+}
+
+static int fs_flush(void *context, long file) {
+    (void)context;
+    return fsync((int)file) == 0 ? SXW_FS_OK : fs_status(errno);
+}
+
+static void fs_close(void *context, long file) {
+    (void)context;
+    close((int)file);
+}
+
+static int fs_make_directory(void *context, const char *path) {
+    (void)context;
+    return mkdir(path, 0755) == 0 ? SXW_FS_OK : fs_status(errno);
+}
+
+static int fs_remove_directory(void *context, const char *path) {
+    (void)context;
+    return rmdir(path) == 0 ? SXW_FS_OK : fs_status(errno == EEXIST ? ENOTEMPTY : errno);
+}
+
+static int fs_remove_file(void *context, const char *path) {
+    (void)context;
+    return unlink(path) == 0 ? SXW_FS_OK : fs_status(errno);
+}
+
+static int fs_rename(void *context, const char *old_path, const char *new_path) {
+    (void)context;
+    return rename(old_path, new_path) == 0 ? SXW_FS_OK : fs_status(errno);
+}
+
+typedef struct listing {
+    DIR *dir;
+    char path[SXW_HOST_PATH];
+} listing;
+
+static int fs_list_open(void *context, const char *path, long *list) {
+    (void)context;
+    listing *l = calloc(1, sizeof(*l));
+    if (l == NULL) {
+        return SXW_FS_IO;
+    }
+    l->dir = opendir(path);
+    if (l->dir == NULL) {
+        const int status = fs_status(errno);
+        free(l);
+        return status;
+    }
+    snprintf(l->path, sizeof(l->path), "%s", strcmp(path, "/") == 0 ? "" : path);
+    *list = (long)(intptr_t)l;
+    return SXW_FS_OK;
+}
+
+static int fs_list_next(void *context, long list, char *name, sxw_host_info *info) {
+    (void)context;
+    listing *l = (listing *)(intptr_t)list;
+    for (;;) {
+        const struct dirent *e = readdir(l->dir);
+        if (e == NULL) {
+            return 0;
+        }
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0 || strlen(e->d_name) > 255u) {
+            continue;
+        }
+        char full[SXW_HOST_PATH + 256];
+        snprintf(full, sizeof(full), "%s/%s", l->path, e->d_name);
+        struct stat st;
+        if (stat(full, &st) != 0) {
+            continue;
+        }
+        host_info(&st, full, info);
+        snprintf(name, 256, "%s", e->d_name);
+        return 1;
+    }
+}
+
+static void fs_list_close(void *context, long list) {
+    (void)context;
+    listing *l = (listing *)(intptr_t)list;
+    closedir(l->dir);
+    free(l);
+}
+
+static const sxw_file_platform g_file_platform = {
+    .stat = fs_stat,
+    .open = fs_open,
+    .read = fs_read,
+    .write = fs_write,
+    .set_size = fs_set_size,
+    .query = fs_query,
+    .flush = fs_flush,
+    .close = fs_close,
+    .make_directory = fs_make_directory,
+    .remove_directory = fs_remove_directory,
+    .remove_file = fs_remove_file,
+    .rename = fs_rename,
+    .list_open = fs_list_open,
+    .list_next = fs_list_next,
+    .list_close = fs_list_close,
+};
 
 /* ---- Windows and input --------------------------------------------------- */
 
@@ -641,14 +856,12 @@ static sxw_services g_services = {
     .now = now_seconds,
     .registry = &g_registry,
     .windows = &g_window_platform,
+    .files = &g_file_platform,
 };
 
-uint32_t sxw_host_service(uint64_t guest_esp) {
-    uint32_t result = sxw_service(&g_services, (uint32_t)guest_esp);
-    if (g_services.exit_requested) {
-        g_exit_status = g_services.exit_status;
-        sxw_exit_requested = 1;
-    }
+uint32_t sxw_host_service(gate_state *gate) {
+    const uint32_t result = sxw_service(&g_services, gate->index, (uint32_t)gate->guest_esp);
+    gate->leave = (uint32_t)sxw_should_leave(&g_services, gate->index);
     return result;
 }
 
@@ -727,10 +940,10 @@ static int build_trampoline(void) {
     return mprotect(t, 0x1000, PROT_READ | PROT_EXEC) == 0 ? 0 : 1;
 }
 
-static int set_teb_segment(uint32_t teb) {
+static int set_teb_segment(uint32_t index, uint32_t teb) {
     struct user_desc d;
     memset(&d, 0, sizeof(d));
-    d.entry_number = TEB_LDT_ENTRY;
+    d.entry_number = index;
     d.base_addr = teb;
     d.limit = SXW_TEB_SIZE - 1;
     d.seg_32bit = 1;
@@ -741,6 +954,80 @@ static int set_teb_segment(uint32_t teb) {
     d.useable = 1;
     return syscall(SYS_modify_ldt, 1, &d, sizeof(d)) == 0 ? 0 : 1;
 }
+
+/* ---- Threads ---------------------------------------------------------------- */
+
+static void wait_word(void *context, volatile uint32_t *word, uint32_t expected, uint32_t timeout) {
+    (void)context;
+    struct timespec limit = {(time_t)(timeout / 1000u), (long)(timeout % 1000u) * 1000000L};
+    syscall(SYS_futex, word, FUTEX_WAIT_PRIVATE, expected, timeout == SXW_INFINITE ? NULL : &limit, NULL, 0);
+}
+
+static void wake_word(void *context, volatile uint32_t *word) {
+    (void)context;
+    syscall(SYS_futex, word, FUTEX_WAKE_PRIVATE, INT_MAX, NULL, NULL, 0);
+}
+
+static uint32_t milliseconds(void *context) {
+    (void)context;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint32_t)((uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u);
+}
+
+/* The process ends here, from whichever thread ended it. */
+static __attribute__((noreturn)) void finish_process(void) {
+    fprintf(stderr, "win32: exit status 0x%08x\n", g_services.exit_status);
+    fflush(stderr);
+    _exit((int)(g_services.exit_status & 0xffu));
+}
+
+/* A gate state for the calling host thread and the guest thread at index. */
+static int prepare_gate(uint32_t index, uint32_t teb) {
+    gate_state *g = &sxw_gates[index];
+    g->index = index;
+    g->teb_selector = TEB_SELECTOR(index);
+    g->leave = 0;
+    return syscall(SYS_arch_prctl, 0x1003 /* ARCH_GET_FS */, &g->host_fsbase) == 0 && set_teb_segment(index, teb) == 0
+               ? 0
+               : 1;
+}
+
+static void enter_guest(void *context, uint32_t index, uint32_t entry, uint32_t esp) {
+    (void)context;
+    if (prepare_gate(index, g_services.threads[index].teb) != 0) {
+        fprintf(stderr, "win32: cannot set up the gate for a thread\n");
+        _exit(126);
+    }
+    put32((uint8_t *)(uintptr_t)esp, TRAMPOLINE + TRAMPOLINE_BACK32);
+    sxw_gate_enter(entry, esp, &sxw_gates[index]);
+}
+
+static void *host_thread(void *argument) {
+    const uint32_t index = (uint32_t)(uintptr_t)argument;
+    if (sxw_thread_main(&g_services, index, enter_guest, NULL)) {
+        finish_process();
+    }
+    return NULL;
+}
+
+static int start_thread(void *context, uint32_t index) {
+    (void)context;
+    pthread_t thread;
+    pthread_attr_t attributes;
+    pthread_attr_init(&attributes);
+    pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+    const int failed = pthread_create(&thread, &attributes, host_thread, (void *)(uintptr_t)index);
+    pthread_attr_destroy(&attributes);
+    return failed != 0;
+}
+
+static const sxw_thread_platform g_thread_platform = {
+    .start = start_thread,
+    .wait_word = wait_word,
+    .wake_word = wake_word,
+    .milliseconds = milliseconds,
+};
 
 static void usage(void) {
     fprintf(stderr, "usage: win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS] [--input SCRIPT] "
@@ -815,8 +1102,7 @@ int main(int argc, char **argv) {
         snprintf(g_exe_dir, sizeof(g_exe_dir), "%.*s", (int)(slash - exe), exe);
     }
 
-    if (syscall(SYS_arch_prctl, 0x1003 /* ARCH_GET_FS */, &sxw_host_fsbase) != 0 ||
-        build_trampoline() != 0) {
+    if (build_trampoline() != 0) {
         fprintf(stderr, "win32: cannot set up the gate\n");
         return 126;
     }
@@ -845,7 +1131,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "win32: %d files left open after the load\n", g_open_files);
         return 124;
     }
-    if (set_teb_segment(g_process.teb) != 0) {
+    if (prepare_gate(0, g_process.teb) != 0) {
         fprintf(stderr, "win32: modify_ldt failed\n");
         return 126;
     }
@@ -863,13 +1149,19 @@ int main(int argc, char **argv) {
     uint32_t esp = g_process.stack_top - 16u;
     put32((uint8_t *)(uintptr_t)esp, TRAMPOLINE + TRAMPOLINE_BACK32);
     put32((uint8_t *)(uintptr_t)(esp + 4u), g_process.start_block);
+    g_services.thread_platform = &g_thread_platform;
     sxw_services_start(&g_services);
-    uint32_t returned = sxw_gate_enter(g_process.start_entry, esp);
-    if (!sxw_exit_requested) {
+    uint32_t returned = sxw_gate_enter(g_process.start_entry, esp, &sxw_gates[0]);
+    if (!g_services.exit_requested) {
+        if (g_services.threads[0].leaving) {
+            /* The first thread ended and others run on. */
+            sxw_turn_give(&g_services);
+            pthread_exit(NULL);
+        }
         fprintf(stderr, "win32: SxwProcessStart returned 0x%08x without exiting\n", returned);
         return 125;
     }
-    fprintf(stderr, "win32: exit status 0x%08x\n", g_exit_status);
-    sxw_unload(&g_process);
-    return (int)(g_exit_status & 0xffu);
+    fprintf(stderr, "win32: exit status 0x%08x\n", g_services.exit_status);
+    fflush(stderr);
+    _exit((int)(g_services.exit_status & 0xffu));
 }

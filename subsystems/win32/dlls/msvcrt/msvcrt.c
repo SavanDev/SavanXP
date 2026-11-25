@@ -543,3 +543,48 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     }
     return TRUE;
 }
+
+/* ---- Threads ---------------------------------------------------------------------- */
+
+typedef unsigned(__stdcall *begin_start)(void *argument);
+
+typedef struct begun {
+    begin_start start;
+    void *argument;
+} begun;
+
+__declspec(dllimport) int WINAPI SxwHeapFree(void *pointer);
+__declspec(dllimport) HANDLE WINAPI CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stack,
+                                                 DWORD(WINAPI *start)(LPVOID), LPVOID argument, DWORD flags,
+                                                 LPDWORD id);
+__declspec(dllimport) __declspec(noreturn) void WINAPI ExitThread(DWORD code);
+
+/* The C runtime keeps no data per thread here, so a thread it starts is a
+ * kernel32 thread whose function's result is its exit code. */
+static DWORD WINAPI begun_thread(LPVOID parameter) {
+    begun what = *(begun *)parameter;
+    SxwHeapFree(parameter);
+    ExitThread(what.start(what.argument));
+}
+
+unsigned long __cdecl _beginthreadex(void *security, unsigned stack_size, begin_start start, void *argument,
+                                     unsigned flags, unsigned *thread_id) {
+    if (start == 0) {
+        return 0;
+    }
+    begun *what = SxwHeapAllocate(sizeof(begun), 0);
+    if (what == 0) {
+        return 0;
+    }
+    what->start = start;
+    what->argument = argument;
+    HANDLE thread = CreateThread(security, stack_size, begun_thread, what, flags, (LPDWORD)thread_id);
+    if (thread == NULL) {
+        SxwHeapFree(what);
+    }
+    return (unsigned long)thread;
+}
+
+void __cdecl _endthreadex(unsigned code) {
+    ExitThread(code);
+}

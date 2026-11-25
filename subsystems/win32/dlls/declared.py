@@ -95,11 +95,16 @@ for index, (name, args, result) in enumerate(entries):
     stdcall = 0 if args == "cdecl" else 1
     out.append(f'sxw_declared sxw_declared_{index} = {{0, {stdcall}, "{dll}!{name}"}};')
     ret = "ret" if args == "cdecl" else f"ret ${args}"
+    # A stdcall C name carries its argument bytes, as the compiler decorates
+    # it (_Name@8), so that a program built against the import library links.
+    sym = symbol(name)
+    if stdcall and not name.startswith("?"):
+        sym = f'"_{name}@{args}"'
     out.append(
         '__asm__(".text\\n.globl {sym}\\n{sym}:\\n'
         '\\tpushl $_sxw_declared_{i}\\n\\tcall _sxw_declared_hit\\n\\taddl $4, %esp\\n'
         '\\tmovl ${res}, %eax\\n\\t{ret}\\n");'.format(
-            sym=symbol(name).replace('"', '\\"'), i=index, res=hex(result), ret=ret))
+            sym=sym.replace('"', '\\"'), i=index, res=hex(result), ret=ret))
 with open(out_c, "w", encoding="utf-8") as f:
     f.write("\n".join(out) + "\n")
 

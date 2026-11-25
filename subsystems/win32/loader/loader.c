@@ -466,16 +466,17 @@ typedef struct tls_entry {
     pe_tls tls;
 } tls_entry;
 
-static int setup_tls(sxw_process *p, uint32_t teb) {
-    tls_entry entries[SXW_MAX_MODULES];
-    uint32_t count = 0;
-    uint32_t total = 0;
+/* The modules with static TLS, and the bytes their blocks take. -1 on a
+ * malformed directory. */
+static int tls_layout(sxw_process *p, tls_entry *entries, uint32_t *count, uint32_t *total) {
+    *count = 0;
+    *total = 0;
     for (uint32_t i = 0; i < p->module_count; ++i) {
         const sxw_module *m = &p->modules[i];
         pe_mapped mapped = mapped_of(m);
         pe_error error;
         int present = 0;
-        if (pe_read_tls(&m->image, &mapped, m->base, &entries[count].tls, &present, &error) != PE_OK) {
+        if (pe_read_tls(&m->image, &mapped, m->base, &entries[*count].tls, &present, &error) != PE_OK) {
             d_pe(p, m->name, &error);
             return -1;
         }
@@ -489,7 +490,7 @@ static int setup_tls(sxw_process *p, uint32_t teb) {
                 d_put(p, ": too many TLS callbacks");
                 return -1;
             }
-            if (pe_tls_callback(&m->image, &mapped, m->base, &entries[count].tls, k, &rva, &error) !=
+            if (pe_tls_callback(&m->image, &mapped, m->base, &entries[*count].tls, k, &rva, &error) !=
                 PE_OK) {
                 d_pe(p, m->name, &error);
                 return -1;
@@ -498,9 +499,43 @@ static int setup_tls(sxw_process *p, uint32_t teb) {
                 break;
             }
         }
-        entries[count].module = i;
-        total += align_up(entries[count].tls.template_size + entries[count].tls.zero_fill, 16u);
-        ++count;
+        entries[*count].module = i;
+        *total += align_up(entries[*count].tls.template_size + entries[*count].tls.zero_fill, 16u);
+        ++*count;
+    }
+    return 0;
+}
+
+/* A thread's TLS at area (a page for the pointer array, then each module's
+ * block, indexed in load order), filled from the templates; with
+ * write_index, each image's index is written too (once, for the process). */
+static void tls_fill(sxw_process *p, const tls_entry *entries, uint32_t count, uint32_t area, uint32_t teb,
+                     int write_index) {
+    uint32_t block = area + PE_PAGE_SIZE;
+    for (uint32_t k = 0; k < count; ++k) {
+        const sxw_module *m = &p->modules[entries[k].module];
+        const pe_tls *tls = &entries[k].tls;
+        if (write_index) {
+            pe_mapped mapped = mapped_of(m);
+            pe_write_u32(&mapped, tls->index_rva, k);
+        }
+        const uint8_t *source = guest(m->base + tls->template_rva);
+        uint8_t *target = guest(block);
+        for (uint32_t b = 0; b < tls->template_size; ++b) {
+            target[b] = source[b];
+        }
+        put32(area + 4u * k, block);
+        block += align_up(tls->template_size + tls->zero_fill, 16u);
+    }
+    put32(teb + SXW_TEB_TLS_POINTER, area);
+}
+
+static int setup_tls(sxw_process *p, uint32_t teb) {
+    tls_entry entries[SXW_MAX_MODULES];
+    uint32_t count = 0;
+    uint32_t total = 0;
+    if (tls_layout(p, entries, &count, &total) != 0) {
+        return -1;
     }
     if (count == 0u) {
         return 0;
@@ -509,22 +544,47 @@ static int setup_tls(sxw_process *p, uint32_t teb) {
     if (map_region(p, PE_PAGE_SIZE + total, &region) != 0) {
         return -1;
     }
-    /* The pointer array, then each module's block, indexed in load order. */
-    uint32_t block = region + PE_PAGE_SIZE;
-    for (uint32_t k = 0; k < count; ++k) {
-        const sxw_module *m = &p->modules[entries[k].module];
-        const pe_tls *tls = &entries[k].tls;
-        pe_mapped mapped = mapped_of(m);
-        pe_write_u32(&mapped, tls->index_rva, k);
-        const uint8_t *source = guest(m->base + tls->template_rva);
-        uint8_t *target = guest(block);
-        for (uint32_t b = 0; b < tls->template_size; ++b) {
-            target[b] = source[b];
-        }
-        put32(region + 4u * k, block);
-        block += align_up(tls->template_size + tls->zero_fill, 16u);
+    tls_fill(p, entries, count, region, teb, 1);
+    return 0;
+}
+
+/* The fields of a TEB that every thread's has the same way. */
+static void fill_teb(sxw_process *p, uint32_t teb, uint32_t stack_low, uint32_t stack_top) {
+    put32(teb + SXW_TEB_EXCEPTION_LIST, 0xffffffffu);
+    put32(teb + SXW_TEB_STACK_BASE, stack_top);
+    put32(teb + SXW_TEB_STACK_LIMIT, stack_low);
+    put32(teb + SXW_TEB_SELF, teb);
+    put32(teb + SXW_TEB_PEB, p->peb);
+    put32(teb + SXW_TEB_GATE, p->platform.gate);
+}
+
+int sxw_new_thread(sxw_process *p, uint32_t stack, sxw_thread_block *out) {
+    d_reset(p);
+    if (stack == 0u) {
+        stack = p->modules[0].image.size_of_stack_reserve;
     }
-    put32(teb + SXW_TEB_TLS_POINTER, region);
+    stack = stack < SXW_MIN_STACK ? SXW_MIN_STACK : stack > SXW_MAX_STACK ? SXW_MAX_STACK : stack;
+    stack = align_up(stack, SXW_GRANULARITY);
+    tls_entry entries[SXW_MAX_MODULES];
+    uint32_t count = 0;
+    uint32_t total = 0;
+    if (tls_layout(p, entries, &count, &total) != 0) {
+        return -1;
+    }
+    /* The stack, the TEB, then the TLS area: one region, one mapping. */
+    const uint32_t tls = count != 0u ? align_up(PE_PAGE_SIZE + total, PE_PAGE_SIZE) : 0u;
+    uint32_t region;
+    if (map_region(p, stack + PE_PAGE_SIZE + tls, &region) != 0) {
+        return -1;
+    }
+    out->region = region;
+    out->stack_low = region;
+    out->stack_top = region + stack;
+    out->teb = region + stack;
+    fill_teb(p, out->teb, out->stack_low, out->stack_top);
+    if (count != 0u) {
+        tls_fill(p, entries, count, out->teb + PE_PAGE_SIZE, out->teb, 0);
+    }
     return 0;
 }
 
@@ -669,12 +729,7 @@ static int setup_process(sxw_process *p, const char *exe_path, const char *argum
     p->peb = block + PE_PAGE_SIZE;
     p->start_block = block + 2u * PE_PAGE_SIZE;
 
-    put32(p->teb + SXW_TEB_EXCEPTION_LIST, 0xffffffffu);
-    put32(p->teb + SXW_TEB_STACK_BASE, p->stack_top);
-    put32(p->teb + SXW_TEB_STACK_LIMIT, p->stack_low);
-    put32(p->teb + SXW_TEB_SELF, p->teb);
-    put32(p->teb + SXW_TEB_PEB, p->peb);
-    put32(p->teb + SXW_TEB_GATE, p->platform.gate);
+    fill_teb(p, p->teb, p->stack_low, p->stack_top);
     put32(p->peb + SXW_PEB_IMAGE_BASE, exe->base);
     setup_parameters(p, exe_path, arguments);
 
@@ -771,6 +826,14 @@ int sxw_load(sxw_process *p, const sxw_platform *platform, const char *exe, cons
         return -1;
     }
     p->start_entry = nt->base + start.rva;
+    /* Where a second thread enters, when ntdll has it. */
+    pe_export thread_start;
+    found = 0;
+    p->thread_entry = pe_find_export_by_name(&nt->image, &nt_mapped, "SxwThreadStart", &thread_start, &found,
+                                             &error) == PE_OK &&
+                              found && thread_start.forwarder == 0
+                          ? nt->base + thread_start.rva
+                          : 0u;
 
     /* ntdll first, as on Windows; then the executable's graph. */
     uint32_t visited = 0;
@@ -920,4 +983,30 @@ int sxw_get_proc(sxw_process *p, uint32_t base, const char *name, uint16_t ordin
 int sxw_allocate_region(sxw_process *p, uint32_t size, uint32_t *base) {
     d_reset(p);
     return size == 0u ? -1 : map_region(p, size, base);
+}
+
+int sxw_free_region(sxw_process *p, uint32_t base) {
+    for (uint32_t i = 0; i < p->region_count; ++i) {
+        if (p->regions[i].base != base) {
+            continue;
+        }
+        /* Only a region allocated at run time: an image's runs, the stack
+         * and the process blocks are not the guest's to give back. */
+        for (uint32_t m = 0; m < p->module_count; ++m) {
+            const sxw_module *module = &p->modules[m];
+            if (base >= module->base && base - module->base < module->image.size_of_image) {
+                return -1;
+            }
+        }
+        if (base == p->stack_low || base == p->teb) {
+            return -1;
+        }
+        p->platform.unmap(p->platform.context, base, p->regions[i].size);
+        for (uint32_t k = i + 1u; k < p->region_count; ++k) {
+            p->regions[k - 1u] = p->regions[k];
+        }
+        --p->region_count;
+        return 0;
+    }
+    return -1;
 }

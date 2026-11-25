@@ -6,9 +6,11 @@ the subsystem's name. Its source tree keeps the API's name
 (`subsystems/win32/`), its code the `sxw_` prefix, and its host program is
 `winhost`.
 
-> **Status: W6 complete (2026-11-13). WordPad's WP2 complete (2026-11-23).**
+> **Status: W6 complete (2026-11-13). WordPad's WP4 complete (2026-11-25).**
 > The user's Windows XP [WordPad](#wordpad) and its MFC load and start up
-> to their first window. SSW handles [software exceptions](#software-exceptions).
+> to their first window. SSW handles [software exceptions](#software-exceptions),
+> runs [threads](#threads), and has [files](#files), heaps, atoms and
+> [the locale](#the-locale) as Windows XP has them.
 > This document describes what exists
 > under `subsystems/win32/`. The plan, the phases and the reasons behind them
 > are in the [Win32 roadmap](../roadmaps/open/WIN32_SUBSYSTEM_ROADMAP.md); the
@@ -206,9 +208,11 @@ versioned with `SXW_ABI_VERSION`. It is not the NT system call table.
 - **Services.** `ntdll!SxwService(number, arguments)` calls through that
   address with a flat array of 32-bit values. The host checks every guest
   address against the regions it mapped and never calls guest code. Version
-  7 has twenty-four services covering process exit, standard I/O, debug
-  output, time, heap regions, module lookup and loading, symbol lookup,
-  `GetModuleFileName`, exception handler validation, and the registry.
+  8 has forty-nine services covering process exit, standard I/O, debug
+  output, time, heap regions given and taken back, module lookup and
+  loading, symbol lookup, `GetModuleFileName`, exception handler validation,
+  the registry, [handles and files](#files), and [threads](#threads) with
+  the objects they wait on.
   The window services provide a millisecond clock and screen dimensions.
   They create, destroy, title and present top-level windows and wait for
   pointer, keyboard, resize and close events.
@@ -255,7 +259,7 @@ in Western European languages.
 | DLL | Exports |
 | --- | --- |
 | `ntdll.dll` | `RtlExitUserProcess`; private: `SxwProcessStart`, `SxwService`, `SxwLoadLibrary`, `SxwGetProcAddress`, `SxwFindModule`, `SxwTime`, `SxwHeapAllocate`, `SxwHeapFree`, `SxwHeapSize`, `SxwHeapResize`, `SxwHeapIsBlock` |
-| `kernel32.dll` | `ExitProcess`, `GetStdHandle`, `WriteFile`; Solitaire's nine (`GetModuleHandleA`, `GetStartupInfoA`, `GetCommandLineW`, `LocalAlloc`, `LocalFree`, `MulDiv`, `lstrlenW`, `LoadLibraryA`, `GetProcAddress`); and for WordPad's start-up: the last error, the version (`GetVersion`, `GetVersionExA`, `GetProcessVersion`), `SetErrorMode`, the current process and thread, `GetStartupInfoW`, the clocks (`GetTickCount`, `GetSystemTimeAsFileTime`, `QueryPerformanceCounter` and `Frequency`), TLS, critical sections, the three `Interlocked` functions, global and local memory with moveable blocks, the `lstr` family, `MultiByteToWideChar`, `WideCharToMultiByte`, modules (`GetModuleHandleW`, `LoadLibraryW`, `LoadLibraryExA` and `W`, `FreeLibrary`, `DisableThreadLibraryCalls`, `GetModuleFileNameW` and `A`, `GetSystemDirectoryA` and `W`), resources (`FindResourceW`, `FindResourceExW`, `LoadResource`, `LockResource`, `SizeofResource`, `FreeResource`) and the locale (`GetUserDefaultLCID`, `GetSystemDefaultLCID`, `GetThreadLocale`, `GetLocaleInfoW`); the full list is `dlls/kernel32/kernel32.def` |
+| `kernel32.dll` | `ExitProcess`, `GetStdHandle`, `WriteFile`; Solitaire's nine (`GetModuleHandleA`, `GetStartupInfoA`, `GetCommandLineW`, `LocalAlloc`, `LocalFree`, `MulDiv`, `lstrlenW`, `LoadLibraryA`, `GetProcAddress`); and for WordPad's start-up: the last error, the version (`GetVersion`, `GetVersionExA`, `GetProcessVersion`), `SetErrorMode`, the current process and thread, `GetStartupInfoW`, the clocks (`GetTickCount`, `GetSystemTimeAsFileTime`, `QueryPerformanceCounter` and `Frequency`), TLS, critical sections, the three `Interlocked` functions, global and local memory with moveable blocks, the `lstr` family, `MultiByteToWideChar`, `WideCharToMultiByte`, modules (`GetModuleHandleW`, `LoadLibraryW`, `LoadLibraryExA` and `W`, `FreeLibrary`, `DisableThreadLibraryCalls`, `GetModuleFileNameW` and `A`, `GetSystemDirectoryA` and `W`), resources (`FindResourceW`, `FindResourceExW`, `LoadResource`, `LockResource`, `SizeofResource`, `FreeResource`) and the locale (`GetUserDefaultLCID`, `GetSystemDefaultLCID`, `GetThreadLocale`, `GetLocaleInfoW`); for WP3 and WP4, threads and the objects they wait on, private heaps, files, searches and paths, atoms, the calendar, the date and time formats, `CompareStringW` and win.ini; the full list is `dlls/kernel32/kernel32.def` |
 | `msvcrt.dll` | Solitaire's eighteen; the Unicode start-up (`__wgetmainargs`, `_wcmdln`, `__p___argc`, `__p___wargv`), `_onexit`, `__dllonexit`, `setlocale`, `abort`, `_purecall`, `std::terminate`, `type_info`'s destructor; the heap (`malloc`, `calloc`, `realloc`, `free`, `_msize`, `_expand`) and the `mem` functions; wide strings, `wcstol`, `wcstoul`, `wcstod`, `_wtoi`, `_wtol`, `_itow`, `_ltow`, `_ultow`, `iswdigit`, `iswspace`, `strcmp`, `strcpy`; `abs`, `labs`, `fabs`, `floor`, `ceil`, `modf`, `_ftol`; `_vsnwprintf`, `_snwprintf`, `swprintf`, `vswprintf`; the full list is `dlls/msvcrt/msvcrt.def` |
 | `advapi32.dll` | Solitaire's six (`RegCreateKeyExW`, `RegOpenKeyExA`, `RegQueryValueExW`, `RegQueryValueExA`, `RegSetValueExW`, `RegCloseKey`) and `RegOpenKeyExW` |
 | `gdi32.dll` | The matrix's twenty-seven: `GetStockObject`, `SelectObject`, `DeleteObject`, `CreateSolidBrush`, `SetBrushOrgEx`, `PatBlt`, `SetROP2`, `MoveToEx`, `LineTo`, `LineDDA`, `SetPixel`, `GetPixel`, `PtVisible`, `GetDeviceCaps`, `CreateFontW`, `TextOutW`, `SetTextColor`, `SetBkColor`, `GetTextExtentPoint32W`, `GetTextMetricsW`, `CreateCompatibleDC`, `DeleteDC`, `CreateCompatibleBitmap`, `BitBlt`, `StretchBlt`, `GetObjectA`, `GetDCOrgEx`; for WordPad, `GetObjectW` and `CreateFontIndirectW`; private: `SxwCreateSurfaceDC`, `SxwSurfaceOfDC`, `SxwCreateBitmapFromDIB`, `SxwSetBkMode` |
@@ -347,11 +351,18 @@ debug output says which of those a run reached.
   10, as on Windows XP), free neighbours merged when they are in the same
   arena (two arenas the host maps side by side are still two regions, and a
   block across them would fail the host's range checks).
-- **One thread.** Thread-local storage has Windows XP's 64 slots in the TEB
-  (`TEB + 0xE10`). A critical section counts its owner's recursion and keeps
-  Windows XP's fields (`LockCount` -1 when free); nothing waits on one,
-  since nothing else runs. Threads come with WP3 of
-  [WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md).
+- **Threads** are [below](#threads). Thread-local storage has Windows XP's
+  64 slots in each TEB (`TEB + 0xE10`); critical sections are `ntdll`'s,
+  with Windows XP's fields and algorithm.
+- **Heaps.** `HeapCreate` makes a heap with arenas of its own, which
+  `HeapDestroy` gives back to the host (`SXW_SVC_FREE`); with a maximum size
+  it holds no more than that. `HeapAlloc`, `HeapFree`, `HeapReAlloc` and
+  `HeapSize` are `ntdll`'s `RtlAllocateHeap` and the rest, and like Windows
+  XP's only a failed `HeapAlloc` sets the last error (8).
+- **Atoms.** A local table and a global one, both this process's: Windows'
+  global table is the session's, and nothing here uses DDE. Names of 1 to
+  255 characters without case, reference counts, "#123" and `MAKEINTATOM`
+  as integer atoms below `0xC000`, and Windows XP's errors.
 - **The version** is Windows XP Professional SP3: `GetVersion` is
   `0x0A280105`, `GetVersionExA` 5.1.2600 "Service Pack 3".
 - **Strings and code pages.** The ANSI and OEM code pages are both
@@ -359,12 +370,7 @@ debug output says which of those a run reached.
   programs see); UTF-8 converts exactly. `lstrcmp` and `lstrcmpi` compare by
   code unit, `lstrcmpi` folding ASCII and Latin-1, where Windows uses the
   locale's collation ("a" sorts before "B" there, after it here).
-- **The locale** is one, Spanish (Argentina), LCID `0x2C0A`, the locale of
-  the Windows XP the profiles were taken from: SavanXP has no regional
-  setting yet. `GetLocaleInfoW` knows only the values a program has asked
-  for (the language, the code pages, metric measurement, the decimal and
-  thousands separators); any other is reported once on the debug output and
-  refused with `ERROR_INVALID_FLAGS`.
+- **The locale** is [below](#the-locale).
 - **Modules.** `GetModuleFileNameW` asks the host for the module's path, so
   it is `C:\...` under the guest's drive and `Z:\...` anywhere else; cut
   short, it is not terminated and the last error is left alone, as on
@@ -406,8 +412,13 @@ debug output says which of those a run reached.
 
 `user32` is the window manager of the guest; the host's window manager only
 frames its top-level windows. Everything is in guest memory: classes, the
-window tree, the message queue, invalid regions, timers, focus, capture and
-activation. One thread, so a sent message is a call to the window procedure.
+window tree, the message queues, invalid regions, timers, focus, capture and
+activation. A window belongs to the thread that made it: each thread has its
+own queue for what is posted to it and its windows and for their input, its
+windows' timers and paint come to it, and a message sent from another
+thread waits in its queue until it looks there, as on Windows (see
+[Threads](#threads)). Focus, capture and the active window are one for the
+process.
 The messages each call sends, and their order, are the ones Windows XP sent
 `window.exe` (see [Fixtures](#fixtures)); among them:
 
@@ -708,6 +719,10 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `window.exe` | A top-level window with a child, painted with the matrix's drawing calls (`PatBlt` with `PATCOPY`, `BLACKNESS` and `DSTINVERT`, `FrameRect`, `InvertRect`, lines in every octant under `R2_COPYPEN` and `R2_NOT`, `SetPixel`, `TextOutW`, a bold `CreateFontW`, `DrawTextW`), two chained timers (one with a timer procedure), and its input script: clicks, a double click, a right click, a click on the child, a captured drag, keys with Shift, an invalidated rectangle, and the frame's close. It writes the messages it gets (the list it keeps is in `logged()`) and, on the key P, its client area outside the text box as runs of colour read back with `GetPixel` | `expected/window.out`, status 3 |
 | `cards.exe` | Loads the user's own `cards.dll` from its folder with `LoadLibraryA` and draws, with `cdtInit`, `cdtDrawExt` and `cdtTerm`, the 52 faces and 12 backs at 71x96 on Solitaire's green, the other modes (inverted, the empty pile's marks, X, O) on a few cards, and the 12 backs at 33x62 as the Deck dialog does. It writes a CRC-32 of each drawing's pixels read back with `GetPixel`, or, with the argument `pixels`, the pixels themselves | `expected/cards.out`, status 0. The pixel listing describes Microsoft's art and is kept with the user's files, never here |
 | `wstartup.exe` | It starts as `wordpad.exe` does, a Unicode program over `msvcrt.dll` (`__wgetmainargs`, `_wcmdln`, `_onexit`), then checks what WordPad's and MFC's start-up need, failure paths included: moveable and fixed global memory, local memory, the C heap, TLS, critical sections, the interlocked functions, the version, `lstr` functions, code pages (1252 and UTF-8, a default character), the wide C strings, number conversions both ways, `floor`, `ceil` and `modf`, the wide printf family (integers, strings, floating point with its edges, lengths, truncation), module paths cut short, resources by id, `"#100"` and name, rectangles, registered clipboard formats, a font's `LOGFONTW`, the registry, `OleInitialize` twice and `__dllonexit`. It prints no path, handle, TLS index, locale or screen size | Run as `wstartup.exe alpha "two words" 3`: `expected/wstartup.out`, status 5 |
+| `files.exe` | WP4: in its own folder, `CreateFileW` with every disposition, reads, writes, `SetFilePointer` past the end and before the start, `SetEndOfFile`, `GetFileTime` against the clock, share modes, another spelling of a name, folders, `FindFirstFileW` with masks, deletes and moves, full paths, the current directory, the volume, and the file-time conversions at their limits. It prints no handle, time, drive letter or serial | Run from a folder on C:: `expected/files.out`, status 0 |
+| `memory.exe` | WP4: the process heap, private heaps (growing, zeroing, in place, a fixed maximum), moveable memory shared for DDE, and local and global atoms (integer atoms, case, references, the name length limits) | `expected/memory.out`, status 0 |
+| `locale.exe` | WP4: every value `GetLocaleInfoW` has for Spanish (Argentina), dates and times from the locale's pictures and others with every flag, their enumerations, `CompareStringW` on pairs with each flag, and win.ini's defaults | `expected/locale.out`, status 0 |
+| `threads.exe` | WP3, with `tlog.dll` and `tquiet.dll`: a thread started suspended, suspend counts, TLS slots and static TLS with its callbacks, thread notifications in order and `DisableThreadLibraryCalls`, events, mutexes, semaphores and waits, a contended critical section, `_beginthreadex` with a priority, a message-only window on the second thread taking sent, posted and thread messages, and a thread left waiting as the process ends | `expected/threads.out`, status 5 |
 | `resource.exe` | Its own resources (`resource.rc`): strings, bitmaps in both header formats at 1, 4 and 24 bits, an icon, a cursor and an accelerator table. It loads them as `sol.exe` does, then copies, converts and stretches the bitmaps (grown by 2, grown to odd sizes, shrunk), and drives the accelerators with posted keys | `expected/resource.out`, status 0 |
 | `dialog.exe` | A menu of two popups with separators and an accelerator shown after a tab, an accelerator table, and two dialogs built from the same resource types and styles as `sol.exe`'s (`dialog.rc`): one of owner-drawn buttons with a default and a cancel button, like Deck, and one of group boxes, radio buttons the program checks itself, automatic check boxes and static text left and right, like Options; then `MessageBoxW`, `ShellAboutW` and `InitCommonControlsEx`. Its input script uses the menus by pointer and by keyboard alone, a grayed item, both dialogs by pointer and by keyboard (Tab, arrows, Space, mnemonics, Enter, Escape), an accelerator for a menu command and one for a command no menu has. It writes the messages its procedures get (the list is in `logged()`), where each control is, the buttons' states, and pixels of the controls outside their text | `expected/dialog.out`, status 5 |
 
@@ -755,6 +770,12 @@ these files built with Clang and lld 23.1.4:
 | `resource.exe` | `bf9ca037356201d43996cf64670e301c4e63699ec8902f5b753d146ab0404c43` |
 | `dialog.exe` | `2378b6b12d0b486e7cf59fffca46ce2ef137f909905824dec91d5e9fe57836e8` |
 | `wstartup.exe` | `af71162775ebce60f5e4d270ef63586e51f75e027c9ada29c63061a78771b5b9` (2026-11-21) |
+| `files.exe` | `893a956e8b18a9f809136feba5d97ede2121317a420004c0ebc65fd2b1dd2554` (2026-11-25) |
+| `memory.exe` | `8be7fbf78b8ede6d847b70234e9c9645a831fad0918fc892f5d576e18aca06d1` (2026-11-25) |
+| `locale.exe` | `5f756142b8495f17f10972a14ea87fa5f2b4c8998c054662d7000e9d0e58eb4e` (2026-11-25) |
+| `threads.exe` | `4d55ea8c3684da784e93499a1fc51e5a60f525969f9f46bea7178f2988e9235a` (2026-11-25) |
+| `tlog.dll` | `e3dba5a8e2d46e32b345029bb6fe844a0169ea279e113414588892a6188d541b` (2026-11-25) |
+| `tquiet.dll` | `bacb05d74ff972ee18001a7925c70cfeb76d11a5cc91c84cd8598a0fc89e8697` (2026-11-25) |
 
 A different compiler version may change the bytes, not the behaviour; when
 a fixture changes, it is run on Windows XP again and this table follows. The
@@ -851,8 +872,8 @@ the load failure's NT status, is printed as `win32: exit status 0x...` and
 its low byte is the harness's exit status.
 
 The gate uses Linux's own selectors: `0x23` for 32-bit code, `0x2b` for data,
-`0x33` for 64-bit code. FS holds an LDT entry (`modify_ldt`) whose base is the
-TEB while guest code runs; glibc's FS base is put back with `arch_prctl`
+`0x33` for 64-bit code. FS holds an LDT entry (`modify_ldt`), one per guest
+thread, whose base is the thread's TEB while guest code runs; glibc's FS base is put back with `arch_prctl`
 before any host C code runs. The 32-bit halves of each transition, and the
 64-bit landings they far-jump to, live in a page at `0x7FFE0000`, since a
 32-bit far jump cannot reach the harness's own code. A fault in guest code
@@ -881,9 +902,11 @@ It is the same loader as the harness over a different platform:
   read into the native heap and freed once the load ends.
 - **The gate.** The 32-bit code segment is `0x2b`, 64-bit code `0x23`, data
   `0x1b` ([ARCH.md](../kernel/ARCH.md#segments)). `winhost` loads the data
-  selector into DS, ES and FS once, then sets FS's base to the TEB with
-  `sxn_set_thread_base`, and never switches them again: the native runtime
-  does not use FS, and the kernel keeps all three per thread. The 32-bit
+  selector into DS, ES and FS once per thread, then sets FS's base to that
+  thread's TEB with `sxn_set_thread_base`, and never switches them again:
+  the native runtime does not use FS, and the kernel keeps all three per
+  thread. Each guest thread is a SUN thread with a 256 KiB native stack per
+  thread slot, reused once the slot's last thread has ended. The 32-bit
   halves of each transition live in a section at `0x7FFE0000`, as in the
   harness.
 - **Services** come from `loader/services.c`, shared with the harness.
@@ -917,6 +940,118 @@ data, relocations), the stack, the TEB block and the trampoline.
 ring) and the region of its pixel buffer when it is larger than a heap
 arena; an open dialog or menu adds the view of its surface. Solitaire's ten
 images need about 50.
+
+## Threads
+
+WP3 of [WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md).
+A guest thread is a host thread: under `winhost` a SUN thread with its own
+selectors and FS base and a native stack, in the harness a POSIX thread with
+its own LDT entry. Its guest memory is one region: the stack (`CreateThread`'s
+size, or the executable's reserve), the TEB, and its static TLS copied from
+each image's template (`sxw_new_thread`). The gate finds a thread's state by
+the index the host keeps in its TEB at `0xFF0`, past every field of Windows
+XP's TEB.
+
+**They take turns.** One thread holds the turn and runs guest code; it gives
+the turn up while it waits on an object, sleeps or waits for input, and at a
+call to the host while another thread is ready (a ticket lock, so each gets
+its turn in order). SSW's DLLs need no locks of their own, and a run repeats
+itself at any number of processors; two guest threads never use two
+processors at once, and a thread that spins in guest code without calling
+the host keeps the others waiting. The decision and its reasons are in the
+roadmap ([Guest threads take turns](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#guest-threads-take-turns-2026-11-25)).
+
+- **Start and end.** A new thread enters the guest at
+  `ntdll!SxwThreadStart`, which runs `DLL_THREAD_ATTACH`: each DLL in the
+  order it attached, its TLS callbacks then `DllMain`, skipping those that
+  called `DisableThreadLibraryCalls`, and the executable's TLS callbacks
+  last. `ExitThread`, or the thread function returning, runs
+  `DLL_THREAD_DETACH` in reverse order, the executable last, under the loader
+  lock as the attach. The host then gives back the thread's region. The last
+  thread to end ends the process.
+- **ExitProcess** stops every other thread where it is before any DLL
+  detaches, and they get no detach, as Windows XP does
+  (`SXW_SVC_END_OTHER_THREADS`).
+- **Suspending.** `CreateThread` with `CREATE_SUSPENDED` holds the thread
+  before its first instruction; `SuspendThread` on a running thread stops
+  it at its next call to the host (Windows stops it at once). Priorities
+  are kept and answered; the host does not schedule by them.
+- **Objects.** Events, mutexes (with abandonment), semaphores and threads,
+  named or not within the process, are handles of the host's table, with
+  files. `WaitForSingleObject` and `WaitForMultipleObjects` (any or all, up
+  to 64) take what they wait for atomically. Handles are `0x40` and up.
+- **Critical sections** are Windows XP's: `LockCount` -1 when free and
+  counting the waiters, an auto-reset event in `LockSemaphore` made by the
+  first thread that has to wait.
+- **The C runtime** keeps no data per thread: `_beginthreadex` starts a
+  kernel32 thread and `_endthreadex` ends it; `rand` has one seed for the
+  whole process, where msvcrt.dll has one per thread.
+- **user32** keeps a queue per thread (above). Another thread's
+  `SendMessageW` waits in the window's thread's queue, and that thread calls
+  the window procedure when it next looks at its messages; meanwhile the
+  sender takes the messages sent to it. A posted or sent message wakes the
+  thread from its wait for input (`SXW_SVC_WAKE_THREAD`). `DestroyWindow`
+  refuses another thread's window, and an `HWND_MESSAGE` window is never
+  shown. Input from the host goes to the thread that made the host window.
+
+## Files
+
+WP4. `kernel32` makes every path full before the host sees it, as
+`GetFullPathNameW` does (the current directory, "." and "..", '/' as '\',
+and the dots and blanks at the end of the last name dropped); the current
+directory starts as the executable's folder, as Explorer starts a program.
+The host maps `C:\` to its `drive_c` folder and `Z:\` to its root (in the
+harness, `Z:` alone), finds every component without case as NTFS does, and
+keeps each file's position in its handle.
+
+- `CreateFileW` with every disposition, `ReadFile`, `WriteFile`,
+  `SetFilePointer` (past the end, and a gap written later reads as zeros),
+  `GetFileSize`, `SetEndOfFile`, `FlushFileBuffers`, `GetFileTime`,
+  `CloseHandle`; share modes between the opens of the process, a file open
+  without `FILE_SHARE_DELETE` refused to `DeleteFileW` and `MoveFileW`.
+- `GetFileAttributesW` answers `FILE_ATTRIBUTE_DIRECTORY`, or
+  `FILE_ATTRIBUTE_ARCHIVE` with `READONLY` for a file that cannot be written.
+- `FindFirstFileW` lists a folder in NTFS's order, "." and ".." first in any
+  folder but a drive's root, with '*' and '?' without case and "*.*" for
+  everything.
+- `CreateDirectoryW`, `RemoveDirectoryW`, `DeleteFileW`, `MoveFileW` (onto
+  nothing that exists), `GetCurrentDirectoryW`, `SetCurrentDirectoryW`,
+  `GetVolumeInformationW` (no label, a fixed serial, 255-character names
+  whose case is kept, "SxFS").
+- **One time per file.** The hosts keep a file's last write, in seconds; it
+  answers for its creation and last access too. **A file's time cannot be
+  set**: neither SUN nor POSIX has a way to on SavanXP, so `SetFileTime`
+  stays [declared](#declared-entry-points).
+- `FileTimeToSystemTime`, `SystemTimeToFileTime` and `GetSystemTime`, with
+  Windows XP's limits (1601 to 30827). **Local time is UTC** until
+  [TIMEZONE_ROADMAP.md](../roadmaps/open/TIMEZONE_ROADMAP.md) T6:
+  `GetLocalTime` and the local file-time conversions change nothing.
+
+Under `winhost` they stand on SUN's file calls, `sxn_seek_file`,
+`sxn_set_file_size`, `sxn_query_file` and `sxn_delete_directory` among them
+([SUN.md](SUN.md#files-and-small-profile-saves)); in the harness on POSIX's.
+
+## The locale
+
+One locale, Spanish (Argentina), LCID `0x2C0A`, the locale of the Windows
+XP the profiles were taken from: SavanXP has no regional setting yet. Its
+values are that Windows' own, taken from what `locale.exe` printed there.
+
+- `GetLocaleInfoW` answers every value Windows XP has for it, in text or
+  with `LOCALE_RETURN_NUMBER`, but `LOCALE_FONTSIGNATURE`; another locale
+  is `ERROR_INVALID_PARAMETER`, another value `ERROR_INVALID_FLAGS`.
+- `GetDateFormatW` and `GetTimeFormatW` format from the locale's pictures or
+  the caller's, with Windows' letters and quoting and the time flags, which
+  drop a field with the text before it. `EnumDateFormatsW` and
+  `EnumTimeFormatsW` list Windows XP's pictures, the default first.
+- `CompareStringW` sorts by letters (ñ its own, between n and o), then
+  accents, then case (lower first); symbols sort before digits and letters,
+  and in a word sort the hyphen and the apostrophe count only last.
+  `NORM_IGNORECASE`, `NORM_IGNORENONSPACE`, `NORM_IGNORESYMBOLS` and
+  `SORT_STRINGSORT` as on Windows.
+- **win.ini** is not there: `GetProfileIntW` and `A`, `GetProfileStringW` and
+  `GetProfileSectionW` answer as Windows XP answers for a name its win.ini
+  lacks, with the default given.
 
 ## Software exceptions
 
@@ -970,9 +1105,9 @@ missing export raises a software exception, and the guest exits with
 `0xc06d007f`.
 
 What the run reaches and is only declared is on the debug output; at this
-point `SetWindowsHookExW` (MFC's message-filter hook, WP5) and
-`GetFileAttributesW` (WordPad looking for its Word converters next to it,
-which it then does without).
+point `SetWindowsHookExW` (MFC's message-filter hook, WP5). WordPad's look
+for its Word converters next to it (`GetFileAttributesW`) now finds none,
+and it goes on without them.
 
 ## Solitaire
 
@@ -1042,7 +1177,9 @@ undefined-behaviour sanitizers. It:
 captures its standard output through a pipe and compares the bytes and the
 32-bit exit status with Windows XP's. Each case is a line in the system log.
 Run it under `--accel kvm` as well: QEMU's TCG does not fault on a null data
-selector in 32-bit code, so only KVM or hardware catches a lost one.
+selector in 32-bit code, so only KVM or hardware catches a lost one. With
+`threads.exe` among its fixtures, run it at `--smp 1` and `--smp 4` too:
+the threads' output must not depend on the number of processors.
 
 `win32-registry-test` checks the store alone, with the sanitizers on: every
 error the registry services return, the file's round trip, malformed files,

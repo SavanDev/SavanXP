@@ -10,7 +10,7 @@
 #ifndef SAVANXP_WIN32_SXW_ABI_H
 #define SAVANXP_WIN32_SXW_ABI_H
 
-#define SXW_ABI_VERSION 7u
+#define SXW_ABI_VERSION 8u
 
 /* ---- Thread environment block (32-bit layout, the fields we fill) ------- */
 
@@ -26,6 +26,12 @@
 /* WOW32Reserved in Windows' own TEB: the 32 -> 64 transition. Here it is the
  * guest-callable address of the service gate. */
 #define SXW_TEB_GATE 0xc0u
+/* Win32ThreadInfo: user32's per-thread state (its message queue), 0 until
+ * the thread first needs one. */
+#define SXW_TEB_WIN32_THREAD 0x40u
+/* The host's index of the thread, which the gate finds its state by. Not a
+ * field of Windows' TEB: past every one Windows XP has. */
+#define SXW_TEB_HOST_THREAD 0xff0u
 #define SXW_TEB_SIZE 0x1000u
 
 /* ---- Process environment block ------------------------------------------ */
@@ -117,9 +123,10 @@
 #define SXW_SVC_WINDOW_PRESENT 18u
 /* (window, title) -> 0, or SXW_FAILED */
 #define SXW_SVC_WINDOW_TITLE 19u
-/* (timeout, out event) -> 1 with an event, 0 when the timeout passed.
- * timeout is in milliseconds, SXW_INFINITE to wait for an event, 0 to poll.
- * out points at an sxw_event. */
+/* (timeout, out event) -> 1 with an event, 0 when the timeout passed, 2
+ * when another thread woke this one (SXW_SVC_WAKE_THREAD). timeout is in
+ * milliseconds, SXW_INFINITE to wait for an event, 0 to poll. out points at
+ * an sxw_event. Only the events of the calling thread's windows come. */
 #define SXW_SVC_WAIT_EVENT 20u
 /* (window, pixels) -> 0, or SXW_FAILED: the window's 16x16 icon, 256 words
  * 0xAARRGGBB, top row first, for its caption and its taskbar button. */
@@ -133,7 +140,119 @@
 /* (handler) -> 1 if the address is an executable image's allowed x86 SEH
  * handler, or 0. The guest calls the handler itself. */
 #define SXW_SVC_SEH_HANDLER 23u
-#define SXW_SVC_COUNT 24u
+
+/* Handles (WP4 of WIN32_WORDPAD_ROADMAP.md). A handle is the host's: a file,
+ * a directory search, and with threads the synchronization objects. Each
+ * service returns a Win32 error, 0 on success. Paths are full Windows paths
+ * in UTF-16 (C:\... under the host's drive_c, Z:\... from the host's root),
+ * looked up without case, as kernel32's GetFullPathNameW makes them. */
+/* (handle) */
+#define SXW_SVC_CLOSE 24u
+/* (handle, out handle): a second handle to the same object, which shares a
+ * file's position. */
+#define SXW_SVC_DUPLICATE 25u
+/* (path, access, share, disposition, out[2]): CreateFileW's access
+ * (GENERIC_READ, GENERIC_WRITE), share mode and disposition (CREATE_NEW to
+ * TRUNCATE_EXISTING). out[0] is the handle, out[1] 1 when the file existed
+ * before. */
+#define SXW_SVC_FILE_OPEN 26u
+/* (handle, buffer, count, out done): at the handle's position, which moves. */
+#define SXW_SVC_FILE_READ 27u
+#define SXW_SVC_FILE_WRITE 28u
+/* (handle, low, high, origin, out[2]): FILE_BEGIN, FILE_CURRENT or FILE_END;
+ * out is the new position, low then high. */
+#define SXW_SVC_FILE_SEEK 29u
+/* (handle): the file ends at the handle's position. */
+#define SXW_SVC_FILE_SET_END 30u
+/* (handle, out sxw_file_entry without its name) */
+#define SXW_SVC_FILE_INFO 31u
+/* (handle) */
+#define SXW_SVC_FILE_FLUSH 32u
+/* (path, out sxw_file_entry without its name) */
+#define SXW_SVC_PATH_INFO 33u
+/* (action, path, second path): SXW_PATH_* */
+#define SXW_SVC_PATH_ACTION 34u
+#define SXW_PATH_DELETE_FILE 1u
+#define SXW_PATH_MAKE_DIRECTORY 2u
+#define SXW_PATH_REMOVE_DIRECTORY 3u
+#define SXW_PATH_MOVE 4u /* the second path must not exist */
+/* (directory path, mask, out handle, out sxw_file_entry): the first entry of
+ * the directory whose name matches the mask (* and ?, without case), in
+ * NTFS's order, "." and ".." first in any directory but a drive's root. */
+#define SXW_SVC_FIND_FIRST 35u
+/* (handle, out sxw_file_entry): the next one; ERROR_NO_MORE_FILES at the end. */
+#define SXW_SVC_FIND_NEXT 36u
+/* (base) -> 0, or SXW_FAILED: gives back a region SXW_SVC_ALLOCATE made (a
+ * destroyed heap's arena). */
+#define SXW_SVC_FREE 37u
+
+/* Threads and the objects they wait on (WP3). Guest threads are host
+ * threads that take turns: one runs guest code at a time, and it lets
+ * another run when it waits, sleeps, or calls the host while another
+ * thread is ready (docs/userland/WIN32.md, "Threads"). Each returns a Win32
+ * error. The current thread's pseudo-handle, (HANDLE)-2, names it. */
+/* (start, parameter, stack bytes, flags, out[2]): a thread whose entry is
+ * ntdll!SxwThreadStart(start, parameter), suspended with CREATE_SUSPENDED;
+ * out[0] its handle, out[1] its id. */
+#define SXW_SVC_THREAD_CREATE 38u
+/* (exit code): the calling thread ends; does not return. */
+#define SXW_SVC_THREAD_EXIT 39u
+/* (thread, resume, out previous count): SuspendThread (resume 0) or
+ * ResumeThread (1). A running thread stops at its next call to the host. */
+#define SXW_SVC_THREAD_SUSPEND 40u
+/* (thread, out[3]): its exit code (STILL_ACTIVE while it runs), its
+ * priority and its id. */
+#define SXW_SVC_THREAD_QUERY 41u
+/* (thread, priority): kept and answered; the host does not schedule by it. */
+#define SXW_SVC_THREAD_PRIORITY 42u
+/* (kind, a, b, name, out[2]): SXW_OBJECT_EVENT (a manual reset, b
+ * signaled), SXW_OBJECT_MUTEX (a owned by the caller), SXW_OBJECT_SEMAPHORE
+ * (a count, b maximum). name is UTF-16 or 0; out[0] the handle, out[1] 1
+ * when a named object of the kind already existed. */
+#define SXW_SVC_OBJECT_CREATE 43u
+#define SXW_OBJECT_EVENT 3u
+#define SXW_OBJECT_MUTEX 4u
+#define SXW_OBJECT_SEMAPHORE 5u
+#define SXW_OBJECT_THREAD 6u
+/* (handle, operation, count, out previous): SXW_SIGNAL_*. */
+#define SXW_SVC_OBJECT_SIGNAL 44u
+#define SXW_SIGNAL_SET 1u     /* SetEvent */
+#define SXW_SIGNAL_RESET 2u   /* ResetEvent */
+#define SXW_SIGNAL_PULSE 3u   /* PulseEvent */
+#define SXW_SIGNAL_RELEASE 4u /* ReleaseMutex, ReleaseSemaphore(count) */
+/* (handles, count, all, milliseconds, out result): WaitForMultipleObjects;
+ * result is WAIT_OBJECT_0 + i, WAIT_ABANDONED_0 + i or WAIT_TIMEOUT. */
+#define SXW_SVC_WAIT 45u
+/* (milliseconds): Sleep. 0 lets a ready thread run. */
+#define SXW_SVC_SLEEP 46u
+/* (thread id): wakes that thread from SXW_SVC_WAIT_EVENT, which returns 2:
+ * user32 posted or sent it a message. */
+#define SXW_SVC_WAKE_THREAD 47u
+/* (): every other thread stops for good where it is; ExitProcess calls it
+ * before the DLLs detach, as Windows XP ends them first. */
+#define SXW_SVC_END_OTHER_THREADS 48u
+#define SXW_SVC_COUNT 49u
+
+#define SXW_WAIT_OBJECT_0 0u
+#define SXW_WAIT_ABANDONED_0 0x80u
+#define SXW_WAIT_TIMEOUT 258u
+#define SXW_STILL_ACTIVE 259u
+#define SXW_CURRENT_THREAD 0xfffffffeu
+#define SXW_CURRENT_PROCESS 0xffffffffu
+
+/* What a file query or a search returns: FILE_ATTRIBUTE_* (0x10 a directory,
+ * 0x20 a file, 0x01 one that cannot be written), the size, the last write
+ * in seconds since 1970 UTC (the hosts keep no other time), and the name,
+ * UTF-16 and NUL-terminated, for a search. */
+#define SXW_FILE_NAME_UNITS 260u
+typedef struct sxw_file_entry {
+    unsigned int attributes;
+    unsigned int size_low;
+    unsigned int size_high;
+    unsigned int mtime;
+    unsigned short name[SXW_FILE_NAME_UNITS];
+} sxw_file_entry;
+#define SXW_FILE_ENTRY_HEADER 16u
 
 #define SXW_INFINITE 0xffffffffu
 
@@ -166,9 +285,25 @@ typedef struct sxw_event {
 #define SXW_ERROR_SUCCESS 0u
 #define SXW_ERROR_FILE_NOT_FOUND 2u
 #define SXW_ERROR_ACCESS_DENIED 5u
+#define SXW_ERROR_PATH_NOT_FOUND 3u
+#define SXW_ERROR_TOO_MANY_OPEN_FILES 4u
 #define SXW_ERROR_INVALID_HANDLE 6u
 #define SXW_ERROR_NOT_ENOUGH_MEMORY 8u
+#define SXW_ERROR_NO_MORE_FILES 18u
+#define SXW_ERROR_WRITE_FAULT 29u
+#define SXW_ERROR_READ_FAULT 30u
+#define SXW_ERROR_SHARING_VIOLATION 32u
+#define SXW_ERROR_HANDLE_DISK_FULL 39u
+#define SXW_ERROR_FILE_EXISTS 80u
 #define SXW_ERROR_INVALID_PARAMETER 87u
+#define SXW_ERROR_NEGATIVE_SEEK 131u
+#define SXW_ERROR_DIR_NOT_EMPTY 145u
+#define SXW_ERROR_BUSY 170u
+#define SXW_ERROR_ALREADY_EXISTS 183u
+#define SXW_ERROR_DIRECTORY 267u
+#define SXW_ERROR_NOT_OWNER 288u
+#define SXW_ERROR_TOO_MANY_POSTS 298u
+#define SXW_ERROR_INVALID_THREAD_ID 1444u
 #define SXW_ERROR_MOD_NOT_FOUND 126u
 #define SXW_ERROR_PROC_NOT_FOUND 127u
 #define SXW_ERROR_INVALID_ORDINAL 182u
@@ -208,6 +343,8 @@ typedef struct sxw_start_block {
 /* DllMain reasons, as Windows defines them. */
 #define SXW_DLL_PROCESS_DETACH 0u
 #define SXW_DLL_PROCESS_ATTACH 1u
+#define SXW_DLL_THREAD_ATTACH 2u
+#define SXW_DLL_THREAD_DETACH 3u
 
 /* NT status values a process ends with when it cannot start, the same ones
  * Windows XP reports for the same failure. */

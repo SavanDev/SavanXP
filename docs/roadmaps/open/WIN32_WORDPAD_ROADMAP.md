@@ -1,7 +1,8 @@
 # Windows XP WordPad on SSW — the second Win32 profile
 
-> **Status: WP1 and WP2 complete (2026-11-23). WordPad starts up to its
-> first window, and SSW handles x86 software exceptions.** This is the plan of
+> **Status: WP1 to WP4 complete (2026-11-25). WordPad starts up to its
+> first window; SSW handles x86 software exceptions, runs a second thread,
+> and has WordPad's files, heaps, atoms and locale.** This is the plan of
 > [W7](WIN32_SUBSYSTEM_ROADMAP.md#w7--later-profiles)'s first named profile.
 > Its inventory, the W0 record taken before any code, is
 > [WIN32_WORDPAD_PROFILE.md](../../userland/WIN32_WORDPAD_PROFILE.md); every
@@ -82,6 +83,26 @@ dispatches them inside the guest. Hardware faults delivered to the guest
 (S3 in [WIN32_SUBSYSTEM_ROADMAP.md](WIN32_SUBSYSTEM_ROADMAP.md#deferred-s1-s2-and-s3))
 stay deferred: no trace reached one. `IsBadWritePtr`, the one probe on the
 path, is answered from the guest's map without touching the memory.
+
+### Guest threads take turns (2026-11-25)
+
+A guest thread is a host thread, a SUN thread under `winhost`, with its own
+TEB, guest stack and host stack, as WP3 planned. They do not run guest code
+at the same time: one holds the turn, and gives it up when it waits on an
+object, sleeps, waits for input, or calls the host while another thread is
+ready.
+
+- **Why.** Every DLL of SSW was written for one thread and keeps its state
+  in plain globals: the heap, the handle tables, user32's windows, the
+  registry and loader services. Taking turns makes all of it correct
+  without a lock in each, and no lock of SSW's can take part in a deadlock.
+  It also makes a run repeat itself, which the fixtures need to write the
+  same bytes as Windows XP at 1, 2 and 4 processors.
+- **What it costs.** Two guest threads never use two processors at once,
+  and a thread that spins in guest code without calling the host keeps the
+  others waiting. WordPad's second thread asks for the default printer and
+  ends. Running guest threads at once, with locks in the DLLs, is a later
+  decision if a program needs it.
 
 ### Help is out of scope
 
@@ -283,6 +304,26 @@ owned by their thread.
 order, an event handshake, a window on the second thread) runs alike on all
 three environments, at 1, 2 and 4 vCPUs on SavanXP.
 
+**Done (2026-11-25).** `threads.exe`, with `tlog.dll` and `tquiet.dll`,
+writes the same bytes on Windows XP, in `win32-harness-test` and in
+`win32-hello` at 1, 2 and 4 vCPUs, under TCG and KVM: a thread started
+suspended and its suspend count, `TlsAlloc` and static TLS with its
+callbacks, `DLL_THREAD_ATTACH` and `DETACH` in Windows XP's order and
+`DisableThreadLibraryCalls`, events, mutexes, semaphores and the waits on
+them, a contended critical section, `_beginthreadex` with a priority, and a
+message-only window on the second thread that is sent, posted and thread
+messages from the first. See [WIN32.md](../../userland/WIN32.md#threads).
+
+What changed from the plan above, and why:
+
+- **The threads take turns** ([decided above](#guest-threads-take-turns-2026-11-25)).
+- **user32's message queue is per thread** and a window belongs to the thread
+  that made it; focus, capture and the active window stay one for the
+  process. Hooks are still WP5's: MFC's thread installs its message-filter
+  hook and goes on without it.
+- **ExitProcess stops the other threads first**, which then get no
+  `DLL_THREAD_DETACH`, as Windows XP's output showed.
+
 ### WP4 — memory and the rest of `kernel32`
 
 Size S to M.
@@ -303,6 +344,27 @@ Size S to M.
 
 **Done when:** a fixture covering each group, failure paths included, writes
 the same bytes on all three environments.
+
+**Done (2026-11-25).** `files.exe`, `memory.exe` and `locale.exe` write the
+same bytes on Windows XP (`files.exe` from a folder on its NTFS drive), in
+`win32-harness-test` and in `win32-hello`. See [WIN32.md](../../userland/WIN32.md#files).
+
+What changed from the plan above, and why:
+
+- **SUN gained the file calls the host needed**: opening an existing file to
+  write, `sxn_seek_file`, `sxn_set_file_size`, `sxn_query_file` and
+  `sxn_delete_directory`, with `winhost` as their consumer
+  ([SUN.md](../../userland/SUN.md#files-and-small-profile-saves)).
+- **A file's times cannot be set.** Neither SUN nor POSIX can change a
+  file's time on SavanXP, so `SetFileTime` stays declared, and the hosts keep
+  one time per file, its last write, in seconds.
+- **Local time is UTC** until [TIMEZONE_ROADMAP.md](TIMEZONE_ROADMAP.md)'s T6;
+  the fixture checks only that the conversions agree with each other.
+- **The locale's values are Windows XP's own**, taken from `locale.exe`'s
+  output there, and `CompareStringW` sorts as that locale does by letters,
+  accents and case, with the hyphen and apostrophe weighed last.
+- **`GlobalGetAtomNameW` with a short buffer is not compared**: Windows XP
+  writes the whole name past the buffer there.
 
 ### WP5 — `user32` for MFC
 

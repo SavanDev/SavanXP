@@ -93,6 +93,10 @@ struct window {
     dialog_info *dialog;
     u32 control_state;
     HFONT font;
+    /* The thread that made it, whose queue gets its messages. */
+    u32 thread;
+    /* A message-only window (HWND_MESSAGE): never shown, no surface. */
+    int message_only;
 };
 
 #define MAX_WINDOWS 128

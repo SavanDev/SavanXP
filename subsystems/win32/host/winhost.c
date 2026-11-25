@@ -22,7 +22,8 @@
  * run: the native runtime does not use FS, so unlike the host harness the
  * gate never switches it. DS and ES hold the user data selector too, which
  * 32-bit code needs and 64-bit code ignores; the kernel keeps all three per
- * thread (docs/kernel/ARCH.md#segments). Single thread only.
+ * thread (docs/kernel/ARCH.md#segments). Every guest thread is a SUN thread
+ * with its own selectors and FS base (docs/userland/WIN32.md, "Threads").
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -55,19 +56,31 @@
 
 /* ---- The 64-bit side of the gate ---------------------------------------- */
 
-uint64_t sxw_host_rsp;
-uint64_t sxw_guest_esp;
-uint64_t sxw_svc_ret32;
-uint32_t sxw_guest_regs[4];
-uint32_t sxw_result;
-uint32_t sxw_exit_requested;
+/* A guest thread's gate state: 64 bytes each, found on the way back from
+ * the guest by the index in its TEB (SXW_TEB_HOST_THREAD), read through FS,
+ * whose base is the TEB for the whole life of the thread. %r12 holds the
+ * state's address on the host side; guest code cannot see it. */
+typedef struct gate_state {
+    uint64_t host_rsp;
+    uint64_t reserved0;
+    uint64_t guest_esp;
+    uint32_t guest_regs[4];
+    uint32_t result;
+    uint32_t leave;
+    uint32_t index;
+    uint32_t reserved1[3];
+} gate_state;
+_Static_assert(sizeof(gate_state) == 64, "the gate assumes 64-byte states");
 
-uint32_t sxw_gate_enter(uint32_t entry, uint32_t guest_esp);
+gate_state sxw_gates[SXW_MAX_THREADS];
+uint64_t sxw_svc_ret32;
+
+uint32_t sxw_gate_enter(uint32_t entry, uint32_t guest_esp, gate_state *state);
 void sxw_gate_return(void);
 void sxw_gate_service(void);
-uint32_t sxw_host_service(uint64_t guest_esp);
+uint32_t sxw_host_service(gate_state *state);
 
-/* sxw_gate_enter(entry, guest_esp): guest_esp points at
+/* sxw_gate_enter(entry, guest_esp, state): guest_esp points at
  * [return address = back32][arguments...]; far-return into 32-bit code.
  * sxw_gate_return: back32 lands here with the guest function's eax.
  * sxw_gate_service: service32 lands here; the guest stack holds
@@ -78,7 +91,7 @@ __asm__(
     "sxw_gate_enter:\n"
     "    push %rbx\n push %rbp\n push %r12\n push %r13\n push %r14\n push %r15\n"
     "    sub $8, %rsp\n"
-    "    mov %rsp, sxw_host_rsp(%rip)\n"
+    "    mov %rsp, 0(%rdx)\n"
     "    mov %edi, %edi\n"
     "    mov %esi, %esp\n"
     "    pushq $0x2b\n"
@@ -87,34 +100,42 @@ __asm__(
     "    .globl sxw_gate_return\n"
     "sxw_gate_return:\n"
     "    mov %esp, %esp\n"
-    "    mov %eax, sxw_result(%rip)\n"
+    "    movl %fs:0xff0, %r12d\n"
+    "    shl $6, %r12\n"
+    "    lea sxw_gates(%rip), %r11\n"
+    "    add %r11, %r12\n"
+    "    mov %eax, 40(%r12)\n"
     "sxw_gate_leave:\n"
-    "    mov sxw_host_rsp(%rip), %rsp\n"
+    "    movl 40(%r12), %eax\n"
+    "    mov 0(%r12), %rsp\n"
     "    add $8, %rsp\n"
     "    pop %r15\n pop %r14\n pop %r13\n pop %r12\n pop %rbp\n pop %rbx\n"
-    "    movl sxw_result(%rip), %eax\n"
     "    ret\n"
     "    .globl sxw_gate_service\n"
     "sxw_gate_service:\n"
     "    mov %esp, %eax\n"
-    "    mov %rax, sxw_guest_esp(%rip)\n"
-    "    mov %ebx, sxw_guest_regs + 0(%rip)\n"
-    "    mov %ebp, sxw_guest_regs + 4(%rip)\n"
-    "    mov %esi, sxw_guest_regs + 8(%rip)\n"
-    "    mov %edi, sxw_guest_regs + 12(%rip)\n"
-    "    mov sxw_host_rsp(%rip), %rsp\n"
-    "    mov sxw_guest_esp(%rip), %rdi\n"
+    "    movl %fs:0xff0, %r12d\n"
+    "    shl $6, %r12\n"
+    "    lea sxw_gates(%rip), %r11\n"
+    "    add %r11, %r12\n"
+    "    mov %rax, 16(%r12)\n"
+    "    mov %ebx, 24(%r12)\n"
+    "    mov %ebp, 28(%r12)\n"
+    "    mov %esi, 32(%r12)\n"
+    "    mov %edi, 36(%r12)\n"
+    "    mov 0(%r12), %rsp\n"
+    "    mov %r12, %rdi\n"
     "    call sxw_host_service\n"
-    "    mov %eax, sxw_result(%rip)\n"
-    "    cmpl $0, sxw_exit_requested(%rip)\n"
+    "    mov %eax, 40(%r12)\n"
+    "    cmpl $0, 44(%r12)\n"
     "    jne sxw_gate_leave\n"
-    "    mov sxw_guest_regs + 0(%rip), %ebx\n"
-    "    mov sxw_guest_regs + 4(%rip), %ebp\n"
-    "    mov sxw_guest_regs + 8(%rip), %esi\n"
-    "    mov sxw_guest_regs + 12(%rip), %edi\n"
+    "    mov 24(%r12), %ebx\n"
+    "    mov 28(%r12), %ebp\n"
+    "    mov 32(%r12), %esi\n"
+    "    mov 36(%r12), %edi\n"
     "    mov sxw_svc_ret32(%rip), %r11\n"
-    "    mov sxw_guest_esp(%rip), %rsp\n"
-    "    movl sxw_result(%rip), %eax\n"
+    "    mov 16(%r12), %rsp\n"
+    "    movl 40(%r12), %eax\n"
     "    pushq $0x2b\n"
     "    push %r11\n"
     "    lretq\n");
@@ -387,6 +408,214 @@ static int save_registry_file(void *context, const char *text, size_t length) {
     (void)sxn_close(handle);
     return ok ? 0 : 1;
 }
+
+/* ---- Files ------------------------------------------------------------------ */
+/*
+ * The guest's files over SUN's file calls: a file is a SUN handle, and a
+ * read or write at a position seeks it first. A file is writable when any of
+ * its write bits is set (the volume clears them all when it is read-only).
+ */
+
+static int fs_status(long error) {
+    switch (-error) {
+    case SAVANXP_ENOENT: return SXW_FS_NOT_FOUND;
+    case SAVANXP_EEXIST: return SXW_FS_EXISTS;
+    case SAVANXP_EACCES:
+    case SAVANXP_EPERM:
+    case SAVANXP_EROFS: return SXW_FS_DENIED;
+    case SAVANXP_ENOTDIR: return SXW_FS_NOT_DIRECTORY;
+    case SAVANXP_EISDIR: return SXW_FS_IS_DIRECTORY;
+    case SAVANXP_ENOTEMPTY: return SXW_FS_NOT_EMPTY;
+    case SAVANXP_EBUSY: return SXW_FS_BUSY;
+    case SAVANXP_ENOSPC: return SXW_FS_FULL;
+    case SAVANXP_EINVAL:
+    case SAVANXP_ENAMETOOLONG: return SXW_FS_INVALID;
+    default: return SXW_FS_IO;
+    }
+}
+
+static void host_info(const struct sxn_file_info *in, sxw_host_info *out) {
+    out->type = in->type == SXN_FILE_TYPE_FILE        ? SXW_HOST_FILE
+                : in->type == SXN_FILE_TYPE_DIRECTORY ? SXW_HOST_DIRECTORY
+                                                      : SXW_HOST_OTHER;
+    out->writable = (in->mode & 0222u) != 0u;
+    out->size = in->size;
+    out->mtime = in->mtime;
+}
+
+static int fs_stat(void *context, const char *path, sxw_host_info *info) {
+    (void)context;
+    struct sxn_file_info raw;
+    const long result = sxn_query_path(path, &raw);
+    if (result != 0) {
+        return fs_status(result);
+    }
+    host_info(&raw, info);
+    return SXW_FS_OK;
+}
+
+static int fs_open(void *context, const char *path, uint32_t mode, long *file) {
+    (void)context;
+    long handle;
+    if ((mode & SXW_OPEN_CREATE) != 0u) {
+        handle = sxn_create_file(path, ((mode & SXW_OPEN_NEW) != 0u ? SXN_CREATE_NEW : SXN_CREATE_ALWAYS) |
+                                           SXN_CREATE_READ);
+    } else {
+        handle = sxn_open_file(path, ((mode & SXW_OPEN_READ) != 0u ? SXN_FILE_READ : 0u) |
+                                         ((mode & SXW_OPEN_WRITE) != 0u ? SXN_FILE_WRITE : 0u));
+    }
+    if (handle < 0) {
+        return fs_status(handle);
+    }
+    *file = handle;
+    return SXW_FS_OK;
+}
+
+static int fs_read(void *context, long file, uint64_t position, void *buffer, uint32_t count, uint32_t *done) {
+    (void)context;
+    *done = 0;
+    const long at = sxn_seek_file(file, (int64_t)position, SXN_SEEK_START);
+    if (at < 0) {
+        return fs_status(at);
+    }
+    while (*done < count) {
+        const long n = sxn_read(file, (uint8_t *)buffer + *done, count - *done);
+        if (n < 0) {
+            return fs_status(n);
+        }
+        if (n == 0) {
+            break;
+        }
+        *done += (uint32_t)n;
+    }
+    return SXW_FS_OK;
+}
+
+static int fs_write(void *context, long file, uint64_t position, const void *buffer, uint32_t count,
+                    uint32_t *done) {
+    (void)context;
+    *done = 0;
+    const long at = sxn_seek_file(file, (int64_t)position, SXN_SEEK_START);
+    if (at < 0) {
+        return fs_status(at);
+    }
+    while (*done < count) {
+        const long n = sxn_write(file, (const uint8_t *)buffer + *done, count - *done);
+        if (n <= 0) {
+            return n < 0 ? fs_status(n) : SXW_FS_IO;
+        }
+        *done += (uint32_t)n;
+    }
+    return SXW_FS_OK;
+}
+
+static int fs_set_size(void *context, long file, uint64_t size) {
+    (void)context;
+    const long result = sxn_set_file_size(file, size);
+    return result == 0 ? SXW_FS_OK : fs_status(result);
+}
+
+static int fs_query(void *context, long file, sxw_host_info *info) {
+    (void)context;
+    struct sxn_file_info raw;
+    const long result = sxn_query_file(file, &raw);
+    if (result != 0) {
+        return fs_status(result);
+    }
+    host_info(&raw, info);
+    return SXW_FS_OK;
+}
+
+static int fs_flush(void *context, long file) {
+    (void)context;
+    const long result = sxn_flush_file(file);
+    return result == 0 ? SXW_FS_OK : fs_status(result);
+}
+
+static void fs_close(void *context, long file) {
+    (void)context;
+    (void)sxn_close(file);
+}
+
+static int fs_result(long result) {
+    return result == 0 ? SXW_FS_OK : fs_status(result);
+}
+
+static int fs_make_directory(void *context, const char *path) {
+    (void)context;
+    return fs_result(sxn_make_directory(path));
+}
+
+static int fs_remove_directory(void *context, const char *path) {
+    (void)context;
+    return fs_result(sxn_delete_directory(path));
+}
+
+static int fs_remove_file(void *context, const char *path) {
+    (void)context;
+    return fs_result(sxn_delete_path(path));
+}
+
+static int fs_rename(void *context, const char *old_path, const char *new_path) {
+    (void)context;
+    return fs_result(sxn_rename_path(old_path, new_path));
+}
+
+static int fs_list_open(void *context, const char *path, long *list) {
+    (void)context;
+    const long handle = sxn_open_directory(path);
+    if (handle < 0) {
+        return fs_status(handle);
+    }
+    *list = handle;
+    return SXW_FS_OK;
+}
+
+static struct sxn_directory_entry g_entry;
+
+static int fs_list_next(void *context, long list, char *name, sxw_host_info *info) {
+    (void)context;
+    for (;;) {
+        const long result = sxn_read_directory(list, &g_entry);
+        if (result != 1) {
+            return 0;
+        }
+        uint32_t n = 0;
+        while (g_entry.name[n] != 0 && n < 255u) {
+            name[n] = g_entry.name[n];
+            ++n;
+        }
+        if (g_entry.name[n] != 0) {
+            continue; /* longer than a Windows name */
+        }
+        name[n] = 0;
+        host_info(&g_entry.info, info);
+        return 1;
+    }
+}
+
+static void fs_list_close(void *context, long list) {
+    (void)context;
+    (void)sxn_close(list);
+}
+
+static const sxw_file_platform g_file_platform = {
+    .stat = fs_stat,
+    .open = fs_open,
+    .read = fs_read,
+    .write = fs_write,
+    .set_size = fs_set_size,
+    .query = fs_query,
+    .flush = fs_flush,
+    .close = fs_close,
+    .make_directory = fs_make_directory,
+    .remove_directory = fs_remove_directory,
+    .remove_file = fs_remove_file,
+    .rename = fs_rename,
+    .list_open = fs_list_open,
+    .list_next = fs_list_next,
+    .list_close = fs_list_close,
+};
 
 /* ---- Windows and input ---------------------------------------------------- */
 /*
@@ -824,6 +1053,8 @@ static sxw_services g_services = {
     .save_registry = save_registry_file,
     .registry = &g_registry,
     .windows = &g_window_platform,
+    .files = &g_file_platform,
+    .drive_c = DRIVE_C,
 };
 
 static void load_registry(void) {
@@ -882,11 +1113,9 @@ static int same_text(const char *a, const char *b) {
     return *a == *b;
 }
 
-uint32_t sxw_host_service(uint64_t guest_esp) {
-    uint32_t result = sxw_service(&g_services, (uint32_t)guest_esp);
-    if (g_services.exit_requested) {
-        sxw_exit_requested = 1;
-    }
+uint32_t sxw_host_service(gate_state *gate) {
+    const uint32_t result = sxw_service(&g_services, gate->index, (uint32_t)gate->guest_esp);
+    gate->leave = (uint32_t)sxw_should_leave(&g_services, gate->index);
     return result;
 }
 
@@ -947,6 +1176,85 @@ static __attribute__((noreturn)) void finish(uint32_t status) {
     say_hex("win32: exit status ", status);
     sxn_exit((int)status);
 }
+
+/* ---- Threads ------------------------------------------------------------------- */
+/*
+ * A guest thread is a SUN thread: its own selectors and FS base (the TEB),
+ * and a native stack per thread slot, reused once the slot's previous
+ * thread has ended for good.
+ */
+
+#define HOST_STACK (256u * 1024u)
+
+static void *g_host_stacks[SXW_MAX_THREADS];
+static long g_host_threads[SXW_MAX_THREADS];
+
+static void wait_word(void *context, volatile uint32_t *word, uint32_t expected, uint32_t timeout) {
+    (void)context;
+    (void)sxn_wait_address(word, expected, 4, timeout == SXW_INFINITE ? -1 : (long)timeout);
+}
+
+static void wake_word(void *context, volatile uint32_t *word) {
+    (void)context;
+    (void)sxn_wake_address(word, SXN_WAKE_ALL);
+}
+
+static uint32_t milliseconds(void *context) {
+    (void)context;
+    return (uint32_t)(sxn_clock_ns() / 1000000u);
+}
+
+static void enter_guest(void *context, uint32_t index, uint32_t entry, uint32_t esp) {
+    (void)context;
+    gate_state *g = &sxw_gates[index];
+    g->index = index;
+    g->leave = 0;
+    if (!use_teb(g_services.threads[index].teb)) {
+        say("win32: cannot set a thread's TEB\n");
+        sxn_exit(2);
+    }
+    put32((uint8_t *)(uintptr_t)esp, TRAMPOLINE + TRAMPOLINE_BACK32);
+    sxw_gate_enter(entry, esp, g);
+}
+
+static void host_thread(void *argument) {
+    const uint32_t index = (uint32_t)(uintptr_t)argument;
+    if (sxw_thread_main(&g_services, index, enter_guest, 0)) {
+        finish(g_services.exit_status);
+    }
+    sxn_thread_exit(0);
+}
+
+static int start_thread(void *context, uint32_t index) {
+    (void)context;
+    if (g_host_threads[index] > 0) {
+        /* The slot's last thread gave up its turn; its stack is free once
+         * it has ended. */
+        (void)sxn_wait_one(g_host_threads[index], -1);
+        (void)sxn_close(g_host_threads[index]);
+        g_host_threads[index] = 0;
+    }
+    if (g_host_stacks[index] == 0) {
+        g_host_stacks[index] = malloc(HOST_STACK);
+        if (g_host_stacks[index] == 0) {
+            return 1;
+        }
+    }
+    void *top = (uint8_t *)g_host_stacks[index] + HOST_STACK;
+    const long handle = sxn_thread_create(host_thread, (void *)(uintptr_t)index, top, 0);
+    if (handle < 0) {
+        return 1;
+    }
+    g_host_threads[index] = handle;
+    return 0;
+}
+
+static const sxw_thread_platform g_thread_platform = {
+    .start = start_thread,
+    .wait_word = wait_word,
+    .wake_word = wake_word,
+    .milliseconds = milliseconds,
+};
 
 int main(int argc, char **argv) {
     const char *exe = 0;
@@ -1021,9 +1329,16 @@ int main(int argc, char **argv) {
     put32((uint8_t *)(uintptr_t)esp, TRAMPOLINE + TRAMPOLINE_BACK32);
     put32((uint8_t *)(uintptr_t)(esp + 4u), g_process.start_block);
     g_started_ns = sxn_clock_ns();
+    g_services.thread_platform = &g_thread_platform;
     sxw_services_start(&g_services);
-    uint32_t returned = sxw_gate_enter(g_process.start_entry, esp);
-    if (!sxw_exit_requested) {
+    sxw_gates[0].index = 0;
+    uint32_t returned = sxw_gate_enter(g_process.start_entry, esp, &sxw_gates[0]);
+    if (!g_services.exit_requested) {
+        if (g_services.threads[0].leaving) {
+            /* The first thread ended and others run on. */
+            sxw_turn_give(&g_services);
+            sxn_thread_exit(0);
+        }
         say_hex("win32: SxwProcessStart returned without exiting: ", returned);
         sxn_exit(2);
     }

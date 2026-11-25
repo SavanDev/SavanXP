@@ -20,6 +20,9 @@ __declspec(dllimport) void WINAPI RtlRaiseException(EXCEPTION_RECORD *record);
 __declspec(dllimport) u32 WINAPI SxwLoadLibrary(const char *name, u32 *error);
 __declspec(dllimport) u32 WINAPI SxwGetProcAddress(u32 base, const char *name, u32 *error);
 __declspec(dllimport) u32 WINAPI SxwFindModule(const char *name);
+/* file.c: WriteFile to a file. */
+BOOL sxw_write_file(HANDLE hFile, LPCVOID lpBuffer, DWORD count, LPDWORD written);
+#define SXW_HANDLE_FIRST 0x40u
 
 static void set_last_error(DWORD error) {
     __asm__ volatile("movl %0, %%fs:%c1" : : "r"(error), "i"(SXW_TEB_LAST_ERROR) : "memory");
@@ -56,6 +59,9 @@ BOOL WINAPI WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrit
     if (lpOverlapped != NULL) {
         set_last_error(ERROR_INVALID_PARAMETER);
         return FALSE;
+    }
+    if ((u32)hFile >= SXW_HANDLE_FIRST) {
+        return sxw_write_file(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten);
     }
     u32 arguments[3] = {(u32)hFile, (u32)lpBuffer, nNumberOfBytesToWrite};
     u32 written = SxwService(SXW_SVC_WRITE, arguments);
@@ -242,8 +248,14 @@ BOOL WINAPI FreeLibrary(HMODULE hLibModule) {
 }
 
 /* DLL_THREAD_ATTACH and DETACH are not sent yet: there is one thread. */
+__declspec(dllimport) int WINAPI SxwDisableThreadCalls(u32 base);
+
+/* The module gets no DLL_THREAD_ATTACH or DETACH from here on. */
 BOOL WINAPI DisableThreadLibraryCalls(HMODULE hLibModule) {
-    (void)hLibModule;
+    if (!SxwDisableThreadCalls((u32)hLibModule)) {
+        set_last_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
     return TRUE;
 }
 

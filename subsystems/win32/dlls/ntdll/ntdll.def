@@ -1,8 +1,21 @@
 LIBRARY ntdll.dll
 EXPORTS
+    RtlAllocateHeap
+    RtlCreateHeap
+    RtlDeleteCriticalSection
+    RtlDestroyHeap
+    RtlEnterCriticalSection
     RtlExitUserProcess
+    RtlFreeHeap
+    RtlInitializeCriticalSection
+    RtlLeaveCriticalSection
     RtlRaiseException
+    RtlReAllocateHeap
+    RtlSizeHeap
+    RtlTryEnterCriticalSection
     RtlUnwind
+    SxwDisableThreadCalls
+    SxwExitThread
     SxwFindModule
     SxwGetProcAddress
     SxwHeapAllocate
@@ -11,7 +24,9 @@ EXPORTS
     SxwHeapResize
     SxwHeapSize
     SxwLoadLibrary
+    SxwProcessHeap
     SxwProcessStart
     SxwRaiseExceptionWithExitStatus
     SxwService
+    SxwThreadStart
     SxwTime

@@ -210,11 +210,13 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `.rsrc` resources | `<program>.sunres.h` (above) | done |
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host: text, and formats through `sxgui_clipboard_*` ([CLIPBOARD.md](../desktop/CLIPBOARD.md)) | text done (Task Manager's Run box); formats done in the toolkit, used by Files (POSIX), no SUN program yet |
-| `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file`; `sxn_create_file`, `sxn_write`, `sxn_flush_file` | Existing regular files, sequential reads, durable whole-file saves up to 4 KiB, and streaming writes from offset 0 of any size; no seek. |
+| `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file`; `sxn_create_file`, `sxn_write`, `sxn_flush_file` | Existing regular files read or written in place, durable whole-file saves up to 4 KiB, and streaming writes of any size |
+| `SetFilePointerEx`, `SetEndOfFile`, `GetFileInformationByHandle` | `sxn_seek_file`, `sxn_set_file_size`, `sxn_query_file` | done (consumer: `winhost`, WP4 of the WordPad roadmap) |
 | `GetFileAttributesEx`, `FindFirstFile`/`FindNextFile` | `sxn_query_path`, `sxn_open_directory`, `sxn_read_directory` | done (the file dialog) |
 | `LockFileEx`, `UnlockFileEx` | `sxn_lock_file` (`SXN_LOCK_EXCLUSIVE`, `SXN_LOCK_FAIL_IMMEDIATELY`), `sxn_unlock_file` | done; advisory, owned by the open file ([FILE_LOCKS.md](../kernel/FILE_LOCKS.md)); consumer: `nativetest`, for parity with POSIX's `fcntl` locks |
 | `CreateDirectory`, `MoveFileEx` | `sxn_make_directory`, `sxn_rename_path` | done (SxBASIC's IDE: New Project, and Save as a rename over the old file; the file dialog's Create New Folder); durable when they return |
 | `DeleteFile` | `sxn_delete_path` (`SXN_SYS_DELETE_PATH`; files only) | done (Web Viewer deletes a download's `.part`); durable when it returns |
+| `RemoveDirectory` | `sxn_delete_directory` (`SXN_SYS_DELETE_DIRECTORY`; an empty directory) | done (consumer: `winhost`); durable when it returns |
 | `GetOpenFileName`, `GetSaveFileName` | `sxn_file_dialog_begin` ([FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) | done (Log Viewer's Save Log..., Display Properties' Browse...); one filter, Create New Folder |
 | `OpenProcessToken` + `GetTokenInformation(TokenUser)` | `sxn_query_identity` (`SXN_SYS_QUERY_IDENTITY`: uid, euid, gid, as POSIX's `GET_IDENTITY`) | done (consumer: `sxn_settings_path`) |
 | `SHGetFolderPath(CSIDL_APPDATA)`, the per-user half of the registry | `sxn_profile_directory`, `sxn_settings_path` (`sxn/sxnprofile.h`), the same rules as POSIX's `savanxp_settings_path` ([USERS_AND_PERMISSIONS.md](../kernel/USERS_AND_PERMISSIONS.md#settings-the-users-and-the-machines)) | done (Display Properties); an elevated SUN program does not make a missing `Settings` folder, since SUN has no chown yet |
@@ -272,9 +274,9 @@ none of them a kernel slice: everything they need was already open to SUN.
 
 A registry, signals (the kernel
 has none; see Isolation D in [KERNEL_NATIVE_API.md](../kernel/KERNEL_NATIVE_API.md)),
-a native `fork`, and the rest of the file surface below: seek, positioned
-or appending writes, and unlink and rmdir
-([VFS-A](../roadmaps/open/VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface)).
+a native `fork`, and the rest of the file surface below: positioned or
+appending writes in one call, and setting a file's time, which POSIX lacks
+too ([VFS-A](../roadmaps/open/VFS_ROADMAP.md#vfs-a--common-io-results-and-the-native-file-surface)).
 Each one waits for a consumer, by rule 1.
 
 ## Files and small profile saves
@@ -285,9 +287,20 @@ permits reading. Directories return `-EISDIR`; devices, relative paths and
 unknown access flags return `-EINVAL`. Missing files return `-ENOENT` and
 permission failures `-EACCES`. `sxn_read` advances the offset, may return a
 partial read and returns 0 at EOF. Duplicates share the offset. Close with
-`sxn_close`; process teardown also releases the handle. Seeking is still
-missing. Compositord's cursor catalog is the first consumer; `nativetest`
-covers the contract.
+`sxn_close`; process teardown also releases the handle. Compositord's cursor
+catalog is the first consumer; `nativetest` covers the contract.
+
+`SXN_FILE_WRITE`, alone or with `SXN_FILE_READ`, opens an existing file to
+write it in place without emptying it, and `sxn_create_file` with
+`SXN_CREATE_READ` or'd in gives a handle that reads too. `sxn_seek_file`
+moves a handle's position from the start, the current position or the end,
+past the end included (a write there leaves zeros in the gap), and returns
+the new one, 64 bits wide. `sxn_set_file_size` cuts or grows a file open for
+writing, leaving the position where it is; `sxn_query_file` answers what
+`sxn_query_path` does for an open handle. `sxn_delete_directory` removes an
+empty directory: `-ENOTEMPTY`, `-ENOTDIR`, `-EBUSY` while it is held.
+`winhost`'s files are the consumer (WIN32.md, "Files"); `nativetest` covers
+the contract.
 
 `sxn_query_path(path, &info)` says what is at a path (type, size, date, owner,
 permission bits) and needs only to reach it, as `stat`. `sxn_open_directory`

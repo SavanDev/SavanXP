@@ -82,6 +82,15 @@ changes not released yet; each released version has its own file in
 
 - **Web Viewer opens large HTML documents** (E2). HTML is parsed through libhubbub and libdom. The old 32 KiB,
   256-paragraph and 64-link limits are gone for local files and remote pages, including links at the end of a document.
+- **Win32 programs can run several threads** (WordPad WP3). `CreateThread`, `_beginthreadex`, suspend counts,
+  thread notifications to DLLs, events, mutexes, semaphores, waits and a message queue per thread; guest threads take
+  turns. Fixture `threads.exe`. See [WIN32.md](docs/userland/WIN32.md#threads).
+- **Win32 has files, private heaps, atoms and the Spanish (Argentina) locale** (WordPad WP4). `CreateFileW` and
+  searches over `C:` and `Z:`, `HeapCreate`, local and global atoms, date and time formats, `CompareStringW` and
+  win.ini's defaults. Fixtures `files.exe`, `memory.exe`, `locale.exe`. See [WIN32.md](docs/userland/WIN32.md#files).
+- **SUN seeks, sizes and queries open files, and removes directories.** `sxn_seek_file`, `sxn_set_file_size`,
+  `sxn_query_file`, `sxn_delete_directory`, `SXN_FILE_WRITE` and `SXN_CREATE_READ`; `winhost` is the consumer.
+  [Slice 31](docs/kernel/KERNEL_NATIVE_API.md#slice-31-positions-sizes-and-directories).
 - **Win32 handles x86 software exceptions** (WordPad WP2). `RaiseException` checks SafeSEH and supports continuing
   execution or searching older frames. `RtlUnwind` runs `__finally` blocks and C++ destructors, and `msvcrt` supports
   typed catches, `catch (...)` and rethrows. See [WIN32.md](docs/userland/WIN32.md#software-exceptions).

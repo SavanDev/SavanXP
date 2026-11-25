@@ -1,0 +1,4 @@
+LIBRARY tlog.dll
+EXPORTS
+    TlogNote
+    TlogTake

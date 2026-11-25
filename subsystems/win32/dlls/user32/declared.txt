@@ -73,7 +73,6 @@ GetWindowPlacement              8  0
 GetWindowRect                   8  0
 GetWindowTextLengthW            4  0
 GetWindowTextW                 12  0
-GetWindowThreadProcessId        8  0
 GrayStringW                    36  0
 InSendMessage                   0  0
 InsertMenuW                    20  0
@@ -81,7 +80,6 @@ InvalidateRgn                  12  0
 IsChild                         8  0
 IsClipboardFormatAvailable      4  0
 IsDialogMessageW                8  0
-IsWindow                        4  0
 IsWindowEnabled                 4  0
 IsWindowVisible                 4  0
 IsZoomed                        4  0
@@ -95,7 +93,6 @@ MessageBoxA                    16  0
 ModifyMenuW                    20  0
 MonitorFromWindow               8  0
 OemToCharBuffA                 12  0
-PostThreadMessageW             16  0
 RedrawWindow                   16  0
 RemoveMenu                     12  0
 RemovePropW                     8  0
@@ -106,7 +103,6 @@ ScrollWindowEx                 32  0
 SendDlgItemMessageA            20  0
 SendDlgItemMessageW            20  0
 SendMessageTimeoutW            28  0
-SendMessageW                   16  0
 SetActiveWindow                 4  0
 SetCursor                       4  0
 SetDlgItemInt                  16  0

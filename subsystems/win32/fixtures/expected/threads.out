@@ -1,0 +1,58 @@
+threads.exe
+notes at start: [Pp1]
+tquiet says: 3
+auto-reset event, signaled: wait, wait: object 0, timeout
+manual-reset event, set: wait, wait, reset, wait: object 0, object 0, ok, timeout
+a wait of 30 ms on nothing: timeout
+semaphore 2 of 3: wait, wait, wait: object 0, object 0, timeout
+ReleaseSemaphore(2): ok previous 0
+ReleaseSemaphore(2) past its maximum: failed error 298 previous -1
+CreateSemaphoreW(3, 2): no error 87
+WaitForMultipleObjects(any): manual unset, semaphore: object 1
+WaitForMultipleObjects(all) with one unset: timeout
+the semaphore was not taken:  error 87
+WaitForMultipleObjects(all) with both set: object 0
+then the semaphore holds: 0
+WaitForMultipleObjects(any): both set, the first wins: object 0
+WaitForMultipleObjects(0 handles): failed error 87
+WaitForSingleObject(a closed handle): failed error 6
+DuplicateHandle, then the copy: ok yes, the original timeout
+mutex: wait, wait again, release, release, release: object 0, object 0, ok, ok, failed error 288
+Sleep(0), Sleep(20): ok
+notes before the thread: []
+CreateThread(CREATE_SUSPENDED): yes
+exit code while suspended: ok 259
+SuspendThread, ResumeThread, ResumeThread: 1, 2, 1
+notes after it started: [A2]
+the thread saw its id, an empty slot and the TLS template: yes 0 15
+this thread's slot and static TLS: 1 6
+the thread's wait on our mutex: timeout
+ReleaseMutex, ReleaseMutex: ok, failed error 288
+the thread's TryEnterCriticalSection while we hold it: no
+still out after 50 ms: yes
+the section, held: 1 waiting yes
+in after we left, and the counter: yes 40000
+the window belongs to the thread: yes
+SendMessageW from here, handled there: 42
+PostMessageW: ok handled there 105
+PostThreadMessageW: ok seen 9
+this thread's queue holds none of it: yes
+PostThreadMessageW to itself: yes
+DestroyWindow from another thread: failed error 5
+destroyed by its own thread: yes yes
+wait for the thread: object 0
+its exit code: ok 7
+notes after it ended: [D3]
+CloseHandle: ok
+_beginthreadex(CREATE_SUSPENDED), idle priority: yes ok -15
+this thread's priority: 0
+_endthreadex(3): object 0 ok 3
+notes: [A2D3]
+a thread that returns 21: ok 21
+a thread that calls ExitThread(31): ok 31
+ResumeThread on an ended thread: 0
+notes: [A2D3A2D3]
+ResumeThread on a closed handle: 0xffffffff error 6
+a thread left waiting as the process ends: yes
+notes: [A2]
+tlog: process detach, last notes [X]

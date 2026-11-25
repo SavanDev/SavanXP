@@ -1,0 +1,105 @@
+files.exe
+SetCurrentDirectoryW(own folder): ok
+GetCurrentDirectoryW is it: yes
+GetCurrentDirectoryW(2) needs: yes
+SetCurrentDirectoryW(missing): failed error 2
+current directory unchanged: yes
+GetFullPathNameW: [C:\a\b\..\c\.\d.txt] -> 12 [C:\a\c\d.txt] part [d.txt]
+GetFullPathNameW: [C:/a/b/c] -> 8 [C:\a\b\c] part [c]
+GetFullPathNameW: [C:\a\b\] -> 7 [C:\a\b\] part none
+GetFullPathNameW: [C:\..\..\x] -> 4 [C:\x] part [x]
+GetFullPathNameW: [C:\x\y. \z..] -> 10 [C:\x\y. \z] part [z]
+GetFullPathNameW: [c:\lower\case] -> 13 [c:\lower\case] part [case]
+GetFullPathNameW: [C:\] -> 3 [C:\] part none
+GetFullPathNameW: [C:\a\.] -> 4 [C:\a] part [a]
+GetFullPathNameW: [C:\a\..] -> 3 [C:\] part none
+GetFullPathNameW: [C:\a\*.txt] -> 10 [C:\a\*.txt] part [*.txt]
+GetFullPathNameW(small) needs: 7
+GetFullPathNameW(rel\file.txt) is the current directory's: yes
+GetFullPathNameW(\rooted.txt) after the drive: yes [\rooted.txt]
+CreateFileW(wp4file.txt, CREATE_ALWAYS) new: valid last error 0
+WriteFile(hello world): ok wrote 11
+SetFilePointer(0, FILE_CURRENT): 11
+SetFilePointer(6, FILE_BEGIN): 6
+ReadFile(5): ok read 5 "world"
+ReadFile at the end: ok read 0
+SetFilePointer(-2, FILE_END): 9
+SetFilePointer(-20, FILE_CURRENT): 0xffffffff error 131
+SetFilePointer with a high part: 3 high 0
+GetFileSize: 11 high 0
+past the end, then a byte: 21 high 0
+the gap: 12 "ld.........!"
+SetEndOfFile at 100: ok size 100 high 0
+SetEndOfFile at 5: ok size 5 high 0
+FlushFileBuffers: ok
+GetFileTime is about now: ok yes
+CloseHandle: ok
+CloseHandle again: failed error 6
+CreateFileW(CREATE_NEW) over it: invalid error 80
+CreateFileW(OPEN_ALWAYS) existing: valid last error 183
+ReadFile through the other spelling: "hello"
+WriteFile on a read handle: failed error 5
+SetEndOfFile on a read handle: failed error 5
+a second reader, sharing reading: valid
+a writer, the reader not sharing writing: invalid error 32
+a reader not sharing reading: invalid error 32
+DeleteFileW while open: failed error 32
+CreateFileW(TRUNCATE_EXISTING): valid size 0 high 0
+ReadFile on a write handle: failed error 5
+CreateFileW(TRUNCATE_EXISTING) to read: invalid error 87
+CreateFileW(OPEN_EXISTING) missing: invalid error 2
+CreateFileW in a missing folder: invalid error 3
+CreateFileW with a wildcard: invalid error 123
+CreateFileW(OPEN_ALWAYS) new: valid last error 0
+ReadFile on a closed handle: failed error 6
+GetFileSize on a closed handle: 0xffffffff error 6
+CreateDirectoryW(wp4dir): ok
+CreateDirectoryW(wp4dir) again: failed error 183
+CreateDirectoryW(wp4dir\sub): ok
+CreateDirectoryW in a missing folder: failed error 3
+GetFileAttributesW(wp4dir): 0x00000010
+GetFileAttributesW(wp4dir\a.TXT): 0x00000020
+GetFileAttributesW(missing): invalid error 2
+GetFileAttributesW(missing folder): invalid error 3
+CreateFileW on a folder: invalid error 5
+FindFirstFileW: [wp4dir\*]: [.] 0x00000010 0 [..] 0x00000010 0 [A.txt] 0x00000020 1 [b.rtf] 0x00000020 7 [c.TXT] 0x00000020 2 [sub] 0x00000010 0 end error 18 close ok
+FindFirstFileW: [wp4dir\*.*]: [.] 0x00000010 0 [..] 0x00000010 0 [A.txt] 0x00000020 1 [b.rtf] 0x00000020 7 [c.TXT] 0x00000020 2 [sub] 0x00000010 0 end error 18 close ok
+FindFirstFileW: [wp4dir\*.txt]: [A.txt] 0x00000020 1 [c.TXT] 0x00000020 2 end error 18 close ok
+FindFirstFileW: [wp4dir\?.rtf]: [b.rtf] 0x00000020 7 end error 18 close ok
+FindFirstFileW: [wp4dir\SUB]: [sub] 0x00000010 0 end error 18 close ok
+FindFirstFileW: [wp4dir\a.txt]: [A.txt] 0x00000020 1 end error 18 close ok
+FindFirstFileW: [wp4dir\*.none]: none error 2
+FindFirstFileW: [wp4-missing\*]: none error 3
+FindFirstFileW: [wp4dir\sub\*]: [.] 0x00000010 0 [..] 0x00000010 0 [deep.txt] 0x00000020 4 end error 18 close ok
+DeleteFileW(folder): failed error 5
+RemoveDirectoryW(not empty): failed error 145
+RemoveDirectoryW(a file): failed error 267
+RemoveDirectoryW(missing): failed error 2
+MoveFileW(onto a file): failed error 183
+MoveFileW(missing): failed error 2
+MoveFileW(A.txt to the parent): ok
+the moved file: 0x00000020 invalid error 2
+DeleteFileW: ok
+DeleteFileW again: failed error 2
+RemoveDirectoryW(empty): ok
+GetVolumeInformationW(own drive): ok longest 255 case kept, Unicode 0x00000006
+GetVolumeInformationW(not a root): failed error 123
+FileTimeToSystemTime: 0x00000000 0x00000000 -> 1601-1-1 0:0:0.0 day 1 back ok yes
+FileTimeToSystemTime: 0x00000000 0x0012d687 -> 1601-1-1 0:0:0.123 day 1 back ok yes
+FileTimeToSystemTime: 0x01bdb7ce 0x5dbc2800 -> 1998-7-25 13:16:0.0 day 6 back ok yes
+FileTimeToSystemTime: 0x01bfa455 0x19b30000 -> 2000-4-12 8:0:0.0 day 3 back ok yes
+FileTimeToSystemTime: 0x7fffffff 0xffffffff -> 30828-9-14 2:48:5.477 day 4 back failed error 87 no
+FileTimeToSystemTime: 0x80000000 0x00000000 -> failed error 87
+SystemTimeToFileTime: 2000-2-29 12:0:0.0 day 0 -> 0x01bf82ac 0x81016000
+SystemTimeToFileTime: 2001-2-29 12:0:0.0 day 0 -> failed error 87
+SystemTimeToFileTime: 2001-13-1 0:0:0.0 day 0 -> failed error 87
+SystemTimeToFileTime: 1600-12-31 0:0:0.0 day 0 -> failed error 87
+SystemTimeToFileTime: 30827-12-31 23:59:59.999 day 0 -> 0x7fff35f4 0xf06c58f0
+SystemTimeToFileTime: 30828-1-1 0:0:0.0 day 0 -> failed error 87
+SystemTimeToFileTime: 2001-8-24 24:0:0.0 day 6 -> failed error 87
+SystemTimeToFileTime: 2001-8-24 23:60:0.0 day 6 -> failed error 87
+SystemTimeToFileTime: 2001-8-24 23:59:59.1000 day 6 -> failed error 87
+SystemTimeToFileTime: 2100-3-1 0:0:0.0 day 5 -> 0x022f9fc0 0x3dc34000
+FileTimeToLocalFileTime and back: ok ok yes
+GetLocalTime agrees with FileTimeToLocalFileTime: yes
+left behind: invalid error 2

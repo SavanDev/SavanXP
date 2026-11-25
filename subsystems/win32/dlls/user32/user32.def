@@ -32,6 +32,7 @@ EXPORTS
     GetSysColor
     GetSysColorBrush
     GetSystemMetrics
+    GetWindowThreadProcessId
     InflateRect
     IntersectRect
     InvalidateRect
@@ -39,6 +40,7 @@ EXPORTS
     IsDlgButtonChecked
     IsIconic
     IsRectEmpty
+    IsWindow
     KillTimer
     LoadAcceleratorsW
     LoadBitmapA
@@ -54,6 +56,7 @@ EXPORTS
     PeekMessageW
     PostMessageW
     PostQuitMessage
+    PostThreadMessageW
     PtInRect
     RegisterClassExW
     RegisterClassW
@@ -61,6 +64,7 @@ EXPORTS
     RegisterWindowMessageW
     ReleaseCapture
     ReleaseDC
+    SendMessageW
     SetCapture
     SetCursorPos
     SetFocus

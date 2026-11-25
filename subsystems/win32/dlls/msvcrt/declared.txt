@@ -4,8 +4,6 @@
 # out of this table when it is written.
 
 __doserrno            cdecl  0
-_beginthreadex        cdecl  0
-_endthreadex          cdecl  0
 _fdopen               cdecl  0
 _get_osfhandle        cdecl  -1
 _open_osfhandle       cdecl  -1

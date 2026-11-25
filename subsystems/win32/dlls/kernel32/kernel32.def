@@ -1,49 +1,101 @@
 LIBRARY kernel32.dll
 EXPORTS
+    AddAtomW
+    CloseHandle
+    CompareStringW
+    CreateDirectoryW
+    CreateEventW
+    CreateFileW
+    CreateMutexW
+    CreateSemaphoreW
+    CreateThread
+    DeleteAtom
     DeleteCriticalSection
+    DeleteFileW
     DisableThreadLibraryCalls
+    DuplicateHandle
     EnterCriticalSection
+    EnumDateFormatsW
+    EnumTimeFormatsW
     ExitProcess
+    ExitThread
+    FileTimeToLocalFileTime
+    FileTimeToSystemTime
+    FindAtomW
+    FindClose
+    FindFirstFileW
+    FindNextFileW
     FindResourceExW
     FindResourceW
+    FlushFileBuffers
     FreeLibrary
     FreeResource
+    GetAtomNameW
     GetCommandLineW
+    GetCurrentDirectoryW
     GetCurrentProcess
     GetCurrentProcessId
     GetCurrentThread
     GetCurrentThreadId
+    GetDateFormatW
+    GetExitCodeThread
+    GetFileAttributesW
+    GetFileSize
+    GetFileTime
+    GetFullPathNameW
     GetLastError
     GetLocaleInfoW
+    GetLocalTime
     GetModuleFileNameA
     GetModuleFileNameW
     GetModuleHandleA
     GetModuleHandleW
     GetProcAddress
+    GetProcessHeap
     GetProcessVersion
+    GetProfileIntA
+    GetProfileIntW
+    GetProfileSectionW
+    GetProfileStringW
     GetStartupInfoA
     GetStartupInfoW
     GetStdHandle
     GetSystemDefaultLCID
     GetSystemDirectoryA
     GetSystemDirectoryW
+    GetSystemTime
     GetSystemTimeAsFileTime
     GetThreadLocale
+    GetThreadPriority
     GetTickCount
+    GetTimeFormatW
     GetUserDefaultLCID
     GetVersion
     GetVersionExA
+    GetVolumeInformationW
+    GlobalAddAtomW
     GlobalAlloc
+    GlobalDeleteAtom
+    GlobalFindAtomW
     GlobalFlags
     GlobalFree
+    GlobalGetAtomNameW
     GlobalHandle
     GlobalLock
     GlobalReAlloc
     GlobalSize
     GlobalUnlock
+    HeapAlloc
+    HeapCreate
+    HeapDestroy
+    HeapFree
+    HeapReAlloc
+    HeapSize
     InitializeCriticalSection
+    InterlockedCompareExchange
     InterlockedDecrement
     InterlockedExchange
+    InterlockedExchangeAdd
     InterlockedIncrement
     LeaveCriticalSection
     LoadLibraryA
@@ -52,6 +104,7 @@ EXPORTS
     LoadLibraryW
     LoadResource
     LocalAlloc
+    LocalFileTimeToFileTime
     LocalFree
     LocalLock
     LocalReAlloc
@@ -68,18 +121,36 @@ EXPORTS
     lstrcpyW
     lstrlenA
     lstrlenW
+    MoveFileW
     MulDiv
     MultiByteToWideChar
     QueryPerformanceCounter
     QueryPerformanceFrequency
     RaiseException
+    ReadFile
+    ReleaseMutex
+    ReleaseSemaphore
+    RemoveDirectoryW
+    ResetEvent
+    ResumeThread
     RtlUnwind=ntdll.RtlUnwind
+    SetCurrentDirectoryW
+    SetEndOfFile
     SetErrorMode
+    SetEvent
+    SetFilePointer
     SetLastError
+    SetThreadPriority
     SizeofResource
+    Sleep
+    SuspendThread
+    SystemTimeToFileTime
     TlsAlloc
     TlsFree
     TlsGetValue
     TlsSetValue
+    TryEnterCriticalSection
+    WaitForMultipleObjects
+    WaitForSingleObject
     WideCharToMultiByte
     WriteFile

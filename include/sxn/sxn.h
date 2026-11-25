@@ -126,7 +126,8 @@ static inline long sxn_write(long handle, const void* buffer, unsigned long coun
     return sxn_trap(SXN_SYS_WRITE, (unsigned long)handle, (unsigned long)buffer, count);
 }
 
-/* Existing regular files only. No desired access means query, never read. */
+/* Existing regular files only, never emptied: SXN_FILE_READ, SXN_FILE_WRITE
+ * or both. No desired access means query, never read. */
 static inline long sxn_open_file(const char* path, unsigned access) {
     return sxn_trap(SXN_SYS_OPEN_FILE, (unsigned long)path, access, 0);
 }
@@ -160,6 +161,22 @@ static inline long sxn_create_file(const char* path, unsigned disposition) {
 
 static inline long sxn_flush_file(long handle) {
     return sxn_trap(SXN_SYS_FLUSH_FILE, (unsigned long)handle, 0, 0);
+}
+
+/* Moves a file handle's position (SXN_SEEK_START, _CURRENT or _END); the
+ * new position, or -errno. */
+static inline long sxn_seek_file(long handle, int64_t offset, unsigned origin) {
+    return sxn_trap(SXN_SYS_SEEK_FILE, (unsigned long)handle, (unsigned long)offset, origin);
+}
+
+/* Cuts or grows (with zeros) a file open for writing to `size` bytes. */
+static inline long sxn_set_file_size(long handle, uint64_t size) {
+    return sxn_trap(SXN_SYS_SET_FILE_SIZE, (unsigned long)handle, (unsigned long)size, 0);
+}
+
+/* What sxn_query_path says, for an open file. 0 or -errno. */
+static inline long sxn_query_file(long handle, struct sxn_file_info* out) {
+    return sxn_trap(SXN_SYS_QUERY_FILE, (unsigned long)handle, (unsigned long)out, sizeof(*out));
 }
 
 /* LockFileEx and UnlockFileEx: a byte range of the open file, shared or
@@ -210,6 +227,11 @@ static inline long sxn_rename_path(const char* old_path, const char* new_path) {
 /* Delete a file (not a directory); durable when it returns. 0 or -errno. */
 static inline long sxn_delete_path(const char* path) {
     return sxn_trap(SXN_SYS_DELETE_PATH, (unsigned long)path, 0, 0);
+}
+
+/* Delete an empty directory; durable when it returns. 0 or -errno. */
+static inline long sxn_delete_directory(const char* path) {
+    return sxn_trap(SXN_SYS_DELETE_DIRECTORY, (unsigned long)path, 0, 0);
 }
 
 static inline long sxn_open_device(const char* name, unsigned access) {

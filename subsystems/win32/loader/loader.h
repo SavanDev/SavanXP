@@ -94,6 +94,7 @@ typedef struct sxw_process {
     uint32_t peb;
     uint32_t start_block;
     uint32_t start_entry; /* ntdll!SxwProcessStart */
+    uint32_t thread_entry; /* ntdll!SxwThreadStart, 0 without one */
 
     char diagnostic[SXW_DIAGNOSTIC];
     /* After a failed load: the NT status Windows XP ends the process with for
@@ -111,6 +112,22 @@ int sxw_load(sxw_process *process, const sxw_platform *platform, const char *exe
 /* A new zeroed read-write region of at least size bytes for the guest (the
  * heap's arenas). 0, or -1 when there is no room. */
 int sxw_allocate_region(sxw_process *process, uint32_t size, uint32_t *base);
+
+/* A new thread's memory: one region with its stack, its TEB (filled as the
+ * first thread's, with no ids) and its static TLS from the images'
+ * templates. stack 0 is the executable's reserve. */
+typedef struct sxw_thread_block {
+    uint32_t region; /* its base, for sxw_free_region */
+    uint32_t stack_low;
+    uint32_t stack_top;
+    uint32_t teb;
+} sxw_thread_block;
+
+int sxw_new_thread(sxw_process *process, uint32_t stack, sxw_thread_block *out);
+
+/* Gives back a region sxw_allocate_region made, by its base. 0, or -1 when
+ * no such region is mapped. */
+int sxw_free_region(sxw_process *process, uint32_t base);
 
 /* LoadLibrary: the DLL named name (ANSI, a path allowed) and what it needs,
  * into a running process. Loaded ones only return their base. The modules

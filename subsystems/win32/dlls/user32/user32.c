@@ -31,7 +31,6 @@
 #define DESKTOP_HANDLE ((HWND)0x00010010)
 #define HTMENU 5
 #define WAIT_OBJECT_0 0u
-#define WAIT_FAILED 0xffffffffu
 #define ERROR_CLASS_ALREADY_EXISTS 1410u
 #define ERROR_RESOURCE_TYPE_NOT_FOUND 1813u
 #define ERROR_CALL_NOT_IMPLEMENTED 120u
@@ -508,9 +507,10 @@ static window *needs_paint(window *w, HWND filter) {
 }
 
 static window *any_paint(HWND filter) {
+    const u32 self = GetCurrentThreadId();
     for (int i = 0; i < MAX_WINDOWS; ++i) {
         window *w = &g_windows[i];
-        if (w->used && w->parent == 0 && !w->destroying) {
+        if (w->used && w->parent == 0 && !w->destroying && w->thread == self) {
             window *found = needs_paint(w, filter);
             if (found != 0) {
                 return found;
@@ -814,7 +814,10 @@ HWND WINAPI CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWind
     }
     window *parent = 0;
     window *owner = 0;
-    if ((dwStyle & WS_CHILD) != 0) {
+    const int message_only = hWndParent == HWND_MESSAGE;
+    if (message_only) {
+        dwStyle &= ~(DWORD)(WS_CHILD | WS_VISIBLE);
+    } else if ((dwStyle & WS_CHILD) != 0) {
         parent = checked(hWndParent);
         if (parent == 0) {
             return NULL;
@@ -842,6 +845,8 @@ HWND WINAPI CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWind
     g_generation = g_generation == 0x7fffu ? 1u : g_generation + 1u;
     w->cls = cls;
     w->proc = cls->proc;
+    w->thread = GetCurrentThreadId();
+    w->message_only = message_only;
     w->style = dwStyle & ~(DWORD)WS_VISIBLE;
     w->ex_style = dwExStyle;
     w->parent = parent;
@@ -886,7 +891,7 @@ HWND WINAPI CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWind
     cs.lpCreateParams = lpParam;
     cs.hInstance = hInstance;
     cs.hMenu = hMenu;
-    cs.hwndParent = hWndParent;
+    cs.hwndParent = message_only ? NULL : hWndParent;
     cs.cy = nHeight;
     cs.cx = nWidth;
     cs.y = Y;
@@ -911,7 +916,7 @@ HWND WINAPI CreateWindowExW(DWORD dwExStyle, LPCWSTR lpClassName, LPCWSTR lpWind
     w->client.top = r.top;
     w->client.right = r.right > r.left ? r.right : r.left;
     w->client.bottom = r.bottom > r.top ? r.bottom : r.top;
-    if (parent == 0 && !size_surface(w, client_width(w), client_height(w) + w->menu_height)) {
+    if (parent == 0 && !message_only && !size_surface(w, client_width(w), client_height(w) + w->menu_height)) {
         destroy_tree(w);
         set_last_error(ERROR_NOT_ENOUGH_MEMORY);
         return NULL;
@@ -986,6 +991,11 @@ static void destroy_tree(window *w) {
 BOOL WINAPI DestroyWindow(HWND hWnd) {
     window *w = checked(hWnd);
     if (w == 0) {
+        return FALSE;
+    }
+    if (w->thread != GetCurrentThreadId()) {
+        /* Only the thread that made a window destroys it, as on Windows. */
+        set_last_error(ERROR_ACCESS_DENIED);
         return FALSE;
     }
     if (w->destroying) {
@@ -1249,6 +1259,7 @@ BOOL WINAPI ClientToScreen(HWND hWnd, LPPOINT lpPoint) {
 
 typedef struct timer {
     int used;
+    u32 thread; /* whose messages it is */
     window *w;
     HWND hwnd;
     UINT_PTR id;
@@ -1291,6 +1302,7 @@ UINT_PTR WINAPI SetTimer(HWND hWnd, UINT_PTR nIDEvent, UINT uElapse, TIMERPROC l
         nIDEvent = g_next_timer_id++;
     }
     slot->used = 1;
+    slot->thread = w != 0 ? w->thread : GetCurrentThreadId();
     slot->w = w;
     slot->hwnd = hWnd;
     slot->id = nIDEvent;
@@ -1322,9 +1334,11 @@ static void timers_of_window_end(window *w) {
 /* The timer that is due first, or 0. */
 static timer *next_timer(HWND filter) {
     timer *best = 0;
+    const u32 self = GetCurrentThreadId();
     for (int i = 0; i < MAX_TIMERS; ++i) {
         timer *t = &g_timers[i];
-        if (t->used && (filter == NULL || t->hwnd == filter) && (best == 0 || (int)(t->due - best->due) < 0)) {
+        if (t->used && t->thread == self && (filter == NULL || t->hwnd == filter) &&
+            (best == 0 || (int)(t->due - best->due) < 0)) {
             best = t;
         }
     }
@@ -1341,14 +1355,81 @@ typedef struct queued {
     int down;
 } queued;
 
-static queued g_posted[MAX_POSTED];
-static u32 g_posted_head;
-static u32 g_posted_count;
-static queued g_input[MAX_INPUT];
-static u32 g_input_head;
-static u32 g_input_count;
-static int g_quit;
-static int g_quit_code;
+/* A message sent from another thread, waiting for the window's own thread
+ * to call the window procedure. It lives on the sender's stack until done. */
+typedef struct sent_message {
+    struct sent_message *next;
+    HWND hwnd;
+    UINT message;
+    WPARAM wParam;
+    LPARAM lParam;
+    LRESULT result;
+    volatile int done;
+    u32 sender;
+} sent_message;
+
+/* A thread's message queue: what is posted to it and to its windows, the
+ * input for its windows, its quit request, and the messages other threads
+ * send it. Made the first time the thread needs one (TEB.Win32ThreadInfo). */
+typedef struct thread_queue {
+    u32 thread;
+    queued posted[MAX_POSTED];
+    u32 posted_head;
+    u32 posted_count;
+    queued input[MAX_INPUT];
+    u32 input_head;
+    u32 input_count;
+    int quit;
+    int quit_code;
+    sent_message *sent_first;
+    sent_message *sent_last;
+} thread_queue;
+
+#define MAX_QUEUES 32
+static thread_queue *g_queues[MAX_QUEUES];
+
+/* The queue of a thread, made when make is set; 0 for a thread without one. */
+static thread_queue *queue_of(u32 thread, int make) {
+    for (int i = 0; i < MAX_QUEUES; ++i) {
+        if (g_queues[i] != 0 && g_queues[i]->thread == thread) {
+            return g_queues[i];
+        }
+    }
+    if (!make) {
+        return 0;
+    }
+    for (int i = 0; i < MAX_QUEUES; ++i) {
+        if (g_queues[i] == 0) {
+            thread_queue *q = SxwHeapAllocate(sizeof(thread_queue), 1);
+            if (q == 0) {
+                return 0;
+            }
+            q->thread = thread;
+            g_queues[i] = q;
+            return q;
+        }
+    }
+    return 0;
+}
+
+/* The calling thread's queue. */
+static thread_queue *my_queue(void) {
+    thread_queue *q;
+    __asm__ volatile("movl %%fs:%c1, %0" : "=r"(q) : "i"(SXW_TEB_WIN32_THREAD));
+    if (q == 0) {
+        q = queue_of(GetCurrentThreadId(), 1);
+        __asm__ volatile("movl %0, %%fs:%c1" : : "r"(q), "i"(SXW_TEB_WIN32_THREAD) : "memory");
+    }
+    return q;
+}
+
+/* Wakes a thread from its wait for messages. */
+static void wake_thread(u32 thread) {
+    if (thread != GetCurrentThreadId()) {
+        u32 arguments[1] = {thread};
+        SxwService(SXW_SVC_WAKE_THREAD, arguments);
+    }
+}
 static unsigned char g_key_state[256];  /* 0x80 down, 0x01 toggled */
 static unsigned char g_async_down[256]; /* as input arrives */
 static WCHAR g_key_char[256];           /* what the last press of each key typed */
@@ -1395,43 +1476,66 @@ static int push(queued *ring, u32 head, u32 *count, u32 capacity, const queued *
 
 static void drop_messages(window *w) {
     const HWND h = handle_of(w);
+    thread_queue *q = queue_of(w->thread, 0);
+    if (q == 0) {
+        return;
+    }
     queued kept;
-    for (u32 n = g_posted_count; n > 0; --n) {
-        if (take(g_posted, &g_posted_head, &g_posted_count, MAX_POSTED, NULL, 0, 0, 1, &kept) &&
+    for (u32 n = q->posted_count; n > 0; --n) {
+        if (take(q->posted, &q->posted_head, &q->posted_count, MAX_POSTED, NULL, 0, 0, 1, &kept) &&
             kept.msg.hwnd != h) {
-            push(g_posted, g_posted_head, &g_posted_count, MAX_POSTED, &kept);
+            push(q->posted, q->posted_head, &q->posted_count, MAX_POSTED, &kept);
         }
     }
-    for (u32 n = g_input_count; n > 0; --n) {
-        if (take(g_input, &g_input_head, &g_input_count, MAX_INPUT, NULL, 0, 0, 1, &kept) &&
+    for (u32 n = q->input_count; n > 0; --n) {
+        if (take(q->input, &q->input_head, &q->input_count, MAX_INPUT, NULL, 0, 0, 1, &kept) &&
             kept.msg.hwnd != h) {
-            push(g_input, g_input_head, &g_input_count, MAX_INPUT, &kept);
+            push(q->input, q->input_head, &q->input_count, MAX_INPUT, &kept);
         }
     }
 }
 
-BOOL WINAPI PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
-    if (hWnd != NULL && checked(hWnd) == 0) {
+/* Posts to a thread's queue and wakes the thread. */
+static BOOL post_to(u32 thread, HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
+    thread_queue *q = queue_of(thread, thread == GetCurrentThreadId());
+    if (q == 0) {
+        set_last_error(1444u); /* ERROR_INVALID_THREAD_ID */
         return FALSE;
     }
-    queued q;
-    zero(&q, sizeof(q));
-    q.msg.hwnd = hWnd;
-    q.msg.message = Msg;
-    q.msg.wParam = wParam;
-    q.msg.lParam = lParam;
-    q.msg.time = ticks();
-    q.msg.pt = g_last_point;
-    if (!push(g_posted, g_posted_head, &g_posted_count, MAX_POSTED, &q)) {
+    queued m;
+    zero(&m, sizeof(m));
+    m.msg.hwnd = hWnd;
+    m.msg.message = Msg;
+    m.msg.wParam = wParam;
+    m.msg.lParam = lParam;
+    m.msg.time = ticks();
+    m.msg.pt = g_last_point;
+    if (!push(q->posted, q->posted_head, &q->posted_count, MAX_POSTED, &m)) {
         set_last_error(ERROR_NOT_ENOUGH_MEMORY);
         return FALSE;
     }
+    wake_thread(thread);
     return TRUE;
 }
 
+BOOL WINAPI PostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
+    window *w = 0;
+    if (hWnd != NULL && (w = checked(hWnd)) == 0) {
+        return FALSE;
+    }
+    return post_to(w != 0 ? w->thread : GetCurrentThreadId(), hWnd, Msg, wParam, lParam);
+}
+
+BOOL WINAPI PostThreadMessageW(DWORD idThread, UINT Msg, WPARAM wParam, LPARAM lParam) {
+    return post_to(idThread, NULL, Msg, wParam, lParam);
+}
+
 void WINAPI PostQuitMessage(int nExitCode) {
-    g_quit = 1;
-    g_quit_code = nExitCode;
+    thread_queue *q = my_queue();
+    if (q != 0) {
+        q->quit = 1;
+        q->quit_code = nExitCode;
+    }
 }
 
 static UINT g_registered_count;
@@ -1510,7 +1614,11 @@ static void queue_input(window *target, UINT message, WPARAM wParam, LPARAM lPar
     q.msg.pt = g_last_point;
     q.vk = vk;
     q.down = down;
-    push(g_input, g_input_head, &g_input_count, MAX_INPUT, &q);
+    thread_queue *queue = queue_of(target != 0 ? target->thread : GetCurrentThreadId(), 1);
+    if (queue != 0) {
+        push(queue->input, queue->input_head, &queue->input_count, MAX_INPUT, &q);
+        wake_thread(queue->thread);
+    }
 }
 
 typedef struct click {
@@ -1736,11 +1844,72 @@ static void handle_event(const sxw_event *e) {
 static int wait_event(u32 timeout) {
     sxw_event e;
     u32 arguments[2] = {timeout, (u32)&e};
-    if (SxwService(SXW_SVC_WAIT_EVENT, arguments) == 0) {
+    const u32 got = SxwService(SXW_SVC_WAIT_EVENT, arguments);
+    if (got == 1u) {
+        handle_event(&e);
+    }
+    /* 2: another thread posted or sent this one a message. */
+    return got != 0u;
+}
+
+/* Calls the window procedures other threads sent messages to, on this
+ * thread, as Windows does whenever the thread looks at its queue. */
+static int receive_sent(void) {
+    thread_queue *q = my_queue();
+    int any = 0;
+    while (q != 0 && q->sent_first != 0) {
+        sent_message *m = q->sent_first;
+        q->sent_first = m->next;
+        if (q->sent_first == 0) {
+            q->sent_last = 0;
+        }
+        window *w = window_of(m->hwnd);
+        m->result = w != 0 ? send(w, m->message, m->wParam, m->lParam) : 0;
+        m->done = 1;
+        wake_thread(m->sender);
+        any = 1;
+    }
+    return any;
+}
+
+/* SendMessage to a window of another thread: queued there, and this thread
+ * waits for the answer, taking the messages sent to it meanwhile. */
+static LRESULT send_across(window *w, UINT message, WPARAM wParam, LPARAM lParam) {
+    thread_queue *q = queue_of(w->thread, 1);
+    if (q == 0) {
         return 0;
     }
-    handle_event(&e);
-    return 1;
+    sent_message m;
+    zero(&m, sizeof(m));
+    m.hwnd = handle_of(w);
+    m.message = message;
+    m.wParam = wParam;
+    m.lParam = lParam;
+    m.sender = GetCurrentThreadId();
+    if (q->sent_last != 0) {
+        q->sent_last->next = &m;
+    } else {
+        q->sent_first = &m;
+    }
+    q->sent_last = &m;
+    wake_thread(w->thread);
+    while (!m.done) {
+        if (!receive_sent()) {
+            wait_event(SXW_INFINITE);
+        }
+    }
+    return m.result;
+}
+
+LRESULT WINAPI SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) {
+    window *w = checked(hWnd);
+    if (w == 0) {
+        return 0;
+    }
+    if (w->thread != GetCurrentThreadId()) {
+        return send_across(w, Msg, wParam, lParam);
+    }
+    return send(w, Msg, wParam, lParam);
 }
 
 static void poll_events(void) {
@@ -1803,24 +1972,27 @@ static void before_mouse(window *w, const MSG *m) {
 /* GetMessage and PeekMessage: sent, posted, quit, input, paint, timer, in
  * Windows' order. 1 with a message, 0 when there was none and block is off. */
 int next_message(MSG *msg, HWND filter, UINT first, UINT last, int remove, int block) {
+    thread_queue *queue = my_queue();
     for (;;) {
         poll_events();
+        receive_sent();
         queued q;
-        if (take(g_posted, &g_posted_head, &g_posted_count, MAX_POSTED, filter, first, last, remove, &q)) {
+        if (take(queue->posted, &queue->posted_head, &queue->posted_count, MAX_POSTED, filter, first, last, remove,
+                 &q)) {
             *msg = q.msg;
             return 1;
         }
-        if (g_quit && filter == NULL) {
+        if (queue->quit && filter == NULL) {
             zero(msg, sizeof(*msg));
             msg->message = WM_QUIT;
-            msg->wParam = (WPARAM)g_quit_code;
+            msg->wParam = (WPARAM)queue->quit_code;
             msg->time = ticks();
             if (remove) {
-                g_quit = 0;
+                queue->quit = 0;
             }
             return 1;
         }
-        if (take(g_input, &g_input_head, &g_input_count, MAX_INPUT, filter, first, last, remove, &q)) {
+        if (take(queue->input, &queue->input_head, &queue->input_count, MAX_INPUT, filter, first, last, remove, &q)) {
             *msg = q.msg;
             if (remove && q.vk != 0) {
                 g_key_state[q.vk] = (unsigned char)((q.down ? 0x80 : 0) |
@@ -1835,7 +2007,8 @@ int next_message(MSG *msg, HWND filter, UINT first, UINT last, int remove, int b
             if (w == 0 && q.msg.hwnd != NULL) {
                 /* Its window is gone: drop it, even when only peeking. */
                 if (!remove) {
-                    take(g_input, &g_input_head, &g_input_count, MAX_INPUT, filter, first, last, 1, &q);
+                    take(queue->input, &queue->input_head, &queue->input_count, MAX_INPUT, filter, first, last, 1,
+                         &q);
                 }
                 continue;
             }
@@ -1876,7 +2049,9 @@ int next_message(MSG *msg, HWND filter, UINT first, UINT last, int remove, int b
 
 int input_waiting(void) {
     poll_events();
-    return g_posted_count != 0 || g_input_count != 0 || g_quit || any_paint(NULL) != 0;
+    receive_sent();
+    const thread_queue *q = my_queue();
+    return q->posted_count != 0 || q->input_count != 0 || q->quit || any_paint(NULL) != 0;
 }
 
 BOOL WINAPI GetMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax) {
@@ -1911,7 +2086,9 @@ DWORD WINAPI MsgWaitForMultipleObjects(DWORD nCount, const HANDLE *pHandles, BOO
         poll_events();
         timer *t = next_timer(NULL);
         const u32 now = ticks();
-        if (g_posted_count != 0 || g_input_count != 0 || g_quit || any_paint(NULL) != 0 ||
+        receive_sent();
+        const thread_queue *q = my_queue();
+        if (q->posted_count != 0 || q->input_count != 0 || q->quit || any_paint(NULL) != 0 ||
             (t != 0 && expired(t->due, now))) {
             return WAIT_OBJECT_0;
         }
@@ -2902,4 +3079,19 @@ int WINAPI DrawTextW(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT f
         y += line_height;
     }
     return height;
+}
+
+BOOL WINAPI IsWindow(HWND hWnd) {
+    return window_of(hWnd) != 0;
+}
+
+DWORD WINAPI GetWindowThreadProcessId(HWND hWnd, LPDWORD lpdwProcessId) {
+    window *w = checked(hWnd);
+    if (w == 0) {
+        return 0;
+    }
+    if (lpdwProcessId != NULL) {
+        *lpdwProcessId = GetCurrentProcessId();
+    }
+    return w->thread;
 }

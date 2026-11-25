@@ -2535,6 +2535,90 @@ static void test_file_listing(void) {
     check(sxn_delete_path("gone") == -SAVANXP_EINVAL);
 }
 
+/* Positions, sizes and directories (SEEK_FILE, SET_FILE_SIZE, QUERY_FILE,
+ * DELETE_DIRECTORY, and OPEN_FILE/CREATE_FILE for reading and writing): what
+ * winhost's CreateFile, SetFilePointer, SetEndOfFile, GetFileSize and
+ * RemoveDirectory stand on. */
+static void test_file_positions(void) {
+    struct sxn_file_info info;
+    char back[16];
+    long handle;
+    long result;
+
+    handle = sxn_create_file("/users/native-seek-test", SXN_CREATE_ALWAYS | SXN_CREATE_READ);
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_write(handle, "hello world", 11) == 11);
+        check(sxn_seek_file(handle, 0, SXN_SEEK_CURRENT) == 11);
+        check(sxn_seek_file(handle, 6, SXN_SEEK_START) == 6);
+        check(sxn_read(handle, back, 5) == 5 && file_bytes_equal(back, "world", 5));
+        check(sxn_read(handle, back, 5) == 0);
+        check(sxn_seek_file(handle, -5, SXN_SEEK_END) == 6);
+        check(sxn_write(handle, "WORLD", 5) == 5);
+        check(sxn_seek_file(handle, -1, SXN_SEEK_START) == -SAVANXP_EINVAL);
+        check(sxn_seek_file(handle, 0, 3) == -SAVANXP_EINVAL);
+        check(sxn_seek_file(handle, 0, SXN_SEEK_CURRENT) == 11);
+        /* Past the end: the gap a write leaves reads as zeros. */
+        check(sxn_seek_file(handle, 20, SXN_SEEK_START) == 20);
+        check(sxn_write(handle, "!", 1) == 1);
+        check(sxn_query_file(handle, &info) == 0 && info.type == SXN_FILE_TYPE_FILE && info.size == 21u);
+        check(sxn_seek_file(handle, 11, SXN_SEEK_START) == 11);
+        check(sxn_read(handle, back, 10) == 10 && back[0] == 0 && back[8] == 0 && back[9] == '!');
+        /* Growing and cutting leave the position where it was. */
+        check(sxn_set_file_size(handle, 100) == 0);
+        check(sxn_query_file(handle, &info) == 0 && info.size == 100u);
+        check(sxn_set_file_size(handle, 4) == 0);
+        check(sxn_query_file(handle, &info) == 0 && info.size == 4u);
+        check(sxn_seek_file(handle, 0, SXN_SEEK_CURRENT) == 21);
+        check(sxn_trap(SXN_SYS_QUERY_FILE, (unsigned long)handle, (unsigned long)&info,
+                       SXN_FILE_INFO_V1_SIZE - 1u) == -SAVANXP_EINVAL);
+        check(sxn_close(handle) == 0);
+    }
+    check(sxn_query_path("/users/native-seek-test", &info) == 0 && info.size == 4u);
+    /* An existing file opened to write keeps its bytes. */
+    handle = sxn_open_file("/users/native-seek-test", SXN_FILE_READ | SXN_FILE_WRITE);
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_seek_file(handle, 0, SXN_SEEK_END) == 4);
+        check(sxn_write(handle, "o", 1) == 1);
+        check(sxn_seek_file(handle, 0, SXN_SEEK_START) == 0);
+        check(sxn_read(handle, back, 8) == 5 && file_bytes_equal(back, "hello", 5));
+        check(sxn_close(handle) == 0);
+    }
+    /* A read handle cannot change the size; a query handle still answers. */
+    handle = sxn_open_file("/users/native-seek-test", SXN_FILE_READ);
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_set_file_size(handle, 0) == -SAVANXP_EBADF);
+        check(sxn_write(handle, "x", 1) == -SAVANXP_EBADF);
+        (void)sxn_close(handle);
+    }
+    handle = sxn_open_file("/users/native-seek-test", 0);
+    check(handle >= 0);
+    if (handle >= 0) {
+        check(sxn_query_file(handle, &info) == 0 && info.size == 5u);
+        (void)sxn_close(handle);
+    }
+    check(sxn_open_file("/system", SXN_FILE_WRITE) == -SAVANXP_EISDIR);
+    check(sxn_open_file("/users/native-seek-test", 4) == -SAVANXP_EINVAL);
+    check(sxn_seek_file(1000, 0, SXN_SEEK_START) == -SAVANXP_EBADF);
+    check(sxn_query_file(1000, &info) == -SAVANXP_EBADF);
+    check(sxn_delete_path("/users/native-seek-test") == 0);
+
+    /* Directories: only an empty one goes. */
+    result = sxn_make_directory("/users/native-rmdir-test");
+    check(result == 0 || result == -SAVANXP_EEXIST);
+    check(sxn_write_file("/users/native-rmdir-test/inside", "x", 1) == 0);
+    check(sxn_delete_directory("/users/native-rmdir-test") == -SAVANXP_ENOTEMPTY);
+    check(sxn_delete_directory("/users/native-rmdir-test/inside") == -SAVANXP_ENOTDIR);
+    check(sxn_delete_path("/users/native-rmdir-test/inside") == 0);
+    check(sxn_delete_directory("/users/native-rmdir-test") == 0);
+    check(sxn_query_path("/users/native-rmdir-test", &info) == -SAVANXP_ENOENT);
+    check(sxn_delete_directory("/users/native-rmdir-test") == -SAVANXP_ENOENT);
+    check(sxn_delete_directory("relative") == -SAVANXP_EINVAL);
+    check(sxn_delete_directory("/") == -SAVANXP_EINVAL);
+}
+
 /* SXN_SYS_LOCK_FILE and UNLOCK_FILE (docs/kernel/FILE_LOCKS.md). A lock belongs
  * to the open file, so two opens of one file are two owners inside this
  * process, and a duplicate is the same owner. A second thread waits on a held
@@ -2866,7 +2950,8 @@ static void test_files(void) {
     check(sxn_open_file("/system/no-such-native-fixture", SXN_FILE_READ) == -SAVANXP_ENOENT);
     check(sxn_open_file("relative", SXN_FILE_READ) == -SAVANXP_EINVAL);
     check(sxn_open_file((const char*)1, SXN_FILE_READ) == -SAVANXP_EINVAL);
-    check(sxn_open_file("/system/native-file-test.txt", 2) == -SAVANXP_EINVAL);
+    /* 2 is SXN_FILE_WRITE since the seek slice; 4 is no access flag. */
+    check(sxn_open_file("/system/native-file-test.txt", 4) == -SAVANXP_EINVAL);
     {
         struct sxn_identity user = {1001u, 1001u, 100u, 0u};
         struct sxn_spawn_request request;
@@ -2902,6 +2987,7 @@ static void test_files(void) {
     check(handle >= 0);
     if (handle >= 0) { check(sxn_read(handle, bytes, 1) == 0); (void)sxn_close(handle); }
     test_file_listing();
+    test_file_positions();
     check(sxn_log("nativetest: files done") == 0);
 }
 

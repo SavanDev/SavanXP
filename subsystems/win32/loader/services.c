@@ -137,6 +137,8 @@ static void write_text(sxw_services *s, const char *text) {
 
 void sxw_services_start(sxw_services *s) {
     s->exit_requested = 0;
+    s->thread_entry = s->process->thread_entry;
+    sxw_threads_start(s);
 }
 
 static uint32_t guest_time(sxw_services *s) {
@@ -241,7 +243,7 @@ static uint32_t registry_service(sxw_services *s, uint32_t service, const uint32
 
 #define SXW_MAX_RECTS 64u
 
-static uint32_t window_service(sxw_services *s, uint32_t service, const uint32_t *a) {
+static uint32_t window_service(sxw_services *s, uint32_t thread, uint32_t service, const uint32_t *a) {
     sxw_process *p = s->process;
     const sxw_window_platform *w = s->windows;
     char title[SXW_MAX_STRING];
@@ -266,6 +268,7 @@ static uint32_t window_service(sxw_services *s, uint32_t service, const uint32_t
         }
         uint32_t id = w->create(s->context, title, &width, &height, a[4], a[5], (int32_t)a[6], (int32_t)a[7]);
         if (id != 0u) {
+            sxw_window_created(s, thread, id);
             write_word(p, a[3], width);
             write_word(p, a[3] + 4u, height);
         }
@@ -324,8 +327,9 @@ static uint32_t window_service(sxw_services *s, uint32_t service, const uint32_t
         if (!sxw_guest_range(p, a[1], sizeof(event))) {
             return 0;
         }
-        if (w == 0 || !w->wait_event(s->context, a[0], &event)) {
-            return 0;
+        const uint32_t got = sxw_wait_event(s, thread, a[0], &event);
+        if (got != 1u) {
+            return got;
         }
         const uint32_t words[6] = {event.kind, event.window, event.a, event.b, event.c, event.time};
         for (uint32_t i = 0; i < 6u; ++i) {
@@ -338,7 +342,7 @@ static uint32_t window_service(sxw_services *s, uint32_t service, const uint32_t
     }
 }
 
-uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
+uint32_t sxw_service(sxw_services *s, uint32_t thread, uint32_t guest_esp) {
     sxw_process *p = s->process;
     uint32_t frame[3];
     uint32_t a[8];
@@ -347,8 +351,10 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
         return 0;
     }
     const uint32_t service = frame[1];
-    static const uint8_t argument_count[SXW_SVC_COUNT] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5,
-                                                           1, 5, 5, 0, 1, 8, 1, 6, 2, 2, 2, 3, 1};
+    static const uint8_t argument_count[SXW_SVC_COUNT] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5, 1, 5,
+                                                           5, 0, 1, 8, 1, 6, 2, 2, 2, 3, 1, 1, 2,
+                                                           5, 4, 4, 5, 1, 2, 1, 2, 3, 4, 2, 1, 5,
+                                                           1, 3, 2, 2, 5, 4, 5, 1, 1, 0};
     if (service >= sizeof(argument_count)) {
         write_text(s, "win32: unknown service\n");
         end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);
@@ -358,6 +364,11 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
         end_process(s, SXW_STATUS_ACCESS_VIOLATION);
         return 0;
     }
+    if (thread >= SXW_MAX_THREADS) {
+        end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);
+        return 0;
+    }
+    sxw_thread_checkpoint(s, thread);
     switch (service) {
     case SXW_SVC_VERSION:
         return SXW_ABI_VERSION;
@@ -394,6 +405,8 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
         uint32_t base = 0;
         return sxw_allocate_region(p, a[0], &base) == 0 ? base : 0u;
     }
+    case SXW_SVC_FREE:
+        return sxw_free_region(p, a[0]) == 0 ? 0u : SXW_FAILED;
     case SXW_SVC_MODULE_PATH:
         return a[2] != 0u && a[2] <= 0x8000u && sxw_guest_range(p, a[1], 2u * a[2])
                    ? sxw_module_path(p, a[0], a[1], a[2])
@@ -451,7 +464,46 @@ uint32_t sxw_service(sxw_services *s, uint32_t guest_esp) {
     case SXW_SVC_REG_QUERY:
     case SXW_SVC_REG_SET:
         return registry_service(s, service, a);
+    case SXW_SVC_DUPLICATE:
+        if (a[0] == SXW_CURRENT_THREAD && s->threads[thread].object != 0u) {
+            /* The current thread's pseudo-handle becomes a real one. */
+            if (!sxw_guest_range(p, a[1], 4u)) {
+                return SXW_ERROR_INVALID_PARAMETER;
+            }
+            const uint32_t handle = sxw_new_handle(s, &s->objects[s->threads[thread].object - 1u]);
+            if (handle == 0u) {
+                return SXW_ERROR_TOO_MANY_OPEN_FILES;
+            }
+            write_word(p, a[1], handle);
+            return SXW_ERROR_SUCCESS;
+        }
+        return sxw_file_service(s, service, a);
+    case SXW_SVC_CLOSE:
+    case SXW_SVC_FILE_OPEN:
+    case SXW_SVC_FILE_READ:
+    case SXW_SVC_FILE_WRITE:
+    case SXW_SVC_FILE_SEEK:
+    case SXW_SVC_FILE_SET_END:
+    case SXW_SVC_FILE_INFO:
+    case SXW_SVC_FILE_FLUSH:
+    case SXW_SVC_PATH_INFO:
+    case SXW_SVC_PATH_ACTION:
+    case SXW_SVC_FIND_FIRST:
+    case SXW_SVC_FIND_NEXT:
+        return sxw_file_service(s, service, a);
+    case SXW_SVC_THREAD_CREATE:
+    case SXW_SVC_THREAD_EXIT:
+    case SXW_SVC_THREAD_SUSPEND:
+    case SXW_SVC_THREAD_QUERY:
+    case SXW_SVC_THREAD_PRIORITY:
+    case SXW_SVC_OBJECT_CREATE:
+    case SXW_SVC_OBJECT_SIGNAL:
+    case SXW_SVC_WAIT:
+    case SXW_SVC_SLEEP:
+    case SXW_SVC_WAKE_THREAD:
+    case SXW_SVC_END_OTHER_THREADS:
+        return sxw_thread_service(s, thread, service, a);
     default:
-        return window_service(s, service, a);
+        return window_service(s, thread, service, a);
     }
 }

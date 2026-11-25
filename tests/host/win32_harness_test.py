@@ -74,6 +74,10 @@ CASES = [
     ("resource.exe", [], "resource.out", 0x0, None, False, None),
     ("dialog.exe", [], "dialog.out", 0x5, None, False, "dialog/input.txt"),
     ("wstartup.exe", STARTUP_ARGUMENTS, "wstartup.out", 0x5, None, True, None),
+    ("files.exe", [], "files.out", 0x0, None, False, None),
+    ("memory.exe", [], "memory.out", 0x0, None, False, None),
+    ("locale.exe", [], "locale.out", 0x0, None, False, None),
+    ("threads.exe", [], "threads.out", 0x5, None, False, None),
 ]
 
 # The images a scripted fixture dumps, each with a golden NAME.ppm.gz.

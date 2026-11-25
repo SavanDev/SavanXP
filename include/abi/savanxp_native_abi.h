@@ -311,8 +311,9 @@ enum sxn_syscall_number {
      * system only. -EINVAL for "/" or nothing mounted there, -EBUSY while a
      * file of it is open or a program of it is mapped. DeleteVolumeMountPoint. */
     SXN_SYS_STORAGE_UNMOUNT = 0x1032,
-    /* rdi = absolute path, rsi = SXN_FILE_READ or 0 (query only).
-     * Opens an existing regular file; directories return -EISDIR, devices
+    /* rdi = absolute path, rsi = SXN_FILE_READ, SXN_FILE_WRITE, both, or 0
+     * (query only). Opens an existing regular file at offset 0, never
+     * emptying it; directories return -EISDIR, devices
      * and invalid flags/paths -EINVAL. Checks VFS credentials. READ/CLOSE
      * use the returned handle; DUPLICATE shares its current offset. Open
      * to every subsystem: a POSIX process gets a descriptor it can read,
@@ -477,6 +478,26 @@ enum sxn_syscall_number {
      * SXN_DEVICE_INFO_V1_SIZE or a bad buffer. Any process may read it.
      * SetupDiGetClassDevs + SetupDiGetDeviceRegistryProperty. */
     SXN_SYS_DEVICE_SNAPSHOT = 0x104E,
+    /* rdi = file handle, rsi = offset (signed), rdx = SXN_SEEK_START,
+     * SXN_SEEK_CURRENT or SXN_SEEK_END. Moves the handle's position, which
+     * its duplicates share; past the end is allowed, and a write there fills
+     * the gap with zeros. The new position, -EBADF (not a file handle),
+     * -EISDIR, -EINVAL (before 0, past 2^63, a bad origin). SetFilePointerEx. */
+    SXN_SYS_SEEK_FILE = 0x104F,
+    /* rdi = handle of a file open for writing, rsi = size. Cuts the file
+     * there or grows it with zeros; the position does not move. 0, -EBADF,
+     * -ENOSPC, -EIO. SetEndOfFile. */
+    SXN_SYS_SET_FILE_SIZE = 0x1050,
+    /* rdi = file handle (any access, query included), rsi = struct
+     * sxn_file_info (written), rdx = its size. QUERY_PATH's answer for an
+     * open file, a file unlinked while open included. 0, -EBADF, -EINVAL.
+     * GetFileInformationByHandle. */
+    SXN_SYS_QUERY_FILE = 0x1051,
+    /* rdi = absolute path. Deletes an empty directory and syncs its volume.
+     * 0, -ENOENT, -ENOTDIR, -ENOTEMPTY, -EBUSY (open, or a process's
+     * current directory), -EINVAL (a relative path or "/"), -EACCES,
+     * -EROFS. RemoveDirectory. */
+    SXN_SYS_DELETE_DIRECTORY = 0x1052,
 };
 
 /* Where the date came from (sxn_clock_status.source). */
@@ -557,6 +578,12 @@ struct sxn_log_record {
 
 /* Desired access for OPEN_FILE. Zero grants query access only. */
 #define SXN_FILE_READ 1u
+#define SXN_FILE_WRITE 2u
+
+/* Origins for SEEK_FILE. */
+#define SXN_SEEK_START 0u
+#define SXN_SEEK_CURRENT 1u
+#define SXN_SEEK_END 2u
 
 /* SXN_SYS_QUERY_PATH and SXN_SYS_READ_DIRECTORY. Both grow at the end only. */
 enum sxn_file_type {
@@ -590,6 +617,7 @@ struct sxn_directory_entry {
 #define SXN_CREATE_NEW 1u     /* fail with -EEXIST if the file exists */
 #define SXN_CREATE_ALWAYS 2u  /* empty an existing file */
 #define SXN_CREATE_EXECUTABLE 0x100u /* or'd in: a new file is 0700, runnable */
+#define SXN_CREATE_READ 0x200u       /* or'd in: the handle can also read */
 
 /* SXN_SYS_LOCK_FILE. */
 #define SXN_LOCK_EXCLUSIVE 1u        /* LOCKFILE_EXCLUSIVE_LOCK */

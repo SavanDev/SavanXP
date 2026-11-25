@@ -262,6 +262,37 @@ Two things stayed on purpose, and the guard says so:
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
 
+## Slice 31: positions, sizes and directories
+
+What `winhost`'s files need (WP4 of
+[WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md)),
+over the `sx::` file path POSIX translation uses too. POSIX already has each
+of them (`lseek`, `ftruncate`, `fstat`, `rmdir`).
+
+- `SXN_SYS_OPEN_FILE` (`0x1033`) takes `SXN_FILE_WRITE` as well: an existing
+  regular file opened to write in place, never emptied; its type is checked
+  before the open. `SXN_SYS_CREATE_FILE` takes `SXN_CREATE_READ` or'd in for
+  a handle that reads too.
+- `SXN_SYS_SEEK_FILE` (`0x104F`): rdi = handle, rsi = signed offset, rdx =
+  `SXN_SEEK_START`, `_CURRENT` or `_END`. The new position, 64 bits wide,
+  through `sx::seek_file`; `-EINVAL` before 0 or past 2^63, `-EBADF`,
+  `-EISDIR`.
+- `SXN_SYS_SET_FILE_SIZE` (`0x1050`): rdi = a handle open for writing, rsi =
+  size. `vfs::truncate` on the file's path: cut, or grown with zeros; the
+  position stays. `-EBADF` for any other handle or a file unlinked while
+  open.
+- `SXN_SYS_QUERY_FILE` (`0x1051`): rdi = handle (query access is enough), rsi
+  = `struct sxn_file_info`, rdx = its size. `QUERY_PATH`'s answer for the
+  open file.
+- `SXN_SYS_DELETE_DIRECTORY` (`0x1052`): rdi = absolute path. An empty
+  directory, through POSIX's `rmdir_path`, then the volume is synced; the
+  root is `-EINVAL`.
+
+`nativetest` writes, seeks and reads back a file, past its end, grows and
+cuts it, opens it to write in place, refuses the size change and a write to
+a read handle, queries a query-only handle, and removes a directory only once
+it is empty.
+
 ## Slice 30: the hardware inventory
 
 What Device Manager needs ([DEVICE_MANAGER.md](../userland/DEVICE_MANAGER.md)),

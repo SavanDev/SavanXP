@@ -30,6 +30,7 @@ __declspec(dllimport) int WINAPI SxwHeapIsBlock(const void *pointer);
 #define HANDLES 8192u
 #define ENTRY_USED 0x0001u
 #define ENTRY_DISCARDABLE 0x0002u
+#define ENTRY_DDESHARE 0x0004u
 
 typedef struct handle_entry {
     void *data;  /* first, as Windows' handle entry: *(void **)handle */
@@ -103,7 +104,8 @@ HGLOBAL WINAPI GlobalAlloc(UINT uFlags, SIZE_T dwBytes) {
     }
     entry->data = data;
     entry->locks = 0;
-    entry->flags = (u16)(ENTRY_USED | ((uFlags & GMEM_DISCARDABLE) != 0u ? ENTRY_DISCARDABLE : 0u));
+    entry->flags = (u16)(ENTRY_USED | ((uFlags & GMEM_DISCARDABLE) != 0u ? ENTRY_DISCARDABLE : 0u) |
+                         ((uFlags & GMEM_DDESHARE) != 0u ? ENTRY_DDESHARE : 0u));
     return (HGLOBAL)entry;
 }
 
@@ -162,7 +164,8 @@ UINT WINAPI GlobalFlags(HGLOBAL hMem) {
     handle_entry *entry = entry_of(hMem);
     if (entry != 0) {
         return entry->locks | (entry->data == 0 ? GMEM_DISCARDED : 0u) |
-               ((entry->flags & ENTRY_DISCARDABLE) != 0u ? GMEM_DISCARDABLE : 0u);
+               ((entry->flags & ENTRY_DISCARDABLE) != 0u ? GMEM_DISCARDABLE : 0u) |
+               ((entry->flags & ENTRY_DDESHARE) != 0u ? GMEM_DDESHARE : 0u);
     }
     if (is_fixed(hMem)) {
         return 0;
@@ -307,4 +310,55 @@ BOOL WINAPI LocalUnlock(HLOCAL hMem) {
 
 HLOCAL WINAPI LocalFree(HLOCAL hMem) {
     return GlobalFree(hMem);
+}
+
+/* ---- Heaps: ntdll's (RtlCreateHeap and the rest), as on Windows ---------------- */
+
+__declspec(dllimport) void *WINAPI RtlCreateHeap(u32 flags, void *base, u32 reserve, u32 commit, void *lock,
+                                                 void *parameters);
+__declspec(dllimport) void *WINAPI RtlDestroyHeap(void *heap);
+__declspec(dllimport) void *WINAPI RtlAllocateHeap(void *heap, u32 flags, u32 size);
+__declspec(dllimport) int WINAPI RtlFreeHeap(void *heap, u32 flags, void *pointer);
+__declspec(dllimport) u32 WINAPI RtlSizeHeap(void *heap, u32 flags, const void *pointer);
+__declspec(dllimport) void *WINAPI RtlReAllocateHeap(void *heap, u32 flags, void *pointer, u32 size);
+__declspec(dllimport) void *WINAPI SxwProcessHeap(void);
+
+HANDLE WINAPI GetProcessHeap(void) {
+    return SxwProcessHeap();
+}
+
+/* A maximum size makes a heap that holds no more than that; 0 one that
+ * grows. */
+HANDLE WINAPI HeapCreate(DWORD flOptions, SIZE_T dwInitialSize, SIZE_T dwMaximumSize) {
+    HANDLE heap = RtlCreateHeap(flOptions | (dwMaximumSize == 0u ? 0x2u : 0u), NULL, dwMaximumSize, dwInitialSize,
+                                NULL, NULL);
+    if (heap == NULL) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    }
+    return heap;
+}
+
+BOOL WINAPI HeapDestroy(HANDLE hHeap) {
+    if (RtlDestroyHeap(hHeap) != NULL) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* As Windows XP's, only a failed HeapAlloc sets the last error. */
+LPVOID WINAPI HeapAlloc(HANDLE hHeap, DWORD dwFlags, SIZE_T dwBytes) {
+    return RtlAllocateHeap(hHeap, dwFlags, dwBytes);
+}
+
+BOOL WINAPI HeapFree(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem) {
+    return RtlFreeHeap(hHeap, dwFlags, lpMem);
+}
+
+SIZE_T WINAPI HeapSize(HANDLE hHeap, DWORD dwFlags, LPCVOID lpMem) {
+    return RtlSizeHeap(hHeap, dwFlags, lpMem);
+}
+
+LPVOID WINAPI HeapReAlloc(HANDLE hHeap, DWORD dwFlags, LPVOID lpMem, SIZE_T dwBytes) {
+    return RtlReAllocateHeap(hHeap, dwFlags, lpMem, dwBytes);
 }

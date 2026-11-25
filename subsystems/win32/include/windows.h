@@ -7,6 +7,7 @@
 #define SAVANXP_WIN32_WINDOWS_H
 
 #define WINAPI __stdcall
+#define CALLBACK __stdcall
 #define DECLSPEC_IMPORT __declspec(dllimport)
 #define DECLSPEC_EXPORT __declspec(dllexport)
 
@@ -26,6 +27,7 @@ typedef BYTE *LPBYTE;
 typedef unsigned short WORD;
 typedef unsigned long DWORD;
 typedef void *HANDLE;
+typedef HANDLE *LPHANDLE;
 typedef void *HINSTANCE;
 typedef void *HMODULE;
 typedef void *HLOCAL;
@@ -195,6 +197,30 @@ typedef struct _FILETIME {
     DWORD dwLowDateTime;
     DWORD dwHighDateTime;
 } FILETIME, *LPFILETIME;
+
+typedef struct _SYSTEMTIME {
+    WORD wYear;
+    WORD wMonth;
+    WORD wDayOfWeek;
+    WORD wDay;
+    WORD wHour;
+    WORD wMinute;
+    WORD wSecond;
+    WORD wMilliseconds;
+} SYSTEMTIME, *LPSYSTEMTIME;
+
+typedef struct _WIN32_FIND_DATAW {
+    DWORD dwFileAttributes;
+    FILETIME ftCreationTime;
+    FILETIME ftLastAccessTime;
+    FILETIME ftLastWriteTime;
+    DWORD nFileSizeHigh;
+    DWORD nFileSizeLow;
+    DWORD dwReserved0;
+    DWORD dwReserved1;
+    WCHAR cFileName[260];
+    WCHAR cAlternateFileName[14];
+} WIN32_FIND_DATAW, *LPWIN32_FIND_DATAW;
 
 typedef union _LARGE_INTEGER {
     struct {
@@ -409,10 +435,46 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 
 #define ERROR_SUCCESS 0L
 #define ERROR_FILE_NOT_FOUND 2L
+#define ERROR_PATH_NOT_FOUND 3u
 #define ERROR_ACCESS_DENIED 5L
 #define ERROR_INVALID_HANDLE 6u
 #define ERROR_NOT_ENOUGH_MEMORY 8u
+#define ERROR_NO_MORE_FILES 18u
+#define ERROR_SHARING_VIOLATION 32u
+#define ERROR_FILE_EXISTS 80u
 #define ERROR_INVALID_PARAMETER 87u
+#define ERROR_INVALID_NAME 123u
+#define ERROR_NEGATIVE_SEEK 131u
+#define ERROR_DIR_NOT_EMPTY 145u
+#define ERROR_ALREADY_EXISTS 183u
+#define ERROR_FILENAME_EXCED_RANGE 206u
+#define ERROR_DIRECTORY 267u
+
+#define GENERIC_READ 0x80000000u
+#define GENERIC_WRITE 0x40000000u
+#define FILE_SHARE_READ 0x1u
+#define FILE_SHARE_WRITE 0x2u
+#define FILE_SHARE_DELETE 0x4u
+#define CREATE_NEW 1u
+#define CREATE_ALWAYS 2u
+#define OPEN_EXISTING 3u
+#define OPEN_ALWAYS 4u
+#define TRUNCATE_EXISTING 5u
+#define FILE_ATTRIBUTE_READONLY 0x01u
+#define FILE_ATTRIBUTE_HIDDEN 0x02u
+#define FILE_ATTRIBUTE_SYSTEM 0x04u
+#define FILE_ATTRIBUTE_DIRECTORY 0x10u
+#define FILE_ATTRIBUTE_ARCHIVE 0x20u
+#define FILE_ATTRIBUTE_NORMAL 0x80u
+#define INVALID_FILE_ATTRIBUTES ((DWORD)-1)
+#define INVALID_FILE_SIZE ((DWORD)0xffffffff)
+#define INVALID_SET_FILE_POINTER ((DWORD)-1)
+#define FILE_BEGIN 0u
+#define FILE_CURRENT 1u
+#define FILE_END 2u
+#define FS_CASE_SENSITIVE 0x1u
+#define FS_CASE_IS_PRESERVED 0x2u
+#define FS_UNICODE_STORED_ON_DISK 0x4u
 #define ERROR_MOD_NOT_FOUND 126u
 #define ERROR_PROC_NOT_FOUND 127u
 #define ERROR_MORE_DATA 234L
@@ -476,6 +538,8 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 
 #define DLL_PROCESS_DETACH 0
 #define DLL_PROCESS_ATTACH 1
+#define DLL_THREAD_ATTACH 2
+#define DLL_THREAD_DETACH 3
 
 /* ---- user32 and gdi32 constants ------------------------------------------ */
 
@@ -583,6 +647,7 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 #define DM_GETDEFID 0x0400
 #define DM_SETDEFID 0x0401
 #define WM_USER 0x0400
+#define HWND_MESSAGE ((HWND)(long)-3)
 
 #define WS_OVERLAPPED 0x00000000L
 #define WS_TABSTOP 0x00010000L
@@ -767,6 +832,7 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 #define PM_REMOVE 0x0001
 #define QS_ALLINPUT 0x04ff
 #define WAIT_TIMEOUT 258L
+#define WAIT_FAILED ((DWORD)0xffffffff)
 
 #define VK_LBUTTON 0x01
 #define VK_RBUTTON 0x02
@@ -907,6 +973,8 @@ SXW_KERNEL32_API BOOL WINAPI WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNu
 SXW_KERNEL32_API __declspec(noreturn) void WINAPI ExitProcess(unsigned int uExitCode);
 SXW_KERNEL32_API void WINAPI RaiseException(DWORD code, DWORD flags, DWORD count, const ULONG_PTR *arguments);
 SXW_KERNEL32_API DWORD WINAPI GetLastError(void);
+SXW_KERNEL32_API DWORD WINAPI GetCurrentThreadId(void);
+SXW_KERNEL32_API DWORD WINAPI GetCurrentProcessId(void);
 SXW_KERNEL32_API void WINAPI SetLastError(DWORD dwErrCode);
 SXW_KERNEL32_API HGLOBAL WINAPI GlobalAlloc(UINT uFlags, SIZE_T dwBytes);
 SXW_KERNEL32_API HGLOBAL WINAPI GlobalReAlloc(HGLOBAL hMem, SIZE_T dwBytes, UINT uFlags);
@@ -921,6 +989,42 @@ SXW_KERNEL32_API LPVOID WINAPI LocalLock(HLOCAL hMem);
 SXW_KERNEL32_API BOOL WINAPI LocalUnlock(HLOCAL hMem);
 SXW_KERNEL32_API int WINAPI MultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr,
                                                 int cbMultiByte, LPWSTR lpWideCharStr, int cchWideChar);
+SXW_KERNEL32_API void WINAPI GetSystemTimeAsFileTime(LPFILETIME lpSystemTimeAsFileTime);
+SXW_KERNEL32_API void WINAPI GetSystemTime(LPSYSTEMTIME lpSystemTime);
+SXW_KERNEL32_API void WINAPI GetLocalTime(LPSYSTEMTIME lpSystemTime);
+SXW_KERNEL32_API BOOL WINAPI FileTimeToSystemTime(const FILETIME *lpFileTime, LPSYSTEMTIME lpSystemTime);
+SXW_KERNEL32_API BOOL WINAPI SystemTimeToFileTime(const SYSTEMTIME *lpSystemTime, LPFILETIME lpFileTime);
+SXW_KERNEL32_API BOOL WINAPI FileTimeToLocalFileTime(const FILETIME *lpFileTime, LPFILETIME lpLocalFileTime);
+SXW_KERNEL32_API BOOL WINAPI LocalFileTimeToFileTime(const FILETIME *lpLocalFileTime, LPFILETIME lpFileTime);
+SXW_KERNEL32_API HANDLE WINAPI CreateFileW(LPCWSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
+                                           LPSECURITY_ATTRIBUTES lpSecurityAttributes, DWORD dwCreationDisposition,
+                                           DWORD dwFlagsAndAttributes, HANDLE hTemplateFile);
+SXW_KERNEL32_API BOOL WINAPI ReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead,
+                                      LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped);
+SXW_KERNEL32_API DWORD WINAPI SetFilePointer(HANDLE hFile, LONG lDistanceToMove, LONG *lpDistanceToMoveHigh,
+                                             DWORD dwMoveMethod);
+SXW_KERNEL32_API DWORD WINAPI GetFileSize(HANDLE hFile, LPDWORD lpFileSizeHigh);
+SXW_KERNEL32_API BOOL WINAPI GetFileTime(HANDLE hFile, LPFILETIME lpCreationTime, LPFILETIME lpLastAccessTime,
+                                         LPFILETIME lpLastWriteTime);
+SXW_KERNEL32_API BOOL WINAPI SetEndOfFile(HANDLE hFile);
+SXW_KERNEL32_API BOOL WINAPI FlushFileBuffers(HANDLE hFile);
+SXW_KERNEL32_API BOOL WINAPI CloseHandle(HANDLE hObject);
+SXW_KERNEL32_API DWORD WINAPI GetFileAttributesW(LPCWSTR lpFileName);
+SXW_KERNEL32_API BOOL WINAPI DeleteFileW(LPCWSTR lpFileName);
+SXW_KERNEL32_API BOOL WINAPI CreateDirectoryW(LPCWSTR lpPathName, LPSECURITY_ATTRIBUTES lpSecurityAttributes);
+SXW_KERNEL32_API BOOL WINAPI RemoveDirectoryW(LPCWSTR lpPathName);
+SXW_KERNEL32_API BOOL WINAPI MoveFileW(LPCWSTR lpExistingFileName, LPCWSTR lpNewFileName);
+SXW_KERNEL32_API HANDLE WINAPI FindFirstFileW(LPCWSTR lpFileName, LPWIN32_FIND_DATAW lpFindFileData);
+SXW_KERNEL32_API BOOL WINAPI FindNextFileW(HANDLE hFindFile, LPWIN32_FIND_DATAW lpFindFileData);
+SXW_KERNEL32_API BOOL WINAPI FindClose(HANDLE hFindFile);
+SXW_KERNEL32_API DWORD WINAPI GetFullPathNameW(LPCWSTR lpFileName, DWORD nBufferLength, LPWSTR lpBuffer,
+                                               LPWSTR *lpFilePart);
+SXW_KERNEL32_API DWORD WINAPI GetCurrentDirectoryW(DWORD nBufferLength, LPWSTR lpBuffer);
+SXW_KERNEL32_API BOOL WINAPI SetCurrentDirectoryW(LPCWSTR lpPathName);
+SXW_KERNEL32_API BOOL WINAPI GetVolumeInformationW(LPCWSTR lpRootPathName, LPWSTR lpVolumeNameBuffer,
+                                                   DWORD nVolumeNameSize, LPDWORD lpVolumeSerialNumber,
+                                                   LPDWORD lpMaximumComponentLength, LPDWORD lpFileSystemFlags,
+                                                   LPWSTR lpFileSystemNameBuffer, DWORD nFileSystemNameSize);
 SXW_KERNEL32_API int WINAPI WideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr,
                                                 int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte,
                                                 LPCSTR lpDefaultChar, BOOL *lpUsedDefaultChar);

@@ -211,7 +211,9 @@ sxw_image(NAME ntdll.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c900000 SAFESEH
     DEF "${SXW_DLLS}/ntdll/ntdll.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c800000
     SOURCES "${SXW_DLLS}/kernel32/kernel32.c" "${SXW_DLLS}/kernel32/memory.c" "${SXW_DLLS}/kernel32/system.c"
-            "${SXW_DLLS}/kernel32/strings.c" "${SXW_DLLS}/kernel32/locale.c" "${SXW_DLLS}/common/codepage.c"
+            "${SXW_DLLS}/kernel32/strings.c" "${SXW_DLLS}/kernel32/locale.c" "${SXW_DLLS}/kernel32/file.c" "${SXW_DLLS}/kernel32/atom.c"
+            "${SXW_DLLS}/kernel32/thread.c"
+            "${SXW_DLLS}/kernel32/time.c" "${SXW_DLLS}/common/codepage.c"
             "${SXW_DLLS}/common/resource.c"
             ${SXW_kernel32_DECLARED}
     DEF "${SXW_kernel32_DEF}" LIBS ntdll)
@@ -296,6 +298,20 @@ sxw_image(NAME wstartup.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENT
 sxw_image(NAME dialog.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/dialog/dialog.c" LIBS user32 gdi32 kernel32 shell32 comctl32
     RC "${SXW_FX}/dialog/dialog.rc" RC_INCLUDE "${SXW_FX}/dialog")
+# WP3 and WP4 (WIN32_WORDPAD_ROADMAP.md): files, memory and atoms, the
+# locale and win.ini; threads with the two DLLs that note thread attaches.
+sxw_image(NAME files.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/kernel/files.c" LIBS kernel32)
+sxw_image(NAME memory.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/kernel/memory.c" LIBS kernel32)
+sxw_image(NAME locale.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/kernel/locale.c" LIBS kernel32)
+sxw_image(NAME tlog.dll KIND dll DIR "${SXW_FIXTURES}" BASE 0x10000000 ENTRY DllMain
+    SOURCES "${SXW_FX}/threads/tlog.c" DEF "${SXW_FX}/threads/tlog.def" LIBS kernel32)
+sxw_image(NAME tquiet.dll KIND dll DIR "${SXW_FIXTURES}" BASE 0x10100000 ENTRY DllMain
+    SOURCES "${SXW_FX}/threads/tquiet.c" DEF "${SXW_FX}/threads/tquiet.def" LIBS tlog kernel32)
+sxw_image(NAME threads.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/threads/threads.c" LIBS tlog tquiet user32 msvcrt kernel32)
 sxw_image(NAME nosuch.dll KIND dll DIR "${SXW_STUBS}"
     SOURCES "${SXW_FX}/missing/stub.c" DEF "${SXW_FX}/missing/nosuch.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_STUBS}"
@@ -338,6 +354,8 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SXW_FIXTURES}/missingdll.exe" "${SXW_FIXTURES}/missingsym.exe"
                 "${SXW_FIXTURES}/startup.exe" "${SXW_FIXTURES}/window.exe" "${SXW_FIXTURES}/cards.exe"
                 "${SXW_FIXTURES}/resource.exe" "${SXW_FIXTURES}/dialog.exe" "${SXW_FIXTURES}/wstartup.exe"
+                "${SXW_FIXTURES}/files.exe" "${SXW_FIXTURES}/memory.exe" "${SXW_FIXTURES}/locale.exe"
+                "${SXW_FIXTURES}/threads.exe" "${SXW_FIXTURES}/tlog.dll" "${SXW_FIXTURES}/tquiet.dll"
                 "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${SXW_FX}/expected" "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/expected")
@@ -355,6 +373,8 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
         "${SAVANXP_WIN32_ROOT}/harness/gate_x86_64.S"
         "${SAVANXP_WIN32_ROOT}/loader/loader.c"
         "${SAVANXP_WIN32_ROOT}/loader/services.c"
+        "${SAVANXP_WIN32_ROOT}/loader/files.c"
+        "${SAVANXP_WIN32_ROOT}/loader/threads.c"
         "${SAVANXP_WIN32_ROOT}/loader/registry.c"
         "${SAVANXP_WIN32_ROOT}/pe/pe.c")
     target_include_directories(savanxp-win32-harness PRIVATE

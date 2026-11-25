@@ -14,10 +14,12 @@ EXPORTS
     __wgetmainargs
     _acmdln DATA
     _adjust_fdiv DATA
+    _beginthreadex
     _c_exit
     _cexit
     _controlfp
     _CxxThrowException
+    _endthreadex
     _except_handler3
     _exit
     _expand

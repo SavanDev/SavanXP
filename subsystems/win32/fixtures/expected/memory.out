@@ -1,0 +1,78 @@
+memory.exe
+GetProcessHeap: yes
+HeapAlloc(process, 0): block size 0 free ok
+HeapCreate(0, 0, 0): yes
+HeapAlloc(10): block size 10 aligned yes
+HeapAlloc(HEAP_ZERO_MEMORY, 300): yes
+HeapReAlloc(10 -> 5000) keeps the bytes: yes size 5000
+HeapReAlloc(HEAP_ZERO_MEMORY, 5000 -> 6000) zeroes the rest: yes
+HeapReAlloc(IN_PLACE_ONLY, 6000 -> 3000): yes size 3000
+HeapReAlloc(IN_PLACE_ONLY, 3000 -> 4 MiB): null error 0 still 3000
+HeapFree(NULL): ok
+HeapFree: ok
+HeapFree(zeroed): ok
+many blocks in a no-serialize heap: yes
+HeapDestroy with blocks in it: ok
+HeapDestroy: ok
+HeapCreate(0, 4 KiB, 64 KiB): yes
+HeapAlloc(32 KiB) in it: block
+HeapAlloc(128 KiB) in it: null error 8
+GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, 16): yes flags 0x00002000
+GlobalLock: yes flags 0x00002001
+GlobalHandle(data): yes
+GlobalUnlock: 0 flags 0x00002000
+GlobalReAlloc(4000, GMEM_MOVEABLE) keeps the handle: yes size 4000 bytes yes
+GlobalAlloc(GHND | GMEM_DDESHARE, 64) zeroed: yes
+GlobalFree: yes yes
+local atoms:
+add: yes
+add again, other case: yes
+find: yes
+name, first spelling: 15 [SxwFixtureAlpha]
+name in 5 units: 4 [SxwF]
+name in 0 units: 0 error 234
+a second name: yes
+delete once: 0
+still there: yes
+delete twice: 0
+gone: 0 error 2
+name of a deleted atom: 0 error 6
+delete a deleted atom: 0 error 6
+add #123: 123
+find #123: 123
+name of 123: 4 [#123]
+delete 123: 0
+add MAKEINTATOM(456): 456
+add #0: 0 error 87
+add #49152: 0 error 87
+add #49151: 49151
+add #12ab: yes
+add empty: 0 error 123
+add 255 characters: yes
+add 256 characters: 0 error 87
+global atoms:
+add: yes
+add again, other case: yes
+find: yes
+name, first spelling: 14 [SxwGlobalAlpha]
+name in 0 units: 0 error 234
+a second name: yes
+delete once: 0
+still there: yes
+delete twice: 0
+gone: 0 error 2
+name of a deleted atom: 0 error 6
+delete a deleted atom: 0 error 6
+add #123: 123
+find #123: 123
+name of 123: 4 [#123]
+delete 123: 0
+add MAKEINTATOM(456): 456
+add #0: 0 error 87
+add #49152: 0 error 87
+add #49151: 49151
+add #12ab: yes
+add empty: 0 error 123
+add 255 characters: yes
+add 256 characters: 0 error 87
+a local name is not global: 0 error 2
