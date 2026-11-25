@@ -1,11 +1,23 @@
 # Driver start and stop
 
 Status: **D3 of [DRIVERS_ROADMAP.md](../roadmaps/open/DRIVERS_ROADMAP.md)
-(2026-11-24).** The contracts below are common. Written to them: the RTL8139
-(`kernel/rtl8139.cpp`), the AC'97 (`kernel/ac97.cpp`) and virtio-rng
-(`kernel/virtio_rng.cpp`). Every other driver still starts once at boot and
-never stops. It builds on the inventory's
-ownership and claims ([DEVICE_INVENTORY.md](DEVICE_INVENTORY.md)).
+(2026-11-24).** The contracts below are common; the drivers written to them
+are listed under [Drivers on the contracts](#drivers-on-the-contracts).
+Every other driver still starts once at boot and never stops. It builds on
+the inventory's ownership and claims ([DEVICE_INVENTORY.md](DEVICE_INVENTORY.md)).
+
+## Drivers on the contracts
+
+| Driver | Start stages | `bring_up` in the self-test | Scenario |
+| --- | --- | --- | --- |
+| `rtl8139` | claim, registers, interrupt, buffers, translation | the reset and receive set-up (`NET_IOC_UP`) | `lifecycle-rtl8139`, `lifecycle-rtl8139-iommu` |
+| `ac97` | claim, registers, codec, buffers, engine | a stream playing silence | `lifecycle-ac97` |
+| `virtio-rng` | transport, features, queue, driver ok | one request filled and taken | `lifecycle-virtio-rng` |
+| `virtio-net` | transport, features (and the MAC) | the queues and `DRIVER_OK` (`NET_IOC_UP`) | `lifecycle-virtio-net` (`--virtio`) |
+
+A scenario marked `--virtio` needs the virtio machine:
+`./build.sh smoke <scenario> --virtio`; without it the scenario refuses to
+run rather than pass.
 
 ## The contracts
 
@@ -122,6 +134,15 @@ device before it frees anything, since a queue the device may still use is
 never freed. `stop()` is the reset, read back, then the queue and the
 function given back. Its `bring_up` waits for the first request to be filled
 and takes it, as `random::` does.
+
+## virtio-net
+
+`start()` is what its probe did: the transport, then the features and the
+MAC. The queues and `DRIVER_OK` still wait for `bring_up()`, which `net::`
+runs on `NET_IOC_UP`; when it creates them it pushes their release onto the
+same record, so `stop()` gives back whatever the device got. A `bring_up`
+that cannot create them resets the device, frees what it got and lists the
+device as failed, instead of leaving half a queue allocated.
 
 ## The self-test
 

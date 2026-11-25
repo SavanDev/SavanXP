@@ -11,6 +11,7 @@
 #include "kernel/physical_memory.hpp"
 #include "kernel/rtl8139.hpp"
 #include "kernel/string.hpp"
+#include "kernel/virtio_net.hpp"
 #include "kernel/virtio_rng.hpp"
 
 namespace {
@@ -25,6 +26,7 @@ const Entry kSubjects[] = {
     {"rtl8139", &rtl8139::lifecycle_subject},
     {"ac97", &ac97::lifecycle_subject},
     {"virtio-rng", &virtio_rng::lifecycle_subject},
+    {"virtio-net", &virtio_net::lifecycle_subject},
 };
 
 constexpr unsigned kCycles = 4;

@@ -5,6 +5,8 @@
 
 #include "kernel/console.hpp"
 #include "kernel/inventory.hpp"
+#include "kernel/lifecycle.hpp"
+#include "kernel/lifecycle_selftest.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_pci.hpp"
 #include "abi/savanxp_abi.h"
@@ -211,13 +213,38 @@ void get_stats(nic::Stats& stats) {
     stats.rx_errors = g_rx_errors;
 }
 
-void fail_device(const char* reason) {
-    virtio_pci::fail_device(g_device);
-    if (reason != nullptr) {
-        console::printf("virtio-net: %s\n", reason);
+/* ---- start and stop (docs/kernel/DRIVER_LIFECYCLE.md) ---------------------
+ *
+ * start() takes the transport and negotiates the features, as probe() did;
+ * the queues and DRIVER_OK wait for bring_up(), which net:: runs on
+ * NET_IOC_UP, and go onto the same record, so stop() gives back whatever the
+ * device got. */
+
+constexpr char kDriverName[] = "virtio-net";
+// transport, features.
+constexpr unsigned kStartStages = 2;
+
+lifecycle::Acquired g_acquired;
+bool g_started = false;
+// Set while a failed start unwinds: the function is then given back as a
+// failed start, not as a clean stop.
+bool g_start_failing = false;
+
+void release_transport(void*) {
+    virtio_pci::release_device(g_device, kDriverName, g_start_failing);
+}
+
+void release_queues(void*) {
+    virtio_pci::release_queue(g_rx_queue);
+    virtio_pci::release_queue(g_tx_queue);
+}
+
+bool stage_failed(unsigned stage, const char* name) {
+    if (!lifecycle::injected(kDriverName, stage)) {
+        return false;
     }
-    g_up = false;
-    g_present = false;
+    console::printf("virtio-net: start stage %u (%s) failed by injection\n", stage, name);
+    return true;
 }
 
 bool bring_up() {
@@ -229,8 +256,14 @@ bool bring_up() {
     }
 
     if (!virtio_pci::setup_queue(g_device, kNetRxQueue, kRxQueueLimit, kRxBufferBytes * kRxSlots, 16, g_rx_queue) ||
-        !virtio_pci::setup_queue(g_device, kNetTxQueue, kTxQueueLimit, kTxBufferBytes, 16, g_tx_queue)) {
-        fail_device("failed to initialize queues");
+        !virtio_pci::setup_queue(g_device, kNetTxQueue, kTxQueueLimit, kTxBufferBytes, 16, g_tx_queue) ||
+        !g_acquired.push("queues", &release_queues, nullptr)) {
+        console::write_line("virtio-net: failed to initialize queues");
+        // The device is reset before its queues go: it never uses them after.
+        (void)virtio_pci::quiesce_device(g_device);
+        release_queues(nullptr);
+        inventory::pci_failed(g_device.pci_device);
+        g_present = false;
         report(SAVANXP_NET_STATUS_BRING_UP_FAILED);
         return false;
     }
@@ -254,51 +287,126 @@ bool bring_up() {
     return true;
 }
 
-// Probe, negotiate features and read the MAC without starting queues.
-// NET_IOC_UP or a native socket's prepare step initializes them later.
-bool probe() {
+// The first virtio-net no other driver holds.
+bool find_device(pci::DeviceInfo& found) {
+    size_t from = 0;
+    size_t index = 0;
+    pci::DeviceInfo candidate = {};
+    while (pci::ready() && virtio_pci::find_modern_device_from(from, kVirtioNetModernDevice,
+               kVirtioNetSubsystemDevice, candidate, index)) {
+        if (inventory::pci_available(candidate, kDriverName)) {
+            found = candidate;
+            return true;
+        }
+        from = index + 1;
+    }
+    return false;
+}
+
+// The transport, then the features and the MAC, without starting queues.
+// False with everything given back.
+bool start(const pci::DeviceInfo& pci_device) {
     memset(&g_device, 0, sizeof(g_device));
     memset(&g_rx_queue, 0, sizeof(g_rx_queue));
     memset(&g_tx_queue, 0, sizeof(g_tx_queue));
     memset(g_mac, 0, sizeof(g_mac));
     g_present = false;
     g_up = false;
+    g_tx_busy = false;
 
-    pci::DeviceInfo pci_device = {};
-    if (!pci::ready() || !virtio_pci::find_modern_device(kVirtioNetModernDevice, kVirtioNetSubsystemDevice, pci_device)) {
+    unsigned stage = 1;
+    if (stage_failed(stage, "transport")) {
         return false;
     }
-
     if (!virtio_pci::initialize_device(pci_device, true, g_device)) {
         console::write_line("virtio-net: missing required MMIO capabilities");
+        // Given back if it was taken here; left alone if another driver has it.
+        (void)inventory::pci_release_failed(pci_device, kDriverName);
         return false;
     }
+    bool ok = g_acquired.push("transport", &release_transport, nullptr);
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "features");
+        if (ok) {
+            virtio_pci::set_device_status(g_device, 0);
+            virtio_pci::memory_barrier();
+            virtio_pci::set_device_status(g_device,
+                static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
 
-    virtio_pci::set_device_status(g_device, 0);
-    virtio_pci::memory_barrier();
-    virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
-
-    volatile virtio_pci::CommonCfg* cfg = virtio_pci::common_cfg(g_device);
-    cfg->device_feature_select = 0;
-    virtio_pci::memory_barrier();
-    const uint32_t requested_word0 = cfg->device_feature & kFeatureMacBit;
-
-    if (!virtio_pci::negotiate_features(g_device, requested_word0, virtio_pci::kFeatureVersion1Bit)) {
-        console::write_line("virtio-net: feature negotiation failed");
-        virtio_pci::fail_device(g_device);
-        return false;
-    }
-
-    if ((requested_word0 & kFeatureMacBit) != 0) {
-        for (size_t index = 0; index < sizeof(g_mac); ++index) {
-            g_mac[index] = device_cfg()->mac[index];
+            volatile virtio_pci::CommonCfg* cfg = virtio_pci::common_cfg(g_device);
+            cfg->device_feature_select = 0;
+            virtio_pci::memory_barrier();
+            const uint32_t requested_word0 = cfg->device_feature & kFeatureMacBit;
+            ok = virtio_pci::negotiate_features(g_device, requested_word0, virtio_pci::kFeatureVersion1Bit);
+            if (!ok) {
+                console::write_line("virtio-net: feature negotiation failed");
+            } else if ((requested_word0 & kFeatureMacBit) != 0) {
+                for (size_t index = 0; index < sizeof(g_mac); ++index) {
+                    g_mac[index] = device_cfg()->mac[index];
+                }
+            }
         }
     }
+    if (!ok) {
+        console::printf("virtio-net: could not start at %x:%x.%u (stage %u); everything it took is given back\n",
+            static_cast<unsigned>(pci_device.bus), static_cast<unsigned>(pci_device.slot),
+            static_cast<unsigned>(pci_device.function), stage);
+        (void)virtio_pci::quiesce_device(g_device);
+        g_start_failing = true;
+        g_acquired.unwind();
+        g_start_failing = false;
+        return false;
+    }
 
+    g_started = true;
     g_present = true;
     // Recognized and negotiated; DRIVER_OK waits for bring_up().
     inventory::pci_started(pci_device);
     return true;
+}
+
+// Reset and read back, then the queues, if it had come up, and the function
+// given back. A device that does not reset keeps everything and is listed as
+// failed.
+bool stop() {
+    if (!g_started) {
+        return true;
+    }
+    g_up = false;
+    g_present = false;
+    if (!virtio_pci::quiesce_device(g_device)) {
+        console::write_line("virtio-net: the device did not reset; it keeps its queues");
+        inventory::pci_failed(g_device.pci_device);
+        return false;
+    }
+    g_acquired.unwind();
+    g_started = false;
+    g_tx_busy = false;
+    return true;
+}
+
+bool idle() {
+    return !g_started && g_acquired.count() == 0 && g_rx_queue.allocation.physical_address == 0 &&
+        g_tx_queue.allocation.physical_address == 0;
+}
+
+const lifecycle::Subject kSubject = {
+    kDriverName,
+    kStartStages,
+    &find_device,
+    &start,
+    &bring_up,
+    &stop,
+    &idle,
+    nullptr,
+};
+
+// Recognizes the device and takes it, without starting queues: NET_IOC_UP
+// or a native socket's prepare step brings it up later.
+bool probe() {
+    pci::DeviceInfo pci_device = {};
+    return find_device(pci_device) && start(pci_device);
 }
 
 int prepare() { return bring_up() ? 0 : -SX_EIO; }
@@ -329,5 +437,7 @@ const nic::Driver kDriver = {
 namespace virtio_net {
 
 const nic::Driver& driver() { return kDriver; }
+
+const lifecycle::Subject& lifecycle_subject() { return kSubject; }
 
 } // namespace virtio_net

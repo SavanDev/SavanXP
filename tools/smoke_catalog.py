@@ -397,6 +397,18 @@ SCENARIOS: dict[str, Scenario] = {
         "then the generator is seeded from it and smoke passes",
         boot_options="lifecycle-selftest=virtio-rng",
     ),
+    # virtio-net on the virtio machine (run with --virtio): queues created at
+    # bring_up and freed at stop, then the network must work over it.
+    "lifecycle-virtio-net": _qemu_scenario(
+        "netsmoke",
+        "NET SMOKE PASS",
+        "lifecycle: selftest failed",
+        "virtio-net start and stop: injected failures and repeated cycles, one brought up, leave nothing "
+        "behind; then the network works",
+        180.0,
+        requires_virtio=True,
+        boot_options="lifecycle-selftest=virtio-net",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",
