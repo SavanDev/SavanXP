@@ -421,6 +421,18 @@ SCENARIOS: dict[str, Scenario] = {
         requires_virtio=True,
         boot_options="lifecycle-selftest=virtio-blk",
     ),
+    # virtio-sound: one cycle stops it with a stream playing silence; then a
+    # stream must play over the device audio:: took back.
+    "lifecycle-virtio-sound": _qemu_scenario(
+        "audiostream",
+        "AUDIO STREAM PASS",
+        "lifecycle: selftest failed",
+        "virtio-sound start and stop: injected failures and repeated cycles, one playing, leave nothing "
+        "behind; then a stream plays",
+        120.0,
+        audio_device="virtio",
+        boot_options="lifecycle-selftest=virtio-sound",
+    ),
     "diskmgmt-smoke": _qemu_scenario(
         "diskmgmt-selftest",
         "DISKMGMT SMOKE PASS",

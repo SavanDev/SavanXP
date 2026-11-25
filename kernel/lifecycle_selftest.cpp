@@ -14,6 +14,7 @@
 #include "kernel/virtio_blk.hpp"
 #include "kernel/virtio_net.hpp"
 #include "kernel/virtio_rng.hpp"
+#include "kernel/virtio_sound.hpp"
 
 namespace {
 
@@ -29,6 +30,7 @@ const Entry kSubjects[] = {
     {"virtio-rng", &virtio_rng::lifecycle_subject},
     {"virtio-net", &virtio_net::lifecycle_subject},
     {"virtio-blk", &virtio_blk::lifecycle_subject},
+    {"virtio-sound", &virtio_sound::lifecycle_subject},
 };
 
 constexpr unsigned kCycles = 4;

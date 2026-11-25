@@ -15,6 +15,7 @@ the inventory's ownership and claims ([DEVICE_INVENTORY.md](DEVICE_INVENTORY.md)
 | `virtio-rng` | transport, features, queue, driver ok | one request filled and taken | `lifecycle-virtio-rng` |
 | `virtio-net` | transport, features (and the MAC) | the queues and `DRIVER_OK` (`NET_IOC_UP`) | `lifecycle-virtio-net` (`--virtio`) |
 | `virtio-blk` | transport, features, capacity, queue, driver ok | sector 0 read through the queue | `lifecycle-virtio-blk` (`--virtio`) |
+| `virtio-sound` | transport, features, queues, driver ok, streams, events | a stream playing silence | `lifecycle-virtio-sound` |
 
 A scenario marked `--virtio` needs the virtio machine:
 `./build.sh smoke <scenario> --virtio`; without it the scenario refuses to
@@ -153,6 +154,19 @@ has no way yet to take a disk back, so nothing but the self-test, which runs
 before `block::probe_all()`, ever stops it. A disk can stop only once the
 block layer can drop it and its partitions and volumes first: references,
 D5.
+
+## virtio-sound
+
+`start()` takes the four queues together and needs an output stream in the
+ABI's format; a device with none fails the streams stage and gives
+everything back, where before it stayed claimed. Capture stays optional.
+
+**`stop()` ends the streams in order before the reset**: `STOP` and
+`RELEASE` for playback and capture, as `audio::` ends them, then the reset.
+Resetting QEMU's device (QEMU 11.1) with a stream running leaves that
+stream wedged on the host: after a start again, the first stream plays no
+period (every one is dropped as the TX ring fills) and its `STOP` and
+`RELEASE` fail. The reset alone is not enough for this device.
 
 ## The self-test
 

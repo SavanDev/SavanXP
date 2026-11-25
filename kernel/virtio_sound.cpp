@@ -5,6 +5,9 @@
 
 #include "kernel/audio.hpp"
 #include "kernel/console.hpp"
+#include "kernel/inventory.hpp"
+#include "kernel/lifecycle.hpp"
+#include "kernel/lifecycle_selftest.hpp"
 #include "kernel/process.hpp"
 #include "kernel/string.hpp"
 #include "kernel/virtio_pci.hpp"
@@ -720,24 +723,39 @@ const audio::Backend g_backend = {
     .capture_available = [](void*) { return vs_capture_available(); },
 };
 
-void fail_device(const char* reason) {
-    virtio_pci::fail_device(g_device);
-    if (reason != nullptr) {
-        console::printf("virtio-sound: %s\n", reason);
-    }
-    g_ready = false;
+/* ---- start and stop (docs/kernel/DRIVER_LIFECYCLE.md) --------------------- */
+
+constexpr char kDriverName[] = "virtio-sound";
+// transport, features, queues, driver ok, streams, events.
+constexpr unsigned kStartStages = 6;
+
+lifecycle::Acquired g_acquired;
+bool g_started = false;
+// Set while a failed start unwinds: the function is then given back as a
+// failed start, not as a clean stop.
+bool g_start_failing = false;
+
+void release_transport(void*) {
+    virtio_pci::release_device(g_device, kDriverName, g_start_failing);
 }
 
-} // namespace
+void release_queues(void*) {
+    virtio_pci::release_queue(g_control_queue);
+    virtio_pci::release_queue(g_event_queue);
+    virtio_pci::release_queue(g_tx_queue);
+    virtio_pci::release_queue(g_rx_queue);
+}
 
-namespace virtio_sound {
+bool stage_failed(unsigned stage, const char* name) {
+    if (!lifecycle::injected(kDriverName, stage)) {
+        return false;
+    }
+    console::printf("virtio-sound: start stage %u (%s) failed by injection\n", stage, name);
+    return true;
+}
 
-void initialize() {
-    memset(&g_device, 0, sizeof(g_device));
-    memset(&g_control_queue, 0, sizeof(g_control_queue));
-    memset(&g_event_queue, 0, sizeof(g_event_queue));
-    memset(&g_tx_queue, 0, sizeof(g_tx_queue));
-    memset(&g_rx_queue, 0, sizeof(g_rx_queue));
+// Every piece of state a start or a stop leaves behind, back to nothing.
+void reset_state() {
     memset(&g_audio_info, 0, sizeof(g_audio_info));
     g_playback = {};
     g_capture = {};
@@ -745,61 +763,135 @@ void initialize() {
     g_ready = false;
     g_event_buffer_armed = false;
     g_tx_usable_slots = 0;
+    g_rx_primed = false;
     reset_tx_ring();
     reset_stream_state(g_playback);
     reset_stream_state(g_capture);
+}
 
-    pci::DeviceInfo pci_device = {};
-    if (!pci::ready() || !virtio_pci::find_modern_device(kVirtioSoundModernDevice, kVirtioSoundSubsystemDevice, pci_device)) {
-        return;
+// The first virtio-sound no other driver holds.
+bool find_device(pci::DeviceInfo& found) {
+    size_t from = 0;
+    size_t index = 0;
+    pci::DeviceInfo candidate = {};
+    while (pci::ready() && virtio_pci::find_modern_device_from(from, kVirtioSoundModernDevice,
+               kVirtioSoundSubsystemDevice, candidate, index)) {
+        if (inventory::pci_available(candidate, kDriverName)) {
+            found = candidate;
+            return true;
+        }
+        from = index + 1;
     }
+    return false;
+}
 
+// The transport, the features, the four queues, DRIVER_OK, an output stream
+// in the ABI's format, and the event buffer armed. False with everything
+// given back.
+bool start(const pci::DeviceInfo& pci_device) {
+    memset(&g_device, 0, sizeof(g_device));
+    memset(&g_control_queue, 0, sizeof(g_control_queue));
+    memset(&g_event_queue, 0, sizeof(g_event_queue));
+    memset(&g_tx_queue, 0, sizeof(g_tx_queue));
+    memset(&g_rx_queue, 0, sizeof(g_rx_queue));
+    reset_state();
+
+    unsigned stage = 1;
+    if (stage_failed(stage, "transport")) {
+        return false;
+    }
     if (!virtio_pci::initialize_device(pci_device, true, g_device)) {
         console::write_line("virtio-sound: missing required MMIO capabilities");
-        return;
+        // Given back if it was taken here; left alone if another driver has it.
+        (void)inventory::pci_release_failed(pci_device, kDriverName);
+        return false;
+    }
+    bool ok = g_acquired.push("transport", &release_transport, nullptr);
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "features");
+        if (ok) {
+            virtio_pci::set_device_status(g_device, 0);
+            virtio_pci::memory_barrier();
+            virtio_pci::set_device_status(g_device,
+                static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
+            ok = virtio_pci::negotiate_features(g_device, 0, virtio_pci::kFeatureVersion1Bit);
+            if (!ok) {
+                console::write_line("virtio-sound: feature negotiation failed");
+            }
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "queues") && g_acquired.push("queues", &release_queues, nullptr);
+        if (ok && (!virtio_pci::setup_queue(g_device, kVirtioSoundControlQueue, kControlQueueDescriptors,
+                       kControlQueueExtraBytes, 16, g_control_queue) ||
+                !virtio_pci::setup_queue(g_device, kVirtioSoundEventQueue, kEventQueueDescriptors,
+                    kEventQueueExtraBytes, 16, g_event_queue) ||
+                !virtio_pci::setup_queue(g_device, kVirtioSoundTxQueue, kTxQueueLimit, kTxQueueExtraBytes, 16,
+                    g_tx_queue) ||
+                !virtio_pci::setup_queue(g_device, kVirtioSoundRxQueue, kRxQueueLimit, kRxQueueExtraBytes, 16,
+                    g_rx_queue))) {
+            console::write_line("virtio-sound: failed to setup queues");
+            ok = false;
+        }
+        if (ok) {
+            // How many playback slots fit in the queue the device negotiated
+            // (each takes 3 descriptors). On QEMU the TX queue is large and
+            // all 8 fit.
+            g_tx_usable_slots = kTxSlots;
+            if (g_tx_queue.size / kTxDescriptorsPerSlot < g_tx_usable_slots) {
+                g_tx_usable_slots = static_cast<uint16_t>(g_tx_queue.size / kTxDescriptorsPerSlot);
+            }
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "driver ok");
+        if (ok) {
+            virtio_pci::set_device_status(g_device,
+                static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
+            g_ready = true;
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "streams");
+        if (ok && device_cfg()->streams == 0) {
+            console::write_line("virtio-sound: device exposes no PCM streams");
+            ok = false;
+        } else if (ok && !select_stream(kVirtioSndDirectionOutput, g_playback)) {
+            console::write_line("virtio-sound: failed to query PCM stream info");
+            ok = false;
+        } else if (ok && !g_playback.selected) {
+            // The device answers, but no output stream offers the ABI's fixed
+            // format (S16, 48 kHz, stereo). Logged, so it is not mistaken for
+            // missing hardware.
+            console::write_line("virtio-sound: no compatible output stream (S16/48kHz/stereo)");
+            ok = false;
+        }
+    }
+    if (ok) {
+        ++stage;
+        ok = !stage_failed(stage, "events");
+        if (ok && !queue_event_buffer()) {
+            console::write_line("virtio-sound: failed to arm event queue");
+            ok = false;
+        }
+    }
+    if (!ok) {
+        console::printf("virtio-sound: could not start at %x:%x.%u (stage %u); everything it took is given back\n",
+            static_cast<unsigned>(pci_device.bus), static_cast<unsigned>(pci_device.slot),
+            static_cast<unsigned>(pci_device.function), stage);
+        // Reset first: a queue the device may still use is never freed.
+        (void)virtio_pci::quiesce_device(g_device);
+        g_start_failing = true;
+        g_acquired.unwind();
+        g_start_failing = false;
+        reset_state();
+        return false;
     }
 
-    virtio_pci::set_device_status(g_device, 0);
-    virtio_pci::memory_barrier();
-    virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::kStatusAcknowledge | virtio_pci::kStatusDriver));
-
-    if (!virtio_pci::negotiate_features(g_device, 0, virtio_pci::kFeatureVersion1Bit)) {
-        fail_device("feature negotiation failed");
-        return;
-    }
-    if (!virtio_pci::setup_queue(g_device, kVirtioSoundControlQueue, kControlQueueDescriptors, kControlQueueExtraBytes, 16, g_control_queue) ||
-        !virtio_pci::setup_queue(g_device, kVirtioSoundEventQueue, kEventQueueDescriptors, kEventQueueExtraBytes, 16, g_event_queue) ||
-        !virtio_pci::setup_queue(g_device, kVirtioSoundTxQueue, kTxQueueLimit, kTxQueueExtraBytes, 16, g_tx_queue) ||
-        !virtio_pci::setup_queue(g_device, kVirtioSoundRxQueue, kRxQueueLimit, kRxQueueExtraBytes, 16, g_rx_queue)) {
-        fail_device("failed to setup queues");
-        return;
-    }
-
-    // Cuantos slots de reproduccion caben en la cola que negocio el device (cada
-    // uno usa 3 descriptores). En QEMU la TX suele ser grande y quedan los 8.
-    g_tx_usable_slots = kTxSlots;
-    if (g_tx_queue.size / kTxDescriptorsPerSlot < g_tx_usable_slots) {
-        g_tx_usable_slots = static_cast<uint16_t>(g_tx_queue.size / kTxDescriptorsPerSlot);
-    }
-
-    virtio_pci::set_device_status(g_device, static_cast<uint8_t>(virtio_pci::device_status(g_device) | virtio_pci::kStatusDriverOk));
-    g_ready = true;
-
-    if (device_cfg()->streams == 0) {
-        fail_device("device exposes no PCM streams");
-        return;
-    }
-    if (!select_stream(kVirtioSndDirectionOutput, g_playback)) {
-        fail_device("failed to query PCM stream info");
-        return;
-    }
-    if (!g_playback.selected) {
-        // El dispositivo responde pero ningun stream de salida ofrece el formato
-        // fijo del ABI (S16 / 48 kHz / estereo). Antes esto quedaba mudo sin
-        // traza; ahora se registra para no confundirlo con "no hay hardware".
-        fail_device("no compatible output stream (S16/48kHz/stereo)");
-        return;
-    }
     g_audio_info = {
         .sample_rate_hz = kAudioSampleRateHz,
         .channels = kAudioChannels,
@@ -810,20 +902,17 @@ void initialize() {
         .backend = SAVANXP_AUDIO_BACKEND_VIRTIO,
         .flags = 0,
     };
-    if (!queue_event_buffer()) {
-        fail_device("failed to arm event queue");
-        return;
-    }
 
-    // Captura opcional: el perfil sin grabación virtio (streams=1) no ofrece
-    // ningun stream de entrada y eso es normal, no un fallo del device -- solo
-    // deja /dev/audio0 sin soporte de lectura. Un error real de query aca
-    // (comunicacion con el device rota) tampoco tira abajo la salida, que ya
-    // quedo funcionando: se registra y se sigue con capture_ready() en false.
+    // Capture is optional: the virtio profile without recording (streams=1)
+    // offers no input stream, which is normal, not a device failure; it only
+    // leaves /dev/audio0 without read support. A real query error here (talk
+    // with the device broken) does not take the working output down either:
+    // it is logged, and capture_ready() stays false.
     if (!select_stream(kVirtioSndDirectionInput, g_capture)) {
         console::write_line("virtio-sound: failed to query PCM stream info for capture");
     }
 
+    g_started = true;
     console::printf(
         "virtio-sound: ready pci=%x:%x.%u stream=%u pcm=%uHz/%uch/%ubit%s\n",
         static_cast<unsigned>(g_device.pci_device.bus),
@@ -835,6 +924,63 @@ void initialize() {
         static_cast<unsigned>(g_audio_info.bits_per_sample),
         g_capture.selected ? " capture=on" : ""
     );
+    return true;
+}
+
+// Reset and read back, which ends any stream the device was playing or
+// recording, then the queues and the function given back. A device that
+// does not reset keeps everything and is listed as failed.
+bool stop() {
+    if (!g_started) {
+        return true;
+    }
+    // Streams end in order first, as audio:: ends them: the device is told
+    // to stop and release each one before the reset takes its queues away.
+    vs_stop();
+    vs_capture_stop();
+    g_ready = false;
+    if (!virtio_pci::quiesce_device(g_device)) {
+        console::write_line("virtio-sound: the device did not reset; it keeps its queues");
+        inventory::pci_failed(g_device.pci_device);
+        return false;
+    }
+    g_acquired.unwind();
+    g_started = false;
+    reset_state();
+    return true;
+}
+
+bool idle() {
+    return !g_started && g_acquired.count() == 0 && g_control_queue.allocation.physical_address == 0 &&
+        g_event_queue.allocation.physical_address == 0 && g_tx_queue.allocation.physical_address == 0 &&
+        g_rx_queue.allocation.physical_address == 0;
+}
+
+// A stream as audio:: would set one up: prepared, started, silence queued.
+bool bring_up() {
+    return vs_configure();
+}
+
+const lifecycle::Subject kSubject = {
+    kDriverName,
+    kStartStages,
+    &find_device,
+    &start,
+    &bring_up,
+    &stop,
+    &idle,
+    nullptr,
+};
+
+} // namespace
+
+namespace virtio_sound {
+
+void initialize() {
+    pci::DeviceInfo pci_device = {};
+    if (find_device(pci_device)) {
+        (void)start(pci_device);
+    }
 }
 
 bool ready() {
@@ -863,5 +1009,7 @@ const audio::Driver kDriver = {
 } // namespace
 
 const audio::Driver& driver() { return kDriver; }
+
+const lifecycle::Subject& lifecycle_subject() { return kSubject; }
 
 } // namespace virtio_sound
