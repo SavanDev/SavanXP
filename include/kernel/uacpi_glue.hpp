@@ -17,6 +17,6 @@ void dump_pci_routing();
 // Resolve a root-bus PCI function using _PRT and the link device's _CRS.
 // Return the assigned vector or zero if the route is unavailable.
 uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
-                       arch::x86_64::IrqHandler handler);
+                       arch::x86::IrqHandler handler);
 
 } // namespace uacpi_glue

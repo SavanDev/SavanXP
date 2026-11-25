@@ -30,15 +30,13 @@ constexpr uint32_t kNoOwner = 0xffffffffu;
 struct SpinLock {
     uint32_t next_ticket = 0;
     uint32_t now_serving = 0;
-    // Indice del core que lo tiene (arch::x86_64::cpu_index()), o kNoOwner.
-    // Solo lo escribe quien tiene el lock, asi que el unico que puede leer su
-    // propio indice aca es el duenio: la lectura sin lock es valida para
-    // preguntar "lo tengo yo?", y solo para eso.
+    // Only the owner writes its CPU index. Callers may read it without
+    // the lock to check whether they already hold the lock.
     uint32_t owner = kNoOwner;
 };
 
 inline bool held_by_this_cpu(const SpinLock& lock) {
-    return __atomic_load_n(&lock.owner, __ATOMIC_ACQUIRE) == arch::x86_64::cpu_index();
+    return __atomic_load_n(&lock.owner, __ATOMIC_ACQUIRE) == arch::x86::cpu_index();
 }
 
 inline void acquire(SpinLock& lock) {
@@ -46,7 +44,7 @@ inline void acquire(SpinLock& lock) {
     while (__atomic_load_n(&lock.now_serving, __ATOMIC_ACQUIRE) != ticket) {
         asm volatile("pause");
     }
-    __atomic_store_n(&lock.owner, arch::x86_64::cpu_index(), __ATOMIC_RELEASE);
+    __atomic_store_n(&lock.owner, arch::x86::cpu_index(), __ATOMIC_RELEASE);
 }
 
 inline void release(SpinLock& lock) {

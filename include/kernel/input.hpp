@@ -47,8 +47,6 @@ struct MouseEvent {
     MouseSource source;
 };
 
-void initialize();
-void poll();
 void submit_key_event(const KeyEvent& event);
 void submit_mouse_event(const MouseEvent& event);
 

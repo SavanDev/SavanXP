@@ -1,23 +1,11 @@
 /*
- * SavanXP - contrato ABI del subsistema nativo (Haxe), v1.
+ * SavanXP native subsystem ABI, v1. The kernel dispatcher and userland
+ * runtime share this contract.
  *
- * Este header es la UNICA fuente del contrato kernel <-> userland del
- * subsistema nativo: lo incluyen tanto el dispatcher del kernel
- * (kernel/native_syscall_dispatch.inc) como el runtime de userland
- * (savanxp_native.h). Es el contrato que heredara HashLink en la etapa VM:
- * AOT y HashLink apuntan a esta misma superficie.
- *
- * Convencion de llamada (compartida con posix por ahora):
- *   int $0x80, numero en rax, args en rdi/rsi/rdx, resultado en rax
- *   (negativo = -errno de savanxp_error_code).
- *
- * Particion del espacio de numeros:
- *   [0x0000, 0x0fff]  baseline transitorio: se delega en la tabla posix
- *                     (READ/WRITE/EXIT/etc. de savanxp/syscall.h). Un proceso
- *                     nativo puede usarlas mientras el ABI propio crece.
- *   [0x1000, ...)     syscalls PROPIAS del subsistema nativo. Un proceso posix
- *                     que las invoque recibe ENOSYS: solo existen detras de
- *                     dispatch_native_syscall.
+ * The syscall number goes in EAX and arguments in EDI, ESI and EDX.
+ * INT 0x80 returns the result in EAX, with negative values from
+ * savanxp_error_code. Calls below SXN_SYS_BASE use the common POSIX
+ * dispatcher. Only native processes can make calls at or above it.
  */
 #pragma once
 

@@ -1,6 +1,6 @@
 #include <stdint.h>
 
-#if defined(__i386__) && defined(__PIC__)
+#if defined(__PIC__)
 // i386 accesses even its stack guard through a GOT pointer. Resolve the main
 // image's RELATIVE entries before calling any protected C function. This is
 // the self-relocation step normally performed by an ELF interpreter; SavanXP

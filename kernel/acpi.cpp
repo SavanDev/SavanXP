@@ -174,21 +174,13 @@ bool g_sci_active = false;
 constexpr uint16_t kPm1PwrBtnBit = 1u << 8; // PWRBTN_STS / PWRBTN_EN
 constexpr uint16_t kPm1CntSciEn = 1u << 0;  // SCI_EN en PM1a_CNT
 
-// x86_64 accepts the bootloader's high-half RSDP pointer. On i386, both the
-// Multiboot RSDP and table references are physical addresses below the RAM cap.
+// The Multiboot RSDP and ACPI table references are physical addresses.
 template <typename T>
 T* acpi_map(uint64_t address) {
-#if defined(__i386__)
     // ACPI addresses are physical; a numeric comparison cannot distinguish
     // them from the native RAM alias, which begins below 4 GiB.
     if (!address || address > 0x40000000ull - sizeof(T)) return nullptr;
     return reinterpret_cast<T*>(static_cast<uintptr_t>(address + g_hhdm_offset));
-#else
-    if (address >= g_hhdm_offset) {
-        return reinterpret_cast<T*>(address);
-    }
-    return reinterpret_cast<T*>(address + g_hhdm_offset);
-#endif
 }
 
 bool checksum_ok(const void* data, size_t length) {
@@ -207,10 +199,8 @@ const SdtHeader* find_table(const RsdpDescriptor* rsdp, const char (&signature)[
         : acpi_map<SdtHeader>(rsdp->rsdt_address);
 
     if (!root || root->length < sizeof(SdtHeader)) return nullptr;
-#if defined(__i386__)
     const uintptr_t root_physical = reinterpret_cast<uintptr_t>(root) - g_hhdm_offset;
     if (root->length > 0x40000000ull - root_physical) return nullptr;
-#endif
     if (!checksum_ok(root, root->length)) return nullptr;
     const size_t entry_size = use_xsdt ? sizeof(uint64_t) : sizeof(uint32_t);
     const size_t entry_count = (root->length - sizeof(SdtHeader)) / entry_size;
@@ -230,9 +220,7 @@ const SdtHeader* find_table(const RsdpDescriptor* rsdp, const char (&signature)[
 
         const SdtHeader* table = acpi_map<SdtHeader>(table_phys);
         if (!table || table->length < sizeof(SdtHeader)) continue;
-#if defined(__i386__)
         if (table->length > 0x40000000ull - table_phys) continue;
-#endif
         if (memcmp(table->signature, signature, 4) == 0 && checksum_ok(table, table->length)) {
             return table;
         }
@@ -415,9 +403,7 @@ void initialize(const boot::BootInfo& boot_info) {
     if (dsdt_phys != 0) {
         const SdtHeader* dsdt = acpi_map<SdtHeader>(dsdt_phys);
         if (dsdt && dsdt->length >= sizeof(SdtHeader)
-#if defined(__i386__)
             && dsdt->length <= 0x40000000ull - dsdt_phys
-#endif
             && memcmp(dsdt->signature, "DSDT", 4) == 0 && checksum_ok(dsdt, dsdt->length)) {
             parse_s5(dsdt);
         }
@@ -507,10 +493,10 @@ bool start_sci() {
                                             ioapic::Trigger::level, sci_interrupt);
     g_sci_active = vector != 0;
     if (!g_sci_active && g_sci_int < 16) {
-        g_sci_active = arch::x86_64::register_irq_handler(
+        g_sci_active = arch::x86::register_irq_handler(
             static_cast<uint8_t>(g_sci_int), sci_interrupt);
         if (g_sci_active) {
-            arch::x86_64::enable_irq(static_cast<uint8_t>(g_sci_int));
+            arch::x86::enable_irq(static_cast<uint8_t>(g_sci_int));
         }
     }
 
@@ -521,7 +507,7 @@ bool start_sci() {
 }
 
 [[noreturn]] void shutdown() {
-    arch::x86_64::disable_interrupts();
+    arch::x86::disable_interrupts();
 
     if (g_s5_available && g_pm1a_cnt_port != 0) {
         const uint16_t value_a = static_cast<uint16_t>((g_slp_typ_a << 10) | (1u << 13));
@@ -538,11 +524,11 @@ bool start_sci() {
     out16(0xB004, 0x2000);  // Bochs / VirtualBox legacy
     out16(0x4004, 0x3400);  // VirtualBox
 
-    arch::x86_64::halt_forever();
+    arch::x86::halt_forever();
 }
 
 [[noreturn]] void reboot() {
-    arch::x86_64::disable_interrupts();
+    arch::x86::disable_interrupts();
 
     // 1) Reset register de la FADT.
     if (g_reset_supported) {
@@ -566,7 +552,7 @@ bool start_sci() {
     short_delay();
 
     // 4) Ultimo recurso.
-    arch::x86_64::halt_forever();
+    arch::x86::halt_forever();
 }
 
 } // namespace acpi

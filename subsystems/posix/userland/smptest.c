@@ -8,13 +8,9 @@
 #define PING_ROUNDS 2000
 
 static void record_cpu(const char* role) {
-#if defined(__i386__)
     unsigned int a, b, c, d;
     __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1), "c"(0));
     printf("smptest: %s lapic=%u\n", role, b >> 24);
-#else
-    (void)role;
-#endif
 }
 
 /* A child owned by another scheduling CPU. */

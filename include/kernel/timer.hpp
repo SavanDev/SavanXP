@@ -2,8 +2,6 @@
 
 #include <stdint.h>
 
-#include "kernel/process.hpp"
-
 namespace timer {
 
 enum class Backend : uint8_t {
@@ -16,8 +14,6 @@ void initialize(uint32_t frequency_hz);
 Backend backend();
 uint32_t frequency_hz();
 uint64_t ticks();
-void wait_ticks(uint64_t tick_count);
-process::SavedContext* handle_interrupt(process::SavedContext* context);
 
 // Start this AP's local timer with the BSP's calibrated count.
 bool start_on_secondary();

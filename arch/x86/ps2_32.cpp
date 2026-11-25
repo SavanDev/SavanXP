@@ -13,9 +13,8 @@
  * The reference kernel/ps2.cpp owns the 8042 controller, its IRQ routing, the
  * ES/EN layouts, lock keys and LEDs, the keypad, AltGr and the IntelliMouse
  * packets. It reports decoded events through input::submit_key_event and
- * input::submit_mouse_event. On x86_64 kernel/input.cpp hands those to the
- * kernel UI or TTY; i386 has neither, so this adapter queues them for
- * /dev/input0, the pointer device and the canonical TTY in arch/x86/io.cpp.
+ * input::submit_mouse_event. This adapter queues them for /dev/input0,
+ * the pointer device and the canonical TTY in arch/x86/io.cpp.
  */
 
 namespace i386 {
@@ -174,7 +173,7 @@ void submit_key_event(const KeyEvent& event) {
 }
 
 void submit_mouse_event(const MouseEvent& event) {
-    // As in kernel/input.cpp, a virtio pointer supersedes the PS/2 mouse.
+    // A virtio pointer supersedes the PS/2 mouse.
     if (virtio_input::mouse_ready() && event.source == MouseSource::ps2) {
         return;
     }

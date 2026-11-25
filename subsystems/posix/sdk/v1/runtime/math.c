@@ -1,21 +1,8 @@
-/* Biblioteca matematica de userland.
- *
- * Se compila y linkea SOLO cuando la app se construye con -Sse. Sin SSE el
- * x86-64 no tiene un ABI de punto flotante utilizable: clang pasa los double en
- * registros de proposito general -- una convencion propia, no la de System V --
- * y resuelve cada operacion con una llamada a los helpers de soft-float
- * (__adddf3, __mulsf3 y compania) que este sistema no tiene, asi que el codigo
- * con floats compila pero no linkea. Con -msse2 los argumentos viajan en
- * xmm0..7 como manda el ABI y las operaciones son instrucciones nativas.
- *
- * El kernel ya sostiene este camino desde antes: guarda y restaura el area
- * FPU/SSE de cada proceso en el cambio de contexto (fxsave64/fxrstor64, ver
- * kernel/process.cpp) y crt0.S deja rsp alineado a 16 bytes antes del primer
- * call, que es lo que necesitan los accesos alineados de SSE.
- */
+/* Userland math requires SSE2. The kernel preserves x87 and SSE state
+ * across process switches, and crt0 aligns the i386 stack before calls. */
 
 #if !defined(__SSE2__)
-#error "math.c necesita SSE2: construi la app con --sse (ver tools/build-user.sh)."
+#error "math.c requires SSE2. Build the app with --sse (see tools/build-user.sh)."
 #endif
 
 #include <math.h>
@@ -64,9 +51,8 @@ double sqrt(double x) {
     return result;
 }
 
-/* floor/ceil/trunc se resuelven con bits y no con roundsd: roundsd es SSE4.1 y
- * el modelo de CPU con el que arranca QEMU por default (qemu64) no la expone.
- * La linea base de este puerto es SSE2, que es lo que garantiza x86-64. */
+/* Implement floor, ceil and trunc with bit operations. ROUNDSD would raise
+ * the CPU requirement from SSE2 to SSE4.1. */
 double floor(double x) {
     union sx_double_bits value;
     int exponent;

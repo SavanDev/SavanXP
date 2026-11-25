@@ -126,7 +126,7 @@ namespace ioapic {
 bool initialize() {
     if (g_ready) return true;
     // Every route needs a functioning local APIC to acknowledge delivery.
-    if (!arch::x86_64::local_apic_ready()) return false;
+    if (!arch::x86::local_apic_ready()) return false;
 
     size_t length = 0;
     const void* madt = acpi::table("APIC", length);
@@ -143,7 +143,7 @@ bool initialize() {
 
 bool ready() { return g_ready; }
 
-uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHandler handler) {
+uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86::IrqHandler handler) {
     if (!g_ready) return 0;
     IoApic* io = owner_of_gsi(gsi);
     if (!io) return 0;
@@ -158,8 +158,8 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHand
                 "ioapic: GSI %u requested with different polarity or trigger; keeping original route\n",
                 unsigned(gsi));
         }
-        if (!arch::x86_64::register_interrupt_handler(
-                existing->vector, handler, arch::x86_64::InterruptEoi::local_apic)) {
+        if (!arch::x86::register_interrupt_handler(
+                existing->vector, handler, arch::x86::InterruptEoi::local_apic)) {
             console::printf("ioapic: could not chain handler on GSI %u\n", unsigned(gsi));
             return 0;
         }
@@ -172,21 +172,21 @@ uint8_t route_gsi(uint32_t gsi, Polarity pol, Trigger trg, arch::x86_64::IrqHand
         return 0;
     }
 
-    if (!arch::x86_64::register_interrupt_handler(
-            vector, handler, arch::x86_64::InterruptEoi::local_apic)) {
+    if (!arch::x86::register_interrupt_handler(
+            vector, handler, arch::x86::InterruptEoi::local_apic)) {
         return 0;
     }
 
     // Routes are installed by the BSP during boot with interrupts disabled.
     write_redirection(*io, gsi, vector, active_low, level, /*masked=*/false,
-                      static_cast<uint8_t>(arch::x86_64::local_apic_id()));
+                      static_cast<uint8_t>(arch::x86::local_apic_id()));
     g_routed[g_routed_count++] = Routed{gsi, vector, active_low, level};
     console::printf("ioapic: GSI %u -> vector %u (%s, active-%s)\n", unsigned(gsi),
                     unsigned(vector), level ? "level" : "edge", active_low ? "low" : "high");
     return vector;
 }
 
-uint8_t route_legacy_irq(uint8_t isa_irq, arch::x86_64::IrqHandler handler) {
+uint8_t route_legacy_irq(uint8_t isa_irq, arch::x86::IrqHandler handler) {
     if (isa_irq >= 16) return 0;
     uint32_t gsi; Polarity pol; Trigger trg;
     resolve_isa(isa_irq, gsi, pol, trg);

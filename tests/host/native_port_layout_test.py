@@ -25,12 +25,12 @@ def main() -> int:
     native = root / "subsystems" / "native"
 
     assert (root / "include" / "abi" / "savanxp_native_abi.h").is_file()
-    assert (root / "kernel" / "native_syscall_dispatch.inc").is_file()
     assert not (native / "sdk" / "include" / "savanxp_native_abi.h").exists()
     assert not (native / "kernel" / "syscall_dispatch.inc").exists()
-    process = (root / "kernel" / "process.cpp").read_text(encoding="utf-8")
-    assert "include/abi/savanxp_native_abi.h" in process
-    assert "native_syscall_dispatch.inc" in process
+    dispatcher = (root / "arch" / "x86" / "native.cpp").read_text(encoding="utf-8")
+    assert '#include "abi/savanxp_native_abi.h"' in dispatcher
+    syscall = (root / "arch" / "x86" / "syscall.cpp").read_text(encoding="utf-8")
+    assert "native_syscall(" in syscall
     generator = (root / "tools" / "gen_sxe_resources.py").read_text(encoding="utf-8")
     assert '"include", "abi", "savanxp_native_abi.h"' in generator
     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")

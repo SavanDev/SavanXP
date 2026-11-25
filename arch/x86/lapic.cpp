@@ -154,7 +154,7 @@ bool send(uint32_t destination, uint32_t command) {
 }
 }
 
-namespace arch::x86_64 {
+namespace arch::x86 {
 bool local_apic_ready() { return i386::lapic::ready(); }
 bool local_apic_x2apic_mode() { return i386::lapic::x2apic_mode(); }
 uint32_t local_apic_id() { return i386::lapic::id(); }

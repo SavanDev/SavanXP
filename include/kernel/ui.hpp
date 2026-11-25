@@ -1,28 +1,14 @@
 #pragma once
 
-#include "boot/boot_info.hpp"
-#include "savanxp/syscall.h"
+#include <stdint.h>
 
 namespace ui {
 
-void initialize(const boot::FramebufferInfo& framebuffer);
-bool ready();
 bool graphics_active();
 bool acquire_graphics_session(uint32_t pid);
 void release_graphics_session(uint32_t pid);
 bool owns_graphics_session(uint32_t pid);
-void handle_key_event(uint32_t key, bool pressed, char ascii, uint32_t modifiers);
-// absolute_x/absolute_y con has_absolute en true son la posicion verdadera del
-// puntero y viajan hasta userland en savanxp_mouse_event: sin ellas, un delta
-// descartado por cola llena es posicion que no vuelve. Los dispositivos
-// relativos pasan has_absolute en false.
-void handle_mouse_event(int32_t delta_x, int32_t delta_y, int32_t wheel, uint32_t buttons, int32_t absolute_x, int32_t absolute_y, bool has_absolute);
-// Re-lee la geometria del backend de display y la propaga a quien la tenga
-// cacheada (hoy, el mapeo de coordenadas absolutas del puntero). La llama el
-// dispatcher de /dev/gpu0 despues de un cambio de modo.
+// Propagate the display geometry to the framebuffer console and absolute pointer.
 void sync_framebuffer_geometry();
-bool framebuffer_available();
-const savanxp_fb_info& framebuffer_info();
-bool mouse_available();
 
 } // namespace ui

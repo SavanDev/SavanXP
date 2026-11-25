@@ -6,11 +6,7 @@
 #include "kernel/device.hpp"
 #include "kernel/object.hpp"
 #include "kernel/process.hpp"
-#if defined(__i386__)
-#include "../arch/x86/services.hpp"
-#else
 #include "kernel/smp.hpp"
-#endif
 #include "kernel/timer.hpp"
 #include "savanxp/syscall.h"
 

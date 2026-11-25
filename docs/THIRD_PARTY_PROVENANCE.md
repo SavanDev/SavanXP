@@ -130,24 +130,16 @@ which is why both go into the registry.
 
 ## Bootloader
 
-### Limine
+### GRUB2
 
-- Origin: https://github.com/limine-bootloader/limine, `v10.x-binary` branch
-- Versioned: no. `build.sh` clones it into `tools/limine`, which is in
-  `.gitignore`
-- License reviewed: BSD-2-Clause, `tools/limine/LICENSE`
-- Decision: `Adopt`
-- Distributed in: the ISO, as `BOOTX64.EFI`, `limine-bios-cd.bin`,
-  `limine-bios.sys` and `limine-uefi-cd.bin`
+The i386 ISO uses the host's GRUB2 BIOS platform files. See
+[host setup](BUILD_LINUX.md) for the required packages.
 
-### Limine protocol header
+### Limine in the x86_64 reference
 
-- Origin: derived from https://github.com/limine-bootloader/limine-protocol
-- Versioned: yes, `vendor/limine.h`
-- License reviewed: 0BSD, declared by SPDX in the file itself
-- Decision: `Selective port`
-- Distributed in: the kernel binary. It is a minimal version written for this
-  repository, not a copy of the upstream header
+The pinned [v0.4.0 reference](https://github.com/SavanDev/SavanXP/blob/v0.4.0/docs/THIRD_PARTY_PROVENANCE.md)
+records Limine's sources, licensing and packaged files. The i386 parity tools
+can boot an ISO produced by that reference.
 
 ## Content and assets in the image
 

@@ -3,6 +3,7 @@
 #include "cpu.hpp"
 #include "process.hpp"
 #include "paging.hpp"
+#include "kernel/smp.hpp"
 #include "kernel/spinlock.hpp"
 #include "lapic.hpp"
 #include "madt.hpp"
@@ -289,7 +290,7 @@ void wait_for_interrupt() {
     if (caller) {
         // Read hardware again: the normal non-volatile STR helper may be
         // commoned across this call, which would hide an erroneous migration.
-        const uint16_t resumed_tr = arch::x86_64::read_task_register();
+        const uint16_t resumed_tr = arch::x86::read_task_register();
         if (i386::process::current() != caller || resumed_tr != i386::cpu::kTssSelector + here * 8 ||
             caller->cpu != here || caller->wait_depth != depth || marker != (0x6374726eu ^ here ^ depth)) {
             console::write_line("process: invalid pinned kernel continuation");

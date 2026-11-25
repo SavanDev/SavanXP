@@ -9,7 +9,5 @@ int elf32_probe(void) {
     if (elf32_absent || *elf32_second != 37) return -100;
     return ++counter + elf32_callback();
 }
-#if defined(__i386__)
 // Force a PC-relative data relocation, independent of compiler code generation.
 __asm__(".data\n.global elf32_pc\nelf32_pc:\n.long elf32_callback - .\n");
-#endif

@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 
 #define LIBCTEST_PATH "/disk/tmp/libctest.txt"
@@ -485,6 +486,9 @@ int main(void) {
     test_directories();
 
     check(getpid() > 0, "getpid");
+    struct utsname system_name;
+    check(uname(&system_name) == 0 && strcmp(system_name.machine, "i386") == 0,
+          "uname reports i386");
     check(strcmp(ops.remove, "campo llamado remove") == 0, "campo remove intacto");
 
     if (g_failures != 0) {

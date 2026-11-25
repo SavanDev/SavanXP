@@ -57,7 +57,7 @@ The kernel-facing contract is now neutral base infrastructure:
 
 - `include/abi/savanxp_native_abi.h` — syscall numbers, shared structures,
   ABI version, and the native ELF OSABI value.
-- `kernel/native_syscall_dispatch.inc` — the base kernel dispatcher.
+- `arch/x86/native.cpp` — the i386 kernel dispatcher.
 
 The optional userland SDK remains under `subsystems/native/sdk/`:
 

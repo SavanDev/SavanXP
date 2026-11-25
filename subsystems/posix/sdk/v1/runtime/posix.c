@@ -4290,7 +4290,7 @@ int sx_uname(struct utsname* value) {
     sx_copy_uname_field(value->nodename, sizeof(value->nodename), "savanxp");
     sx_copy_uname_field(value->release, sizeof(value->release), "0.1");
     sx_copy_uname_field(value->version, sizeof(value->version), "sdk-v1");
-    sx_copy_uname_field(value->machine, sizeof(value->machine), "x86_64");
+    sx_copy_uname_field(value->machine, sizeof(value->machine), "i386");
     return 0;
 }
 

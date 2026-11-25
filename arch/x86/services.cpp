@@ -23,8 +23,8 @@ namespace {
 uint8_t in8(uint16_t port) { uint8_t v; asm volatile("inb %1,%0" : "=a"(v) : "Nd"(port)); return v; }
 void out8(uint16_t port, uint8_t v) { asm volatile("outb %0,%1" :: "a"(v), "Nd"(port)); }
 }
-namespace arch::x86_64 {
-// Retained generic drivers use this historical namespace for the CPU boundary.
+namespace arch::x86 {
+// CPU services for the shared kernel drivers.
 bool register_irq_handler(uint8_t irq, IrqHandler handler) {
     if (irq >= 16 || !handler) return false;
     if (irq >= 3 && irq != 8 && irq != 13) {

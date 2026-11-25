@@ -240,7 +240,7 @@ uacpi_iteration_decision route_find_cb(void* user, uacpi_namespace_node* node, u
 }
 
 static uint8_t route_pci_intx_ioapic(uint8_t bus, uint8_t dev, uint8_t func, uint8_t pin,
-                                     arch::x86_64::IrqHandler handler) {
+                                     arch::x86::IrqHandler handler) {
     if (!g_namespace_ready) return 0;
     RouteCtx ctx = {};
     ctx.bus = bus;
@@ -271,7 +271,7 @@ static uint8_t route_pci_intx_ioapic(uint8_t bus, uint8_t dev, uint8_t func, uin
 }
 
 uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
-                       arch::x86_64::IrqHandler handler) {
+                       arch::x86::IrqHandler handler) {
     const uint8_t pin = pci::read_config_u8(bus, dev, func, 0x3d);
     if (pin < 1 || pin > 4) return 0;
     if (const uint8_t vector = route_pci_intx_ioapic(bus, dev, func, pin, handler))
@@ -279,8 +279,8 @@ uint8_t route_pci_intx(uint8_t bus, uint8_t dev, uint8_t func,
 
     const uint8_t irq = pci::read_config_u8(bus, dev, func, 0x3c);
     if (irq < 3 || irq >= 16 || irq == 8 || irq == 13) return 0;
-    if (!arch::x86_64::register_irq_handler(irq, handler)) return 0;
-    arch::x86_64::enable_irq(irq);
+    if (!arch::x86::register_irq_handler(irq, handler)) return 0;
+    arch::x86::enable_irq(irq);
     return 0x20 + irq;
 }
 } // namespace uacpi_glue
@@ -496,9 +496,9 @@ uacpi_status uacpi_kernel_install_interrupt_handler(
         routed = ioapic::route_gsi(irq, ioapic::Polarity::active_low,
                                    ioapic::Trigger::level, sci_trampoline) != 0;
     } else if (irq < 16) {
-        routed = arch::x86_64::register_irq_handler(uint8_t(irq), sci_trampoline);
+        routed = arch::x86::register_irq_handler(uint8_t(irq), sci_trampoline);
         if (routed) {
-            arch::x86_64::enable_irq(uint8_t(irq));
+            arch::x86::enable_irq(uint8_t(irq));
         }
     }
     if (!routed) {

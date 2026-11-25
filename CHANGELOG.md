@@ -194,10 +194,12 @@ Cut-off notes:
 
 ### Removed
 
-- **The x86_64 boot implementation and Limine/UEFI build path are retired here.**
-  Use `master` for x86_64; unported shared modules remain as porting material.
+- **The i386 branch retires the x86_64 kernel, inactive 64-bit SDK paths and Limine/UEFI build support.**
+  The parity tools and SXE metadata reader retain ELF64 inspection.
 
 ### Fixed
+
+- **The POSIX SDK reports `i386` from `uname().machine` on Legacy Edition.**
 
 - **i386 uses the v0.4.0 PS/2 keyboard and mouse driver.** NumLock and the keypad,
   Caps Lock, AltGr (`@`, `~` and `\` in the ES layout), keyboard LEDs, Pause and

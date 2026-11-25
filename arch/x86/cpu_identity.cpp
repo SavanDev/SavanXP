@@ -1,6 +1,9 @@
 // Architecture-independent CPUID query from the pinned v0.4.0 CPU boundary.
 #include "kernel/cpu.hpp"
-namespace arch::x86_64 {
+
+#include <stddef.h>
+
+namespace arch::x86 {
 namespace {
 void cpuid(uint32_t leaf, uint32_t subleaf, uint32_t& eax, uint32_t& ebx, uint32_t& ecx, uint32_t& edx) {
     asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(leaf), "c"(subleaf));

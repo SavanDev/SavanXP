@@ -3363,7 +3363,7 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
     // legacy INTx path below is a fallback this kernel cannot actually route on
     // q35 (no IOAPIC), so without MSI-X the driver falls back to polling. This
     // must happen before queue setup so the queues bind to the MSI-X vector.
-    if (arch::x86_64::register_interrupt_handler(kGpuMsixVector, gpu_irq, arch::x86_64::InterruptEoi::local_apic) &&
+    if (arch::x86::register_interrupt_handler(kGpuMsixVector, gpu_irq, arch::x86::InterruptEoi::local_apic) &&
         virtio_pci::enable_msix(g_device, kGpuMsixVector)) {
         g_gpu_msix_enabled = true;
         g_irq_registered = true;
@@ -3391,9 +3391,9 @@ void initialize(const boot::FramebufferInfo& framebuffer) {
         pci_device.irq_line != 0 &&
         pci_device.irq_line != 0xff &&
         pci_device.irq_line < 16 &&
-        arch::x86_64::register_irq_handler(pci_device.irq_line, gpu_irq)) {
+        arch::x86::register_irq_handler(pci_device.irq_line, gpu_irq)) {
         virtio_pci::enable_intx(g_device);
-        arch::x86_64::enable_irq(pci_device.irq_line);
+        arch::x86::enable_irq(pci_device.irq_line);
         g_irq_line = pci_device.irq_line;
         g_irq_registered = true;
         console::printf("virtio-gpu: irq line %u armed\n", static_cast<unsigned>(g_irq_line));

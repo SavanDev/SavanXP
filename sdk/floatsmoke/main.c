@@ -171,8 +171,7 @@ static void check_libm(void) {
     }
 }
 
-/* Loads a known pattern into four XMM registers (xmm5..xmm8 on x86_64,
- * xmm4..xmm7 on i386), spins long enough to take several timer interrupts --
+/* Loads a known pattern into xmm4..xmm7, spins long enough to take several timer interrupts --
  * and so several context switches to the other process, which does the same
  * with another pattern -- and reads them back.
  *
@@ -196,7 +195,6 @@ static int fpu_registers_survive(uint64_t base, unsigned long spins) {
         return 1;
     }
 
-#if defined(__i386__)
     /* i386 has eight XMM registers and no 64-bit general registers, so the
      * pattern travels through memory operands in xmm4..xmm7. */
     __asm__ volatile(
@@ -215,24 +213,6 @@ static int fpu_registers_survive(uint64_t base, unsigned long spins) {
           [n] "+r"(counter)
         : [i0] "m"(in0), [i1] "m"(in1), [i2] "m"(in2), [i3] "m"(in3)
         : "xmm4", "xmm5", "xmm6", "xmm7", "cc", "memory");
-#else
-    __asm__ volatile(
-        "movq %[i0], %%xmm5\n\t"
-        "movq %[i1], %%xmm6\n\t"
-        "movq %[i2], %%xmm7\n\t"
-        "movq %[i3], %%xmm8\n\t"
-        "1:\n\t"
-        "decq %[n]\n\t"
-        "jnz 1b\n\t"
-        "movq %%xmm5, %[o0]\n\t"
-        "movq %%xmm6, %[o1]\n\t"
-        "movq %%xmm7, %[o2]\n\t"
-        "movq %%xmm8, %[o3]"
-        : [o0] "=r"(out0), [o1] "=r"(out1), [o2] "=r"(out2), [o3] "=r"(out3),
-          [n] "+r"(counter)
-        : [i0] "r"(in0), [i1] "r"(in1), [i2] "r"(in2), [i3] "r"(in3)
-        : "xmm5", "xmm6", "xmm7", "xmm8", "cc");
-#endif
 
     if (out0 != in0 || out1 != in1 || out2 != in2 || out3 != in3) {
         printf("  xmm corrupto: base=%x got %x %x %x %x\n",

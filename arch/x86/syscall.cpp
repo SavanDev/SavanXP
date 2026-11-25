@@ -358,14 +358,14 @@ void handle(ContextFrame& frame) {
             info.pci_device_count = pci::device_count();
             info.cpu_ticks_total = process::total_cpu_ticks();
             info.cpu_khz = timer::tsc_khz();
-            arch::x86_64::CpuIdentity identity = {};
-            arch::x86_64::query_cpu_identity(identity);
-            static_assert(arch::x86_64::kCpuFeatureSse2 == SAVANXP_CPU_FEATURE_SSE2 &&
-                arch::x86_64::kCpuFeaturePae == SAVANXP_CPU_FEATURE_PAE &&
-                arch::x86_64::kCpuFeatureNx == SAVANXP_CPU_FEATURE_NX &&
-                arch::x86_64::kCpuFeatureLongMode == SAVANXP_CPU_FEATURE_LONG_MODE &&
-                arch::x86_64::kCpuFeatureX2Apic == SAVANXP_CPU_FEATURE_X2APIC &&
-                arch::x86_64::kCpuFeatureHypervisor == SAVANXP_CPU_FEATURE_HYPERVISOR);
+            arch::x86::CpuIdentity identity = {};
+            arch::x86::query_cpu_identity(identity);
+            static_assert(arch::x86::kCpuFeatureSse2 == SAVANXP_CPU_FEATURE_SSE2 &&
+                arch::x86::kCpuFeaturePae == SAVANXP_CPU_FEATURE_PAE &&
+                arch::x86::kCpuFeatureNx == SAVANXP_CPU_FEATURE_NX &&
+                arch::x86::kCpuFeatureLongMode == SAVANXP_CPU_FEATURE_LONG_MODE &&
+                arch::x86::kCpuFeatureX2Apic == SAVANXP_CPU_FEATURE_X2APIC &&
+                arch::x86::kCpuFeatureHypervisor == SAVANXP_CPU_FEATURE_HYPERVISOR);
             info.cpu_features = identity.features;
             memcpy(info.cpu_vendor, identity.vendor, sizeof(info.cpu_vendor));
             memcpy(info.cpu_brand, identity.brand, sizeof(info.cpu_brand));

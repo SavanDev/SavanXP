@@ -15,17 +15,8 @@
 #include <savanxp/ldso.h>
 #include "math.h"
 
-/* Un puntero global que apunta a un objeto del mismo ejecutable.
- *
- * Esto prueba algo que las llamadas a sqrt no prueban. sqrt entra por el PLT con
- * una R_X86_64_JUMP_SLOT, que se resuelve por nombre. Lo de aqui es una
- * R_X86_64_RELATIVE, que no tiene nombre: es "pone aqui una direccion de la
- * imagen". Y es justo donde estaba el bug -- lld deja la casilla en cero y el
- * valor de enlace en la adenda, asi que sumar el bias a la memoria dejaba
- * stdout apuntando a la base de la imagen.
- *
- * El sintoma era invisible hasta que algo lo usaba: los programas PIE del arbol
- * llamaban sqrt y nada mas, y a stdout no llegaba nadie. */
+/* A pointer into the executable exercises R_386_RELATIVE with its implicit
+ * addend. The sqrt call exercises R_386_JUMP_SLOT by symbol name. */
 extern void* stdout;
 
 static int check_relocated_pointer(void) {

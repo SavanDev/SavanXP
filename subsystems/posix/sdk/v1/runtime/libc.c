@@ -9,24 +9,10 @@ static long syscall3(unsigned long number, unsigned long a, unsigned long b, uns
 }
 
 static long syscall5(unsigned long number, unsigned long a, unsigned long b, unsigned long c, unsigned long d, unsigned long e) {
-#if defined(__i386__)
-    /* En 32 bits no hay r10 ni r8, pero ecx y ebx estan libres: el cuarto y el
-     * quinto argumento viajan en registros como los tres primeros y el kernel
-     * los lee de ahi. */
+    /* ECX and EBX carry the fourth and fifth arguments. */
     long result;
     asm volatile("int $0x80" : "=a"(result) : "a"(number), "D"(a), "S"(b), "d"(c), "c"(d), "b"(e) : "memory");
     return result;
-#else
-    register unsigned long r10 asm("r10") = d;
-    register unsigned long r8 asm("r8") = e;
-    long result;
-    asm volatile(
-        "int $0x80"
-        : "=a"(result)
-        : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
-        : "memory");
-    return result;
-#endif
 }
 
 static long syscall2(unsigned long number, unsigned long a, unsigned long b) {
@@ -264,18 +250,7 @@ const char* savanxp_interpreter_path(void) {
  * enlazador lo resuelve en 0. */
 extern int sx_run_interpreter(void) __attribute__((weak));
 
-/* Lo que crt0 llama antes de main.
- *
- * La comprobacion va en C a proposito. En ensamblador, preguntar si un simbolo
- * debil esta definido obliga a hacer `movq simbolo(%rip), %rax`, que LEE la
- * memoria en la direccion del simbolo; si no esta definido, esa direccion es
- * cero y el proceso muere en un fallo de pagina antes de llegar a main. El
- * enlazador le da a un simbolo debil indefinido una entrada en el GOT con valor
- * cero, y eso es lo que se consulta aca.
- *
- * Que este sea el unico lugar donde se decide si el interprete corre es lo que
- * hace que sea automatico: un programa no necesita acordarse de llamarlo, y no
- * puede olvidarse. */
+/* Startup calls the weak interpreter hook before main when it is linked in. */
 void sx_start_dynamic(void) {
     if (sx_run_interpreter != 0) {
         const int result = sx_run_interpreter();
@@ -352,14 +327,10 @@ unsigned long uptime_ms(void) {
 }
 
 unsigned long long monotonic_ns(void) {
-#if defined(__i386__)
     /* Wide scalar returns use EDX:EAX, like the i386 C ABI. */
     unsigned long low, high;
     __asm__ volatile("int $0x80" : "=a"(low), "=d"(high) : "a"(SAVANXP_SYS_MONOTONIC_NS) : "memory", "cc");
     return ((unsigned long long)high << 32) | low;
-#else
-    return (unsigned long long)syscall0(SAVANXP_SYS_MONOTONIC_NS);
-#endif
 }
 
 long clear_screen(void) {
@@ -478,10 +449,7 @@ int clipboard_set_text(const char* text) {
     while (text[length] != '\0') {
         length += 1;
     }
-    /* Copiar la cadena vacia significa vaciar el portapapeles, pero no se puede
-     * expresar con un write: write_handle corta en count == 0 antes de llegar
-     * al device (kernel/process.cpp), asi que el pedido no llegaria nunca. El
-     * ioctl dice lo mismo y ademas lo dice explicito. */
+    /* A zero-byte write cannot reach the device. Use its clear operation. */
     if (length == 0) {
         return clipboard_clear();
     }
@@ -856,31 +824,16 @@ char* strcpy(char* destination, const char* source) {
     return destination;
 }
 
-// Userland tambien se compila con -mgeneral-regs-only (sin SSE), asi que la
-// unidad mas ancha son 8 bytes. Las instrucciones de string mueven esos 8 bytes
-// por iteracion sin overhead de lazo; un lazo en C sin optimizar cuesta media
-// docena de instrucciones por byte. Importa mas de lo que parece: el blit por
-// filas del compositor (sx_painter_blit en gfx2d.c) llama aca una vez por fila
-// de cada rectangulo sucio de cada frame.
-//
-// Requisito: DF=0, que garantiza el crt0 con su cld al arrancar el proceso.
+// Copy words with string instructions for the compositor's row blits.
+// The startup code clears DF before entering the runtime.
 void* memcpy(void* destination, const void* source, size_t count) {
     void* cursor = destination;
     const void* origin = source;
-#if defined(__i386__)
-    /* La palabra de copia son 4 bytes: en modo 32 bits no existe movsq. */
     size_t words = count >> 2;
     size_t tail = count & 3u;
 
     __asm__ volatile("rep movsl" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
     __asm__ volatile("rep movsb" : "+D"(cursor), "+S"(origin), "+c"(tail) : : "memory");
-#else
-    size_t words = count >> 3;
-    size_t tail = count & 7u;
-
-    __asm__ volatile("rep movsq" : "+D"(cursor), "+S"(origin), "+c"(words) : : "memory");
-    __asm__ volatile("rep movsb" : "+D"(cursor), "+S"(origin), "+c"(tail) : : "memory");
-#endif
 
     return destination;
 }
@@ -888,24 +841,13 @@ void* memcpy(void* destination, const void* source, size_t count) {
 void* memset(void* destination, int value, size_t count) {
     unsigned char byte = (unsigned char)value;
     void* cursor = destination;
-#if defined(__i386__)
-    /* El patron se replica en 4 posiciones porque la palabra de stosl son
-     * 4 bytes; en modo 32 bits no existe stosq. */
+    /* Replicate the byte across the word written by stosl. */
     unsigned int pattern = (unsigned int)byte * 0x01010101u;
     size_t words = count >> 2;
     size_t tail = count & 3u;
 
     __asm__ volatile("rep stosl" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
     __asm__ volatile("rep stosb" : "+D"(cursor), "+c"(tail) : "a"(byte) : "memory");
-#else
-    /* Replica el byte en las 8 posiciones para que stosq escriba el mismo patron. */
-    unsigned long long pattern = (unsigned long long)byte * 0x0101010101010101ULL;
-    size_t words = count >> 3;
-    size_t tail = count & 7u;
-
-    __asm__ volatile("rep stosq" : "+D"(cursor), "+c"(words) : "a"(pattern) : "memory");
-    __asm__ volatile("rep stosb" : "+D"(cursor), "+c"(tail) : "a"(byte) : "memory");
-#endif
 
     return destination;
 }

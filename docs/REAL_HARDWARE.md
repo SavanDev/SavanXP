@@ -92,14 +92,14 @@ assume a 64-bit address space:
 
 | Assumption | Where |
 | --- | --- |
-| Kernel at `0xffffffff80000000`, kernel PML4 slot 256 | [`linker.ld:13`](https://github.com/SavanDev/SavanXP/blob/master/linker.ld#L13), [`vmm.cpp:16`](../kernel/vmm.cpp:16) |
-| 4-level paging, `sign_extend_48`, 48-bit page mask | [`vmm.cpp:15-67`](../kernel/vmm.cpp), [`elf.cpp:116-137`](../kernel/elf.cpp) |
-| User stack top at 512 GiB, section views at 16 GiB | [`vmm.hpp:14-15`](../include/kernel/vmm.hpp), [`vmm.hpp:37`](../include/kernel/vmm.hpp) |
-| NX bit 63 on every kernel mapping | [`vmm.hpp:49`](../include/kernel/vmm.hpp), [`vmm.cpp:810`](../kernel/vmm.cpp) |
-| ELF64 / `EM_X86_64` only | [`elf.cpp:10-12`](../kernel/elf.cpp) |
+| Kernel at `0xffffffff80000000`, kernel PML4 slot 256 | [`linker.ld:13`](https://github.com/SavanDev/SavanXP/blob/master/linker.ld#L13), [`vmm.cpp:16`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp#L16) |
+| 4-level paging, `sign_extend_48`, 48-bit page mask | [`vmm.cpp:15-67`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp), [`elf.cpp:116-137`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/elf.cpp) |
+| User stack top at 512 GiB, section views at 16 GiB | [`vmm.hpp:14-15`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/include/kernel/vmm.hpp), [`vmm.hpp:37`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/include/kernel/vmm.hpp) |
+| NX bit 63 on every kernel mapping | [`vmm.hpp:49`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/include/kernel/vmm.hpp), [`vmm.cpp:810`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp) |
+| ELF64 / `EM_X86_64` only | [`elf.cpp:10-12`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/elf.cpp) |
 | 64-bit syscall context, `iretq`, `pushq` | [`context.S:26-98`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/context.S), [`process.hpp:45-66`](../include/kernel/process.hpp) |
 | 64-bit GDT, TSS with 8 ISTs, 10-byte IDT gates, `fxsave64` | [`cpu_init.cpp:59-95`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/cpu_init.cpp), [`cpu_init.cpp:755-764`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/cpu_init.cpp) |
-| HHDM as the only physical-address path | [`vmm.cpp:967-969`](../kernel/vmm.cpp), [`physical_memory.cpp:111-113`](../kernel/physical_memory.cpp) |
+| HHDM as the only physical-address path | [`vmm.cpp:967-969`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp), [`physical_memory.cpp:111-113`](../kernel/physical_memory.cpp) |
 
 That is roughly 26,700 lines of kernel, 19 files with inline assembly and three
 `.S` files, plus 70 in-tree programs and the ports, against
@@ -137,7 +137,7 @@ implements neither.
 
 ### The kernel brings up no paging of its own
 
-[`vmm::initialize()`](../kernel/vmm.cpp) stores the HHDM offset and adopts
+[`vmm::initialize()`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp) stores the HHDM offset and adopts
 Limine's CR3 (`read_cr3() & kPageMask`); nothing anywhere writes `CR0.PG`,
 builds a page table or relocates the kernel. The page tables, the direct map
 and the long-mode entry are all the bootloader's. Whatever replaces Limine has
@@ -160,8 +160,8 @@ from the MADT instead of Limine's `goto_address`), and paging itself (bootstrapp
 | Build graph: `SAVANXP_ARCH`, four profiles, `linker32.ld`, `-m elf_i386` | S-M | **Landed and simplified.** This branch builds i386 only, using `linker32.ld` and ELF32 profiles; [`tools/arch-env.sh`](../tools/arch-env.sh) applies the same ABI to external builders |
 | `arch/x86`: 32-bit GDT/TSS/IDT, `iret`/`pushal` stubs, `fxsave`, AP trampolines | L | Replaces `arch/x86_64` (`entry`, `cpu_init`, `timer`, `smp`, `context.S`). **Landed:** Multiboot2 entry, flat GDT/TSS, IDT with exceptions and IRQs, PIC+PIT, PS/2, COM1 and the EGA text console, ATA/SxFS mount, ELF32 ring 3 and syscalls live in [`arch/x86`](../arch/x86); `fxsave` context and per-process stacks have landed; AP trampolines remain future work |
 | Paging bootstrap and a 1 GiB direct map, no NX | L | **Landed.** The bootstrap maps the first 1 GiB identity with 4 MiB PSE pages and reports over serial; `EFER` does not exist in 32-bit mode |
-| VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](../include/kernel/vmm.hpp)) does not fit in 32 bits. **Partial:** private per-process CR3 maps with a common ELF32 virtual window and supervisor kernel aliases; allocator-backed 4 KiB pages, ELF write protection, guards and local user-fault termination; no section views or ASLR. See [i386 processes](I386_PROCESSES.md) |
-| `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/context.S), [`elf.cpp:163-263`](../kernel/elf.cpp) |
+| VMM rewrite | XL | The user address map ([`vmm.hpp:14-15`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/include/kernel/vmm.hpp)) does not fit in 32 bits. **Partial:** private per-process CR3 maps with a common ELF32 virtual window and supervisor kernel aliases; allocator-backed 4 KiB pages, ELF write protection, guards and local user-fault termination; no section views or ASLR. See [i386 processes](I386_PROCESSES.md) |
+| `SavedContext` (168 -> 52 bytes), i386 syscall register mapping, ELF32, 4-byte argv slots | M | [`context.S`](https://github.com/SavanDev/SavanXP/blob/master/arch/x86_64/context.S), [`elf.cpp:163-263`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/elf.cpp) |
 | Heap off HHDM pointers | S | [`heap.cpp:224-244`](../kernel/heap.cpp) builds arenas straight on the direct map |
 | Userland, SDK, ports, busybox | M | The runtime is SavanXP's own freestanding one ([`subsystems/posix/sdk/v1/runtime`](../subsystems/posix/sdk/v1/runtime)), so there is no musl/glibc and no multilib to arrange |
 | Harness: a second QEMU machine profile | S-M | **Landed.** Normal commands select `qemu-system-i386` (`--legacy` remains an alias), [`tools/check_legacy_cpu.py`](../tools/check_legacy_cpu.py) asserts the CPU has no long mode or NX and [`tools/legacy_boot_test.py`](../tools/legacy_boot_test.py) boots the i386 ISO; see [A permanent harness](#a-permanent-harness-for-a-32-bit-target) |
@@ -170,12 +170,12 @@ The good news for the ABI is specific and worth protecting. Syscalls are a
 DPL=3 `int $0x80` gate ([`abi/savanxp_native_abi.h:10-12`](../include/abi/savanxp_native_abi.h)),
 which exists identically in 32-bit protected mode; the dispatchers pass user
 addresses as explicit-width `uint64_t` rather than raw pointers
-([`syscall_dispatch.inc:9-25`](../subsystems/posix/kernel/syscall_dispatch.inc));
+([`syscall_dispatch.inc:9-25`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/subsystems/posix/kernel/syscall_dispatch.inc));
 and the shared SDK structs contain no pointers at all, only fixed-width integers
 ([`savanxp/syscall.h`](../subsystems/posix/sdk/v1/include/savanxp/syscall.h)).
 So the ~440-line dispatcher and the whole SDK survive a port almost unchanged.
 The one real LP64 hole is the initial process stack, which is a native SysV argv
-array of 8-byte slots ([`elf.cpp:170-239`](../kernel/elf.cpp)).
+array of 8-byte slots ([`elf.cpp:170-239`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/elf.cpp)).
 
 Order of work, with each step independently bootable and testable:
 `build graph` (landed) -> `multiboot2 entry + paging bootstrap + serial console` (landed) ->
@@ -317,8 +317,8 @@ smokes as the guard.
 
 | # | Work | Where |
 | --- | --- | --- |
-| 1 | **32-bpp-only video.** `bpp == 32` is a hard gate in the driver, the console and the splash, and the userland blitter assumes a 4-byte stride. If the firmware's VESA implementation has no 32-bpp linear mode, there is no console, no splash, no `/dev/gpu0`, no desktop -- only serial. Either support 24/16 bpp end to end, or program a 32-bpp mode | [`fb_gpu.cpp:235`](../kernel/fb_gpu.cpp), [`console.cpp:86`](../kernel/console.cpp), [`boot_screen.cpp:359`](../kernel/boot_screen.cpp), [`gfx2d.c:1002-1005`](../subsystems/posix/sdk/v1/runtime/gfx2d.c) |
-| 2 | **No write-combining on the firmware framebuffer.** The WC remap through the PAT exists only for Bochs' `dispi` adapter. The scanout Limine hands over is used as mapped. On a 2.4 GHz Pentium 4 with uncached or write-through video memory the compositor would be unwatchable; remapping the aperture should not depend on `dispi` | [`fb_gpu.cpp:181-232`](../kernel/fb_gpu.cpp), [`vmm.cpp:924-957`](../kernel/vmm.cpp) |
+| 1 | **32-bpp-only video.** `bpp == 32` is a hard gate in the driver, the console and the splash, and the userland blitter assumes a 4-byte stride. If the firmware's VESA implementation has no 32-bpp linear mode, there is no console, no splash, no `/dev/gpu0`, no desktop -- only serial. Either support 24/16 bpp end to end, or program a 32-bpp mode | [`fb_gpu.cpp:235`](../kernel/fb_gpu.cpp), [`console.cpp:86`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/console.cpp), [`boot_screen.cpp:359`](../kernel/boot_screen.cpp), [`gfx2d.c:1002-1005`](../subsystems/posix/sdk/v1/runtime/gfx2d.c) |
+| 2 | **No write-combining on the firmware framebuffer.** The WC remap through the PAT exists only for Bochs' `dispi` adapter. The scanout Limine hands over is used as mapped. On a 2.4 GHz Pentium 4 with uncached or write-through video memory the compositor would be unwatchable; remapping the aperture should not depend on `dispi` | [`fb_gpu.cpp:181-232`](../kernel/fb_gpu.cpp), [`vmm.cpp:924-957`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp) |
 | 3 | **ATA never enables the PCI IDE function.** The driver hardcodes `0x1F0/0x170`, does not include `pci.hpp`, and nothing writes the IDE function's command register. On firmware that gates legacy IDE decode on PCI command bits 0 and 2, every port reads `0xFF` and no disk is found. PIO only, a 255-sector cap the block core does not chunk, and a million-iteration "timeout" with no SRST recovery | [`ata.cpp:8-11`](../kernel/ata.cpp), [`ata.cpp:87-115`](../kernel/ata.cpp), [`block.cpp:40-47`](../kernel/block.cpp) |
 | 4 | **AC'97 mixer writes assume an emulator.** `unmute_mixer()` writes `0x0000` to NAM offset `0x00`, whose real meaning is *System Power Down*; the reset bit is 15. QEMU ignores it, real codecs may go silent | [`ac97.cpp:185-191`](../kernel/ac97.cpp) |
 | 5 | **No trackpad.** AUX init insists on `0xFF` reset, `0xF6` defaults and the IntelliMouse sample-rate knock; many 2003-era PS/2 pads do not acknowledge those. The keyboard survives, the pointer does not. No absolute or digitizer mode either. And if the pad enumerates as USB there is nothing at all: the tree has no USB stack | [`ps2.cpp:1044-1066`](../kernel/ps2.cpp) |

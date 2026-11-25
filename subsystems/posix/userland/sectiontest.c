@@ -580,13 +580,9 @@ int main(void) {
 
     /* map_view_at lets the caller choose the address, which the loader needs
      * to honor each PT_LOAD's p_vaddr. Without it a .so cannot be placed where
-     * it asks to go. The base sits in the section range of each ABI's user
-     * window: i386 places automatic views from 0x10000000 up to 0x40000000. */
-#if defined(__i386__)
+     * it asks to go. The base sits in the view window from 0x10000000 through
+     * 0x3fffffff. */
     const unsigned long asked = 0x38000000UL;
-#else
-    const unsigned long asked = 0x0000002000000000UL;
-#endif
     void* placed = map_view_at((int)code_section, asked, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
     if (!expect_pointer(placed, "map view at chosen base")) {
         unmap_view(runnable);
@@ -626,14 +622,8 @@ int main(void) {
         return 1;
     }
 
-    /* Nor can a view be mapped over the process's own image, which starts at
-     * the linker script's base: 0x400000 (kUserBase) on x86_64, 0x08000000 on
-     * i386. */
-#if defined(__i386__)
+    /* A view also cannot overlap the process image at the linker script base. */
     const unsigned long image_base = 0x08000000UL;
-#else
-    const unsigned long image_base = 0x400000UL;
-#endif
     if (!expect_refused(
             map_view_at((int)code_section, image_base, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE),
             "un mapa encima de la imagen")) {

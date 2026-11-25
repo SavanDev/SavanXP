@@ -5,12 +5,10 @@
 
 #include "libc.h"
 
-// Native ELF layouts. i386 uses REL (the destination contains the addend),
-// while x86_64 uses RELA with an explicit addend in each table entry.
+// ELF32 REL entries store their addend at the relocation destination.
 typedef uint16_t Elf_Half;
 typedef uint32_t Elf_Word;
 typedef int32_t Elf_Sword;
-#if defined(__i386__)
 typedef uint32_t Elf_Addr;
 typedef uint32_t Elf_Off;
 typedef uint32_t Elf_Xword;
@@ -20,17 +18,6 @@ typedef uint32_t Elf_Xword;
 #define DT_RELOCSZ 18
 #define ELF_R_TYPE(info) ((info) & 255u)
 #define ELF_R_SYM(info) ((info) >> 8)
-#else
-typedef uint64_t Elf_Addr;
-typedef uint64_t Elf_Off;
-typedef uint64_t Elf_Xword;
-#define ELF_CLASS 2
-#define ELF_MACHINE 62
-#define DT_RELOC 7
-#define DT_RELOCSZ 8
-#define ELF_R_TYPE(info) ((info) & 0xffffffffu)
-#define ELF_R_SYM(info) ((info) >> 32)
-#endif
 #define EI_NIDENT 16
 #define ET_DYN 3
 #define ET_EXEC 2
@@ -52,6 +39,7 @@ typedef uint64_t Elf_Xword;
 #define R_GLOB_DAT 6
 #define R_RELATIVE 8
 #define R_ABSOLUTE 1
+#define R_PC32 2
 
 typedef struct {
     unsigned char e_ident[EI_NIDENT];
@@ -65,38 +53,24 @@ typedef struct {
 
 typedef struct {
     Elf_Word p_type;
-#if !defined(__i386__)
-    Elf_Word p_flags;
-#endif
     Elf_Off p_offset;
     Elf_Addr p_vaddr, p_paddr;
     Elf_Xword p_filesz, p_memsz;
-#if defined(__i386__)
     Elf_Word p_flags;
-#endif
     Elf_Xword p_align;
 } Elf_Phdr;
 
 typedef struct {
     Elf_Word st_name;
-#if defined(__i386__)
     Elf_Addr st_value;
     Elf_Xword st_size;
-#endif
     unsigned char st_info, st_other;
     Elf_Half st_shndx;
-#if !defined(__i386__)
-    Elf_Addr st_value;
-    Elf_Xword st_size;
-#endif
 } Elf_Sym;
 
 typedef struct {
     Elf_Addr r_offset;
     Elf_Xword r_info;
-#if !defined(__i386__)
-    int64_t r_addend;
-#endif
 } Elf_Reloc;
 
 // Each image accepts at most 24 program headers, matching the reference budget.
@@ -338,19 +312,8 @@ static int adopt_executable(void) {
                    &exe->headers[index], sizeof(Elf_Phdr));
         exe->placed[index] = 0;
     }
-    /* Los segmentos ya estan mapeados: el kernel los puso, y el cargador no
-     * tiene descriptor ni seccion con que mapearlos otra vez. placed[] se deduce
-     * de la geometria de la imagen.
-     *
-     * El bias sale de la base que dio el kernel y del primer PT_LOAD: lo que
-     * hay entre donde quedo la cabecera y donde la imagen dice que empieza su
-     * primer segmento. Para una ET_DYN, que carga en kUserBase, da kUserBase;
-     * para una ET_EXEC, que carga en sus propias direcciones de enlace, da cero.
-     *
-     * Antes estaba escrito como una constante --kUserBase para una ET_DYN-- con
-     * el comentario de que tiene que coincidir con kernel/elf.cpp. Coincidia, y
-     * por eso el bug no se veia. Con los dos numeros a la vista la cuenta es
-     * explicita y no puede desincronizarse sola. */
+    /* The kernel already mapped the executable. Compute its bias from the
+     * mapped header and the first loadable segment's page-aligned address. */
     Elf_Addr first_vaddr = 0;
     int found_first = 0;
     for (Elf_Half index = 0; index < header.e_phnum; ++index) {
@@ -507,24 +470,18 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
         !mapped_range(slot, elf_table, elf_size, 0)) return 0;
     for (unsigned long offset = 0; offset + sizeof(Elf_Reloc) <= elf_size;
          offset += sizeof(Elf_Reloc)) {
-        Elf_Reloc rela;
-        copy_bytes(table + offset, &rela, sizeof(rela));
-        const unsigned type = ELF_R_TYPE(rela.r_info);
+        Elf_Reloc relocation;
+        copy_bytes(table + offset, &relocation, sizeof(relocation));
+        const unsigned type = ELF_R_TYPE(relocation.r_info);
         if (type == 0) continue;
-        Elf_Addr* destination = (Elf_Addr*)map_of(slot, rela.r_offset);
-        if (!destination || !mapped_range(slot, rela.r_offset, sizeof(Elf_Addr), 1)) return 0;
-#if defined(__i386__)
+        Elf_Addr* destination = (Elf_Addr*)map_of(slot, relocation.r_offset);
+        if (!destination || !mapped_range(slot, relocation.r_offset, sizeof(Elf_Addr), 1)) return 0;
         const Elf_Addr addend = *destination;
-#else
-        const Elf_Addr addend = (Elf_Addr)rela.r_addend;
-#endif
         if (type == R_RELATIVE) {
-#if defined(__i386__)
             extern unsigned int sx_bootstrap_relocated;
             if (slot == 0 && sx_bootstrap_relocated) continue;
-#endif
-            // RELATIVE adds the bias to the implicit i386 addend or the explicit RELA addend.
-            Elf_Addr* where = (Elf_Addr*)map_of(slot, rela.r_offset);
+            // RELATIVE adds the image bias to the word already in the image.
+            Elf_Addr* where = (Elf_Addr*)map_of(slot, relocation.r_offset);
             if (where == 0) {
                 return 0;
             }
@@ -532,18 +489,14 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
             continue;
         }
         if (type != R_JUMP_SLOT && type != R_GLOB_DAT &&
-            type != R_ABSOLUTE
-#if defined(__i386__)
-            && type != 2 /* R_386_PC32 */
-#endif
-            ) {
+            type != R_ABSOLUTE && type != R_PC32) {
             // Unsupported relocation types fail explicitly rather than leaving a broken pointer.
             eprintf("loader: %s has unsupported relocation type %u; "
                     "supported: JUMP_SLOT, GLOB_DAT, absolute, PC32 (i386), RELATIVE\n",
                     image_name(slot), type);
             return 0;
         }
-        const unsigned name_index = ELF_R_SYM(rela.r_info);
+        const unsigned name_index = ELF_R_SYM(relocation.r_info);
         if (name_index >= g_libs[slot].dynsym_count) return 0;
         Elf_Sym symbol;
         copy_bytes(g_libs[slot].dynsym + (name_index * sizeof(Elf_Sym)), &symbol, sizeof(symbol));
@@ -579,7 +532,7 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
             report_unplaced(g_libs[slot].dynstr + symbol.st_name, owner);
             return 0;
         }
-        Elf_Addr* where = (Elf_Addr*)map_of(slot, rela.r_offset);
+        Elf_Addr* where = (Elf_Addr*)map_of(slot, relocation.r_offset);
         if (where == 0) {
             /* El GOT de esta entrada no esta en ningun segmento mapeado. Un
              * error de la imagen, no del enlazado. */
@@ -587,16 +540,16 @@ static int apply_table_in(int slot, unsigned long elf_table, unsigned long elf_s
                 skipped++;
                 continue;
             }
-            report_unmapped(image_name(slot), g_libs[slot].dynstr + symbol.st_name, rela.r_offset);
+            report_unmapped(image_name(slot), g_libs[slot].dynstr + symbol.st_name, relocation.r_offset);
             return 0;
         }
-        // Absolute i386 relocations add the original word; GOT/PLT entries
-        // contain only S. RELA absolute entries use their explicit addend.
-#if defined(__i386__)
-        if (type == 2) *where = value + addend - (Elf_Addr)(uintptr_t)where;
-        else
-#endif
-        *where = value + (type == R_ABSOLUTE ? addend : 0);
+        // Absolute relocations add the original word. GOT/PLT entries take
+        // the resolved symbol address alone.
+        if (type == R_PC32) {
+            *where = value + addend - (Elf_Addr)(uintptr_t)where;
+        } else {
+            *where = value + (type == R_ABSOLUTE ? addend : 0);
+        }
     }
     if (skipped != 0) {
         /* Una linea, no una por simbolo: el nombre de la libreria ya lo enseanyo
@@ -643,18 +596,16 @@ static int read_dynamic_in(int slot) {
     return 1;
 }
 
-/* Las dos tablas son OPCIONALES. Una libreria que no llama a nada de fuera no
- * tiene .rela.plt, y exigirla la hacia fallar al cargar: el fallo no era de la
- * reubicacion sino de una tabla que no existe. */
+/* Both tables are optional. A library with no imported calls can omit .rel.plt. */
 static int apply_relocs_in(int slot) {
     unsigned long jmprel = 0;
     unsigned long pltrelsz = 0;
     unsigned long rel = 0;
-    unsigned long relasz = 0;
+    unsigned long relsz = 0;
     unsigned long plt_format = 0;
-    if (find_dynamic_in(slot, DT_RELOC, &rel) && find_dynamic_in(slot, DT_RELOCSZ, &relasz) &&
-        relasz != 0) {
-        if (!apply_table_in(slot, rel, relasz)) { g_lib_reloc_step = 5; return 0; }
+    if (find_dynamic_in(slot, DT_RELOC, &rel) && find_dynamic_in(slot, DT_RELOCSZ, &relsz) &&
+        relsz != 0) {
+        if (!apply_table_in(slot, rel, relsz)) { g_lib_reloc_step = 5; return 0; }
     }
     if (find_dynamic_in(slot, DT_JMPREL, &jmprel) &&
         find_dynamic_in(slot, DT_PLTRELSZ, &pltrelsz) && pltrelsz != 0) {

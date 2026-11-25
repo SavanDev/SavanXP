@@ -38,7 +38,7 @@
 >
 > **Crux decision:** SXE is **not a container**. It is a convention over ELF:
 > the file still starts with `7F 45 4C 46`, the same
-> [kernel/elf.cpp](../kernel/elf.cpp) loads it without touching a line, and
+> [kernel/elf.cpp](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/elf.cpp) loads it without touching a line, and
 > `llvm-readelf` opens it. All it adds is two **non-alloc** sections the kernel
 > never maps. "SXE" names the convention and the extension, not a new binary
 > format.

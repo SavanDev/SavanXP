@@ -189,9 +189,9 @@ bring-up: one #UD or #PF stopped the entire guest, and the process table occupie
 96 MiB before any user program ran. The v0.4.0 reference already supplied the
 physical free-region allocator in
 [`kernel/physical_memory.cpp`](../kernel/physical_memory.cpp), page ownership and
-teardown in [`kernel/vmm.cpp`](../kernel/vmm.cpp), and the
+teardown in [`kernel/vmm.cpp`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp), and the
 `terminate_current_from_exception` convention in
-[`kernel/process.cpp`](../kernel/process.cpp). The adaptation reuses that allocator
+[`kernel/process.cpp`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp). The adaptation reuses that allocator
 and those lifecycle rules. It does not import the reference's four-level paging
 instructions or 64-bit virtual addresses, which cannot run in protected mode.
 
@@ -2824,3 +2824,39 @@ for later optimization.
 With the 30-second `memhog32` residency from section 36, `smp --smp 4`
 passed five consecutive runs, so the rollback failure was that sampling
 race and not a fault in the reordered boot.
+
+## 38. Retiring the inactive x86_64 implementation
+
+The v0.4.0 review closed with a single ELF32 build graph. The checkout still
+held the old kernel entry, console and input path, PML4 memory manager, ELF64
+loader, process implementation and syscall tables. The kernel source list,
+the linked symbols and the host tests showed where that reference code had
+been replaced and where shared drivers still used the original interfaces.
+The native port layout test still checked the old dispatcher, so it now
+checks the i386 dispatcher and the syscall path that calls it.
+
+Keeping the old implementation in the checkout would make source comparisons
+convenient while leaving two representations of kernel state in the branch.
+The tagged reference already provides the old implementation. The cleanup
+removes the unused sources and declarations, keeps the existing protected-mode
+implementations behind the shared driver interfaces, and names the CPU
+interface `arch::x86`. The SDK startup and embedded loader keep the existing
+ELF32 calling convention and REL relocation path. The audit also found that
+the POSIX SDK's `uname` still returned `x86_64` in its machine field.
+The core libc test now checks the corrected `i386` value.
+
+The SXE reader still inspects metadata in preserved ELF64 files, and the
+parity tools still read and boot artifacts from the pinned reference.
+Guest execution uses the existing ELF32 validation and loader. The
+persistent volume format is independent of the removed source paths.
+
+`./build.sh build`, `./build.sh test` and `./build.sh smoke sxgui-smoke`
+passed. The `shared` and `shared-memory` scenarios exercised ELF32
+relocations, and `smp --smp 4` verified startup and scheduling on four CPUs.
+The core spec ran `libctest`, including the `uname` assertion. The ISO
+kernel and the installed libc test and SxGUI library matched the rebuilt
+ELF32 artifacts byte for byte. `virtio-smoke`, `float-smoke` and
+`native-smoke` passed with the rebuilt kernel and userland.
+`./tools/verify_doom_persistence.sh` confirmed that a normal rebuild
+preserves the external Doom binary, WAD, settings and save data. This
+cleanup applies to the verified v0.4.0 baseline.

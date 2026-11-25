@@ -33,14 +33,8 @@ function(savanxp_program)
     if(P_LINK_PROFILE STREQUAL "STATIC" OR NOT P_LINK_PROFILE)
         target_link_libraries(${P_NAME} PRIVATE savanxp_user_runtime)
     elseif(P_LINK_PROFILE STREQUAL "PIE")
-        # Un PIE nace del runtime PIC: crt0.S ya es position independent
-        # (%rip y call relativo) y esta dentro de savanxp_user_runtime_pic.
-        #
-        # El runtime que corresponde es el que NO trae las unidades que sus
-        # DEPENDSLeaving en una libreria. No es una bandera que el autor pone:
-        # sale de la lista, porque forgettingla es un fallo silencioso --el
-        # programa enlazaria bien y estaria con una copia propia-- en vez de uno
-        # ruidoso.
+        # The PIC startup resolves the executable's relative relocations.
+        # Omit runtime units supplied by the declared shared dependencies.
         set(dropped_units "")
         foreach(lib IN LISTS P_DEPENDS)
             if(SAVANXP_LIBRARY_REPLACES_${lib})
@@ -366,18 +360,8 @@ savanxp_program(NAME notepad DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE
     subsystems/posix/userland/notepad.c)
 savanxp_program(NAME mines DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/mines.c
-    subsystems/posix/userland/mines_board.c)# La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
-# pruebas en el perfil PIE: depende de SxGUI y se dibuja, asi que si el perfil
-# serviriera para algo mas que para mover sqrt, este es el programa que lo
-# demuestra. La migracion es una linea porque las unidades del runtime ya no se
-# listan a mano.
-# La calculadora es el primer programa de escritorio en el perfil PIE. Antes de
-# ella solo lo usaban libtest y ldtest, y por eso el perfil parecia funcionar:
-# esos dos llaman sqrt y nada mas, y una llamada entra por un JUMP_SLOT que se
-# resuelve por nombre. Enseñar un programa real que escribe en stdout destapo
-# que R_X86_64_RELATIVE estaba leyendo la memoria en vez de la adenda, y que
-# lld deja la casilla en cero. docs/SHARED_LIBRARIES.md tiene los numeros.
-#
+    subsystems/posix/userland/mines_board.c)
+
 # El reproductor de medios es un programa de este arbol. Su motor --FFmpeg-- es un
 # port, asi que el programa se construye solo cuando el port esta (ver la deteccion en
 # CMakeLists.txt) y lleva DEPENDS libffmpeg, que es lo que produce su DT_NEEDED.

@@ -2,12 +2,8 @@
 .global _start
 
 _start:
-    # Bandera de direccion en 0: memcpy/memset usan instrucciones de string, que
-    # con DF=1 caminan hacia atras. El kernel ya arranca los procesos con
-    # rflags=0x202, pero dejarlo explicito ata la precondicion al mismo lado que
-    # la depende.
+    # String instructions in the runtime require DF to be clear.
     cld
-#if defined(__i386__)
     # The kernel supplies argc/argv in EDI/ESI, the guard in EDX,
     # PT_INTERP in ECX and the image header in EBP. Establish the GOT without
     # reading any unrelocated pointer before entering the embedded loader.
@@ -34,10 +30,8 @@ _start:
     movl %ecx, sx_interpreter_path
     movl %ebp, sx_image_base
 #endif
-    # ABI System V de 32 bits: los argumentos van en el stack, de derecha a
-    # izquierda, y el stack debe estar alineado a 16 en cada call. Los dos
-    # push de 4 bytes no reponen los 16, asi que hay un relleno de 8 delante y
-    # se retira con un add de 16 al volver.
+    # Push two arguments right to left and add eight bytes of padding to
+    # preserve the 16-byte call-site alignment.
     subl $8, %esp
     pushl %esi
     pushl %edi
@@ -49,47 +43,6 @@ _start:
     call main
     movl %eax, %edi
     movl $7, %eax
-#else
-    # Alinear el stack a 16 bytes antes del primer call: el ABI System V exige
-    # rsp alineado a 16 en cada call (rsp % 16 == 0), y SSE (doubles de Haxe en
-    # el subsistema nativo) puede emitir movaps que fallan con #GP si no lo esta.
-    andq $-16, %rsp
-    # El kernel deja un canary nuevo en rdx al crear el proceso. rdx no forma
-    # parte del ABI de entrada a main, asi que crt0 lo instala antes de la
-    # primera llamada protegida. El byte bajo nunca es cero (ABI canary).
-    movq %rdx, __stack_chk_guard(%rip)
-    # rcx trae la ruta del interprete (PT_INTERP) que el loader copio al stack,
-    # o 0 si la imagen es estatica. Se guarda antes de la primera llamada porque
-    # rcx no sobrevive a un call.
-    movq %rcx, sx_interpreter_path(%rip)
-    # r8 trae la direccion de la cabecera ELF de la imagen. El kernel la calculo
-    # al mapearla y es el dato exacto; antes el cargador lo adivinaba retrocediendo
-    # pagina a pagina desde una funcion suya, lo que supone que toda pagina del
-    # camino esta mapeada. Un enlazador puede dejar un hueco entre dos PT_LOAD, y
-    # con selftest --cuyo texto arranca en 0xc000 y su primer segmento termina en
-    # 0xaff3-- la pagina intermedia no existe y el escaneo moria alli.
-    movq %r8, sx_image_base(%rip)
-    # Correr el interprete antes de main. El hook vive en C, no aca: comprobar si
-    # un simbolo debil esta definido exige mirar su entrada en el GOT, y en
-    # ensamblador habria que hacer movq simbolo(%rip) -- que LEE la memoria de esa
-    # direccion. Con el simbolo debil sin definir esa direccion es 0 y el proceso
-    # muere leyendo la pagina cero antes de llegar a main.
-    #
-    # %rdi y %rsi traen argc y argv desde el kernel, y no hay donde copiarlos:
-    # una llamada puede usar cualquiera de los dos. Hay que guardarlos en el
-    # stack y restaurarlos antes de entrar a main.
-    #
-    # Los dos push dejan rsp alineado a 16 igual que estaba: main exige
-    # rsp % 16 == 0 en el call, y main es justamente a donde se llega.
-    pushq %rdi
-    pushq %rsi
-    call sx_start_dynamic
-    popq %rsi
-    popq %rdi
-    call main
-    movq %rax, %rdi
-    movq $7, %rax
-#endif
     int $0x80
 1:
     hlt

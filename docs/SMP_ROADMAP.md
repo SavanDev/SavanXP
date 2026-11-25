@@ -46,15 +46,15 @@ already exists and making it hold across cores.
 
 **2. Syscalls never block on the kernel stack.** A syscall that cannot complete
 records a state and returns `kBlockedResult`
-([`process.cpp:47`](../kernel/process.cpp:47)); the waker then **retries the
+([`process.cpp:47`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp#L47)); the waker then **retries the
 operation on the sleeper's behalf** and completes it — see
 `wake_blocked_readers_for_pipe()`
-([`process.cpp:1377`](../kernel/process.cpp:1377)), which re-runs `try_pipe_read`
+([`process.cpp:1377`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp#L1377)), which re-runs `try_pipe_read`
 for every process parked on that pipe. There are no kernel threads halted
 halfway down a call stack, no sleep queues holding kernel context, and no
 stack-switching context switch: the scheduler picks a `SavedContext` and
 `iretq`s into it (`pick_next_runnable()`,
-[`process.cpp:1147`](../kernel/process.cpp:1147)). A second core therefore needs
+[`process.cpp:1147`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp#L1147)). A second core therefore needs
 no second copy of anything the scheduler owns — only its own idea of which
 process it is running.
 
@@ -86,9 +86,9 @@ process it is running.
 | GSIs are routed to the BSP in physical mode, hardcoded | [`ioapic.cpp:262`](../kernel/ioapic.cpp:262) |
 | No spinlock primitive. The only lock in the kernel is a bare `__atomic_test_and_set` in SxFS | [`sxfs.cpp:148`](../kernel/sxfs.cpp:148) |
 | uACPI's spinlocks and mutexes are stubs that only save and restore `IF` | [`uacpi_glue.cpp:428`](../kernel/uacpi_glue.cpp:428) |
-| The vendored `limine.h` is a 197-line subset with no `limine_mp_request` | [`vendor/limine.h`](../vendor/limine.h) |
+| The vendored `limine.h` is a 197-line subset with no `limine_mp_request` | [`vendor/limine.h`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/vendor/limine.h) |
 | QEMU is launched without `--smp`; every smoke runs on one core | [`build.sh`](../build.sh) |
-| Scheduler state is global and singular: `g_current`, `g_idle`, `g_schedule_cursor`, `g_resched_pending` | [`process.cpp:73`](../kernel/process.cpp:73) |
+| Scheduler state is global and singular: `g_current`, `g_idle`, `g_schedule_cursor`, `g_resched_pending` | [`process.cpp:73`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp#L73) |
 
 ## Phase 0 — bring the APs up — **DONE**
 
@@ -182,7 +182,7 @@ The original plan follows.
   GS-based fast path is an optimization for later, and one that has to be
   designed against interrupt gates rather than `syscall`/`sysret`.
 - **An idle process per CPU.** Today there is one `g_idle`
-  ([`process.cpp:75`](../kernel/process.cpp:75)); every core needs something to
+  ([`process.cpp:75`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp#L75)); every core needs something to
   run when the ready queue is empty.
 - Move `g_current` into `struct Cpu`. This is the change that touches the most
   call sites, and it is mechanical.
@@ -220,7 +220,7 @@ What it actually took, against the plan below:
 - **A context preempted in ring 0 is pinned to its core.** A process sleeping
   in `wait_for_interrupt` can be preempted by the tick with its context in the
   middle of a syscall. That context is only resumed on the core it slept on
-  (`runnable_here()` in [`process.cpp`](../kernel/process.cpp)): the kernel code
+  (`runnable_here()` in [`process.cpp`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp)): the kernel code
   around it — `cpu_index()` is deliberately fusable by the compiler — assumes
   the core does not change during one kernel entry.
 - **The idle of an AP is a process, like the BSP's.** Deferred from phase 1.
@@ -280,10 +280,10 @@ The original plan follows.
   `dispatch_external_vector`
   ([`cpu_init.cpp:280`](../arch/x86_64/cpu_init.cpp:280)).
 - **A shared ready queue under the BKL.** `pick_next_runnable()`
-  ([`process.cpp:1147`](../kernel/process.cpp:1147)) must skip processes already
+  ([`process.cpp:1147`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp#L1147)) must skip processes already
   running on another core, so `Process` grows an owning-CPU field. Without it,
   two cores resume the same `SavedContext` and the process forks in place.
-  `has_runnable_non_idle()` ([`process.cpp:1138`](../kernel/process.cpp:1138))
+  `has_runnable_non_idle()` ([`process.cpp:1138`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp#L1138))
   needs the same treatment, or an idle core spins waking itself for a process
   another core is already running.
 - **A reschedule IPI.** `resched_pending`
@@ -330,7 +330,7 @@ What it actually took, against the plan below: **no IPI at all.**
   address space, nor the page tables under ranges that were unmapped.
 - **User space needs no mechanism, but the reasons are now rules.** The
   argument below holds, and is written down next to `sync_kernel_tlb()` in
-  [`vmm.hpp`](../include/kernel/vmm.hpp): an address space is loaded on at most
+  [`vmm.hpp`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/include/kernel/vmm.hpp): an address space is loaded on at most
   one core, a process switch reloads `CR3`, and only the space of the process
   running *here* or of one running *nowhere* is ever unmapped. Deferring the
   kill of a process that runs on another core (phase 2) is what keeps the last
@@ -350,8 +350,8 @@ enabled.
 The original plan follows.
 
 `map_page`/`unmap_page` invalidate only when the current `CR3` matches the space
-being modified ([`vmm.cpp:473`](../kernel/vmm.cpp:473),
-[`vmm.cpp:499`](../kernel/vmm.cpp:499)). Two different exposures:
+being modified ([`vmm.cpp:473`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp#L473),
+[`vmm.cpp:499`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp#L499)). Two different exposures:
 
 - **User space: mostly safe by construction.** There are no threads, so an
   address space is loaded on at most one core at a time, and every unmap path
@@ -360,10 +360,10 @@ being modified ([`vmm.cpp:473`](../kernel/vmm.cpp:473),
   earlier does not keep stale entries.
 - **Kernel space: a real requirement.** `create_address_space()` copies the
   kernel PML4 entries into every new space
-  ([`vmm.cpp:406`](../kernel/vmm.cpp:406)) — those entries point at *shared*
+  ([`vmm.cpp:406`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp#L406)) — those entries point at *shared*
   lower tables, so a kernel mapping change propagates to every space and every
   core. And `map_kernel_pages`/`unmap_kernel_pages`
-  ([`vmm.cpp:698`](../kernel/vmm.cpp:698)) are called **at runtime**, not only
+  ([`vmm.cpp:698`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/vmm.cpp#L698)) are called **at runtime**, not only
   during init: the GPU drivers map and unmap surface backing on every import and
   destroy ([`virtio_gpu.cpp:2269`](../kernel/virtio_gpu.cpp:2269),
   [`fb_gpu.cpp:667`](../kernel/fb_gpu.cpp:667)).
@@ -464,7 +464,7 @@ being blind to every race introduced. Phases 0-3 need `--smp` variants:
 Honestly: not yet, and the reason is worth writing down.
 
 **There are no threads.** A process is one context
-([`process.cpp`](../kernel/process.cpp) has no thread concept), so SMP
+([`process.cpp`](https://github.com/SavanDev/SavanXP/blob/v0.4.0/kernel/process.cpp) has no thread concept), so SMP
 parallelizes *distinct processes* and nothing else. The heaviest consumer in the
 system, Doom, is single-threaded — it does not get faster on four cores. What
 would genuinely improve is latency across the desktop: the compositor painting

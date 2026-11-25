@@ -41,15 +41,9 @@ static const unsigned char g_pattern[IMAGE_PATTERN_BYTES] = {
 /* .bss: no viaja en el archivo, el loader lo tiene que dejar en cero. */
 static unsigned char g_zeroed[IMAGE_BSS_BYTES];
 
-/* .data: carried in the file and also writable. The patterns fill a whole
- * unsigned long on each ABI (32 bits on i386). */
-#if defined(__i386__)
+/* The file-backed, writable .data patterns fill one unsigned long each. */
 #define IMAGE_DATA0 0x89abcdefUL
 #define IMAGE_DATA1 0x76543210UL
-#else
-#define IMAGE_DATA0 0x0123456789abcdefUL
-#define IMAGE_DATA1 0xfedcba9876543210UL
-#endif
 static unsigned long g_initialized[8] = {
     IMAGE_DATA0, IMAGE_DATA1, 1UL, 2UL, 3UL, 4UL, 5UL, 6UL};
 
