@@ -3,11 +3,15 @@
 > **Status: open.** Native drivers, per-class registries and USB hotplug exist.
 > **D1 and the initial D2 window landed 2026-11-24**: the hardware inventory
 > ([DEVICE_INVENTORY.md](../../kernel/DEVICE_INVENTORY.md)) and a read-only
-> Device Manager ([DEVICE_MANAGER.md](../../userland/DEVICE_MANAGER.md)). **D3's
-> first slice, exclusive PCI claims, landed 2026-11-24.** The rest of the
-> lifecycle (D3-D7) is planned, not implemented. The application
-> is a SUN program inspired by Windows XP's Device Manager; it does not depend
-> on the Win32 subsystem, MMC or Windows driver compatibility.
+> Device Manager ([DEVICE_MANAGER.md](../../userland/DEVICE_MANAGER.md)).
+> **D3 is in progress (2026-11-24/25)**: exclusive PCI ownership, several
+> instances per driver, resource claims, and the start/quiesce/stop contracts
+> ([DRIVER_LIFECYCLE.md](../../kernel/DRIVER_LIFECYCLE.md)) with the RTL8139,
+> the AC'97 and every virtio driver on them; the other drivers, references,
+> `remove` and `recover` are still open ([D3](#d3--instance-binding-resources-and-lifecycle)).
+> D4-D7 are planned, not implemented. The application is a SUN program
+> inspired by Windows XP's Device Manager; it does not depend on the Win32
+> subsystem, MMC or Windows driver compatibility.
 
 The goal is a common foundation for discovering hardware, binding drivers,
 owning resources, submitting I/O and safely removing devices. Preserve the
@@ -21,7 +25,10 @@ Drivers are compiled and linked into the kernel by `CMakeLists.txt`, registered
 explicitly during `kernel/kernel_main.cpp`, and selected/enumerated through
 interfaces of function pointers. There is no runtime driver-module loader or
 external driver ABI. The hardware inventory (D1) lists every instance with its
-parent and the driver using it, but it records bindings; it does not make them.
+parent and the driver using it, and since D3 it also decides who owns a PCI
+function and the ranges inside it: a driver claims before it touches the
+hardware, and a second driver is refused. Each driver still finds its own
+device; nothing binds drivers to instances from a central match table.
 `device::Device` is the small
 read/write/ioctl/close interface used to publish `/dev` nodes, not a global
 hardware manager. A device whose answers depend on the descriptor gets one
@@ -240,7 +247,10 @@ guarantee that none runs afterwards; the RTL8139 is the first driver on them
    callbacks, so a stop can refuse or wait while a device is in use.
 3. `remove` (surprise removal, with D5) and `recover`.
 
-**Open design work; builds on D1, independent of the D2 window.** Bind a driver
+**The design the slices above follow; builds on D1, independent of the D2
+window.** What is still open in it is the list above, plus central binding:
+drivers still find their own device rather than being matched to an
+instance by a table. Bind a driver
 to a specific discovered instance rather than letting unrelated probes find the
 same device independently. Define match priority, exclusivity and multi-function
 ownership. Bus drivers enumerate; function drivers match instances; class cores
