@@ -1057,6 +1057,8 @@ static int rescue_selftest(void) {
     // Neither command is a path: sh has to find both in /rescue/bin, with no /bin.
     const char* sh_argv[] = {RESCUE_SHELL, "-c", "echo rescue-shell | cat", 0};
     const char* df_argv[] = {RESCUE_ROOT "/bin/df", 0};
+    // sysinfo is a SUN program, staged as sysinfo.sxe: sh finds it by its .sxe.
+    const char* sysinfo_argv[] = {RESCUE_SHELL, "-c", "sysinfo", 0};
     const char* imagetest_argv[] = {RESCUE_ROOT "/bin/imagetest", 0};
     int ok = 1;
 
@@ -1070,6 +1072,7 @@ static int rescue_selftest(void) {
     ok = rescue_expect(cat_argv[0], cat_argv, 2, 0, "cat reads /rescue/README") && ok;
     ok = rescue_expect(sh_argv[0], sh_argv, 3, 0, "sh finds commands in /rescue/bin") && ok;
     ok = rescue_expect(df_argv[0], df_argv, 1, 1, "df reports no root volume") && ok;
+    ok = rescue_expect(sysinfo_argv[0], sysinfo_argv, 3, 0, "sh runs the SUN sysinfo") && ok;
     ok = rescue_expect(imagetest_argv[0], imagetest_argv, 1, 0, "the in-memory executable reader") && ok;
     puts_out(ok ? "RESCUE SMOKE PASS\n" : "RESCUE SMOKE FAIL\n");
     return ok ? 0 : 1;

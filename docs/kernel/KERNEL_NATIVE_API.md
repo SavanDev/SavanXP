@@ -686,7 +686,11 @@ The calls a platform service needs to run without POSIX
   `pipe_write_chunk`, `device::read/write`), not on the POSIX translation, and
   park the process as `blocked_read`/`blocked_write` like the POSIX side, so
   the same wakeups serve both. A pipe write up to the pipe's capacity is whole
-  or not at all.
+  or not at all. Files, sockets and the text console came later: a write to a
+  `tty` handle, the standard output a shell or `init` hands down, goes to the
+  console as the POSIX write does and is logged under the program. `sysinfo`,
+  printing on the rescue system's console, is its consumer; reading the
+  console is not there yet.
 - `SXN_SYS_OPEN_DEVICE`, `SXN_SYS_DEVICE_CONTROL` (`0x1014`, `0x1015`): a
   device by bare name (`gpu0`, `input0`, `serial`; letters and digits only, so
   the call cannot reach outside `/dev`), then the same control requests the

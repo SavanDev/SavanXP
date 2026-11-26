@@ -22,6 +22,7 @@
 #include "kernel/storage.hpp"
 #include "kernel/sx.hpp"
 #include "kernel/timer.hpp"
+#include "kernel/tty.hpp"
 #include "kernel/vfs.hpp"
 
 namespace process {
@@ -120,6 +121,24 @@ int native_write(Thread& self, uint64_t handle, uint64_t user_buffer, size_t cou
     if (file->kind == HandleKind::vnode) {
         return sx::io_result_value(sx::write_file(proc, *file, user_buffer,
             count < sx::kMaxIoCount ? count : sx::kMaxIoCount));
+    }
+    if (file->kind == HandleKind::tty) {
+        // The text console a shell handed down as standard output: written
+        // as the POSIX write does, and logged under the program, not the kernel.
+        char scratch[detail::kPipeChunkSize] = {};
+        size_t written = 0;
+        klog::ScopedSource source(proc.pid, proc.credentials.uid, proc.name);
+        while (written < count) {
+            const size_t step = (count - written) < sizeof(scratch) ? (count - written) : sizeof(scratch);
+            if (!sx::copy_from_user(scratch, user_buffer + written, step)) {
+                return sx::negative_error(SX_EINVAL);
+            }
+            for (size_t index = 0; index < step; ++index) {
+                tty::write_char(scratch[index]);
+            }
+            written += step;
+        }
+        return static_cast<int>(count);
     }
     if (file->kind != HandleKind::pipe || file->pipe == nullptr) {
         return sx::negative_error(SX_EBADF);

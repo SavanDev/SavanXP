@@ -1,25 +1,38 @@
-#include "libc.h"
+/* sysinfo: the system's identity and what the kernel reports about the
+ * machine, printed on standard output. A SUN program: the report comes from
+ * sxn_system_info and goes out through handle 1, which the shell that started
+ * it gave it. It is also one of the rescue system's tools
+ * (docs/kernel/FILESYSTEMS.md#the-rescue-system). */
+
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "abi/savanxp_abi.h"
+#include "sxn/sxn.h"
 
 #include "shared/version.h"
 #include "build_number.h"
 
+/* Set when standard output refused a write: the report did not reach whoever
+ * asked for it, and the exit status says so. */
+static int g_write_failed;
+
+static void write_text(int handle, const char* text) {
+    const long length = (long)strlen(text);
+    if (sxn_write(handle, text, (unsigned long)length) != length && handle == 1) {
+        g_write_failed = 1;
+    }
+}
+
+static void puts_out(const char* text) {
+    write_text(1, text);
+}
+
 static void print_u64(uint64_t value) {
-    char buffer[32];
-    int index = 0;
-
-    if (value == 0) {
-        putchar_fd(1, '0');
-        return;
-    }
-
-    while (value != 0 && index < (int)sizeof(buffer)) {
-        buffer[index++] = (char)('0' + (value % 10));
-        value /= 10;
-    }
-
-    while (index > 0) {
-        putchar_fd(1, buffer[--index]);
-    }
+    char buffer[24];
+    (void)snprintf(buffer, sizeof(buffer), "%llu", (unsigned long long)value);
+    puts_out(buffer);
 }
 
 static void print_label(const char* label) {
@@ -51,19 +64,19 @@ static const char* timer_backend_string(uint32_t backend) {
 static void print_text_line(const char* label, const char* value) {
     print_label(label);
     puts_out(text_or_unknown(value));
-    putchar_fd(1, '\n');
+    puts_out("\n");
 }
 
 static void print_bool_line(const char* label, uint8_t value) {
     print_label(label);
     puts_out(yes_no(value));
-    putchar_fd(1, '\n');
+    puts_out("\n");
 }
 
 static void print_u64_line(const char* label, uint64_t value) {
     print_label(label);
     print_u64(value);
-    putchar_fd(1, '\n');
+    puts_out("\n");
 }
 
 static void print_mib_line(const char* label, uint64_t bytes) {
@@ -74,9 +87,11 @@ static void print_mib_line(const char* label, uint64_t bytes) {
 
 int main(void) {
     struct savanxp_system_info info = {};
-    const long status = system_info(&info);
+    const long status = sxn_system_info(&info);
     if (status < 0) {
-        eprintf("sysinfo: system_info failed (%s)\n", result_error_string(status));
+        char message[96];
+        (void)snprintf(message, sizeof(message), "sysinfo: system_info failed (%s)\n", strerror((int)-status));
+        write_text(2, message);
         return 1;
     }
 
@@ -102,11 +117,11 @@ int main(void) {
     print_bool_line("input", info.input_ready);
     print_label("framebuffer_mode");
     print_u64(info.framebuffer_width);
-    putchar_fd(1, 'x');
+    puts_out("x");
     print_u64(info.framebuffer_height);
-    putchar_fd(1, 'x');
+    puts_out("x");
     print_u64(info.framebuffer_bpp);
-    putchar_fd(1, '\n');
+    puts_out("\n");
 
     puts_out("timer:\n");
     print_text_line("backend", timer_backend_string(info.timer_backend));
@@ -128,5 +143,5 @@ int main(void) {
     puts_out("uptime:\n");
     print_u64_line("milliseconds", info.uptime_ms);
 
-    return 0;
+    return g_write_failed ? 1 : 0;
 }

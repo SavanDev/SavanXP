@@ -4712,6 +4712,14 @@ int main(int argc, char** argv) {
         run_profile_user_child(streq(argv[1], "profileelevated"));
     }
 
+    /* In native-test, init starts this program with the text console as its
+     * standard output, as a shell starts sysinfo. A native write to that tty
+     * handle prints the whole count; it used to be EBADF. */
+    {
+        static const char line[] = "nativetest: standard output on the text console\n";
+        check(sxn_write(1, line, sizeof(line) - 1) == (long)(sizeof(line) - 1));
+    }
+
     /* P1's snapshot contract also works while the pointer is outside the
      * client. Real windowd publication is exercised by linux-xclient. */
     {

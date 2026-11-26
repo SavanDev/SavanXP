@@ -308,6 +308,9 @@ changes not released yet; each released version has its own file in
 
 ### Changed
 
+- **`sysinfo` is a SUN program**, `/system/sysinfo.sxe` from `system/sysinfo`, and `sysinfo.sxe` on the rescue system;
+  `/bin/sysinfo` is retired. Its report is unchanged. A SUN program's `sxn_write` now reaches the text console, as a
+  POSIX write does ([KERNEL_NATIVE_API.md](docs/kernel/KERNEL_NATIVE_API.md)).
 - **`tools/run_qemu.py` refuses a monitor or QMP socket path over the 107-byte Unix limit before launching QEMU.** The
   smoke runner and `shoot.sh` name the path and its length instead of reporting QEMU exiting with status 1.
 - **`libsxfont` hints at every size and reads `VDMX`, as Windows XP does; its header is `sxfont/font.h`.** A fixed-pitch

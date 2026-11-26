@@ -94,6 +94,11 @@ savanxp_system_service(NAME windowd LINK_PROFILE PIE DEPENDS libgfx2d libsxfont 
 # the native API like them, so it lives here and links the same way.
 savanxp_system_service(NAME console SOURCES console.c)
 
+# sysinfo: the system's identity and the kernel's report on the machine, on
+# standard output. A command, not a service, and one of the rescue system's
+# tools (SAVANXP_RESCUE_PROGRAMS), staged there as sysinfo.sxe.
+savanxp_system_service(NAME sysinfo SOURCES sysinfo.c)
+
 # Nightwood (docs/userland/NIGHTWOOD.md): the forest game, the first game
 # written against SUN and the consumer of SxGL's textures, fog and blending.
 # Like the console it is an application, not a service, linked the same way;

@@ -617,7 +617,6 @@ savanxp_program(NAME keytest DEPENDS libsxgfx TEST LINK_PROFILE PIE SOURCES
 savanxp_program(NAME kbdtest TEST SOURCES subsystems/posix/userland/kbdtest.c)
 savanxp_program(NAME mousetest DEPENDS libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/mousetest.c)
-savanxp_program(NAME sysinfo SOURCES subsystems/posix/userland/sysinfo.c)
 savanxp_program(NAME forktest TEST SOURCES subsystems/posix/userland/forktest.c)
 # Directorio actual: cwd, su herencia por fork y su conservacion por exec
 # (isolation slice B). El binario esta en /disk porque se reejecuta a si mismo.
