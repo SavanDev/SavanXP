@@ -118,6 +118,23 @@ class QemuDiskTest(unittest.TestCase):
                 for fd in fds:
                     self.assertIn(f"fd={fd},set=0", args)
 
+    def test_socket_paths_over_the_unix_limit_are_refused_before_launch(self):
+        def build(socket_path):
+            return run_qemu.build_qemu_args(
+                image_root=Path("image"), disk_image=None, code=Path("code"),
+                vars_copy=Path("vars"), debug_log=Path("debug"), accel="tcg", smp=1,
+                virtio=False, headless=True, debug=False, monitor_path=socket_path,
+            )
+
+        limit = run_qemu.UNIX_SOCKET_PATH_MAX
+        fits = Path("/" + "d" * (limit - 1))
+        self.assertIn(f"unix:{fits},server=on,wait=off", build(fits))
+        too_long = Path("/" + "d" * limit)
+        with self.assertRaises(SystemExit) as refused:
+            build(too_long)
+        self.assertIn(f"{limit + 1} bytes", str(refused.exception))
+        self.assertIn(str(too_long), str(refused.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -119,6 +119,24 @@ def qemu_display_arg(*, headless: bool, gl: bool) -> str:
     return display + ",gl=on" if gl else display
 
 
+# A Unix socket path lives in sockaddr_un.sun_path: 108 bytes, the final NUL
+# included. Past that QEMU exits with "UNIX socket path ... is too long",
+# which a smoke run only reports as QEMU exiting with status 1.
+UNIX_SOCKET_PATH_MAX = 107
+
+
+def check_socket_path(path: Path | None) -> None:
+    if path is None:
+        return
+    length = len(os.fsencode(str(path)))
+    if length > UNIX_SOCKET_PATH_MAX:
+        raise SystemExit(
+            f"QEMU socket path is {length} bytes, over the {UNIX_SOCKET_PATH_MAX}-byte "
+            f"Unix socket limit: {path}\n"
+            "Run from a shorter directory (--out-dir, --log-dir, build/smoke-logs or "
+            "where it links to), for example build/shots-<name> or /dev/shm/<name>.")
+
+
 def build_qemu_args(
     *,
     image_root: Path,
@@ -236,6 +254,8 @@ def build_qemu_args(
     args_list += ["-netdev", "user,id=net0"] if network else ["-nic", "none"]
     if rng:
         args_list += ["-device", "virtio-rng-pci"]
+    for socket_path in (monitor_path, qmp_path):
+        check_socket_path(socket_path)
     if monitor_path is not None:
         args_list += ["-no-reboot", "-no-shutdown"]
         args_list += [

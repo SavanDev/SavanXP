@@ -279,12 +279,16 @@ push, plus the ones specific to each area:
 - For a repeatable isolated check, run
   `./tools/verify_doom_persistence.sh` (or pass `--wad` for a real IWAD).
 
-## Visual checks with `tools/shoot.sh`
+## Directories QEMU runs in
 
-- Keep `--out-dir` short, for example `build/shots-<name>`. QEMU opens its
-  monitor and QMP sockets inside that directory, and a Unix socket path must
-  be under 108 bytes: a deep temporary or scratch directory makes QEMU exit
-  with `UNIX socket path ... is too long` before the scenario starts.
+- QEMU opens its monitor and QMP sockets in the directory a run writes to:
+  `shoot.sh --out-dir`, the smoke's `--log-dir`, `build/smoke-logs`, or
+  wherever a symlink points them. A Unix socket path must be under 108 bytes,
+  so before moving any of them, count the length of the resolved path plus the
+  socket's file name. A session scratchpad or a deep temporary directory is too
+  long; `build/shots-<name>` or `/dev/shm/<name>` fit.
+- `tools/run_qemu.py` refuses a socket path over the limit before launching
+  QEMU and names it. That stop is this rule, not a flake to retry.
 
 ## Current reference case
 

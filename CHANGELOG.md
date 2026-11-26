@@ -308,6 +308,8 @@ changes not released yet; each released version has its own file in
 
 ### Changed
 
+- **`tools/run_qemu.py` refuses a monitor or QMP socket path over the 107-byte Unix limit before launching QEMU.** The
+  smoke runner and `shoot.sh` name the path and its length instead of reporting QEMU exiting with status 1.
 - **`libsxfont` hints at every size and reads `VDMX`, as Windows XP does; its header is `sxfont/font.h`.** A fixed-pitch
   face keeps one advance; `sx_font_face_info` adds the caret slope, `vdmx` and `SX_FONT_SIGNED`. `savanxp/font.h` still
   includes it. [Metrics](docs/desktop/FONT_LIBRARY.md#metrics-as-windows-reports-them).
