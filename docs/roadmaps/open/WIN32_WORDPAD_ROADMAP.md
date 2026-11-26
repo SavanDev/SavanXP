@@ -420,7 +420,10 @@ What changed from the plan above, and why:
   `clip.exe drop` prints what it got in `win32-harness-test` and in
   `win32-drop`, where a SUN window drags two files onto it. Windows XP
   cannot record that output (an input script cannot drag from another
-  program there), so `clip-drop.out` is the harness's.
+  program there), so `clip-drop.out` is the harness's. WordPad itself is
+  dropped on once WP7 lets it reach its main window: today it stops at its
+  message box about the RichEdit DLL, and after OK ends with `0xc06d007f`.
+  A Win32 drag source and `RegisterDragDrop` targets are OLE's bridge (WP9).
 
 ### WP6 — text and pictures in `gdi32`
 
