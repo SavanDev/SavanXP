@@ -1,4 +1,4 @@
-#include "desktop_icons.h"
+#include "shell/desktop_icons.h"
 
 #include "desktop_icon_assets.h"
 

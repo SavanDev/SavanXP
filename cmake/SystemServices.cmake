@@ -87,7 +87,7 @@ savanxp_system_service(NAME windowd LINK_PROFILE PIE DEPENDS libgfx2d libsxfont 
     windowd_layout.c
     windowd_render.c
     windowd_consent.c
-    SHARED_SOURCES subsystems/posix/userland/desktop_icons.c)
+    SHARED_SOURCES system/shell/desktop_icons.c)
 
 # The Command Prompt (docs/desktop/CONSOLE.md): the console host, the first
 # SUN application. Not a service, but a piece of the system written against

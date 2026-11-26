@@ -1,7 +1,7 @@
 #include "desktop.h"
 
 #include "shell/progman_registry.h"
-#include "desktop_icons.h"
+#include "shell/desktop_icons.h"
 
 /*
  * The Start menu's cascade: the popup that opens to the right of Programs or

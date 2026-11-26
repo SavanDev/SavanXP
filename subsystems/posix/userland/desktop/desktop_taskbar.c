@@ -1,7 +1,7 @@
 #include "desktop.h"
 #include "savanxp/wm_shell_protocol.h"
 
-#include "desktop_icons.h"
+#include "shell/desktop_icons.h"
 #include "start_logo.h"
 
 /*

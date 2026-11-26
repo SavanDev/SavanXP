@@ -522,7 +522,7 @@ savanxp_program(NAME desktop DEPENDS libgfx2d libsxfont libsxgui libsxgfx libsxi
     subsystems/posix/userland/desktop_wallpaper.c
     system/gfx/wallpaper.c
     subsystems/posix/userland/display_settings.c
-    subsystems/posix/userland/desktop_icons.c
+    system/shell/desktop_icons.c
     system/shell/progman_registry.c
     system/shell/shortcut.c
     system/shell/start_shortcuts.c
@@ -538,7 +538,7 @@ savanxp_program(NAME progman DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_P
     subsystems/posix/userland/progman.c
     system/shell/progman_registry.c
     subsystems/posix/userland/shell_io_posix.c
-    subsystems/posix/userland/desktop_icons.c)
+    system/shell/desktop_icons.c)
 savanxp_program(NAME appwiz DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/appwiz.c
     subsystems/posix/userland/appwiz_catalog.c)

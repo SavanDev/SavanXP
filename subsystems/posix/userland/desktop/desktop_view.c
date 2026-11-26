@@ -1,6 +1,6 @@
 #include "desktop.h"
 
-#include "desktop_icons.h"
+#include "shell/desktop_icons.h"
 #include "sxgfx/mime_icon.h"
 #include "shell/shortcut.h"
 #include "savanxp/sxe.h"

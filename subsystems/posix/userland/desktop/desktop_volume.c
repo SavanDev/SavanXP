@@ -1,5 +1,5 @@
 #include "desktop.h"
-#include "desktop_icons.h"
+#include "shell/desktop_icons.h"
 #include "sxn/sxnaudio.h"
 
 #include <stdio.h>

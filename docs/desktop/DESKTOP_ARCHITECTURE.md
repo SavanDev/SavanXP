@@ -193,12 +193,12 @@ What the interface promises holds on both sides:
   caller filters them out.
 - `shell_io_launch` starts a program in a shortcut's working directory when
   the shortcut has one. POSIX swaps the caller's directory around the spawn.
-  SUN has no spawn in a directory yet, and the desktop's move to SUN is the
-  consumer that adds one.
+  SUN starts the child with `sxn_spawn_ex_in`
+  ([slice 32](../kernel/KERNEL_NATIVE_API.md#slice-32-spawning-in-a-directory)),
+  which only a POSIX child keeps.
 
-The modules still take their fallback icon type from
-`subsystems/posix/userland/desktop_icons.h`, which includes the POSIX
-`libc.h`. That goes when the desktop moves.
+The fallback icon the modules hand out (`include/shell/desktop_icons.h`) is
+plain data in `system/shell/` too, shared with windowd.
 
 ### The Task List is removed
 

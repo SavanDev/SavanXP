@@ -1,7 +1,7 @@
 #pragma once
 
 #include "libc.h"
-#include "desktop_icons.h"
+#include "shell/desktop_icons.h"
 
 /*
  * Window presentation: title, small icon, accent and window style.

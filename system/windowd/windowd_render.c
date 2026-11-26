@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include "sxgfx/sxchrome.h"
 #include "shared/version.h"
-#include "desktop_icons.h"
+#include "shell/desktop_icons.h"
 #include "windowd_presentation.h"
 #include "windowd_layout.h"
 #include "windowd_render.h"

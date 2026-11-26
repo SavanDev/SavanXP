@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include "abi/savanxp_abi.h"
-#include "desktop_icons.h"
+#include "shell/desktop_icons.h"
 
 /*
  * Program Manager's program registry (A2.3, see docs/desktop/WM_SUBSYSTEM.md).
