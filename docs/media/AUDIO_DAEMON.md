@@ -182,14 +182,14 @@ Its persisted identity is independent of that transient entry.
 **Pending: the daemon starts the stream before it can feed it.**
 `audiod_acquire_device` claims the device with one period of silence, and
 that write starts playback. Only after it does audiod load its preferences
-from disk and spawn its save worker. That startup has the driver's lead
-(128 ms on Azalia) plus that period to finish before the first mixed write.
-Under 2-core TCG it runs out whenever storage is slower, and the stream
-underruns about 140 ms in
-([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md), slice 5.2). Claiming the
-device last, once the mixing loop is about to write, would start the stream
-only when it can be kept fed, the way ALSA holds a stream until its
-`start_threshold` is queued.
+from disk and spawn its save worker. Claiming the device last, once the
+mixing loop is about to write, would start the stream only when it can be
+kept fed, the way ALSA holds a stream until its `start_threshold` is queued.
+It is not what makes the stream underrun about 140 ms in under 2-core TCG,
+as this note once said: measured, the first mixed write lands 18-31 ms after
+the claim. That underrun is a later turn of the loop that runs 100-190 ms
+late, longer than the driver's lead (128 ms on Azalia) and the 100 ms render
+cap ([SMP_ROADMAP.md](../roadmaps/open/SMP_ROADMAP.md), slice 5.2).
 
 ## Preferences and durability
 

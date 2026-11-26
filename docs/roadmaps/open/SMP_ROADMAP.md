@@ -1055,10 +1055,10 @@ another whose path has the same length (see the build-path trap in
 | With a partition's read settling first, as before | 2 of 4, 4 of 4 failing | 0 of 5 |
 
 The underruns land at the same two points every time: about 27 KB (140 ms)
-into the first `audiod`'s stream, while it loads its preferences and spawns
-its save worker after claiming the device
-([AUDIO_DAEMON.md](../../media/AUDIO_DAEMON.md#who-holds-the-device)), and
-about 141 KB into the second `audiod`'s, during the capture checks. The base's
+into the first `audiod`'s stream, and about 141 KB into the second
+`audiod`'s, during the capture checks. (The first was read as `audiod`'s
+startup, [AUDIO_DAEMON.md](../../media/AUDIO_DAEMON.md#who-holds-the-device);
+measured below, it is not.) The base's
 rare underruns land anywhere. Since the second row regresses with no read
 leaving the lock, the cause is in a part that should be inert then:
 - the door checks and the safe point;
@@ -1083,33 +1083,76 @@ without the padding). Interleaved in three worktrees of equal path length,
 | The branch | 6 of 6 | 140-153 KB into the second (6), and 255 and 300 KB |
 
 The padded base fails at the branch's two points, and fails at the first one
-more often than the branch does. The regression is how
-TCG runs a kernel laid out that way, not anything the branch does. What it
-exposes is two moments where `audiod` already has almost no margin on
-master: the startup in
-[AUDIO_DAEMON.md](../../media/AUDIO_DAEMON.md#who-holds-the-device), and the
-capture checks.
+more often than the branch does. The regression is how TCG runs a kernel laid
+out that way, not anything the branch does.
+
+**Under KVM the regression is gone.** Same two trees, no probes, run disks in
+`/dev/shm`, 6 interleaved rounds with `SAVANXP_ACCEL=kvm`:
+
+| Kernel | Booted | HDA underruns | `NATIVE PREFERENCES` | Host WAV check | Ticks lost in the test's window |
+| --- | --- | --- | --- | --- | --- |
+| `b04c1632` | 3 of 6 | 0 | 3 pass | 3 pass | 17-24 ms |
+| The branch | 3 of 6 | 0 | 3 pass | 3 pass | 20-37 ms |
+
+Under TCG the same window loses 350-710 ms of a 2 s window on every tree,
+because the vCPU running the BSP spends that long unable to take its
+interrupt. With the November runs, the branch has passed 5 of 5 KVM runs that
+booted. The six that did not boot are a separate problem, below.
+
+What `audiod` loses under TCG, and what was ruled out on the way (probes in
+`audiod`'s loop and in the kernel, none committed):
+- `audiod` goes 80-190 ms without running, either asleep in its 10 ms
+  `sleep_ms` or inside `audiod_drain_native`; with the driver's 128 ms lead and
+  a render cap of 100 ms, any such gap underruns. Its startup is not the
+  cause: the first mixed write lands 18-31 ms after the claim.
+- *The host's disk.* Run disks in `/dev/shm` instead of `build/smoke-logs` on
+  the host's HDD left base 0 of 6 and the branch 4 of 6 with underruns.
+- *Frames that held code* ([KERNEL_SECURITY.md, F2](../../kernel/KERNEL_SECURITY.md#found-while-porting-tinycc-2026-11-21)).
+  Clearing every frame
+  `physical_memory` hands out left the padded kernel at 6 of 6, at the same
+  two points.
+- *Long holds of the kernel lock.* Outside boot, holds over 15 ms are few and
+  15-20 ms long, and none lines up with `audiod`'s gaps.
+- *Late wakeups by the BSP's tick.* Only the BSP's tick checks deadlines, but
+  in the layout measured no sleeper woke 20 ms or more late, and letting the
+  first core to tick each millisecond check them changed nothing.
+- The probes themselves move the layout: the padded kernel with them failed
+  0 of 6. A comparison under TCG holds only between kernels that carry the
+  same probes.
 
 **Owed before it can merge:**
-1. *Give `audiod` its margin at the two points.* The cause is isolated: layout,
-   above. What stays owed is the fragility it exposes, on master as much as
-   on the branch: the startup that starts the stream before it can feed it,
-   and whatever the capture checks hold up about 141 KB into the second
-   stream. Under KVM (`--accel kvm`, 2 cores, 4 interleaved pairs) the branch
-   passed both runs that booted and the base passed 4/4. The branch's other
-   two runs stopped in OVMF before `BdsDxe: loading Boot0002`, with the
-   kernel never loaded; those stalls are not explained.
+1. *Bring the branch up to master* and run the area's scenarios on it, with
+   `audio-preferences` repeated under KVM.
 2. *`SXN_SYS_PORT_ACCEPT` and `PORT_ACCEPT_EX` are not storage-free.* `audiod`
    calls one every turn of its loop, so it parks during every read, though
    the call touches only handles and pipes.
 3. *The tick's forced step,* above, and the copy's writes.
 4. *`audio-preferences` itself.* Without any of this it fails about one run in
-   three, mostly on a gap of 22-43 ms with no underrun in the guest.
+   three under TCG, mostly on a gap of 22-43 ms with no underrun in the guest.
 
 Done when the 4 MB copy of the table above leaves `held` and the compositor's
 frame rate where an idle desktop has them, and the tick clock loses no time.
-Done also when `audio-preferences` passes repeatedly under TCG with no HDA
+Done also when `audio-preferences` passes repeatedly under KVM with no HDA
 underrun ([what storage under the lock sounds like](#what-storage-under-the-lock-sounds-like)).
+The criterion was TCG until the measurements above; it moved to KVM because
+under TCG the result follows the kernel's layout more than its code.
+
+**Future work under TCG.** `audio-preferences` under TCG is still where a
+slow machine shows first, and it should become a usable measure again:
+- find what the BSP's vCPU does for the 350-700 ms it cannot take its tick
+  (sampling QEMU's own threads, with gdb launching QEMU and `thread apply all
+  bt` on each stop, changes no guest layout);
+- a late-wakeup counter carried by every kernel in `timer-stats:`, so that a
+  control and a change share the same probe;
+- `audiod`'s margin: a lead longer than the 100 ms render cap, so one late
+  turn does not underrun.
+
+**Pending: KVM does not always boot.** Six of the twelve KVM runs above, on
+both trees alike, stopped before the kernel: five with no serial output at
+all, inside OVMF, and one after `BdsDxe: starting Boot0002`, as Limine began
+to draw. In November two of four did the same, then only on the branch's
+side. Not investigated; it makes a KVM batch need twice the runs.
+
 The power-off path's reliance on the lock is answered in the same slice,
 not after it.
 
