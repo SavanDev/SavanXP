@@ -5501,6 +5501,56 @@ int main(int argc, char** argv) {
         check(sxn_log("nativetest: spawn ex done") == 0);
     }
 
+    /* SPAWN_EX in a directory: a POSIX child starts where the flag says (its
+     * shell's pwd answers it) and, without the flag, at "/", since a native
+     * parent has no current directory to pass on. A directory that is not
+     * one fails the spawn before any child exists. */
+    {
+        char* pwd_argv[3];
+        struct sxn_spawn_request request;
+        const char* const directories[2] = {"/system", 0};
+        const char* const expected[2] = {"/system\n", "/\n"};
+
+        pwd_argv[0] = "/bin/sh";
+        pwd_argv[1] = "-c";
+        pwd_argv[2] = "pwd";
+        for (int run = 0; run < 2; ++run) {
+            int32_t output[2] = {-1, -1};
+            char buffer[32] = {0};
+            long total = 0;
+            long child;
+            int status = -1;
+
+            check(sxn_pipe_create(output) == 0);
+            sxn_spawn_request_init(&request, "/bin/sh", pwd_argv, 3);
+            request.std_handles[1] = output[1];
+            child = directories[run] != 0 ? sxn_spawn_ex_in(&request, directories[run]) : sxn_spawn_ex(&request);
+            check(child > 0);
+            (void)sxn_close(output[1]);
+            if (child > 0) {
+                for (;;) {
+                    long count = sxn_read(output[0], buffer + total, sizeof(buffer) - 1u - (unsigned long)total);
+                    if (count <= 0) {
+                        break;
+                    }
+                    total += count;
+                }
+                buffer[total] = '\0';
+                check(streq(buffer, expected[run]));
+                check(sxn_waitpid(child, &status) == child && status == 0);
+            }
+            (void)sxn_close(output[0]);
+        }
+
+        sxn_spawn_request_init(&request, "/bin/sh", pwd_argv, 3);
+        check(sxn_spawn_ex_in(&request, "system") == -SAVANXP_EINVAL);
+        sxn_spawn_request_init(&request, "/bin/sh", pwd_argv, 3);
+        check(sxn_spawn_ex_in(&request, "/no/such/directory") == -SAVANXP_ENOENT);
+        sxn_spawn_request_init(&request, "/bin/sh", pwd_argv, 3);
+        check(sxn_spawn_ex_in(&request, "/bin/sh") == -SAVANXP_ENOTDIR);
+        check(sxn_log("nativetest: spawn in directory done") == 0);
+    }
+
     /* TERMINATE reaches a grandchild: the middle child reports its sleeper's
      * pid, this process ends the sleeper, and the middle child exits with the
      * status its waitpid saw. */

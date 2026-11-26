@@ -1491,10 +1491,37 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
             }
-            constexpr uint32_t known_flags = SXN_SPAWN_FLAG_IDENTITY | SXN_SPAWN_FLAG_SUBSYSTEM;
+            constexpr uint32_t known_flags =
+                SXN_SPAWN_FLAG_IDENTITY | SXN_SPAWN_FLAG_SUBSYSTEM | SXN_SPAWN_FLAG_DIRECTORY;
             if ((request.flags & ~known_flags) != 0 || request.handle_count > SXN_SPAWN_MAX_HANDLES) {
                 context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
                 return context;
+            }
+            // Where the child starts. It is found and checked before the
+            // child exists, so a bad directory fails the spawn instead of
+            // leaving a process behind.
+            const bool with_directory = (request.flags & SXN_SPAWN_FLAG_DIRECTORY) != 0;
+            vfs::PathBuffer start_directory;
+            if (with_directory) {
+                vfs::PathBuffer requested;
+                if (start_directory == nullptr || requested == nullptr) {
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOMEM));
+                    return context;
+                }
+                if (!sx::copy_user_string(requested, requested.capacity(), context->r10) || requested[0] != '/' ||
+                    !resolve_path_from_root(requested, start_directory, start_directory.capacity())) {
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_EINVAL));
+                    return context;
+                }
+                const vfs::Vnode* const node = vfs::resolve(start_directory);
+                if (node == nullptr) {
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOENT));
+                    return context;
+                }
+                if (node->type != vfs::NodeType::directory) {
+                    context->rax = static_cast<uint64_t>(sx::negative_error(SX_ENOTDIR));
+                    return context;
+                }
             }
             // Another identity for the child: the one way a token goes up
             // (docs/kernel/USERS_AND_PERMISSIONS.md#the-token), and only the
@@ -1600,6 +1627,16 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             }
             heap::free(arguments);
             heap::free(environment);
+            // The child's subsystem keeps the directory, checking its own
+            // rules (search permission, with the child's identity); a refusal
+            // reaps the child and is the spawn's answer.
+            if (child != nullptr && with_directory) {
+                const int refused = set_spawn_directory(*child, start_directory);
+                if (refused != 0) {
+                    context->rax = static_cast<uint64_t>(refused);
+                    return context;
+                }
+            }
             context->rax = static_cast<uint64_t>(child != nullptr
                 ? static_cast<int>(child->pid)
                 : sx::negative_error(image_failure_errno(failure)));

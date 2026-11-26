@@ -12,6 +12,7 @@ size_t g_thread_state_size[static_cast<size_t>(Id::count)] = {};
 WaitRecheck g_wait_recheck[static_cast<size_t>(Id::count)] = {};
 StateHook g_state_copied[static_cast<size_t>(Id::count)] = {};
 StateHook g_state_released[static_cast<size_t>(Id::count)] = {};
+StartDirectory g_start_directory[static_cast<size_t>(Id::count)] = {};
 
 } // namespace
 
@@ -34,6 +35,7 @@ void reset() {
     for (size_t index = 0; index < static_cast<size_t>(Id::count); ++index) {
         g_state_copied[index] = nullptr;
         g_state_released[index] = nullptr;
+        g_start_directory[index] = nullptr;
     }
 }
 
@@ -100,6 +102,22 @@ void process_state_released(Id id, process::Process& proc) {
     if (index < static_cast<size_t>(Id::count) && g_state_released[index] != nullptr) {
         g_state_released[index](proc);
     }
+}
+
+void register_start_directory(Id id, StartDirectory hook) {
+    const auto index = static_cast<size_t>(id);
+    if (index >= static_cast<size_t>(Id::count)) {
+        return;
+    }
+    g_start_directory[index] = hook;
+}
+
+int set_start_directory(Id id, process::Process& proc, const char* path) {
+    const auto index = static_cast<size_t>(id);
+    if (index >= static_cast<size_t>(Id::count) || g_start_directory[index] == nullptr) {
+        return 0;
+    }
+    return g_start_directory[index](proc, path);
 }
 
 void register_thread_state_size(Id id, size_t bytes) {

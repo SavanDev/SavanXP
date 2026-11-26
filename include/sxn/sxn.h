@@ -396,6 +396,14 @@ static inline long sxn_spawn_ex_as(struct sxn_spawn_request* request, const stru
     return sxn_trap(SXN_SYS_SPAWN_EX, (unsigned long)request, (unsigned long)identity, 0);
 }
 
+/* sxn_spawn_ex with the child starting in `directory`, an absolute path
+ * (CreateProcess's lpCurrentDirectory); sets SXN_SPAWN_FLAG_DIRECTORY itself.
+ * Only a child whose subsystem keeps a current directory (POSIX) sees it. */
+static inline long sxn_spawn_ex_in(struct sxn_spawn_request* request, const char* directory) {
+    request->flags |= SXN_SPAWN_FLAG_DIRECTORY;
+    return sxn_trap4(SXN_SYS_SPAWN_EX, (unsigned long)request, 0, 0, (unsigned long)directory);
+}
+
 /* A request for `path` with `argc` arguments, the caller's own stdio and no
  * extra handles. */
 /* CreateThread: a thread of this process starts at `entry` with `argument`,

@@ -75,6 +75,7 @@ object/process factoring, not before.
 - Slice 29: `SXN_SYS_LOG_READ`, the system log for Log Viewer.
 - Slice 30: `SXN_SYS_DEVICE_SNAPSHOT`, the hardware inventory for Device
   Manager.
+- Slice 32: `SXN_SPAWN_FLAG_DIRECTORY`, a child that starts in a directory.
 - Files (VFS-A step 1): `sx::open_file`, `read_file`, `write_file`,
   `seek_file`, `close_handle` in `kernel/sx_file.cpp`, with `sx::IoResult`;
   native dispatch and POSIX translation both call them
@@ -261,6 +262,34 @@ Two things stayed on purpose, and the guard says so:
 - The constant names are shared wire vocabulary. Only the *ownership*
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
+
+## Slice 32: spawning in a directory
+
+What the SUN desktop needs to open a shortcut with `workdir=`
+([DESKTOP_ICONS.md](../desktop/DESKTOP_ICONS.md)). POSIX has it already: a
+parent changes directory around the spawn and the child inherits it.
+
+- `SXN_SPAWN_FLAG_DIRECTORY` (`1 << 2`) on `SXN_SYS_SPAWN_EX`: r10 = an
+  absolute path. `CreateProcess`'s `lpCurrentDirectory`. The kernel
+  normalizes it from the root and finds it before the child exists
+  (`-EINVAL` for an unreadable or relative path, `-ENOENT`, `-ENOTDIR`), then
+  hands it to the child's subsystem through `subsystem::set_start_directory`.
+  The kernel still has no current directory (Isolation B): the subsystem that
+  keeps one decides. POSIX registers its `chdir_path`, so the child's search
+  permission is checked with the child's identity, and a refusal (`-EACCES`)
+  reaps the child and is the spawn's answer.
+- A child whose subsystem has no hook starts as without the flag. SUN has no
+  current directory. Win32 takes its directory from the image's path. A
+  Linux program, started through `/system/linux.sxe`, does not receive the
+  directory. That last one is a gap: the launcher would have to pass it on
+  and SSL would need a hook to keep it.
+- `sxn_spawn_ex_in(request, directory)` in `sxn.h` sets the flag. It passes 0
+  in rsi and rdx, so it does not combine with an identity or a subsystem
+  block.
+
+`nativetest` starts `/bin/sh -c pwd` in `/system` and without the flag (it
+answers `/`, since a native parent has nothing to pass on), and checks the
+three refusals.
 
 ## Slice 31: positions, sizes and directories
 

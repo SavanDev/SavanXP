@@ -660,6 +660,15 @@ enum sxn_spawn_flags {
      * -EINVAL for an unreadable block or environment, or an unknown
      * subsystem. */
     SXN_SPAWN_FLAG_SUBSYSTEM = 1u << 1,
+    /* r10 = const char*, an absolute path to a directory: the child starts
+     * there, as CreateProcess's lpCurrentDirectory. The kernel has no
+     * current directory; it hands the path to the child's subsystem, which
+     * keeps it if it has one (POSIX does, so getcwd answers it). A SUN or
+     * Win32 child has none and starts as without the flag. -ENOENT when the
+     * path does not exist, -ENOTDIR when it is not a directory, -EACCES when
+     * the child may not search it, -EINVAL for an unreadable or relative
+     * path. */
+    SXN_SPAWN_FLAG_DIRECTORY = 1u << 2,
 };
 
 enum sxn_subsystem_id {

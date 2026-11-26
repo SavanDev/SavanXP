@@ -2269,6 +2269,14 @@ bool add_spawn_handles(process::Process& proc, const process::Process& parent, c
     return true;
 }
 
+int set_spawn_directory(process::Process& proc, const char* directory) {
+    const int result = subsystem::set_start_directory(proc.subsystem_id, proc, directory);
+    if (result != 0) {
+        reap_process(proc);
+    }
+    return result;
+}
+
 bool has_runnable_non_idle() {
     for (const process::Thread& thread : used_thread_slots()) {
         if (runnable_here(thread)) {

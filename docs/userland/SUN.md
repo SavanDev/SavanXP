@@ -177,6 +177,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 |---|---|---|
 | `CreateProcess` | `sxn_spawn` (clones the table), `sxn_spawn_stdio` (stdio only) | done |
 | `CreateProcess` + `STARTUPINFO.hStd*` + handle list | `sxn_spawn_ex` (`struct sxn_spawn_request`) | done (slice 21) |
+| `CreateProcess`'s `lpCurrentDirectory` | `sxn_spawn_ex_in` (`SXN_SPAWN_FLAG_DIRECTORY`); a POSIX child keeps it | done (slice 32) |
 | `CreatePipe` | `sxn_pipe_create` | done (slice 20) |
 | `TerminateProcess` / `TerminateJobObject` | `sxn_terminate` (a descendant, or by owner as kill does) | done (slices 22, 27) |
 | `WaitForSingleObject` / `WaitForMultipleObjects` | `sxn_wait_one`, `sxn_wait_many` (pipes and devices included) | done |

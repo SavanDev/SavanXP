@@ -59,6 +59,16 @@ void register_process_state_hooks(Id id, StateHook copied, StateHook released);
 void process_state_copied(Id id, process::Process& proc);
 void process_state_released(Id id, process::Process& proc);
 
+// Where a new process starts, for a subsystem that keeps a current directory
+// in its state: a native spawn with SXN_SPAWN_FLAG_DIRECTORY hands the child's
+// subsystem an absolute, normalized path to a directory the kernel already
+// found (CreateProcess's lpCurrentDirectory). The hook checks what its own
+// rules ask (POSIX: search permission) and returns 0 or -errno. A subsystem
+// with no hook has no current directory to set, and the directory is ignored.
+using StartDirectory = int (*)(process::Process& proc, const char* path);
+void register_start_directory(Id id, StartDirectory hook);
+int set_start_directory(Id id, process::Process& proc, const char* path);
+
 // Per-thread private state, the same way: a subsystem declares how much each
 // of its threads needs and the kernel allocates it on first use
 // (process::thread_subsystem_state) and frees it with the thread. POSIX keeps

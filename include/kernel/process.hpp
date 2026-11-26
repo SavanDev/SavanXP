@@ -344,6 +344,11 @@ Process* create_process_internal(const char* path, int argc, const char* const* 
 // SPAWN_EX). Reaps the child and reports false when one is not a handle, like
 // clone_handles_for_spawn.
 bool add_spawn_handles(Process& child, const Process& parent, const int32_t* handles, uint32_t count);
+// Gives a spawned child its start directory through its subsystem
+// (subsystem::set_start_directory; native SPAWN_EX with
+// SXN_SPAWN_FLAG_DIRECTORY). 0, or -errno with the child reaped, like
+// add_spawn_handles.
+int set_spawn_directory(Process& child, const char* directory);
 // Clones the caller's handle table into a spawned child (native spawn only;
 // the POSIX spawn takes stdio). Reaps the child and reports false when the
 // clone fails, so the caller just sees the error.

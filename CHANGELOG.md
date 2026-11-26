@@ -8,6 +8,9 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **SUN programs can start a child in a directory: `SXN_SPAWN_FLAG_DIRECTORY`, `sxn_spawn_ex_in` (SDK 2.0).**
+  `CreateProcess`'s `lpCurrentDirectory`; a POSIX child starts there and `getcwd` answers it
+  ([Slice 32](docs/kernel/KERNEL_NATIVE_API.md#slice-32-spawning-in-a-directory)).
 - **SUN programs can be the shell: `sxnwm_connect_shell` and `sxnwm_shell_request` (SDK 2.0)**, the counterparts of POSIX's
   `gfx_open_shell` and its request pipe. windowd now gives a shell that reads its input from a ring both the ring and the
   window list ([SUN.md](docs/userland/SUN.md#win32-counterparts)).
