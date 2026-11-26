@@ -8,6 +8,9 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **The interface's body and caption faces are files in `/system/fonts` (SDK 2.0).** `windowd` (now a PIE), the desktop
+  and toolkit programs draw from `MSSansSerif.ttf` and `RetroSans.ttf`, pixel for pixel the baked tables, which static
+  programs keep. Test `ui-face-files-test`. [Interface faces from files](docs/desktop/UI_FONTS.md#interface-faces-from-files).
 - **The UI, caption and monospace faces can be replaced at run time (SDK 2.0).** `gfx_face_install` puts another
   face in a slot of the text primitives; `sx_font_gfx_face` makes one from a `libsxfont` strike. The baked faces stay
   the default, pixel for pixel. Host test `pixels-text-test`. [Faces at run time](docs/desktop/UI_FONTS.md#faces-at-run-time).

@@ -9,6 +9,8 @@
 #include <string.h>
 
 #include "sxn/sxn.h"
+#include "sxn/sxngui.h"
+#include "sxgfx/pixels.h"
 #include "sxfont_selftest.h"
 
 #define FONT_DIRECTORY "/system/fonts"
@@ -96,6 +98,28 @@ static unsigned count_faces(void) {
     return faces;
 }
 
+/* The interface faces as SUN's frame loads them (docs/desktop/UI_FONTS.md,
+ * "Interface faces from files"): the body and caption slots from
+ * /system/fonts, the monospace slot baked, and the same widths as the tables
+ * they replace. */
+static void check_interface_faces(struct state *state) {
+    static const char sample[] = "SavanXP: WordPad, ni\xc3\xb1o 0123";
+    int body_width = gfx_text_width(sample), title_width = gfx_text_width_title(sample);
+    int loaded = sxngui_load_interface_faces();
+    char line[160];
+    snprintf(line, sizeof line, "fonttest: %d interface faces from " FONT_DIRECTORY, loaded);
+    say(line);
+    if (loaded != 2) report(state, "two interface faces load from " FONT_DIRECTORY);
+    if (!gfx_face_installed(GFX_FACE_UI) || !gfx_face_installed(GFX_FACE_TITLE))
+        report(state, "the body and caption slots hold the faces from files");
+    if (gfx_face_installed(GFX_FACE_MONO)) report(state, "the monospace slot keeps its baked face");
+    if (gfx_text_height() != 13 || gfx_text_height_title() != 17)
+        report(state, "the files' lines are the tables' (13 and 17)");
+    if (gfx_text_width(sample) != body_width || gfx_text_width_title(sample) != title_width)
+        report(state, "the files measure the sample as the tables do");
+    if (sxngui_load_interface_faces() != loaded) report(state, "a second load answers as the first");
+}
+
 int main(void) {
     static struct state state;
     unsigned faces = count_faces();
@@ -104,6 +128,7 @@ int main(void) {
     say(line);
     if (faces != 12) report(&state, "twelve Liberation faces in " FONT_DIRECTORY);
     int failed = sxfont_selftest(load, report, &state);
+    check_interface_faces(&state);
     snprintf(line, sizeof line, "fonttest: %d self-test checks failed", failed);
     say(line);
     for (unsigned i = 0; i < state.count; i++) free(state.files[i].data);

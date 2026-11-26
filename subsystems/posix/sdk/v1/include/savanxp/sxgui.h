@@ -115,6 +115,11 @@ void sxgui_content_bounds(const struct sxgui_widget *widgets, int widget_count, 
  * answer: progman is a launcher and wants room to grow, filesapp stretches its
  * panes with the window and starts with every rect at zero. */
 int sxgui_app_init(struct sxgui_app *app, const char *name, struct sxgui_widget *widgets, int widget_count);
+/* Puts the interface faces from /system/fonts in the text primitives' slots
+ * (docs/desktop/UI_FONTS.md); how many came from files, 0 when the program
+ * does not map libsxfont. sxgui_app_init calls it; a program that draws
+ * without sxgui_app (the desktop) calls it before it draws. */
+int sxgui_load_interface_faces(void);
 /* Asks for a usable area of width x height and waits briefly for the WM to
  * apply it, so the first frame is not shown at the old size. Returns 1 if the
  * WM has applied it, 0 if it did not arrive in time (it arrives later as

@@ -3,6 +3,7 @@
 
 #include "libc.h"
 #include "sxn/sxn.h"
+#include "sxn/sxngui.h"
 #include "windowd_session.h"
 #include "windowd_presentation.h"
 #include "windowd_layout.h"
@@ -7706,6 +7707,15 @@ int main(int argc, char **argv)
     if (argc > 1 && argv != 0 && argv[1] != 0 && strcmp(argv[1], "--hw-native-test") == 0)
     {
         return windowd_native_hw_selftest();
+    }
+
+    /* Captions and the consent prompt are drawn in the interface faces from
+     * /system/fonts, like every program's (docs/desktop/UI_FONTS.md). */
+    {
+        /* At most GFX_FACE_SLOTS faces: one digit. */
+        char faces_line[] = "windowd: 0 interface faces from /system/fonts\n";
+        faces_line[9] = (char)('0' + sxngui_load_interface_faces());
+        puts_fd(2, faces_line);
     }
 
     if (open_compositor_session(&session, 0) < 0)

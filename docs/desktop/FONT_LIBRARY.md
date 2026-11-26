@@ -142,9 +142,11 @@ either.
 ### The glyph cache
 
 Each strike keeps the glyphs it drew: a table of 1024 slots and an arena of
-256 KiB of coverage. When the table is three-quarters full, or the arena
-cannot take the next glyph, both are emptied at once and filling starts
-over. It is the simplest bound that keeps a strike's memory fixed and makes
+coverage that starts at 16 KiB and doubles as glyphs need it, up to 256 KiB.
+Starting small matters because every program with an interface holds two
+strikes ([UI_FONTS.md](UI_FONTS.md#interface-faces-from-files)). When the
+table is three-quarters full, or the arena is at its largest and cannot take
+the next glyph, both are emptied at once and filling starts over. It is the simplest bound that keeps a strike's memory fixed and makes
 the same calls always give the same cache. A glyph larger than a quarter of
 the arena is drawn into a scratch buffer of its own and not kept. Advances
 asked for without drawing are cached in the same slots.

@@ -2,8 +2,51 @@
 
 #include "sxn/sxngui.h"
 #include "sxn/sxnclip.h"
+#include "sxfont/ui.h"
 
+#include <stdlib.h>
 #include <string.h>
+
+/* ---- the interface faces ---------------------------------------------------- */
+
+/* A whole file for the interface faces' loader (sxfont/ui.h). */
+static void *sxngui_read_file(const char *path, size_t *size)
+{
+    long handle = sxn_open_file(path, SXN_FILE_READ);
+    if (handle < 0)
+    {
+        return 0;
+    }
+    struct sxn_file_info info;
+    void *data = 0;
+    if (sxn_query_file(handle, &info) == 0 && info.size > 0 && info.size < 16u * 1024u * 1024u)
+    {
+        size_t done = 0;
+        data = malloc((size_t)info.size);
+        while (data != 0 && done < info.size)
+        {
+            long got = sxn_read(handle, (char *)data + done, (unsigned long)(info.size - done));
+            if (got <= 0)
+            {
+                break;
+            }
+            done += (size_t)got;
+        }
+        if (data != 0 && done != info.size)
+        {
+            free(data);
+            data = 0;
+        }
+        *size = done;
+    }
+    (void)sxn_close(handle);
+    return data;
+}
+
+int sxngui_load_interface_faces(void)
+{
+    return sxfont_ui_load(sxngui_read_file);
+}
 
 /* ---- the toolkit's host ----------------------------------------------------- */
 
@@ -278,6 +321,7 @@ int sxngui_app_init(struct sxngui_app *app, const struct sxnwm_presentation_sour
     }
     memset(app, 0, sizeof(*app));
     sxgui_set_host(&k_sun_host);
+    (void)sxngui_load_interface_faces();
     sxgui_set_host_clipboard(&k_sun_host_clipboard);
     app->wake_event = sxn_event_create(0);
     if (app->wake_event < 0)

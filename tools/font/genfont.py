@@ -17,6 +17,11 @@ Three modes:
               0x00 or 0xff. This is how the UI body face is made, from Wine's
               MS Sans Serif 13px strike.
 
+  sfdttf   -> not a table: one bitmap strike of a .sfd written as a TrueType
+              file of pixel outlines, which libsxfont draws at run time and
+              which gives back the strike exactly at its own size. This is
+              how the UI body face reaches /system/fonts. Needs fontTools.
+
   noto     -> proportional face rasterised from a TTF outline by FreeType.
               Requires freetype-py. The mode name is historical: it bakes any
               proportional TTF. A pixel-font TTF comes out 1-bit only at its
@@ -37,6 +42,9 @@ Regenerate (run from repo root):
   python tools/font/genfont.py sfd \
       --sfd assets/desktop/fonts/ms_sans_serif.sfd --size 13 \
       --out system/gfx/gfx_font_noto.inc
+  python tools/font/genfont.py sfdttf \
+      --sfd assets/desktop/fonts/ms_sans_serif.sfd --size 13 \
+      --family "MS Sans Serif" --out assets/desktop/fonts/MSSansSerif.ttf
   python tools/font/genfont.py noto \
       --ttf assets/desktop/fonts/RetroSans.ttf --size 17 \
       --prefix SX_TITLE \
@@ -407,6 +415,140 @@ def gen_sfd(sfd, size, outs, prefix="SX_NOTO"):
         ascent, descent, ascent + descent, glyphs, coverage, slot_of, outs)
 
 
+# One pixel of the strike, in font units, for sfdttf. 128 keeps every
+# coordinate whole at the strike's own size and every size that divides it.
+SFD_TTF_UNITS_PER_PIXEL = 128
+# head.created and head.modified, fixed so the file is the same on every run.
+SFD_TTF_TIMESTAMP = 3786825600  # 2024-01-01 in seconds since 1904
+
+
+def gen_sfd_ttf(sfd, size, out, family):
+    """Write one bitmap strike of a FontForge .sfd as a TrueType file.
+
+    Each glyph's outline is its pixels: one rectangle per run of set pixels,
+    runs that repeat on consecutive rows merged into one taller rectangle,
+    on a grid of SFD_TTF_UNITS_PER_PIXEL units. At `size` pixels per em the
+    rasterizer gives back the strike exactly; at other sizes it is a pixel
+    font scaled. gasp asks for 1-bit grid-fitted text at every size, so no
+    size is smoothed. Codepoints the strike lacks map to nothing and draw
+    .notdef, which is blank and advances like the space, as the baked table's
+    fallback does; SFD_ALIASES map to their ASCII twins as in the table.
+    Needs fontTools. See docs/desktop/UI_FONTS.md, "Interface faces from files".
+    """
+    try:
+        from fontTools.fontBuilder import FontBuilder
+        from fontTools.pens.ttGlyphPen import TTGlyphPen
+        from fontTools.ttLib import newTable
+        from fontTools.ttLib.tables._g_a_s_p import GASP_GRIDFIT
+    except ImportError:
+        sys.exit("sfdttf mode needs fontTools: pip install fonttools")
+    ascent, descent, table = _parse_sfd_strike(sfd, size)
+    unit = SFD_TTF_UNITS_PER_PIXEL
+    if 0x20 not in table:
+        raise ValueError("%s: the %dpx strike has no space glyph" % (sfd, size))
+
+    def outline(source):
+        pen = TTGlyphPen(None)
+        width = source["xmax"] - source["xmin"] + 1
+        rows = source["ymax"] - source["ymin"] + 1
+        stride = (width + 7) // 8
+        bits = source["bits"]
+        if source["xmax"] < source["xmin"] or not any(bits):
+            return pen.glyph()
+        # Runs per row, as (first column, column past the last).
+        runs = []
+        for row in range(rows):
+            line, start = [], None
+            for column in range(width + 1):
+                lit = column < width and bits[row * stride + column // 8] & (0x80 >> (column % 8))
+                if lit and start is None:
+                    start = column
+                elif not lit and start is not None:
+                    line.append((start, column))
+                    start = None
+            runs.append(line)
+        # A rectangle per run, grown down while the next row has the same run.
+        done = [set() for _ in range(rows)]
+        for row in range(rows):
+            for run in runs[row]:
+                if run in done[row]:
+                    continue
+                bottom = row
+                while bottom + 1 < rows and run in runs[bottom + 1] and run not in done[bottom + 1]:
+                    bottom += 1
+                for r in range(row, bottom + 1):
+                    done[r].add(run)
+                x0 = (source["xmin"] + run[0]) * unit
+                x1 = (source["xmin"] + run[1]) * unit
+                y1 = (source["ymax"] + 1 - row) * unit
+                y0 = (source["ymax"] - bottom) * unit
+                # Clockwise, as TrueType wants an outer contour.
+                pen.moveTo((x0, y0))
+                pen.lineTo((x0, y1))
+                pen.lineTo((x1, y1))
+                pen.lineTo((x1, y0))
+                pen.closePath()
+        return pen.glyph()
+
+    codepoints = sorted(cp for cp in table if cp >= 0x20)
+    names = [".notdef"] + ["uni%04X" % cp for cp in codepoints]
+    glyphs = {".notdef": TTGlyphPen(None).glyph()}
+    metrics = {".notdef": (table[0x20]["advance"] * unit, 0)}
+    cmap = {}
+    for cp in codepoints:
+        name = "uni%04X" % cp
+        glyphs[name] = outline(table[cp])
+        cmap[cp] = name
+    for alias, twin in SFD_ALIASES.items():
+        if alias not in cmap and twin in cmap:
+            cmap[alias] = cmap[twin]
+
+    builder = FontBuilder(size * unit, isTTF=True)
+    builder.setupGlyphOrder(names)
+    builder.setupCharacterMap(cmap)
+    builder.setupGlyf(glyphs)
+    glyf = builder.font["glyf"]
+    for cp in codepoints:
+        name = "uni%04X" % cp
+        glyph = glyf[name]
+        glyph.recalcBounds(glyf)
+        lsb = glyph.xMin if glyph.numberOfContours else 0
+        metrics[name] = (table[cp]["advance"] * unit, lsb)
+    builder.setupHorizontalMetrics(metrics)
+    builder.setupHorizontalHeader(ascent=ascent * unit, descent=-descent * unit, lineGap=0)
+    advances = [advance for advance, _ in metrics.values() if advance > 0]
+    builder.setupOS2(
+        usWeightClass=400, fsSelection=0x40, achVendID="SAVX",
+        sTypoAscender=ascent * unit, sTypoDescender=-descent * unit, sTypoLineGap=0,
+        usWinAscent=ascent * unit, usWinDescent=descent * unit,
+        xAvgCharWidth=round(sum(advances) / len(advances)),
+        yStrikeoutPosition=round((ascent * unit) * 0.3), yStrikeoutSize=unit,
+        ulCodePageRange1=1, ulCodePageRange2=0,
+        ulUnicodeRange1=0x3, ulUnicodeRange2=0, ulUnicodeRange3=0, ulUnicodeRange4=0)
+    builder.setupPost(underlinePosition=-unit, underlineThickness=unit)
+    builder.setupNameTable({
+        "familyName": family,
+        "styleName": "Regular",
+        "uniqueFontIdentifier": "%s %dpx (SavanXP, from %s)" % (family, size, os.path.basename(sfd)),
+        "fullName": family,
+        "psName": family.replace(" ", ""),
+        "version": "Version 1.000",
+        "copyright": "Copyright (C) 2004 Huw D M Davies, Dmitry Timoshkov",
+        "licenseDescription": "GNU LGPL 2.1 or later",
+    })
+    gasp = newTable("gasp")
+    gasp.version = 1
+    gasp.gaspRange = {0xFFFF: GASP_GRIDFIT}
+    builder.font["gasp"] = gasp
+    builder.font["head"].created = SFD_TTF_TIMESTAMP
+    builder.font["head"].modified = SFD_TTF_TIMESTAMP
+    builder.font.recalcTimestamp = False
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    builder.save(out)
+    print("Wrote %d glyphs of the %dpx strike, %d codepoints, to %s" %
+          (len(codepoints), size, len(cmap), out))
+
+
 def _emit_proportional(symbols, source, ascent, descent, line_height,
                        glyphs, coverage, slot_of, outs):
     """Write one proportional face as the C tables gfx_impl.inc consumes.
@@ -513,6 +655,13 @@ def main():
                    help="C symbol prefix (default: SX_NOTO)")
     b.add_argument("--out", action="append", required=True)
 
+    t = sub.add_parser("sfdttf", help="write a 1-bit bitmap strike of a .sfd as a TrueType file")
+    t.add_argument("--sfd", required=True)
+    t.add_argument("--size", type=int, default=13,
+                   help="pixel size of the strike (default: 13)")
+    t.add_argument("--family", required=True, help="family name in the TrueType file")
+    t.add_argument("--out", required=True)
+
     args = ap.parse_args()
     if args.mode == "unifont":
         gen_unifont(args.hexpath, args.out)
@@ -520,6 +669,8 @@ def main():
         gen_noto(args.ttf, args.size, args.out, args.prefix, args.bold)
     elif args.mode == "sfd":
         gen_sfd(args.sfd, args.size, args.out, args.prefix)
+    elif args.mode == "sfdttf":
+        gen_sfd_ttf(args.sfd, args.size, args.out, args.family)
 
 
 if __name__ == "__main__":

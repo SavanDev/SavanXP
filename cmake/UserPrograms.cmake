@@ -506,7 +506,7 @@ savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.
 # The desktop: background, taskbar, Start menu and the taskbar's popups, as
 # windows of one process (docs/desktop/DESKTOP_ARCHITECTURE.md). windowd starts
 # it as the shell. No .sxres, so it stays out of the launcher.
-savanxp_program(NAME desktop DEPENDS libgfx2d libsxgui libsxgfx libsximg LINK_PROFILE PIE SOURCES
+savanxp_program(NAME desktop DEPENDS libgfx2d libsxfont libsxgui libsxgfx libsximg LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/desktop/desktop.c
     subsystems/posix/userland/desktop/desktop_taskbar.c
     subsystems/posix/userland/desktop/desktop_startmenu.c
@@ -533,16 +533,16 @@ savanxp_program(NAME desktop DEPENDS libgfx2d libsxgui libsxgfx libsximg LINK_PR
     system/gfx/pe_resource.c
     system/gfx/pe_icon.c
     subsystems/posix/userland/mime_icon_posix.c)
-savanxp_program(NAME progman DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
+savanxp_program(NAME progman DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/progman.c
     subsystems/posix/userland/progman_registry.c
     subsystems/posix/userland/desktop_icons.c)
-savanxp_program(NAME appwiz DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
+savanxp_program(NAME appwiz DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/appwiz.c
     subsystems/posix/userland/appwiz_catalog.c)
-savanxp_program(NAME aboutapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
+savanxp_program(NAME aboutapp DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/aboutapp.c)
-savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
+savanxp_program(NAME filesapp DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_copy.c
     subsystems/posix/userland/file_assoc.c
@@ -561,12 +561,12 @@ savanxp_program(NAME filesapp DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PI
 #
 # That scenario is what was missing to say SxGUI works as a library: no
 # self-test reaches the drawing path.
-savanxp_program(NAME notepad DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
+savanxp_program(NAME notepad DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/notepad.c)
-savanxp_program(NAME mines DEPENDS libgfx2d libsxgui libsxgfx LINK_PROFILE PIE SOURCES
+savanxp_program(NAME mines DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/mines.c
     subsystems/posix/userland/mines_board.c)
-savanxp_program(NAME paint DEPENDS libgfx2d libsxgui libsxgfx libsximg LINK_PROFILE PIE SOURCES
+savanxp_program(NAME paint DEPENDS libgfx2d libsxfont libsxgui libsxgfx libsximg LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/paint.c)# La calculadora va como ET_DYN. Es la primera aplicacion real fuera de las
 # pruebas en el perfil PIE: depende de SxGUI y se dibuja, asi que si el perfil
 # serviriera para algo mas que para mover sqrt, este es el programa que lo
@@ -593,18 +593,18 @@ if(SAVANXP_HAVE_FFMPEG)
         subsystems/posix/userland/mediaplayer/mediaplayer.c
         subsystems/posix/userland/mediaplayer/playback.c
         subsystems/posix/userland/mediaplayer/selftest.c)
-    savanxp_program(NAME mediaplayer DEPENDS libgfx2d libffmpeg libmath libsxgui libsxgfx
+    savanxp_program(NAME mediaplayer DEPENDS libgfx2d libsxfont libffmpeg libmath libsxgui libsxgfx
         LINK_PROFILE PIE
         SOURCES ${SAVANXP_MEDIA_PLAYER_SOURCES})
 endif()
 
-savanxp_program(NAME calc DEPENDS libgfx2d libmath libsxgui libsxgfx LINK_PROFILE PIE
+savanxp_program(NAME calc DEPENDS libgfx2d libsxfont libmath libsxgui libsxgfx LINK_PROFILE PIE
     SOURCES
     subsystems/posix/userland/calc.c)# Galeria de controles: el usuario mas amplio de SxGUI, con 20 funciones, y la
 # app que mas conviene mirar a ojo porque esta hecha para eso. Es la que prueba
 # a mano si SxGUI dibuja bien cuando viene de una libreria, que ninguna
 # comprobacion automatica cubre hoy.
-savanxp_program(NAME widgetsdemo DEPENDS libgfx2d libsxgui libsxgfx TEST LINK_PROFILE PIE SOURCES
+savanxp_program(NAME widgetsdemo DEPENDS libgfx2d libsxfont libsxgui libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/widgetsdemo.c)
 savanxp_program(NAME gfxdemo DEPENDS libsxgfx TEST LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/gfxdemo.c)

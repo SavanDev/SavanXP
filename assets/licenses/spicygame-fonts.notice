@@ -2,6 +2,6 @@ name=SpicyGame pixel fonts (Retro Sans)
 license=CC0-1.0
 copyright=SpicyGame
 origin=https://spicygame.itch.io/fonts
-used-in=window captions
+used-in=window captions: /system/fonts/RetroSans.ttf, and the table baked from it
 provenance=SpicyGame pixel fonts (captions and spares)
 text=assets/desktop/fonts/readme.txt

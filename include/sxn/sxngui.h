@@ -144,9 +144,15 @@ const struct sxgui_host *sxngui_host(void);
 /* Milliseconds since boot, from the monotonic clock. */
 unsigned long sxngui_uptime_ms(void);
 
+/* Puts the interface faces from /system/fonts in the text primitives' slots
+ * (include/sxfont/ui.h); how many came from files, 0 when the program does
+ * not map libsxfont. sxngui_app_init calls it; a SUN program that draws
+ * without the frame (windowd) calls it before it draws. */
+int sxngui_load_interface_faces(void);
+
 /* Connect to windowd, publish `presentation` (the program's compiled-in
- * resources, <program>.sunres.h) and bind the widgets to the surface.
- * 0, or negative -errno with nothing left open. */
+ * resources, <program>.sunres.h), load the interface faces and bind the
+ * widgets to the surface. 0, or negative -errno with nothing left open. */
 int sxngui_app_init(struct sxngui_app *app, const struct sxnwm_presentation_source *presentation,
                     struct sxgui_widget *widgets, int widget_count);
 

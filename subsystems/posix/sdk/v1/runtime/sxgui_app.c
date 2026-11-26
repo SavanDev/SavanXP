@@ -1,6 +1,52 @@
 #include "savanxp/sxgui.h"
+#include "sxfont/ui.h"
 
+#include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+/* A whole file for the interface faces' loader (sxfont/ui.h). */
+static void *sxgui_app_read_file(const char *path, size_t *size)
+{
+    struct stat info;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+    {
+        return 0;
+    }
+    void *data = 0;
+    if (fstat(fd, &info) == 0 && info.st_size > 0 && info.st_size < 16 * 1024 * 1024)
+    {
+        size_t done = 0;
+        data = malloc((size_t)info.st_size);
+        while (data != 0 && done < (size_t)info.st_size)
+        {
+            ssize_t got = read(fd, (char *)data + done, (size_t)info.st_size - done);
+            if (got <= 0)
+            {
+                break;
+            }
+            done += (size_t)got;
+        }
+        if (data != 0 && done != (size_t)info.st_size)
+        {
+            free(data);
+            data = 0;
+        }
+        *size = done;
+    }
+    close(fd);
+    return data;
+}
+
+/* The interface faces from /system/fonts, for a POSIX program that draws
+ * without sxgui_app (the desktop): sxgui_app_init calls it too. */
+int sxgui_load_interface_faces(void)
+{
+    return sxfont_ui_load(sxgui_app_read_file);
+}
 
 /* The toolkit's host for every POSIX program, whether it runs sxgui_app or
  * drives the widgets itself (seltest). The toolkit core defines none
@@ -163,6 +209,7 @@ int sxgui_app_init(struct sxgui_app *app, const char *name, struct sxgui_widget 
     }
     memset(app, 0, sizeof(*app));
     app->pointer_fd = -1;
+    (void)sxgui_load_interface_faces();
 
     if (gfx_open(&app->gfx) < 0)
     {

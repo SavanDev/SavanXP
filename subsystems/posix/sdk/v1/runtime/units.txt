@@ -10,7 +10,8 @@
 #
 #   core    what every program links
 #   math    libm (needs SSE)
-#   gui     the SXGUI toolkit and the POSIX application frame
+#   gui     the SXGUI toolkit, the POSIX application frame and the loader of
+#           the interface faces from /system/fonts (include/sxfont/ui.h)
 #   audio   PCM audio
 #   midi    the MIDI synthesizer
 #   gl      SxGL, the 3D rasterizer (needs SSE, like math)
@@ -29,6 +30,7 @@ math    subsystems/posix/sdk/v1/runtime/math.c
 gui     system/gfx/sxchrome.c
 gui     system/gfx/sxgui.c
 gui     subsystems/posix/sdk/v1/runtime/sxgui_app.c
+gui     system/font/sxfont_ui.c
 audio   subsystems/posix/sdk/v1/runtime/audio.c
 midi    subsystems/posix/sdk/v1/runtime/sxmidi.c
 gl      system/gfx/sxgl.c

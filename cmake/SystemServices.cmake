@@ -49,7 +49,9 @@ endfunction()
 # libsxgui and libgfx2d are neutral, and the host part -- sxngui.c, the SUN
 # application frame -- is linked into each program (docs/kernel/
 # SHARED_LIBRARIES.md, "The toolkit, split into neutral and host").
-set(SAVANXP_SUN_TOOLKIT libsxgui libgfx2d)
+# libsxfont too: the frame loads the interface faces from /system/fonts
+# (docs/desktop/UI_FONTS.md, "Interface faces from files").
+set(SAVANXP_SUN_TOOLKIT libsxgui libgfx2d libsxfont)
 
 savanxp_system_service(NAME compositord SOURCES
     compositord.c
@@ -74,8 +76,10 @@ savanxp_system_service(NAME taskmgr LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLK
 # The window manager. Its sources are written against the POSIX SDK;
 # windowd_sys.h, included first by every unit, renames those calls onto SXN
 # (windowd_sys.c). The desktop's icons are shared with the desktop and Program
-# Manager, so they stay with them.
-savanxp_system_service(NAME windowd SOURCES
+# Manager, so they stay with them. PIE, mapping libgfx2d and libsxfont, so its
+# captions come from the interface faces in /system/fonts (docs/desktop/
+# UI_FONTS.md, "Interface faces from files").
+savanxp_system_service(NAME windowd LINK_PROFILE PIE DEPENDS libgfx2d libsxfont SOURCES
     windowd.c
     windowd_sys.c
     windowd_compositor_client.c

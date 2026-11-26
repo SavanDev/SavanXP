@@ -738,6 +738,9 @@ int main(void)
 {
     unsigned long next_wallpaper_check_ms = 0;
 
+    /* The taskbar, the Start menu and the popups are drawn in the interface
+     * faces from /system/fonts, like every program's (docs/desktop/UI_FONTS.md). */
+    (void)sxgui_load_interface_faces();
     /* It closes its popups and taskbar itself when windowd goes away. */
     gfx_handle_close(1);
     if (gfx_open_shell(&g_background) < 0)

@@ -485,11 +485,13 @@ musl from `https://musl.libc.org/releases/`, and util-linux (libuuid) from
   drawing, made as a free replacement for Microsoft's MS Sans Serif, which
   Wine does not ship
 - Decision: `Adopt`
-- Distributed in: `libsxgfx.so.0.4` and statically linked programs, as the
-  13px bitmap strike baked to a C table by `tools/font/genfont.py sfd`
-  (`gfx_font_noto.inc`). The source and the generator are both in the
-  repository, so the table can be regenerated from a modified `.sfd` and the
-  library rebuilt
+- Distributed in: `/system/fonts/MSSansSerif.ttf`, the 13px bitmap strike
+  written as TrueType pixel outlines by `tools/font/genfont.py sfdttf`, which
+  the interface loads at run time; and `libgfx2d.so.0.4`, statically linked
+  programs and `gdi32.dll`, as the same strike baked to a C table by
+  `genfont.py sfd` (`gfx_font_noto.inc`), the fallback. The source and the
+  generator are both in the repository, so both can be regenerated from a
+  modified `.sfd`
 - Reason: the Win9x/2000 UI face, drawn by hand at the pixel size the desktop
   uses; full Latin-1 including Spanish accents. See `docs/desktop/UI_FONTS.md`
 
@@ -534,9 +536,10 @@ musl from `https://musl.libc.org/releases/`, and util-linux (libuuid) from
   and `assets/desktop/fonts/readme.txt`
 - License reviewed: CC0, per `readme.txt`
 - Decision: `Adopt`
-- Distributed in: the binary, as a coverage table baked by
-  `tools/font/genfont.py`: RetroSans at 17px, its native pixel grid, for
-  window captions (`gfx_font_title.inc`). PixelSans and ImpactfulBits are baked at 13px as
+- Distributed in: `/system/fonts/RetroSans.ttf`, unmodified, which window
+  captions are drawn from at run time at 17px, its native pixel grid; and the
+  binary, as a coverage table baked from it by `tools/font/genfont.py`
+  (`gfx_font_title.inc`), the fallback. PixelSans and ImpactfulBits are baked at 13px as
   committed spares (`gfx_font_pixelsans.inc`, `gfx_font_impactfulbits.inc`)
   and are not linked into any binary yet
 - Reason: a pixel face for window captions; the spares cover future chrome

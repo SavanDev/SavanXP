@@ -40,10 +40,14 @@ struct sx_font_face {
 };
 
 /* The glyph cache: an open-addressed table of glyphs and an arena of their
- * coverage. When either fills, both are emptied, so what a strike keeps is
- * bounded and the same calls always give the same cache. */
+ * coverage. The arena starts small and doubles as glyphs need it, up to
+ * CACHE_ARENA; when the table is three-quarters full or the arena is at its
+ * largest and full, both are emptied, so what a strike keeps is bounded and
+ * the same calls always give the same cache. Starting small matters because
+ * every program with an interface holds two strikes (UI_FONTS.md). */
 #define CACHE_SLOTS 1024u
 #define CACHE_ARENA (256u * 1024u)
+#define CACHE_ARENA_FIRST (16u * 1024u)
 #define CACHE_NO_BITMAP 0xffffffffu
 
 struct cache_entry {
@@ -65,6 +69,7 @@ struct sx_font_strike {
     unsigned used_slots;
     uint8_t *arena;
     unsigned arena_used;
+    unsigned arena_size;
     uint8_t *scratch;            /* a glyph too large for the arena */
     size_t scratch_size;
 };
@@ -434,7 +439,8 @@ int sx_font_strike_open(struct sx_font_face *face, const struct sx_font_strike_o
     struct sx_font_strike *strike = calloc(1, sizeof *strike);
     if (strike == NULL) return SX_FONT_ERROR_MEMORY;
     strike->slots = calloc(CACHE_SLOTS, sizeof *strike->slots);
-    strike->arena = malloc(CACHE_ARENA);
+    strike->arena = malloc(CACHE_ARENA_FIRST);
+    strike->arena_size = CACHE_ARENA_FIRST;
     if (strike->slots == NULL || strike->arena == NULL) {
         free(strike->slots);
         free(strike->arena);
@@ -505,7 +511,15 @@ static struct cache_entry *cache_find(struct sx_font_strike *strike, unsigned gl
 static struct cache_entry *cache_claim(struct sx_font_strike *strike, unsigned glyph, size_t bytes) {
     struct cache_entry *entry = cache_find(strike, glyph);
     int is_new = entry == NULL || entry->glyph_plus_one == 0;
-    if ((is_new && strike->used_slots + 1u > CACHE_SLOTS * 3u / 4u) || strike->arena_used + bytes > CACHE_ARENA) {
+    while (strike->arena_used + bytes > strike->arena_size && strike->arena_size < CACHE_ARENA) {
+        /* Entries keep offsets, so the arena may move; the coverage a render
+         * returned is only promised until the next render. */
+        uint8_t *grown = realloc(strike->arena, strike->arena_size * 2u);
+        if (grown == NULL) break;
+        strike->arena = grown;
+        strike->arena_size *= 2u;
+    }
+    if ((is_new && strike->used_slots + 1u > CACHE_SLOTS * 3u / 4u) || strike->arena_used + bytes > strike->arena_size) {
         cache_clear(strike);
         entry = cache_find(strike, glyph);
         is_new = 1;
@@ -690,7 +704,8 @@ int sx_font_gfx_face(struct sx_font_strike *strike, struct gfx_face *out) {
     if (strike == NULL) return SX_FONT_ERROR_ARGUMENT;
     int cell = gfx_face_advance(strike, 'M');
     out->ascent = strike->metrics.ascent;
-    out->line_height = strike->metrics.height;
+    /* The line spacing the face asks for: its cell and the gap Windows adds. */
+    out->line_height = strike->metrics.height + strike->metrics.external_leading;
     out->cell_width = cell > 0 ? cell : strike->metrics.max_advance;
     out->glyph = gfx_face_glyph;
     out->advance = gfx_face_advance;

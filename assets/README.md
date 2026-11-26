@@ -147,9 +147,10 @@ The source fonts live in `assets/desktop/fonts/`:
 fonts/
   unifont.hex              GNU UniFont 17.0.04 (bitmap, console/terminal)
   ms_sans_serif.sfd        Wine's MS Sans Serif, wine-11.20 (bitmap, desktop body)
+  MSSansSerif.ttf          its 13px strike as TrueType (genfont.py sfdttf), /system/fonts
   LICENSE-LGPL-2.1.txt     GNU LGPL 2.1 (Wine's MS Sans Serif)
   NotoSans-Regular.ttf     Noto Sans Regular v1.06 (boot screen wordmark)
-  RetroSans.ttf            Retro Sans (proportional pixel, window captions)
+  RetroSans.ttf            Retro Sans (proportional pixel, window captions), /system/fonts
   PixelSans.ttf            Pixel Sans (spare proportional pixel face)
   ImpactfulBits.ttf        Impactful Bits (spare proportional pixel face)
   readme.txt               SpicyGame pixel fonts, CC0
@@ -158,7 +159,12 @@ fonts/
 
 Unlike the PNGs, the fonts are **not** converted during the normal build: they
 are baked by hand with `tools/font/genfont.py` and the resulting `.inc` tables
-are committed. UniFont comes from the canonical `.hex` (crisp 8x16 bitmaps).
+are committed. The interface also loads the body and caption faces from
+`/system/fonts` at run time: `RetroSans.ttf` as it is, and `MSSansSerif.ttf`,
+the 13px strike written as TrueType by `genfont.py sfdttf` (needs fontTools)
+and committed like the tables. The tables stay as the fallback, and
+`ui-face-files-test` holds each file to its table pixel for pixel
+([`docs/desktop/UI_FONTS.md`](../docs/desktop/UI_FONTS.md#interface-faces-from-files)). UniFont comes from the canonical `.hex` (crisp 8x16 bitmaps).
 The desktop body is the hand-drawn 13px bitmap strike of Wine's MS Sans Serif,
 read straight from the `.sfd` (no extra Python packages). Window captions use
 RetroSans at 17px, its native pixel grid, with no faux-bold; the TTF modes
@@ -185,6 +191,8 @@ python tools/font/genfont.py unifont --hex assets/desktop/fonts/unifont.hex \
     --out system/gfx/console_font_unifont.inc
 python tools/font/genfont.py sfd --sfd assets/desktop/fonts/ms_sans_serif.sfd --size 13 \
     --out system/gfx/gfx_font_noto.inc
+python tools/font/genfont.py sfdttf --sfd assets/desktop/fonts/ms_sans_serif.sfd --size 13 \
+    --family "MS Sans Serif" --out assets/desktop/fonts/MSSansSerif.ttf
 python tools/font/genfont.py noto --ttf assets/desktop/fonts/RetroSans.ttf --size 17 \
     --prefix SX_TITLE \
     --out system/gfx/gfx_font_title.inc

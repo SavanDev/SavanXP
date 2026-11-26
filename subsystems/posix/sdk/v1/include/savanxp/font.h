@@ -171,8 +171,9 @@ int sx_font_catalog_match(const struct sx_font_catalog *catalog, const struct sx
                           struct sx_font_match *out);
 
 /* A face for the platform's text primitives (sxgfx/pixels.h,
- * gfx_face_install) that draws with this strike: its ascent, its height as
- * the line, the advance of 'M' as the monospace cell. The face points at the
+ * gfx_face_install) that draws with this strike: its ascent, its height plus
+ * its external leading as the line (the line spacing the face asks for), the
+ * advance of 'M' as the monospace cell. The face points at the
  * strike, so it is removed from its slot (gfx_face_install(slot, NULL))
  * before the strike closes. */
 struct gfx_face;
