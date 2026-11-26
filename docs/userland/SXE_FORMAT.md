@@ -443,6 +443,13 @@ can be measured again when something changes.
   windowd ──► title, window icon, declared accent, window style
 ```
 
+The shared reader is the runtime's, and both subsystems have it. What it reads
+the file with is a runtime hook (`sx_sxe_open`, `_read`, `_seek`, `_close`):
+weak and POSIX in the runtime, strong and SXN in SUN's
+(`system/runtime/sxn_sxe.c`), so a SUN program calls the same `sxe_file_open`,
+`sxe_load_meta` and `sxe_load_icon_file`. `nativetest` reads the Command
+Prompt's name and icons that way.
+
 The WM neither guesses from the path nor reads the binary: the window says who
 it is ([DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md#presentation-comes-from-the-client)).
 The per-path fallback table (`windowd_appinfo.c`) is gone; a window that

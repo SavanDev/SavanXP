@@ -8,9 +8,12 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
-- **SUN programs can be the shell: `sxnwm_connect_shell` and `sxnwm_shell_request`**, the counterparts of POSIX's
+- **SUN programs can be the shell: `sxnwm_connect_shell` and `sxnwm_shell_request` (SDK 2.0)**, the counterparts of POSIX's
   `gfx_open_shell` and its request pipe. windowd now gives a shell that reads its input from a ring both the ring and the
   window list ([SUN.md](docs/userland/SUN.md#win32-counterparts)).
+- **SUN programs read `.sxe` resources: `sxe_file_open`, `sxe_load_meta`, `sxe_load_icon_file` (SDK 2.0).** The
+  runtime's reader stands on the `sx_sxe_*` hooks, which SUN's runtime gives over SXN
+  ([SXE_FORMAT.md](docs/userland/SXE_FORMAT.md#who-reads-what)).
 - **Win32 programs draw TrueType text: `gdi32` over `libsxfont` through `winhost`, with Windows XP's metrics.** Any size,
   style and charset from `/system/fonts` and `C:\windows\fonts`: `ExtTextOutW`, `GetCharWidthW`, `GetOutlineTextMetricsW`,
   `EnumFontFamiliesExW`, `StretchDIBits`, `CreatePen`; fixture `text.exe`. [Text](docs/userland/WIN32.md#user32-and-gdi32).

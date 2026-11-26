@@ -208,6 +208,15 @@ struct sxe_file {
 /* SXE_OK, or SXE_ABSENT if `path` does not open or is not an ELF64. On
  * failure nothing stays open and sxe_file_close is harmless. */
 int sxe_file_open(struct sxe_file* file, const char* path);
+/* What the file reads stand on, a runtime hook: weak and POSIX in the
+ * runtime, strong and SXN in SUN's (system/runtime/sxn_sxe.c), so the same
+ * calls read .sxe resources in either subsystem. A handle, or a negative
+ * error; read gives the count, 0 at the end; seek goes to `offset` from the
+ * start. Not for programs to call. */
+long sx_sxe_open(const char* path);
+long sx_sxe_read(long handle, void* buffer, size_t count);
+long sx_sxe_seek(long handle, uint64_t offset);
+void sx_sxe_close(long handle);
 /* Same results as sxe_read_section, against an open file. */
 int sxe_file_read_section(struct sxe_file* file, const char* section, void* buffer, size_t capacity, size_t* out_length);
 int sxe_file_load_meta(struct sxe_file* file, void* buffer, size_t capacity, struct sxe_meta* out);

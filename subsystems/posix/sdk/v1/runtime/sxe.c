@@ -18,6 +18,31 @@
 _Static_assert((int)SXE_ICON_FORMAT_BGRA8888 == (int)SX_PIXEL_FORMAT_BGRA8888,
     "SXE_ICON_FORMAT_BGRA8888 debe seguir siendo SX_PIXEL_FORMAT_BGRA8888");
 
+/* --- The file underneath ------------------------------------------------- */
+
+/* What sxe_file_* and sxe_load_icon_file stand on (savanxp/sxe.h): weak and
+ * POSIX here, strong and SXN in SUN's runtime (system/runtime/sxn_sxe.c), so a
+ * SUN program reads .sxe resources with the same calls. */
+__attribute__((weak)) long sx_sxe_open(const char* path)
+{
+    return savanxp_open(path);
+}
+
+__attribute__((weak)) long sx_sxe_read(long handle, void* buffer, size_t count)
+{
+    return savanxp_read((int)handle, buffer, count);
+}
+
+__attribute__((weak)) long sx_sxe_seek(long handle, uint64_t offset)
+{
+    return seek((int)handle, (long)offset, SAVANXP_SEEK_SET);
+}
+
+__attribute__((weak)) void sx_sxe_close(long handle)
+{
+    (void)savanxp_close((int)handle);
+}
+
 /* --- Helpers ------------------------------------------------------------- */
 
 static uint16_t sxe_load_u16(const uint8_t* bytes)
@@ -610,7 +635,7 @@ static int sxe_read_exact(int fd, void* buffer, size_t count)
 
     while (done < count)
     {
-        long got = savanxp_read(fd, cursor + done, count - done);
+        long got = sx_sxe_read(fd, cursor + done, count - done);
 
         if (got <= 0)
         {
@@ -627,7 +652,7 @@ static int sxe_read_at(int fd, uint64_t offset, void* buffer, size_t count)
     {
         return 0;
     }
-    if (seek(fd, (long)offset, SAVANXP_SEEK_SET) < 0)
+    if (sx_sxe_seek(fd, offset) < 0)
     {
         return 0;
     }
@@ -683,7 +708,7 @@ void sxe_file_close(struct sxe_file* file)
 {
     if (file != 0 && file->fd >= 0)
     {
-        (void)savanxp_close(file->fd);
+        sx_sxe_close(file->fd);
         file->fd = -1;
     }
 }
@@ -708,7 +733,7 @@ int sxe_file_open(struct sxe_file* file, const char* path)
         return SXE_ABSENT;
     }
 
-    fd = savanxp_open(path);
+    fd = sx_sxe_open(path);
     if (fd < 0)
     {
         return SXE_ABSENT;
@@ -924,20 +949,20 @@ int sxe_load_icon_file(const char* path, void* buffer, size_t capacity, struct s
         return SXE_ABSENT;
     }
 
-    fd = savanxp_open(path);
+    fd = sx_sxe_open(path);
     if (fd < 0)
     {
         return SXE_ABSENT;
     }
 
-    /* Sin stat: se lee hasta EOF o hasta llenar el buffer. */
+    /* No stat: read until EOF or until the buffer is full. */
     while (total < capacity)
     {
-        long got = savanxp_read((int)fd, (uint8_t*)buffer + total, capacity - total);
+        long got = sx_sxe_read(fd, (uint8_t*)buffer + total, capacity - total);
 
         if (got < 0)
         {
-            (void)savanxp_close((int)fd);
+            sx_sxe_close(fd);
             return SXE_ABSENT;
         }
         if (got == 0)
@@ -948,23 +973,23 @@ int sxe_load_icon_file(const char* path, void* buffer, size_t capacity, struct s
     }
 
     /*
-     * El buffer se lleno: puede que el archivo siga. Un byte de sonda separa
-     * "entro justo" de "no entra", que para el llamador son casos distintos --
-     * sin esto, un blob demasiado grande llegaria truncado a sxe_icons_open y
-     * saldria como SXE_MALFORMED, culpando al archivo en vez al buffer.
+     * The buffer filled up: the file may go on. One probe byte tells "it just
+     * fit" from "it does not fit", which are different cases for the caller --
+     * without it, a blob too large would reach sxe_icons_open truncated and
+     * come out as SXE_MALFORMED, blaming the file instead of the buffer.
      */
     if (total == capacity)
     {
         uint8_t probe = 0;
 
-        if (savanxp_read((int)fd, &probe, sizeof(probe)) > 0)
+        if (sx_sxe_read(fd, &probe, sizeof(probe)) > 0)
         {
-            (void)savanxp_close((int)fd);
+            sx_sxe_close(fd);
             return SXE_TOO_LARGE;
         }
     }
 
-    (void)savanxp_close((int)fd);
+    sx_sxe_close(fd);
     return sxe_icons_open(buffer, total, out);
 }
 

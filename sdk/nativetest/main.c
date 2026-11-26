@@ -66,6 +66,7 @@
 #include "sxn/sxncapture.h"
 #include "sxn/sxnpointer.h"
 #include "sxn/sxnprofile.h"
+#include "savanxp/sxe.h"
 #include "sxgfx/virgl_protocol.h"
 
 #define SXN_CHILD_STATUS 42
@@ -4722,6 +4723,25 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && (streq(argv[1], "profileuser") || streq(argv[1], "profileelevated"))) {
         run_profile_user_child(streq(argv[1], "profileelevated"));
+    }
+
+    /* A SUN program reads another program's resources with the runtime's .sxe
+     * reader, over SXN (system/runtime/sxn_sxe.c): the Command Prompt's name
+     * and its icons, and nothing from a file that is not there. */
+    {
+        static uint8_t blob[16384];
+        struct sxe_file file;
+        struct sxe_meta meta;
+        struct sxe_icons icons;
+        char name[64];
+        check(sxe_file_open(&file, "/system/console.sxe") == SXE_OK);
+        check(sxe_file_load_meta(&file, blob, sizeof(blob), &meta) == SXE_OK &&
+              sxe_meta_string(&meta, SXE_TAG_NAME, name, sizeof(name)) > 0 && streq(name, "Command Prompt"));
+        check(sxe_file_load_icons(&file, blob, sizeof(blob), &icons) == SXE_OK && icons.image_count > 0);
+        sxe_file_close(&file);
+        check(file.fd == -1);
+        check(sxe_file_open(&file, "/system/no-such-program.sxe") == SXE_ABSENT && file.fd == -1);
+        check(sxe_load_meta("/system/console.sxe", blob, sizeof(blob), &meta) == SXE_OK);
     }
 
     /* In native-test, init starts this program with the text console as its

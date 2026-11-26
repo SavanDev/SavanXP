@@ -10,13 +10,15 @@
 #   core    the heap's page source on SXN (docs/userland/NATIVE_HEAP.md),
 #           replacing the POSIX runtime's weak one, the person's profile
 #           and settings path (include/sxn/sxnprofile.h), the DNS resolver
-#           (include/sxn/sxndns.h) and the HTTP loader (include/sxn/sxnhttp.h)
+#           (include/sxn/sxndns.h), the HTTP loader (include/sxn/sxnhttp.h) and
+#           the .sxe reader's file (system/runtime/sxn_sxe.c)
 #   gui     the SXGUI application frame for SUN (include/sxn/sxngui.h), whose
 #           strong toolkit host replaces the POSIX frame's weak one, and the
 #           file dialog (include/sxn/sxnfiledlg.h) with the icons by type it
 #           shows; it needs the POSIX runtime's gui group
 core    system/runtime/sxn_runtime.c
 core    system/runtime/sxnprofile.c
+core    system/runtime/sxn_sxe.c
 core    system/runtime/sxndns_message.c
 core    system/runtime/sxndns.c
 core    system/runtime/sxnhttp_message.c
