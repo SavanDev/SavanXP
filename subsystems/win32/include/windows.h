@@ -14,6 +14,8 @@
 typedef int BOOL;
 typedef long LONG;
 typedef unsigned int UINT;
+typedef int INT;
+typedef int *LPINT;
 typedef unsigned long ULONG_PTR;
 typedef ULONG_PTR SIZE_T;
 typedef char CHAR;
@@ -395,6 +397,132 @@ typedef struct tagTEXTMETRICW {
     BYTE tmPitchAndFamily;
     BYTE tmCharSet;
 } TEXTMETRICW, *LPTEXTMETRICW;
+
+typedef struct tagPANOSE {
+    BYTE bFamilyType;
+    BYTE bSerifStyle;
+    BYTE bWeight;
+    BYTE bProportion;
+    BYTE bContrast;
+    BYTE bStrokeVariation;
+    BYTE bArmStyle;
+    BYTE bLetterform;
+    BYTE bMidline;
+    BYTE bXHeight;
+} PANOSE;
+
+typedef struct _OUTLINETEXTMETRICW {
+    UINT otmSize;
+    TEXTMETRICW otmTextMetrics;
+    BYTE otmFiller;
+    PANOSE otmPanoseNumber;
+    UINT otmfsSelection;
+    UINT otmfsType;
+    int otmsCharSlopeRise;
+    int otmsCharSlopeRun;
+    int otmItalicAngle;
+    UINT otmEMSquare;
+    int otmAscent;
+    int otmDescent;
+    UINT otmLineGap;
+    UINT otmsCapEmHeight;
+    UINT otmsXHeight;
+    RECT otmrcFontBox;
+    int otmMacAscent;
+    int otmMacDescent;
+    UINT otmMacLineGap;
+    UINT otmusMinimumPPEM;
+    POINT otmptSubscriptSize;
+    POINT otmptSubscriptOffset;
+    POINT otmptSuperscriptSize;
+    POINT otmptSuperscriptOffset;
+    UINT otmsStrikeoutSize;
+    int otmsStrikeoutPosition;
+    int otmsUnderscoreSize;
+    int otmsUnderscorePosition;
+    char *otmpFamilyName; /* offsets from the structure's start */
+    char *otmpFaceName;
+    char *otmpStyleName;
+    char *otmpFullName;
+} OUTLINETEXTMETRICW, *LPOUTLINETEXTMETRICW;
+
+typedef struct tagFONTSIGNATURE {
+    DWORD fsUsb[4];
+    DWORD fsCsb[2];
+} FONTSIGNATURE, *LPFONTSIGNATURE;
+
+typedef struct tagCHARSETINFO {
+    UINT ciCharset;
+    UINT ciACP;
+    FONTSIGNATURE fs;
+} CHARSETINFO;
+
+typedef struct tagNEWTEXTMETRICW {
+    LONG tmHeight;
+    LONG tmAscent;
+    LONG tmDescent;
+    LONG tmInternalLeading;
+    LONG tmExternalLeading;
+    LONG tmAveCharWidth;
+    LONG tmMaxCharWidth;
+    LONG tmWeight;
+    LONG tmOverhang;
+    LONG tmDigitizedAspectX;
+    LONG tmDigitizedAspectY;
+    WCHAR tmFirstChar;
+    WCHAR tmLastChar;
+    WCHAR tmDefaultChar;
+    WCHAR tmBreakChar;
+    BYTE tmItalic;
+    BYTE tmUnderlined;
+    BYTE tmStruckOut;
+    BYTE tmPitchAndFamily;
+    BYTE tmCharSet;
+    DWORD ntmFlags;
+    UINT ntmSizeEM;
+    UINT ntmCellHeight;
+    UINT ntmAvgWidth;
+} NEWTEXTMETRICW;
+
+typedef struct tagNEWTEXTMETRICEXW {
+    NEWTEXTMETRICW ntmTm;
+    FONTSIGNATURE ntmFontSig;
+} NEWTEXTMETRICEXW;
+
+typedef struct tagENUMLOGFONTEXW {
+    LOGFONTW elfLogFont;
+    WCHAR elfFullName[64];
+    WCHAR elfStyle[32];
+    WCHAR elfScript[32];
+} ENUMLOGFONTEXW;
+
+typedef int(CALLBACK *FONTENUMPROCW)(const LOGFONTW *, const TEXTMETRICW *, DWORD, LPARAM);
+
+typedef struct tagRGBQUAD {
+    BYTE rgbBlue;
+    BYTE rgbGreen;
+    BYTE rgbRed;
+    BYTE rgbReserved;
+} RGBQUAD;
+
+typedef struct tagBITMAPINFOHEADER {
+    DWORD biSize;
+    LONG biWidth;
+    LONG biHeight;
+    WORD biPlanes;
+    WORD biBitCount;
+    DWORD biCompression;
+    DWORD biSizeImage;
+    LONG biXPelsPerMeter;
+    LONG biYPelsPerMeter;
+    DWORD biClrUsed;
+    DWORD biClrImportant;
+} BITMAPINFOHEADER;
+
+typedef struct tagBITMAPINFO {
+    BITMAPINFOHEADER bmiHeader;
+    RGBQUAD bmiColors[1];
+} BITMAPINFO;
 
 typedef struct tagBITMAP {
     LONG bmType;
@@ -922,6 +1050,67 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 #define FW_BOLD 700
 #define DEFAULT_CHARSET 1
 #define ANSI_CHARSET 0
+
+/* WP6: text and pictures (WIN32_WORDPAD_ROADMAP.md). */
+#define SRCAND 0x008800c6u
+#define SRCINVERT 0x00660046u
+#define SRCPAINT 0x00ee0086u
+#define SYMBOL_CHARSET 2
+#define MAC_CHARSET 77
+#define SHIFTJIS_CHARSET 128
+#define HANGEUL_CHARSET 129
+#define GB2312_CHARSET 134
+#define CHINESEBIG5_CHARSET 136
+#define GREEK_CHARSET 161
+#define TURKISH_CHARSET 162
+#define VIETNAMESE_CHARSET 163
+#define HEBREW_CHARSET 177
+#define ARABIC_CHARSET 178
+#define BALTIC_CHARSET 186
+#define RUSSIAN_CHARSET 204
+#define THAI_CHARSET 222
+#define EASTEUROPE_CHARSET 238
+#define OEM_CHARSET 255
+#define DEFAULT_PITCH 0
+#define FIXED_PITCH 1
+#define VARIABLE_PITCH 2
+#define FF_DONTCARE 0x00
+#define FF_ROMAN 0x10
+#define FF_SWISS 0x20
+#define FF_MODERN 0x30
+#define FF_SCRIPT 0x40
+#define FF_DECORATIVE 0x50
+#define DEFAULT_QUALITY 0
+#define DRAFT_QUALITY 1
+#define PROOF_QUALITY 2
+#define NONANTIALIASED_QUALITY 3
+#define ANTIALIASED_QUALITY 4
+#define TMPF_FIXED_PITCH 0x01
+#define TMPF_VECTOR 0x02
+#define TMPF_TRUETYPE 0x04
+#define TMPF_DEVICE 0x08
+#define RASTER_FONTTYPE 0x0001
+#define DEVICE_FONTTYPE 0x0002
+#define TRUETYPE_FONTTYPE 0x0004
+#define NTM_ITALIC 0x00000001
+#define NTM_BOLD 0x00000020
+#define NTM_REGULAR 0x00000040
+#define ETO_OPAQUE 0x0002
+#define ETO_CLIPPED 0x0004
+#define ETO_GLYPH_INDEX 0x0010
+#define TA_NOUPDATECP 0
+#define TA_UPDATECP 1
+#define TA_LEFT 0
+#define TA_RIGHT 2
+#define TA_CENTER 6
+#define TA_TOP 0
+#define TA_BOTTOM 8
+#define TA_BASELINE 24
+#define GDI_ERROR 0xffffffffu
+#define PS_SOLID 0
+#define PS_NULL 5
+#define BI_RGB 0
+#define DIB_RGB_COLORS 0
 
 #define DT_TOP 0x0000
 #define DT_LEFT 0x0000
@@ -1459,6 +1648,7 @@ typedef struct {
 
 SXW_KERNEL32_API HANDLE WINAPI GetStdHandle(DWORD nStdHandle);
 SXW_KERNEL32_API LPWSTR WINAPI GetCommandLineW(void);
+SXW_KERNEL32_API DWORD WINAPI GetModuleFileNameW(HMODULE hModule, LPWSTR lpFilename, DWORD nSize);
 SXW_KERNEL32_API void WINAPI GetStartupInfoA(LPSTARTUPINFOA lpStartupInfo);
 SXW_KERNEL32_API HMODULE WINAPI GetModuleHandleA(LPCSTR lpModuleName);
 SXW_KERNEL32_API HMODULE WINAPI LoadLibraryA(LPCSTR lpLibFileName);
@@ -1590,6 +1780,8 @@ SXW_USER32_API HDC WINAPI BeginPaint(HWND hWnd, LPPAINTSTRUCT lpPaint);
 SXW_USER32_API BOOL WINAPI EndPaint(HWND hWnd, const PAINTSTRUCT *lpPaint);
 SXW_USER32_API HDC WINAPI GetDC(HWND hWnd);
 SXW_USER32_API int WINAPI ReleaseDC(HWND hWnd, HDC hDC);
+SXW_USER32_API BOOL WINAPI SystemParametersInfoA(UINT uiAction, UINT uiParam, LPVOID pvParam, UINT fWinIni);
+SXW_USER32_API BOOL WINAPI SystemParametersInfoW(UINT uiAction, UINT uiParam, LPVOID pvParam, UINT fWinIni);
 SXW_USER32_API BOOL WINAPI InvalidateRect(HWND hWnd, const RECT *lpRect, BOOL bErase);
 SXW_USER32_API int WINAPI DrawTextW(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format);
 SXW_USER32_API int WINAPI FrameRect(HDC hDC, const RECT *lprc, HBRUSH hbr);
@@ -1839,5 +2031,30 @@ SXW_GDI32_API BOOL WINAPI GetDCOrgEx(HDC hdc, LPPOINT lppt);
 SXW_GDI32_API int WINAPI SetBkMode(HDC hdc, int mode);
 SXW_GDI32_API COLORREF WINAPI GetBkColor(HDC hdc);
 SXW_GDI32_API COLORREF WINAPI GetTextColor(HDC hdc);
+SXW_GDI32_API HFONT WINAPI CreateFontIndirectW(const LOGFONTW *lplf);
+SXW_GDI32_API int WINAPI AddFontResourceW(LPCWSTR name);
+SXW_GDI32_API int WINAPI GetObjectW(HANDLE h, int c, LPVOID pv);
+SXW_GDI32_API BOOL WINAPI ExtTextOutW(HDC hdc, int x, int y, UINT options, const RECT *lprect, LPCWSTR lpString,
+                                     UINT c, const INT *lpDx);
+SXW_GDI32_API BOOL WINAPI ExtTextOutA(HDC hdc, int x, int y, UINT options, const RECT *lprect, LPCSTR lpString,
+                                     UINT c, const INT *lpDx);
+SXW_GDI32_API BOOL WINAPI GetCharWidthW(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer);
+SXW_GDI32_API BOOL WINAPI GetCharWidthA(HDC hdc, UINT iFirst, UINT iLast, LPINT lpBuffer);
+SXW_GDI32_API BOOL WINAPI GetTextExtentPoint32A(HDC hdc, LPCSTR lpString, int c, LPSIZE psizl);
+SXW_GDI32_API int WINAPI GetTextFaceW(HDC hdc, int c, LPWSTR lpName);
+SXW_GDI32_API UINT WINAPI GetOutlineTextMetricsW(HDC hdc, UINT cjCopy, LPOUTLINETEXTMETRICW potm);
+SXW_GDI32_API int WINAPI GetTextCharsetInfo(HDC hdc, LPFONTSIGNATURE lpSig, DWORD dwFlags);
+SXW_GDI32_API int WINAPI EnumFontFamiliesExW(HDC hdc, LOGFONTW *lpLogfont, FONTENUMPROCW lpProc, LPARAM lParam,
+                                            DWORD dwFlags);
+SXW_GDI32_API UINT WINAPI SetTextAlign(HDC hdc, UINT align);
+SXW_GDI32_API UINT WINAPI GetTextAlign(HDC hdc);
+SXW_GDI32_API BOOL WINAPI GetCurrentPositionEx(HDC hdc, LPPOINT lppt);
+SXW_GDI32_API BOOL WINAPI Rectangle(HDC hdc, int left, int top, int right, int bottom);
+SXW_GDI32_API HPEN WINAPI CreatePen(int iStyle, int cWidth, COLORREF color);
+SXW_GDI32_API HBITMAP WINAPI CreateBitmap(int nWidth, int nHeight, UINT nPlanes, UINT nBitCount,
+                                         const void *lpBits);
+SXW_GDI32_API int WINAPI StretchDIBits(HDC hdc, int xDest, int yDest, int DestWidth, int DestHeight, int xSrc,
+                                      int ySrc, int SrcWidth, int SrcHeight, const void *lpBits,
+                                      const BITMAPINFO *lpbmi, UINT iUsage, DWORD rop);
 
 #endif

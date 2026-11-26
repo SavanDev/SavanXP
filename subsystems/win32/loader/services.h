@@ -281,6 +281,11 @@ typedef struct sxw_services {
     uint32_t ending;
     /* ntdll!SxwThreadStart, where a new thread enters the guest. */
     uint32_t thread_entry;
+    /* The host folders the font services list the faces of, NULL-terminated,
+     * or NULL for none (fonts.c). */
+    const char *const *font_directories;
+    /* The font services' state, made when a font is first asked for. */
+    struct sxw_fonts *fonts;
     /* Host window id -> the thread that made it, index + 1. */
     uint8_t window_owner[64];
     char registry_text[SXW_REGISTRY_TEXT];
@@ -341,6 +346,9 @@ uint32_t sxw_file_service(sxw_services *services, uint32_t service, const uint32
 /* The clipboard services (clipboard.c), SXW_SVC_CLIPBOARD_SET to _GET, and
  * the drag's, SXW_SVC_DRAG_REPLY to _GET. */
 uint32_t sxw_clipboard_service(sxw_services *services, uint32_t service, const uint32_t *arguments);
+
+/* The font services (fonts.c), SXW_SVC_FONT_OPEN to _FACE, over libsxfont. */
+uint32_t sxw_font_service(sxw_services *services, uint32_t service, const uint32_t *arguments);
 
 /* Closes a handle of any kind: a Win32 error. */
 uint32_t sxw_close_handle(sxw_services *services, uint32_t handle);

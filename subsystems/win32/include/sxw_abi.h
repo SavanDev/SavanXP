@@ -10,7 +10,7 @@
 #ifndef SAVANXP_WIN32_SXW_ABI_H
 #define SAVANXP_WIN32_SXW_ABI_H
 
-#define SXW_ABI_VERSION 10u
+#define SXW_ABI_VERSION 11u
 
 /* ---- Thread environment block (32-bit layout, the fields we fill) ------- */
 
@@ -266,7 +266,103 @@
  * out length). */
 #define SXW_SVC_DRAG_FORMAT 56u
 #define SXW_SVC_DRAG_GET 57u
-#define SXW_SVC_COUNT 58u
+/* Fonts (WP6, docs/userland/WIN32.md, "Text"): the host's TrueType faces,
+ * drawn by libsxfont. gdi32 keeps its 13 px strike for the faces the
+ * interface asks for and takes every other one from here. A font is a host
+ * id, 0 for none. */
+/* (request sxw_font_request, out sxw_font_metrics) -> font id, or 0 when the
+ * host has no face at all. The face is the nearest the host has: the one
+ * named, a metric-compatible one (Arial -> Liberation Sans), or the default
+ * for the pitch and family asked for. */
+#define SXW_SVC_FONT_OPEN 58u
+/* (font) -> 0 */
+#define SXW_SVC_FONT_CLOSE 59u
+/* (font, UTF-16 units, count, out int32[count]) -> 0, or SXW_FAILED: each
+ * unit's advance in pixels, synthetic bold included. */
+#define SXW_SVC_FONT_ADVANCES 60u
+/* (font, codepoint, out sxw_font_glyph, buffer, capacity) -> 0, or
+ * SXW_FAILED. The glyph's coverage, width x height bytes from the top row,
+ * 0 to 255 (only 0 and 255 for a 1-bit font), when it fits in capacity;
+ * out.size says how many bytes it needs. */
+#define SXW_SVC_FONT_GLYPH 61u
+/* (index, out sxw_font_face_entry) -> 0, or SXW_FAILED past the last: the
+ * host's faces, a family's styles together, regular first. */
+#define SXW_SVC_FONT_FACE 62u
+#define SXW_SVC_COUNT 63u
+
+#define SXW_FONT_FACE_UNITS 32u /* LOGFONT's lfFaceName */
+#define SXW_FONT_FULL_UNITS 64u /* ENUMLOGFONTEX's elfFullName */
+
+/* What CreateFontIndirectW asked for; heights as LOGFONT's. */
+typedef struct sxw_font_request {
+    int height;
+    int width;
+    unsigned int weight;
+    unsigned int italic;
+    unsigned int charset;
+    unsigned int pitch_family;
+    unsigned int quality;
+    unsigned short face[SXW_FONT_FACE_UNITS];
+} sxw_font_request;
+
+/* A font at its size, in pixels, as GetTextMetricsW and
+ * GetOutlineTextMetricsW report it (names UTF-16, NUL-terminated). */
+typedef struct sxw_font_metrics {
+    int height, ascent, descent, internal_leading, external_leading;
+    int average_width, maximum_width;
+    unsigned int weight;
+    unsigned int first_char, last_char, default_char, break_char;
+    unsigned int italic;       /* 255 or 0, as TEXTMETRIC's */
+    unsigned int pitch_family; /* tmPitchAndFamily: TMPF_* | FF_* */
+    unsigned int charset;
+    unsigned int ppem;
+    unsigned int em_square;
+    int typo_ascent, typo_descent, typo_line_gap;
+    int cap_height, x_height;
+    int italic_angle;          /* tenths of a degree */
+    int slope_rise, slope_run;
+    int underscore_size, underscore_position;
+    int strikeout_size, strikeout_position;
+    unsigned int fs_selection, fs_type;
+    int mac_ascent, mac_descent, mac_line_gap;
+    unsigned int minimum_ppem;
+    int box[4];                /* left, top, right, bottom */
+    unsigned char panose[12];  /* 10 used */
+    unsigned int code_pages[2];
+    unsigned int smooth;       /* drawn grey where the face asks */
+    unsigned short family[SXW_FONT_FACE_UNITS];
+    unsigned short style[SXW_FONT_FACE_UNITS];
+    unsigned short full[SXW_FONT_FULL_UNITS];
+} sxw_font_metrics;
+
+/* One glyph as drawn: from the pen, left and up to its top row. */
+typedef struct sxw_font_glyph {
+    int left, top;
+    unsigned int width, height;
+    int advance;
+    unsigned int size; /* width * height */
+} sxw_font_glyph;
+
+/* One face of the host, for EnumFontFamiliesExW: its names and what the
+ * enumeration's TEXTMETRIC says, at an em of 32 pixels as Windows XP gives
+ * it there. */
+typedef struct sxw_font_face_entry {
+    unsigned short family[SXW_FONT_FACE_UNITS];
+    unsigned short style[SXW_FONT_FACE_UNITS];
+    unsigned short full[SXW_FONT_FULL_UNITS];
+    unsigned int weight;
+    unsigned int italic;       /* 255 or 0 */
+    unsigned int pitch_family; /* tmPitchAndFamily */
+    unsigned int lf_pitch_family; /* lfPitchAndFamily */
+    int height, ascent, descent, internal_leading, external_leading;
+    int average_width, maximum_width;
+    int lf_width;              /* the LOGFONT's lfWidth: the average at an em of 32 */
+    unsigned int first_char, last_char;
+    unsigned int em_square, cell_height, average_units;
+    unsigned int code_pages[2];
+    unsigned int unicode_ranges[4];
+    unsigned int ntm_flags;    /* what the file adds to ntmFlags: NTM_DSIG, NTM_TT_OPENTYPE */
+} sxw_font_face_entry;
 
 #define SXW_CLIPBOARD_FORMATS 8u
 #define SXW_CLIPBOARD_NAME 64u /* NUL included */

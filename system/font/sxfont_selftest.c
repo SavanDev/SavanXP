@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "savanxp/font.h"
+#include "sxfont/font.h"
 #include "sxgfx/pixels.h"
 
 struct context {
@@ -226,21 +226,21 @@ static void check_metrics(struct context *c, struct sx_font_engine *engine, cons
     sx_font_face_close(sans);
 }
 
-/* What gasp says, per size: Liberation Sans 1-bit and hinted from 9 to 17
- * ppem, grey around it, unhinted up to 8; Liberation Serif's own ranges
- * start at 10. */
+/* What gasp says, per size: Liberation Sans 1-bit from 9 to 17 ppem, grey
+ * around it; Liberation Serif's own ranges start at 10. Hinted at every
+ * size, as Windows XP draws them even where gasp leaves GRIDFIT clear. */
 static void check_render_modes(struct context *c, struct sx_font_engine *engine, const struct file *files) {
     static const struct {
         unsigned file, ppem, flags, render, hinted;
     } kCases[] = {
-        {SANS, 8, 0, SX_FONT_RENDER_GRAY, 0},
+        {SANS, 8, 0, SX_FONT_RENDER_GRAY, 1},
         {SANS, 9, 0, SX_FONT_RENDER_MONO, 1},
         {SANS, 13, 0, SX_FONT_RENDER_MONO, 1},
         {SANS, 17, 0, SX_FONT_RENDER_MONO, 1},
         {SANS, 18, 0, SX_FONT_RENDER_GRAY, 1},
         {SANS, 96, 0, SX_FONT_RENDER_GRAY, 1},
         {SANS_BOLD, 10, 0, SX_FONT_RENDER_GRAY, 1},
-        {SERIF, 10, 0, SX_FONT_RENDER_GRAY, 0},
+        {SERIF, 10, 0, SX_FONT_RENDER_GRAY, 1},
         {SERIF, 11, 0, SX_FONT_RENDER_MONO, 1},
         {SANS, 30, SX_FONT_FORCE_MONO, SX_FONT_RENDER_MONO, 1},
         {SANS, 6, SX_FONT_FORCE_MONO, SX_FONT_RENDER_MONO, 1},

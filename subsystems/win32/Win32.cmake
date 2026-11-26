@@ -15,6 +15,8 @@ set(SAVANXP_WIN32_FIXTURES "$ENV{SAVANXP_WIN32_FIXTURES}" CACHE PATH
     "Folder holding the user's Windows XP sol.exe and cards.dll (optional)")
 set(SAVANXP_WIN32_WORDPAD "$ENV{SAVANXP_WIN32_WORDPAD}" CACHE PATH
     "Folder holding the user's Windows XP wordpad.exe, with mfc42u.dll and mfc42loc.dll in system32/ (optional)")
+set(SAVANXP_WIN32_TEXT "$ENV{SAVANXP_WIN32_TEXT}" CACHE PATH
+    "Folder holding Windows XP's x.out for text.exe and the user's XP fonts in fonts/ (optional)")
 
 set(SAVANXP_WIN32_ROOT "${CMAKE_SOURCE_DIR}/subsystems/win32")
 
@@ -228,7 +230,7 @@ sxw_image(NAME advapi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77dd0000
     DEF "${SXW_advapi32_DEF}" LIBS ntdll)
 sxw_image(NAME gdi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f10000
     SOURCES "${SXW_DLLS}/gdi32/gdi32.c" "${SXW_DLLS}/gdi32/raster.c" "${SXW_DLLS}/gdi32/dib.c"
-            "${SXW_DLLS}/common/region.c"
+            "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/codepage.c"
             "${SXW_DLLS}/common/memory.c" ${SXW_gdi32_DECLARED}
     DEF "${SXW_gdi32_DEF}" LIBS ntdll)
 sxw_image(NAME user32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7e410000
@@ -324,6 +326,9 @@ sxw_image(NAME controls.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENT
     SOURCES "${SXW_FX}/controls/controls.c" LIBS user32 gdi32 kernel32)
 sxw_image(NAME clip.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/clip/clip.c" LIBS user32 gdi32 shell32 kernel32)
+# WP6: text and pictures in gdi32.
+sxw_image(NAME text.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/text/text.c" LIBS user32 gdi32 kernel32)
 sxw_image(NAME nosuch.dll KIND dll DIR "${SXW_STUBS}"
     SOURCES "${SXW_FX}/missing/stub.c" DEF "${SXW_FX}/missing/nosuch.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_STUBS}"
@@ -369,6 +374,7 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SXW_FIXTURES}/files.exe" "${SXW_FIXTURES}/memory.exe" "${SXW_FIXTURES}/locale.exe"
                 "${SXW_FIXTURES}/threads.exe" "${SXW_FIXTURES}/tlog.dll" "${SXW_FIXTURES}/tquiet.dll"
                 "${SXW_FIXTURES}/hooks.exe" "${SXW_FIXTURES}/controls.exe" "${SXW_FIXTURES}/clip.exe"
+                "${SXW_FIXTURES}/text.exe"
                 "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${SXW_FX}/expected" "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/expected")
@@ -389,10 +395,20 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
         "${SAVANXP_WIN32_ROOT}/loader/files.c"
         "${SAVANXP_WIN32_ROOT}/loader/threads.c"
         "${SAVANXP_WIN32_ROOT}/loader/clipboard.c"
+        "${SAVANXP_WIN32_ROOT}/loader/fonts.c"
         "${SAVANXP_WIN32_ROOT}/loader/registry.c"
-        "${SAVANXP_WIN32_ROOT}/pe/pe.c")
+        "${SAVANXP_WIN32_ROOT}/pe/pe.c"
+        "${CMAKE_SOURCE_DIR}/system/font/sxfont.c")
     target_include_directories(savanxp-win32-harness PRIVATE
         "${SAVANXP_WIN32_ROOT}/include" "${SAVANXP_WIN32_ROOT}/pe" "${SAVANXP_WIN32_ROOT}/loader")
+    # sxfont/font.h and sxgfx/pixels.h, after the host's own headers: the
+    # platform's directory also holds headers named as the C library's.
+    target_compile_options(savanxp-win32-harness PRIVATE "SHELL:-idirafter ${CMAKE_SOURCE_DIR}/include")
+    # The font services draw with libsxfont over the host's FreeType build,
+    # the same sources winhost links (docs/desktop/FONT_LIBRARY.md).
+    target_link_libraries(savanxp-win32-harness PRIVATE freetype_host)
+    target_compile_definitions(savanxp-win32-harness PRIVATE
+        "SXW_HARNESS_FONT_DIRS=\"${CMAKE_SOURCE_DIR}/assets/fonts/liberation\", \"${CMAKE_SOURCE_DIR}/assets/desktop/fonts\"")
     set_target_properties(savanxp-win32-harness PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES)
     target_compile_options(savanxp-win32-harness PRIVATE -Wall -Wextra -Werror)
     add_dependencies(savanxp-win32-harness savanxp_win32)
@@ -425,6 +441,14 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
                 --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}"
                 --expected "${SXW_FX}/expected" --wordpad "${SAVANXP_WIN32_WORDPAD}")
     set_tests_properties(win32-wordpad-test PROPERTIES SKIP_RETURN_CODE 77)
+    # text.exe with the user's own Windows XP fonts, against what XP printed;
+    # skipped without them.
+    add_test(NAME win32-text-xp-test
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/host/win32_harness_test.py"
+                --harness "$<TARGET_FILE:savanxp-win32-harness>"
+                --system32 "${SXW_SYSTEM32}" --fixtures "${SXW_FIXTURES}"
+                --expected "${SXW_FX}/expected" --text "${SAVANXP_WIN32_TEXT}")
+    set_tests_properties(win32-text-xp-test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # The shell's readers of a .exe's icon and version strings

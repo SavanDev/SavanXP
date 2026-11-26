@@ -1,5 +1,5 @@
 /* libsxfont: scalable TrueType fonts over FreeType
- * (savanxp/font.h, docs/desktop/FONT_LIBRARY.md).
+ * (sxfont/font.h, docs/desktop/FONT_LIBRARY.md).
  *
  * Memory only and call-free: FreeType is built without file streams
  * (FT_CONFIG_OPTION_DISABLE_STREAM_SUPPORT) and gets its memory from the
@@ -7,7 +7,7 @@
  * render mode from gasp, the metrics Windows reports, the synthetic bold,
  * the choice of face -- is the document's, section by section. */
 
-#include "savanxp/font.h"
+#include "sxfont/font.h"
 #include "sxgfx/pixels.h"
 
 #include <stdlib.h>
@@ -30,6 +30,8 @@ struct sx_font_engine {
     struct sx_font_face *faces;
 };
 
+#define VDMX_SIZES 256u
+
 struct sx_font_face {
     struct sx_font_engine *engine;
     struct sx_font_face *next;
@@ -37,6 +39,12 @@ struct sx_font_face {
     struct sx_font_face_info info;
     int symbol;
     struct sx_font_strike *strikes;
+    /* The VDMX table's extents for a 1:1 aspect, by ppem: the ascent and
+     * descent Windows gives a font at that size, ahead of the scaled win
+     * metrics (Arial at 8 ppem is 8 + 2, not 7 + 2). */
+    uint8_t vdmx_known[VDMX_SIZES / 8u];
+    int16_t vdmx_max[VDMX_SIZES];
+    int16_t vdmx_min[VDMX_SIZES];
 };
 
 /* The glyph cache: an open-addressed table of glyphs and an arena of their
@@ -213,15 +221,74 @@ static int has_table(FT_Face ft, FT_ULong tag) {
     return FT_Load_Sfnt_Table(ft, tag, 0, NULL, &length) == FT_Err_Ok && length > 0;
 }
 
+static unsigned be16(const uint8_t *p) {
+    return ((unsigned)p[0] << 8) | p[1];
+}
+
+/* Reads VDMX: the first ratio range that holds a 1:1 aspect (or matches any
+ * aspect), and its group's records by yPelHeight. */
+static void read_vdmx(struct sx_font_face *face) {
+    FT_ULong length = 0;
+    FT_ULong tag = FT_MAKE_TAG('V', 'D', 'M', 'X');
+    if (FT_Load_Sfnt_Table(face->ft, tag, 0, NULL, &length) != FT_Err_Ok || length < 6) return;
+    uint8_t *table = malloc(length);
+    if (table == NULL) return;
+    if (FT_Load_Sfnt_Table(face->ft, tag, 0, table, &length) != FT_Err_Ok) {
+        free(table);
+        return;
+    }
+    unsigned ratios = be16(table + 4);
+    unsigned offsets = 6u + ratios * 4u;
+    if ((FT_ULong)offsets + ratios * 2u > length) {
+        free(table);
+        return;
+    }
+    for (unsigned r = 0; r < ratios; ++r) {
+        const uint8_t *range = table + 6u + r * 4u;
+        unsigned x = range[1], y_start = range[2], y_end = range[3];
+        if (x != 0 && (y_start > x || y_end < x)) continue;
+        unsigned group = be16(table + offsets + r * 2u);
+        if ((FT_ULong)group + 4u > length) break;
+        unsigned records = be16(table + group);
+        if ((FT_ULong)group + 4u + records * 6u > length) break;
+        for (unsigned i = 0; i < records; ++i) {
+            const uint8_t *e = table + group + 4u + i * 6u;
+            unsigned ppem = be16(e);
+            if (ppem >= VDMX_SIZES) continue;
+            face->vdmx_known[ppem / 8u] |= (uint8_t)(1u << (ppem % 8u));
+            face->info.vdmx = 1;
+            face->vdmx_max[ppem] = (int16_t)be16(e + 2);
+            face->vdmx_min[ppem] = (int16_t)be16(e + 4);
+        }
+        break;
+    }
+    free(table);
+}
+
+/* The ascent and descent at `ppem` from VDMX, when it has them. */
+static int vdmx_extents(const struct sx_font_face *face, unsigned ppem, int *ascent, int *descent) {
+    if (ppem >= VDMX_SIZES || (face->vdmx_known[ppem / 8u] & (1u << (ppem % 8u))) == 0) return 0;
+    *ascent = face->vdmx_max[ppem];
+    *descent = -face->vdmx_min[ppem];
+    return 1;
+}
+
 static void fill_info(struct sx_font_face *face) {
     FT_Face ft = face->ft;
     struct sx_font_face_info *info = &face->info;
     memset(info, 0, sizeof *info);
     read_name(ft, TT_NAME_ID_FONT_FAMILY, ft->family_name, info->family, sizeof info->family);
     read_name(ft, TT_NAME_ID_FONT_SUBFAMILY, ft->style_name, info->style, sizeof info->style);
+    read_name(ft, TT_NAME_ID_FULL_NAME, info->family, info->full_name, sizeof info->full_name);
+    info->x_min = (int)ft->bbox.xMin;
+    info->y_min = (int)ft->bbox.yMin;
+    info->x_max = (int)ft->bbox.xMax;
+    info->y_max = (int)ft->bbox.yMax;
     info->faces_in_file = (unsigned)ft->num_faces;
     info->glyph_count = (unsigned)ft->num_glyphs;
     info->units_per_em = ft->units_per_EM;
+    const TT_Header *head = FT_Get_Sfnt_Table(ft, FT_SFNT_HEAD);
+    if (head != NULL) info->lowest_ppem = head->Lowest_Rec_PPEM;
 
     const TT_OS2 *os2 = FT_Get_Sfnt_Table(ft, FT_SFNT_OS2);
     const TT_HoriHeader *hhea = FT_Get_Sfnt_Table(ft, FT_SFNT_HHEA);
@@ -231,6 +298,8 @@ static void fill_info(struct sx_font_face *face) {
         info->hhea_descent = hhea->Descender;
         info->hhea_line_gap = hhea->Line_Gap;
         info->max_advance = hhea->advance_Width_Max;
+        info->caret_slope_rise = hhea->caret_Slope_Rise;
+        info->caret_slope_run = hhea->caret_Slope_Run;
     }
     if (os2 != NULL && os2->version != 0xffff) {
         info->weight = os2->usWeightClass;
@@ -244,6 +313,21 @@ static void fill_info(struct sx_font_face *face) {
             info->code_page_range[1] = (uint32_t)os2->ulCodePageRange2;
         }
         memcpy(info->panose, os2->panose, sizeof info->panose);
+        info->typo_ascender = os2->sTypoAscender;
+        info->typo_descender = os2->sTypoDescender;
+        info->typo_line_gap = os2->sTypoLineGap;
+        info->fs_selection = os2->fsSelection;
+        info->fs_type = os2->fsType;
+        info->first_char = os2->usFirstCharIndex;
+        info->unicode_range[0] = (uint32_t)os2->ulUnicodeRange1;
+        info->unicode_range[1] = (uint32_t)os2->ulUnicodeRange2;
+        info->unicode_range[2] = (uint32_t)os2->ulUnicodeRange3;
+        info->unicode_range[3] = (uint32_t)os2->ulUnicodeRange4;
+        info->last_char = os2->usLastCharIndex;
+        if (os2->version >= 2) {
+            info->cap_height = os2->sCapHeight;
+            info->x_height = os2->sxHeight;
+        }
         if (os2->fsSelection & 0x0001u) info->flags |= SX_FONT_ITALIC;
         if (os2->fsSelection & 0x0020u) info->flags |= SX_FONT_BOLD;
     } else {
@@ -253,16 +337,23 @@ static void fill_info(struct sx_font_face *face) {
         info->avg_char_width = info->max_advance / 2;
         info->strikeout_position = info->win_ascent / 3;
         info->strikeout_size = (int)info->units_per_em / 20;
+        info->typo_ascender = info->hhea_ascent;
+        info->typo_descender = info->hhea_descent;
+        info->typo_line_gap = info->hhea_line_gap;
+        info->first_char = 0x20;
+        info->last_char = 0xff;
     }
     if (info->weight == 0) info->weight = 400;
     if (ft->style_flags & FT_STYLE_FLAG_ITALIC) info->flags |= SX_FONT_ITALIC;
     if (ft->style_flags & FT_STYLE_FLAG_BOLD) info->flags |= SX_FONT_BOLD;
     if (FT_IS_FIXED_WIDTH(ft)) info->flags |= SX_FONT_FIXED_PITCH;
     if (has_table(ft, TTAG_fpgm) || has_table(ft, TTAG_prep)) info->flags |= SX_FONT_HINTED;
+    if (has_table(ft, FT_MAKE_TAG('D', 'S', 'I', 'G'))) info->flags |= SX_FONT_SIGNED;
     if (face->symbol) info->flags |= SX_FONT_SYMBOL;
     if (post != NULL) {
         info->underline_position = post->underlinePosition;
         info->underline_thickness = post->underlineThickness;
+        info->italic_angle = (int32_t)post->italicAngle;
     }
 }
 
@@ -305,6 +396,7 @@ int sx_font_face_open(struct sx_font_engine *engine, const void *data, size_t si
     }
     face->engine = engine;
     fill_info(face);
+    read_vdmx(face);
     face->next = engine->faces;
     engine->faces = face;
     *out = face;
@@ -339,7 +431,10 @@ unsigned sx_font_glyph_index(const struct sx_font_face *face, uint32_t codepoint
     return glyph;
 }
 
-static int cell_height_at(const struct sx_font_face_info *info, unsigned ppem) {
+static int cell_height_at(const struct sx_font_face *face, unsigned ppem) {
+    const struct sx_font_face_info *info = &face->info;
+    int ascent, descent;
+    if (vdmx_extents(face, ppem, &ascent, &descent)) return ascent + descent;
     return (int)(scale_round(info->win_ascent, ppem, info->units_per_em) +
                  scale_round(info->win_descent, ppem, info->units_per_em));
 }
@@ -349,6 +444,25 @@ int sx_font_ppem_for_cell_height(const struct sx_font_face *face, unsigned heigh
     *ppem = 0;
     if (face == NULL || height == 0) return SX_FONT_ERROR_ARGUMENT;
     const struct sx_font_face_info *info = &face->info;
+    /* With VDMX, its records in order: the first whose extents add up to
+     * the height, or else the last before one that passes it (Windows XP's
+     * choice for every Arial, Times New Roman and Courier New cell in
+     * text.exe; Wine reads VDMX the same way). */
+    unsigned under = 0;
+    for (unsigned candidate = 1; candidate < VDMX_SIZES; candidate++) {
+        int ascent, descent;
+        if (!vdmx_extents(face, candidate, &ascent, &descent)) continue;
+        if (ascent + descent == (int)height) {
+            *ppem = candidate;
+            return SX_FONT_OK;
+        }
+        if (ascent + descent > (int)height) {
+            if (under == 0) break;
+            *ppem = under;
+            return SX_FONT_OK;
+        }
+        under = candidate;
+    }
     long cell = (long)info->win_ascent + info->win_descent;
     if (cell <= 0) return SX_FONT_ERROR_FORMAT;
     unsigned guess = scale_round((long)height, info->units_per_em, (unsigned)cell);
@@ -356,7 +470,7 @@ int sx_font_ppem_for_cell_height(const struct sx_font_face *face, unsigned heigh
     int best_distance = 0;
     for (unsigned candidate = guess > 1 ? guess - 1 : 1; candidate <= guess + 1; candidate++) {
         if (candidate < 1 || candidate > SX_FONT_MAX_PPEM) continue;
-        int distance = cell_height_at(info, candidate) - (int)height;
+        int distance = cell_height_at(face, candidate) - (int)height;
         if (distance < 0) distance = -distance;
         if (best == 0 || distance < best_distance) {
             best = candidate;
@@ -370,19 +484,20 @@ int sx_font_ppem_for_cell_height(const struct sx_font_face *face, unsigned heigh
 
 /* --- Strikes ------------------------------------------------------------- */
 
-/* Without a gasp table, the ranges Liberation Sans ships: grey and not
- * grid-fitted up to 8 ppem, 1-bit and hinted up to 17, grey and hinted
- * above. */
+/* Grid-fitted at every size, and grey where gasp asks for it: what Windows
+ * XP's standard smoothing does. Its rasterizer runs the hinting even where
+ * gasp leaves GRIDFIT clear (Liberation's up to 8 ppem), and the advances
+ * GDI reports there are the hinted ones (text.exe, docs/desktop/
+ * FONT_LIBRARY.md, "Smoothing"). Without a gasp table, the ranges
+ * Liberation Sans ships: grey up to 8 ppem and from 18, 1-bit between. */
 static void choose_rendering(struct sx_font_strike *strike) {
     unsigned ppem = strike->options.ppem;
     unsigned flags = strike->options.flags;
     FT_Int gasp = FT_Get_Gasp(strike->face->ft, ppem);
-    int gridfit, gray;
+    int gridfit = 1, gray;
     if (gasp == FT_GASP_NO_TABLE) {
-        gridfit = ppem > 8;
         gray = ppem <= 8 || ppem >= 18;
     } else {
-        gridfit = (gasp & FT_GASP_DO_GRIDFIT) != 0;
         gray = (gasp & FT_GASP_DO_GRAY) != 0;
     }
     if (flags & SX_FONT_FORCE_MONO) {
@@ -407,6 +522,7 @@ static void compute_metrics(struct sx_font_strike *strike) {
     m->ppem = ppem;
     m->ascent = (int)scale_round(info->win_ascent, ppem, em);
     m->descent = (int)scale_round(info->win_descent, ppem, em);
+    (void)vdmx_extents(strike->face, ppem, &m->ascent, &m->descent);
     m->height = m->ascent + m->descent;
     m->internal_leading = m->height - (int)ppem;
     if (m->internal_leading < 0) m->internal_leading = 0;
@@ -544,6 +660,12 @@ static int load_glyph(struct sx_font_strike *strike, unsigned glyph) {
 static int slot_advance(const struct sx_font_strike *strike) {
     FT_Pos advance = strike->face->ft->glyph->advance.x;
     int pixels = (int)((advance + 32) >> 6);
+    /* A fixed-pitch face keeps one advance at every size, hinted or not,
+     * as Windows has it: Courier New at 16 ppem is 10 pixels for every
+     * glyph, where hinting would make some 9. */
+    const struct sx_font_face_info *info = &strike->face->info;
+    if ((info->flags & SX_FONT_FIXED_PITCH) != 0 && advance > 0)
+        pixels = (int)scale_round(info->max_advance, strike->options.ppem, info->units_per_em);
     return pixels + ((strike->options.flags & SX_FONT_SYNTH_BOLD) != 0);
 }
 

@@ -8,6 +8,9 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Win32 programs draw TrueType text: `gdi32` over `libsxfont` through `winhost`, with Windows XP's metrics.** Any size,
+  style and charset from `/system/fonts` and `C:\windows\fonts`: `ExtTextOutW`, `GetCharWidthW`, `GetOutlineTextMetricsW`,
+  `EnumFontFamiliesExW`, `StretchDIBits`, `CreatePen`; fixture `text.exe`. [Text](docs/userland/WIN32.md#user32-and-gdi32).
 - **Display Properties gains an Appearance tab: interface fonts and font smoothing, applied live (SDK 2.0).** Face and
   size for window text and title bars in `appearance.cfg`; Effects moved there. `sxnwm_settings_changed`,
   `gfx_settings_changed`, `SAVANXP_WM_EVENT_SETTINGS`; `appearance-smoke`. [Appearance](docs/desktop/DISPLAY_PROPERTIES.md#appearance).
@@ -305,6 +308,9 @@ changes not released yet; each released version has its own file in
 
 ### Changed
 
+- **`libsxfont` hints at every size and reads `VDMX`, as Windows XP does; its header is `sxfont/font.h`.** A fixed-pitch
+  face keeps one advance; `sx_font_face_info` adds the caret slope, `vdmx` and `SX_FONT_SIGNED`. `savanxp/font.h` still
+  includes it. [Metrics](docs/desktop/FONT_LIBRARY.md#metrics-as-windows-reports-them).
 - **Win32 programs run in English (United States), LCID 0x0409, as the rest of the system.** `GetLocaleInfoW`, the
   date and time formats and `CompareStringW` give an English Windows XP's answers; ñ sorts as n with a tilde.
   [The locale](docs/userland/WIN32.md#the-locale).

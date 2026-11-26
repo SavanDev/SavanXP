@@ -38,6 +38,16 @@ and dumps the first window it shows (WIN32_WORDPAD_ROADMAP.md, WP1): every
 import must resolve, MFC and WordPad must initialize, and the program must be
 waiting for input with a window up. Nothing of it is compared with an image:
 it is Microsoft's text. Without the files it exits 77.
+
+"text.exe liberation" runs with every other fixture: byte for byte against
+text-savanxp.out, the harness's own, which win32test holds winhost to inside
+SavanXP; and against expected/text-liberation.out, Windows XP RTM's, through
+win32_text_compare:
+metrics, widths, enumeration and pictures equal, the ink counts within a few
+pixels (docs/userland/WIN32.md, "Text"). With --text FOLDER it runs plain
+text.exe with the user's own Windows XP fonts from FOLDER/fonts and compares
+it with FOLDER/x.out, what XP printed for it, a pixel of slack per glyph;
+without them it exits 77.
 """
 
 import argparse
@@ -49,6 +59,8 @@ import sys
 import tempfile
 
 import hashlib
+
+import win32_text_compare
 
 STARTUP_ARGUMENTS = ["alpha", "two words", "3"]
 
@@ -91,6 +103,7 @@ CASES = [
     ("clip.exe", ["put"], "clip-put.out", 0x0, None, False, None),
     ("clip.exe", ["get"], "clip-get.out", 0x0, None, False, None),
     ("clip.exe", ["drop"], "clip-drop.out", 0x0, None, False, "clip/drop.txt"),
+    ("text.exe", ["liberation"], "text-savanxp.out", 0x0, None, False, None),
 ]
 
 # The fixtures that leave the clipboard to the next run: they share one
@@ -167,6 +180,37 @@ def run_solitaire(args, expected_dir):
     return 0
 
 
+def run_text(args, arguments, fonts, expected, widths, substitutes, label):
+    """text.exe through the harness, compared with what Windows XP printed."""
+    command = [args.harness, "--dlls", args.system32]
+    for folder in fonts:
+        command += ["--fonts", str(folder)]
+    command += [f"{args.fixtures}/text.exe"] + arguments
+    with tempfile.TemporaryDirectory() as scratch:
+        result = subprocess.run(command, capture_output=True, timeout=60, cwd=scratch)
+    errors = result.stderr.decode(errors="replace").splitlines()
+    problems = []
+    if result.returncode != 0 or "win32: exit status 0x00000000" not in errors:
+        problems.append(f"status {result.returncode} {errors[-3:]!r}")
+    problems += win32_text_compare.compare(expected.read_text(encoding="latin-1"),
+                                           result.stdout.decode("latin-1"), widths=widths, substitutes=substitutes)
+    if problems:
+        print(f"FAIL {label}: " + "; ".join(problems[:10]))
+        return 1
+    print(f"ok   {label}")
+    return 0
+
+
+def run_text_xp(args):
+    folder = pathlib.Path(args.text) if args.text else None
+    if folder is None or not (folder / "x.out").is_file() or not list((folder / "fonts").glob("*.ttf")):
+        print("skipped: needs Windows XP's x.out and the user's XP fonts in SAVANXP_WIN32_TEXT")
+        return 77
+    liberation = pathlib.Path(__file__).resolve().parents[2] / "assets/fonts/liberation"
+    return run_text(args, [], [folder / "fonts", liberation], folder / "x.out", 1, False,
+                    "text.exe with the XP fonts -> x.out")
+
+
 def run_wordpad(args):
     folder = pathlib.Path(args.wordpad) if args.wordpad else None
     files = ["wordpad.exe", "system32/mfc42u.dll", "system32/mfc42loc.dll"]
@@ -213,6 +257,7 @@ def main():
     parser.add_argument("--cards", help="the folder holding the user's cards.dll")
     parser.add_argument("--solitaire", help="the folder holding the user's sol.exe and cards.dll")
     parser.add_argument("--wordpad", help="the folder holding the user's wordpad.exe and system32/mfc42u.dll")
+    parser.add_argument("--text", help="the folder holding XP's x.out and the user's XP fonts in fonts/")
     args = parser.parse_args()
     expected_dir = pathlib.Path(args.expected)
     if args.cards is not None:
@@ -221,6 +266,8 @@ def main():
         return run_solitaire(args, expected_dir)
     if args.wordpad is not None:
         return run_wordpad(args)
+    if args.text is not None:
+        return run_text_xp(args)
 
     failures = 0
     with tempfile.TemporaryDirectory() as scratch:
@@ -261,6 +308,8 @@ def main():
                 print(f"FAIL {label}: " + "; ".join(problems))
             else:
                 print(f"ok   {label}")
+    failures += run_text(args, ["liberation"], [], expected_dir / "text-liberation.out", 0, True,
+                         "text.exe liberation -> text-liberation.out")
     return 1 if failures else 0
 
 

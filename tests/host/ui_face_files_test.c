@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "savanxp/font.h"
+#include "sxfont/font.h"
 #include "sxgfx/pixels.h"
 
 #include "gfx_font_noto.inc"

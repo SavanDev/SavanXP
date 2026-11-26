@@ -1,6 +1,7 @@
 # libsxfont: scalable fonts at run time
 
-`libsxfont.so.0.4`, declared in `savanxp/font.h`, draws TrueType fonts at
+`libsxfont.so.0.4`, declared in `sxfont/font.h` (`include/sxfont/font.h`;
+the POSIX SDK's `savanxp/font.h` includes it), draws TrueType fonts at
 any size. It is the system library the
 [WordPad roadmap](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#d1-real-fonts-rasterized-at-run-time-by-a-system-library-2026-11-21)
 asked for before WP6: a word processor needs text from 8 to 72 points, in
@@ -87,15 +88,19 @@ unhinted.
 
 ### Smoothing: what gasp says
 
-Each strike chooses 1-bit or grey, and whether to grid-fit, from the face's
-`gasp` table at its size, as Windows XP's standard font smoothing did:
+Each strike is hinted at every size and chooses 1-bit or grey from the
+face's `gasp` table at its size, as Windows XP's standard font smoothing
+does:
 
-- **`GASP_GRIDFIT` set:** hinted. Not set: drawn from the bare outline.
+- **Hinting** runs whatever `GASP_GRIDFIT` says: XP's rasterizer runs the
+  instructions even where gasp leaves it clear (Liberation's up to 8 ppem),
+  and the advances `GetCharWidthW` reports there are the hinted ones
+  (`text.exe`, [WIN32.md](../userland/WIN32.md#user32-and-gdi32), "Text").
 - **`GASP_DOGRAY` set:** grey, coverage 0 to 255. Not set: 1-bit, every
   byte `0x00` or `0xff`.
-- **No gasp table:** the ranges Liberation Sans ships: grey and unhinted up
-  to 8 ppem, 1-bit and hinted from 9 to 17, grey and hinted from 18. That
-  is SavanXP's choice for such a face, not a measurement of Windows.
+- **No gasp table:** the ranges Liberation Sans ships: grey up to 8 ppem,
+  1-bit from 9 to 17, grey from 18. That is SavanXP's choice for such a
+  face, not a measurement of Windows.
 
 So text at reading sizes is as crisp as the desktop's: Liberation Sans is
 1-bit from 9 to 17 ppem, which covers 7 to 12 points at 96 DPI, and grey
@@ -112,21 +117,30 @@ There is no subpixel (ClearType) rendering:
 A strike's metrics are what `GetTextMetrics` would say for that size, each
 scaled from font units and rounded half up:
 
-- **Ascent and descent** come from OS/2's `usWinAscent` and
-  `usWinDescent`, not from `hhea`: GDI's cell is those two, and programs
-  size lines from it. The height is their sum; the internal leading is the
-  height less the em.
+- **Ascent and descent** come from the face's `VDMX` record for the size
+  when it has one (Arial at 8 ppem is 8 and 2, where the scaled metrics
+  give 7 and 2), else from OS/2's `usWinAscent` and `usWinDescent`, not
+  from `hhea`: GDI's cell is those two, and programs size lines from it.
+  The height is their sum; the internal leading is the height less the em.
+  `sx_font_ppem_for_cell_height` reads `VDMX` the same way, and
+  `sx_font_face_info` says whether the face has it (`vdmx`), its caret
+  slope and whether the file is signed (`SX_FONT_SIGNED`).
 - **External leading** is the part of `hhea`'s line gap that the win
   metrics did not already take: `lineGap - ((winAscent + winDescent) -
   (ascender - descender))`, at least 0.
 - **Average and largest width** come from `xAvgCharWidth` and
   `advanceWidthMax`; underline from `post`, strikeout from OS/2, each at
   least a pixel thick.
+- **A fixed-pitch face** (`post`'s `isFixedPitch`) has one advance,
+  `advanceWidthMax` scaled, whatever the hinting does to each glyph:
+  Courier New at 16 ppem is 10 pixels for every glyph on Windows XP.
 
-`gdi32`'s present metrics follow the same rounding
-([WIN32.md](../userland/WIN32.md#user32-and-gdi32), "Text"). Whether every
-number equals Windows XP's at every size is measured in WP6 against the
-user's own fonts.
+`gdi32` adds what is GDI's own on top (the 16.16 scale, the positive
+heights, the outline metrics), measured in WP6 with `text.exe`: with
+Liberation every metric equals Windows XP RTM's at every size it asks for;
+with the user's own Arial, Times New Roman and Courier New, every metric
+does and a few glyphs' advances differ by a pixel
+([WIN32.md](../userland/WIN32.md#user32-and-gdi32), "Text").
 
 ### Synthetic bold and italic
 
@@ -197,14 +211,17 @@ else on the disk where it is, as for external programs in `/bin`. Liberation
 ## Win32: through winhost (WP6)
 
 `gdi32` is 32-bit guest code and `libsxfont` is an x86-64 library, so
-`gdi32` will not link it. WP6 adds `winhost` services, shared with the
-harness in `loader/services.c` like the others, that open a face, a strike
-and a glyph on the host side and copy the coverage into guest memory;
-`gdi32` keeps a cache of its own so that a line of text is not a service
-call per character. The harness links `freetype_host`, the same sources
-built for Linux, so a fixture gives the same pixels in both. One FreeType,
-built once per host architecture, rather than a second build for
-`i686-pc-windows-msvc` inside `gdi32`.
+`gdi32` does not link it. `winhost` links `sxfont.c` and FreeType
+statically and serves it to the guest (`loader/fonts.c`, services 58 to
+62, shared with the harness like the others): it keeps a catalog of the
+faces in `/system/fonts` and `C:\windows\fonts`, opens a strike for a
+`LOGFONTW`, and copies advances and a glyph's coverage into guest memory;
+`gdi32` caches each font's advances so that measuring a line is not a
+service call per character. The harness links `freetype_host`, the same
+sources built for Linux, so a fixture gives the same pixels in both. One
+FreeType, built once per host architecture, rather than a second build for
+`i686-pc-windows-msvc` inside `gdi32`. The coverage stays linear here;
+`gdi32` blends it in linear light as XP does.
 
 ## The configuration
 
@@ -262,7 +279,8 @@ a SUN program that maps `libsxfont.so.0.4` and reads the same files from
 
 - **Kerning and shaping.** `GetKerningPairs` and complex scripts are later
   needs; Uniscribe never loaded for WordPad's Latin text.
-- **Subpixel (ClearType) rendering**, and gamma: coverage is linear.
+- **Subpixel (ClearType) rendering.** The SUN toolkit's text blends
+  coverage linearly; only `gdi32` corrects for gamma.
 - **Formats beyond TrueType** (CFF, Type 1, WOFF, `.fon`), and variable and
   colour fonts.
 - **A catalog that scans directories.** The library opens no file, so each

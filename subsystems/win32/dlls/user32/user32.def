@@ -196,6 +196,8 @@ EXPORTS
     ShowScrollBar
     ShowWindow
     SxwDialogBoxIndirectParamW
+    SystemParametersInfoA
+    SystemParametersInfoW
     TrackPopupMenu
     TranslateAcceleratorW
     TranslateMessage

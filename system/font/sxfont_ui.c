@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "savanxp/font.h"
+#include "sxfont/font.h"
 #include "sxgfx/pixels.h"
 
 /* Weak: a static program links this unit without libsxfont, and then these

@@ -1,0 +1,1159 @@
+text.exe: screen 32 bits, 96 dpi
+font smoothing: yes 1 yes 1
+font: [Liberation Sans] regular -8
+  face: 16 [Liberation Sans]
+  tm: 9 7 2 1 0 5 15 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  2 3 3 4 4 7 5 2 3 3 3 5 2 3 2 2 4 4 4 4 4 4 4 4 4 4 2 2 5 5 5 4 8 5 5 6 6 5 5 6 6 2 4 5 4 7 6 6 5 6 6 5 5 6 5 7 5 5 5 2 2 2 3 4 3 4 4 4 4 4 2 5 4 2 2 3 2 6 4 4 4 5 3 4 2 4 3 5 3 3 4 3 3 3 5
+  extent:  192 9
+  otm:  2048 6 -2 1 4 2 0 1 0 1 0 0 2 64 0 7 -2 0 8 -4 8 10 -2 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular -11
+  face: 16 [Liberation Sans]
+  tm: 12 10 2 1 0 6 20 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  3 2 4 6 6 10 7 2 4 4 4 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 3 3 6 6 6 6 11 8 7 7 7 6 6 8 7 2 5 7 6 8 7 8 6 8 7 7 6 7 8 10 7 8 7 3 3 3 5 6 4 6 6 6 6 6 4 6 6 2 2 5 2 8 6 6 6 6 4 6 3 6 6 10 6 6 6 4 2 4 6
+  extent:  287 12
+  otm:  2048 8 -2 2 6 3 0 1 0 1 0 1 3 64 0 10 -2 0 8 -6 11 14 -3 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular -13
+  face: 16 [Liberation Sans]
+  tm: 15 12 3 2 0 8 24 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  4 3 5 7 7 12 9 2 4 4 5 8 4 4 4 4 7 7 7 7 7 7 7 7 7 7 4 4 8 8 8 7 13 9 9 9 9 9 8 10 9 3 6 9 7 11 9 10 9 10 9 9 7 9 9 13 7 9 7 4 4 4 5 7 4 7 7 7 7 7 3 7 7 3 3 7 3 11 7 7 7 7 4 7 4 7 5 9 7 7 7 4 3 4 8
+  extent:  338 15
+  otm:  2048 9 -3 2 7 3 0 1 0 1 0 1 3 64 0 12 -3 0 8 -7 13 17 -4 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular -16
+  face: 16 [Liberation Sans]
+  tm: 17 14 3 1 1 9 30 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  4 5 6 9 9 14 11 3 5 5 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 4 4 9 9 9 9 16 11 11 12 12 11 10 12 11 3 8 11 9 13 11 12 11 12 11 11 9 11 11 15 11 9 9 4 4 4 7 9 5 9 9 8 9 9 4 9 8 4 3 8 3 13 8 9 9 9 5 8 4 8 7 11 7 7 7 5 3 5 9
+  extent:  404 17
+  otm:  2048 12 -3 2 8 4 0 1 0 1 -1 1 4 64 0 14 -3 1 8 -9 16 21 -5 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular -19
+  face: 16 [Liberation Sans]
+  tm: 21 17 4 2 1 11 35 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  5 6 7 11 11 17 13 4 6 6 7 11 5 6 5 5 11 11 11 11 11 11 11 11 11 11 5 5 11 11 11 11 19 13 13 14 14 13 12 15 13 6 10 13 11 15 13 15 13 15 14 13 12 13 13 19 13 12 12 5 5 5 7 11 6 10 11 10 11 11 6 11 10 4 4 9 4 16 10 11 11 11 6 10 5 10 9 13 9 9 9 6 6 6 11
+  extent:  498 21
+  otm:  2048 14 -4 3 10 5 0 1 0 1 -1 1 5 64 0 17 -4 1 8 -10 19 25 -6 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular -24
+  face: 16 [Liberation Sans]
+  tm: 27 22 5 3 1 14 44 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  7 8 9 13 13 21 16 5 8 8 9 14 7 8 7 7 13 13 13 13 13 13 13 13 13 13 7 7 14 14 14 13 24 15 16 17 17 16 15 19 17 6 12 16 13 19 17 19 16 19 17 16 14 17 15 23 15 16 15 7 7 7 12 13 8 13 14 12 14 13 7 14 14 5 6 12 6 20 14 13 14 14 8 12 7 14 11 17 11 12 12 8 6 8 14
+  extent:  631 27
+  otm:  2048 17 -5 4 12 6 0 1 0 2 -1 1 6 64 0 22 -5 1 8 -13 24 31 -7 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular -32
+  face: 16 [Liberation Sans]
+  tm: 36 29 7 4 1 19 59 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  9 11 11 18 18 28 21 6 11 11 12 19 9 11 9 9 18 18 18 18 18 18 18 18 18 18 9 9 19 19 19 18 32 21 21 23 23 21 20 25 23 9 16 21 18 27 23 25 21 25 23 21 19 23 21 32 21 21 20 9 9 9 14 18 11 17 17 16 17 17 10 17 18 7 7 16 7 27 18 17 17 17 11 16 9 18 15 23 14 15 15 11 8 11 19
+  extent:  828 36
+  otm:  2048 23 -7 5 16 8 0 1 0 2 -1 2 8 64 0 29 -7 1 8 -17 31 42 -10 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular -48
+  face: 16 [Liberation Sans]
+  tm: 53 43 10 5 2 28 89 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  13 14 17 27 27 43 32 9 16 16 19 28 13 16 13 13 27 27 27 27 27 27 27 27 27 27 13 13 28 28 28 27 49 32 32 35 35 32 29 37 35 12 24 32 27 39 35 37 32 37 35 32 28 35 32 48 31 30 29 13 13 13 22 27 16 27 27 24 27 27 13 27 27 10 10 24 10 40 27 27 27 27 16 24 13 27 25 33 24 23 24 16 12 16 28
+  extent:  1256 53
+  otm:  2048 35 -10 7 24 12 0 1 0 4 -2 2 12 64 0 43 -10 2 8 -26 47 62 -15 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular -72
+  face: 16 [Liberation Sans]
+  tm: 80 65 15 8 2 42 133 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  20 22 26 40 40 64 48 14 24 24 28 42 20 24 20 20 40 40 40 40 40 40 40 40 40 40 20 20 42 42 42 40 73 48 48 52 52 48 44 56 52 20 36 48 40 59 52 56 48 56 52 48 45 52 48 72 47 47 44 20 20 20 33 40 24 40 40 36 40 40 21 40 40 16 15 36 16 59 40 40 40 40 24 36 20 40 37 51 35 35 36 24 17 24 42
+  extent:  1882 80
+  otm:  2048 52 -15 11 36 18 0 1 0 5 -2 4 19 64 0 65 -15 2 8 -39 71 94 -22 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular 0
+  face: 16 [Liberation Sans]
+  tm: 17 14 3 1 1 9 30 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  4 5 6 9 9 14 11 3 5 5 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 4 4 9 9 9 9 16 11 11 12 12 11 10 12 11 3 8 11 9 13 11 12 11 12 11 11 9 11 11 15 11 9 9 4 4 4 7 9 5 9 9 8 9 9 4 9 8 4 3 8 3 13 8 9 9 9 5 8 4 8 7 11 7 7 7 5 3 5 9
+  extent:  404 17
+  otm:  2048 12 -3 2 8 4 0 1 0 1 -1 1 4 64 0 14 -3 1 8 -9 16 21 -5 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular 12
+  face: 16 [Liberation Sans]
+  tm: 12 10 2 1 0 6 20 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  3 2 4 6 6 10 7 2 4 4 4 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 3 3 6 6 6 6 11 8 7 7 7 6 6 8 7 2 5 7 6 8 7 8 6 8 7 7 6 7 8 10 7 8 7 3 3 3 5 6 4 6 6 6 6 6 4 6 6 2 2 5 2 8 6 6 6 6 4 6 3 6 6 10 6 6 6 4 2 4 6
+  extent:  287 12
+  otm:  2048 8 -2 2 5 3 0 1 0 1 0 1 3 64 0 10 -2 0 8 -6 11 14 -3 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] regular 20
+  face: 16 [Liberation Sans]
+  tm: 20 16 4 2 1 10 33 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  5 6 6 10 10 16 12 3 6 6 7 11 5 6 5 5 10 10 10 10 10 10 10 10 10 10 5 5 11 11 11 10 18 11 12 13 13 12 11 14 13 4 9 12 10 15 13 14 12 14 13 12 12 13 11 17 11 12 11 5 5 5 7 10 6 10 10 9 10 10 5 10 10 4 4 9 4 14 10 10 10 10 6 9 5 10 9 13 8 9 8 6 6 6 11
+  extent:  469 20
+  otm:  2048 13 -4 3 9 4 0 1 0 1 -1 1 5 64 0 16 -4 1 8 -10 18 23 -5 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold -8
+  face: 16 [Liberation Sans]
+  tm: 9 7 2 1 0 5 14 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  2 1 4 4 4 8 6 2 3 3 3 5 2 3 2 2 4 4 4 4 4 4 4 4 4 4 3 3 5 5 5 5 8 5 6 6 6 5 5 6 6 2 4 6 5 7 6 6 5 6 6 5 5 6 5 9 5 5 5 3 2 3 5 4 3 4 5 4 5 4 3 5 5 2 3 4 2 7 5 5 5 5 3 4 3 5 5 5 4 3 4 3 2 3 5
+  extent:  212 9
+  otm:  2048 6 -2 1 4 2 0 1 0 1 0 0 2 32 0 7 -2 0 8 -4 8 10 -3 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold -11
+  face: 16 [Liberation Sans]
+  tm: 12 10 2 1 0 7 20 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  3 3 5 6 6 9 8 3 4 4 4 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 3 3 6 6 6 7 11 8 7 8 7 6 6 8 7 3 6 7 7 10 7 8 7 8 7 7 7 7 8 10 7 7 7 4 3 4 6 6 4 6 7 6 7 7 4 7 7 3 3 7 3 11 7 7 7 7 5 7 4 7 6 10 6 6 6 4 3 4 6
+  extent:  317 12
+  otm:  2048 8 -2 2 6 3 0 1 0 1 0 1 3 32 0 10 -2 0 8 -5 11 14 -4 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold -13
+  face: 16 [Liberation Sans]
+  tm: 15 12 3 2 0 8 23 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  4 4 6 7 7 10 9 3 4 4 5 8 4 4 4 4 7 7 7 7 7 7 7 7 7 7 4 4 8 8 8 8 13 9 9 9 9 8 8 10 9 4 7 9 8 11 9 10 9 10 9 9 8 9 9 13 9 8 7 4 4 4 8 7 4 8 8 7 8 8 4 8 8 4 4 7 4 12 8 8 8 8 5 6 4 8 7 11 8 7 7 5 3 5 8
+  extent:  368 15
+  otm:  2048 9 -3 2 7 3 0 1 0 1 0 1 3 32 0 12 -3 0 8 -6 13 17 -5 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold -16
+  face: 16 [Liberation Sans]
+  tm: 17 14 3 1 1 10 29 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  4 4 8 9 9 16 12 4 5 5 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 6 6 9 9 9 10 16 11 12 12 12 11 10 12 12 4 9 12 10 13 12 12 11 12 12 11 10 12 11 15 11 10 9 5 4 5 9 9 5 9 10 9 10 9 5 10 10 4 4 9 4 14 10 10 10 10 6 9 5 10 9 13 9 9 9 6 4 6 9
+  extent:  444 17
+  otm:  2048 12 -3 2 8 4 0 1 0 2 0 1 4 32 0 14 -3 1 8 -8 17 21 -6 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold -19
+  face: 16 [Liberation Sans]
+  tm: 21 17 4 2 1 12 34 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  5 5 9 11 11 17 14 5 6 6 7 11 5 6 5 5 11 11 11 11 11 11 11 11 11 11 7 7 11 11 11 12 19 13 14 14 14 13 12 15 13 5 11 14 12 17 13 15 13 15 13 13 13 13 13 17 13 13 11 6 5 6 11 11 6 11 12 11 12 11 6 12 12 5 5 11 5 17 12 12 12 12 8 11 6 12 11 15 11 11 10 7 4 7 11
+  extent:  541 21
+  otm:  2048 14 -4 3 10 5 0 1 0 2 0 1 5 32 0 17 -4 1 8 -9 20 25 -7 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold -24
+  face: 16 [Liberation Sans]
+  tm: 27 22 5 3 1 15 43 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  7 7 11 13 13 18 17 6 8 8 9 14 7 8 7 7 13 13 13 13 13 13 13 13 13 13 7 7 14 14 14 15 23 17 17 17 17 16 15 19 17 7 13 17 15 21 17 18 16 18 17 16 15 17 16 23 16 15 14 8 7 8 14 13 8 13 15 13 15 13 8 15 15 7 7 13 7 21 15 15 15 15 9 13 8 15 13 19 13 13 12 9 7 9 14
+  extent:  669 27
+  otm:  2048 17 -5 4 12 6 0 1 0 3 0 1 6 32 0 22 -5 1 8 -12 25 31 -9 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold -32
+  face: 16 [Liberation Sans]
+  tm: 36 29 7 4 1 20 57 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  9 10 15 18 18 26 23 8 11 11 12 19 9 11 9 9 18 18 18 18 18 18 18 18 18 18 10 10 19 19 19 20 31 23 22 23 23 21 20 25 22 8 17 23 20 27 22 24 20 24 22 21 20 22 21 31 21 20 20 11 9 11 19 18 11 18 19 18 19 18 11 19 19 10 10 18 10 28 19 19 19 19 13 18 11 19 17 25 18 17 16 12 9 12 19
+  extent:  890 36
+  otm:  2048 23 -7 5 16 8 0 1 0 3 0 2 8 32 0 29 -7 1 8 -15 33 42 -12 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold -48
+  face: 16 [Liberation Sans]
+  tm: 53 43 10 5 2 29 86 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  13 15 23 27 27 42 35 11 16 16 19 28 13 16 13 13 27 27 27 27 27 27 27 27 27 27 17 17 28 28 28 29 47 33 35 35 35 32 29 37 35 13 27 35 29 41 35 37 32 37 35 32 30 35 32 45 32 33 29 16 13 16 28 27 16 27 29 27 29 27 16 29 29 13 13 27 13 43 29 29 29 29 19 27 16 29 27 39 27 27 24 19 13 19 28
+  extent:  1334 53
+  otm:  2048 35 -10 7 24 12 0 1 0 5 0 2 12 32 0 43 -10 2 8 -23 50 63 -18 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold -72
+  face: 16 [Liberation Sans]
+  tm: 80 65 15 8 2 44 129 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  20 22 34 40 40 64 52 17 24 24 28 42 20 24 20 20 40 40 40 40 40 40 40 40 40 40 24 24 42 42 42 44 70 49 52 52 52 48 44 56 52 20 40 52 44 61 52 56 48 56 52 48 44 52 48 69 48 48 44 24 20 24 42 40 24 40 44 40 44 40 24 44 44 20 20 40 20 64 44 44 44 44 28 40 24 44 39 58 40 38 36 28 20 28 42
+  extent:  1999 80
+  otm:  2048 52 -15 11 36 18 0 1 0 8 0 4 19 32 0 65 -15 2 8 -35 74 94 -27 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold 0
+  face: 16 [Liberation Sans]
+  tm: 17 14 3 1 1 10 29 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  4 4 8 9 9 16 12 4 5 5 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 6 6 9 9 9 10 16 11 12 12 12 11 10 12 12 4 9 12 10 13 12 12 11 12 12 11 10 12 11 15 11 10 9 5 4 5 9 9 5 9 10 9 10 9 5 10 10 4 4 9 4 14 10 10 10 10 6 9 5 10 9 13 9 9 9 6 4 6 9
+  extent:  444 17
+  otm:  2048 12 -3 2 8 4 0 1 0 2 0 1 4 32 0 14 -3 1 8 -8 17 21 -6 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold 12
+  face: 16 [Liberation Sans]
+  tm: 12 10 2 1 0 7 19 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  3 3 5 6 6 9 8 3 4 4 4 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 3 3 6 6 6 7 11 8 7 8 7 6 6 8 7 3 6 7 7 10 7 8 7 8 7 7 7 7 8 10 7 7 7 4 3 4 6 6 4 6 7 6 7 7 4 7 7 3 3 7 3 11 7 7 7 7 5 7 4 7 6 10 6 6 6 4 3 4 6
+  extent:  317 12
+  otm:  2048 8 -2 2 5 3 0 1 0 1 0 1 3 32 0 10 -2 0 8 -5 11 14 -4 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold 20
+  face: 16 [Liberation Sans]
+  tm: 20 16 4 2 1 11 32 700 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  5 5 9 10 10 17 13 4 6 6 7 11 5 6 5 5 10 10 10 10 10 10 10 10 10 10 7 7 11 11 11 11 18 13 13 13 13 12 11 14 13 5 10 13 11 15 13 14 12 14 13 12 11 13 13 17 12 13 10 6 5 6 11 10 6 10 11 10 11 11 6 11 11 5 5 10 5 17 11 11 11 11 7 10 6 11 11 15 11 11 9 7 4 7 11
+  extent:  508 20
+  otm:  2048 13 -4 3 9 4 0 1 0 2 0 1 5 32 0 16 -4 1 8 -9 19 23 -7 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic -8
+  face: 16 [Liberation Sans]
+  tm: 9 7 2 1 0 5 16 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  2 2 3 4 4 7 5 2 3 3 3 5 2 3 2 2 4 4 4 4 4 4 4 4 4 4 2 2 5 5 5 4 8 5 5 6 6 5 5 6 6 2 4 5 4 7 6 6 5 6 6 5 5 6 5 8 5 5 5 2 2 2 4 4 3 4 4 4 4 4 2 4 4 2 2 4 2 5 4 4 4 4 3 4 2 4 4 6 4 4 4 3 2 3 5
+  extent:  194 9
+  otm:  2048 6 -2 1 4 2 -120 100 21 1 0 0 2 1 0 7 -2 0 8 -5 8 11 -2 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic -11
+  face: 16 [Liberation Sans]
+  tm: 12 10 2 1 0 6 22 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  3 3 4 6 6 10 7 2 4 4 4 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 3 3 6 6 6 6 11 7 7 8 8 7 7 9 8 3 6 7 6 9 8 9 7 9 8 7 7 7 7 11 7 7 7 3 3 3 5 6 4 6 7 6 6 6 3 6 6 3 3 6 3 9 6 6 6 6 4 6 3 6 5 7 6 5 6 4 3 4 6
+  extent:  288 12
+  otm:  2048 8 -2 2 6 3 -120 100 21 1 0 1 3 1 0 10 -2 0 8 -7 11 15 -3 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic -13
+  face: 16 [Liberation Sans]
+  tm: 15 12 3 2 0 8 26 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  4 4 5 7 7 12 9 2 4 4 5 8 4 4 4 4 7 7 7 7 7 7 7 7 7 7 4 4 8 8 8 7 13 9 9 9 9 9 8 10 9 4 7 9 7 10 9 10 9 10 9 9 8 9 9 13 9 9 8 4 4 4 6 7 4 7 8 7 7 7 4 7 7 3 3 8 3 11 7 7 7 7 4 7 4 7 6 8 6 6 7 4 3 4 8
+  extent:  340 15
+  otm:  2048 9 -3 2 7 3 -120 100 21 1 0 1 3 1 0 12 -3 0 8 -9 13 18 -4 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic -16
+  face: 16 [Liberation Sans]
+  tm: 17 14 3 1 1 9 32 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  4 4 6 9 9 14 11 3 5 5 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 4 4 9 9 9 9 16 11 11 12 12 11 10 12 12 4 8 11 9 14 12 12 11 12 12 11 10 12 11 15 11 11 10 4 4 4 8 9 5 9 9 8 9 9 4 9 9 4 4 8 4 14 9 9 9 9 5 8 4 9 8 9 8 8 7 5 4 5 9
+  extent:  414 17
+  otm:  2048 12 -3 2 8 4 -120 100 21 1 -1 1 4 1 0 14 -3 1 8 -11 16 22 -5 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic -19
+  face: 16 [Liberation Sans]
+  tm: 21 17 4 2 1 11 38 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  5 5 7 11 11 17 13 4 6 6 7 11 5 6 5 5 11 11 11 11 11 11 11 11 11 11 5 5 11 11 11 11 20 13 13 14 14 13 12 15 14 5 10 13 11 16 14 15 13 15 14 13 12 14 13 18 13 13 12 5 5 5 9 11 6 11 11 10 11 11 5 11 11 5 4 10 5 17 11 11 11 11 6 10 5 11 10 14 10 10 10 6 5 6 11
+  extent:  512 21
+  otm:  2048 14 -4 3 10 5 -120 100 21 1 -1 1 5 1 0 17 -4 1 8 -13 19 26 -6 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic -24
+  face: 16 [Liberation Sans]
+  tm: 27 22 5 3 1 14 49 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  7 7 9 13 13 21 16 5 8 8 9 14 7 8 7 7 13 13 13 13 13 13 13 13 13 13 7 7 14 14 14 13 24 16 16 17 17 16 15 19 17 6 12 16 13 20 17 19 16 19 17 16 15 17 16 24 17 16 15 7 7 7 11 13 8 13 13 12 13 13 7 13 13 6 5 12 6 20 13 13 13 12 8 12 7 13 12 16 12 12 11 8 6 8 14
+  extent:  621 27
+  otm:  2048 17 -5 4 12 6 -120 100 21 2 -1 1 6 1 0 22 -5 1 8 -16 24 33 -7 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic -32
+  face: 16 [Liberation Sans]
+  tm: 36 29 7 4 1 19 65 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  9 9 11 18 18 28 21 6 11 11 12 19 9 11 9 9 18 18 18 18 18 18 18 18 18 18 9 9 19 19 19 18 33 21 21 23 23 21 20 25 23 8 16 21 18 27 23 25 21 25 23 21 20 23 21 32 21 21 20 9 9 9 15 18 11 18 18 16 18 18 9 18 18 7 7 16 7 27 18 17 18 18 11 16 9 18 16 23 16 16 16 11 8 11 19
+  extent:  842 36
+  otm:  2048 23 -7 5 16 8 -120 100 21 2 -1 2 8 1 0 29 -7 1 8 -21 32 44 -10 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic -48
+  face: 16 [Liberation Sans]
+  tm: 53 43 10 5 2 28 97 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  13 13 17 27 27 43 32 9 16 16 19 28 13 16 13 13 27 27 27 27 27 27 27 27 27 27 13 13 28 28 28 27 48 32 32 35 35 32 29 37 35 13 24 32 27 39 35 37 32 37 35 32 29 35 32 46 32 32 29 13 13 13 23 27 16 27 27 24 27 27 13 27 27 10 11 24 11 39 27 27 27 26 16 24 13 27 24 34 23 24 22 16 12 16 28
+  extent:  1255 53
+  otm:  2048 35 -10 7 24 12 -120 100 21 4 -2 2 12 1 0 43 -10 2 8 -32 49 65 -15 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic -72
+  face: 16 [Liberation Sans]
+  tm: 80 65 15 8 2 42 146 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  20 20 26 40 40 64 48 14 24 24 28 42 20 24 20 20 40 40 40 40 40 40 40 40 40 40 20 20 42 42 42 40 73 48 48 52 52 48 44 56 52 20 36 48 40 59 52 56 48 56 52 48 44 52 48 70 48 48 44 20 20 20 34 40 24 40 40 36 40 40 20 40 40 16 16 36 16 60 40 40 40 40 24 36 20 40 36 51 36 36 34 24 19 24 42
+  extent:  1881 80
+  otm:  2048 52 -15 11 36 18 -120 100 21 5 -2 4 19 1 0 65 -15 2 8 -48 73 98 -22 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic 0
+  face: 16 [Liberation Sans]
+  tm: 17 14 3 1 1 9 32 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  4 4 6 9 9 14 11 3 5 5 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 4 4 9 9 9 9 16 11 11 12 12 11 10 12 12 4 8 11 9 14 12 12 11 12 12 11 10 12 11 15 11 11 10 4 4 4 8 9 5 9 9 8 9 9 4 9 9 4 4 8 4 14 9 9 9 9 5 8 4 9 8 9 8 8 7 5 4 5 9
+  extent:  414 17
+  otm:  2048 12 -3 2 8 4 -120 100 21 1 -1 1 4 1 0 14 -3 1 8 -11 16 22 -5 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic 12
+  face: 16 [Liberation Sans]
+  tm: 12 10 2 1 0 6 22 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  3 3 4 6 6 10 7 2 4 4 4 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 3 3 6 6 6 6 11 7 7 8 8 7 7 9 8 3 6 7 6 9 8 9 7 9 8 7 7 7 7 11 7 7 7 3 3 3 5 6 4 6 7 6 6 6 3 6 6 3 3 6 3 9 6 6 6 6 4 6 3 6 5 7 6 5 6 4 3 4 6
+  extent:  288 12
+  otm:  2048 8 -2 2 5 3 -120 100 21 1 0 1 3 1 0 10 -2 0 8 -7 11 15 -3 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] italic 20
+  face: 16 [Liberation Sans]
+  tm: 20 16 4 2 1 10 36 400 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  5 5 6 10 10 16 12 3 6 6 7 11 5 6 5 5 10 10 10 10 10 10 10 10 10 10 5 5 11 11 11 10 18 12 12 13 13 12 11 14 13 5 9 12 10 16 13 14 12 14 13 12 11 13 12 17 12 12 11 5 5 5 8 10 6 10 10 9 10 10 5 10 10 5 4 9 5 15 10 10 10 10 6 9 5 10 9 13 9 9 8 6 5 6 11
+  extent:  472 20
+  otm:  2048 13 -4 3 9 4 -120 100 21 1 -1 1 5 1 0 16 -4 1 8 -12 18 24 -5 panose 2 11 6 4 names [Liberation Sans] [Liberation Sans Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic -8
+  face: 16 [Liberation Sans]
+  tm: 9 7 2 1 0 5 15 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  2 3 4 4 4 8 6 2 3 3 3 5 2 3 2 2 4 4 4 4 4 4 4 4 4 4 3 3 5 5 5 5 8 6 6 6 6 5 5 6 6 2 4 6 5 6 6 6 5 6 6 5 5 6 5 8 5 5 5 3 2 3 5 4 3 4 5 4 5 4 3 5 5 2 2 4 2 7 5 5 5 5 3 4 3 5 4 6 4 4 4 3 3 3 5
+  extent:  212 9
+  otm:  2048 6 -2 1 4 2 -120 100 21 1 0 0 2 33 0 7 -2 0 8 -4 8 11 -3 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic -11
+  face: 16 [Liberation Sans]
+  tm: 12 10 2 1 0 7 20 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  3 3 5 6 6 8 8 3 4 4 4 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 4 4 6 6 6 6 10 8 8 8 8 7 7 9 8 3 6 8 7 11 8 9 8 9 8 7 7 8 7 11 8 7 7 4 3 4 6 6 4 7 7 6 7 6 4 7 7 4 4 7 4 10 7 7 7 7 5 5 4 7 6 8 5 6 6 4 3 4 6
+  extent:  312 12
+  otm:  2048 8 -2 2 6 3 -120 100 21 1 0 1 3 33 0 10 -2 0 8 -5 11 15 -4 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic -13
+  face: 16 [Liberation Sans]
+  tm: 15 12 3 2 0 8 24 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  4 4 6 7 7 11 9 3 4 4 5 8 4 4 4 4 7 7 7 7 7 7 7 7 7 7 4 4 8 8 8 8 12 10 9 9 9 9 8 10 9 3 7 9 8 12 9 10 8 10 9 9 8 9 9 13 9 9 9 4 4 4 8 7 4 7 8 7 8 7 4 8 8 4 4 8 4 12 8 8 8 8 5 6 4 8 7 10 7 7 7 5 3 5 8
+  extent:  363 15
+  otm:  2048 9 -3 2 7 3 -120 100 21 1 0 1 3 33 0 12 -3 0 8 -6 13 18 -5 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic -16
+  face: 16 [Liberation Sans]
+  tm: 17 14 3 1 1 10 29 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  4 5 7 9 9 14 12 3 5 6 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 5 5 9 9 9 10 16 12 11 12 12 11 10 12 12 5 9 12 10 14 12 12 11 12 12 11 10 12 11 15 11 10 10 5 4 4 9 9 5 9 10 8 9 9 5 9 10 4 4 9 4 14 10 10 9 9 6 9 5 10 9 13 9 9 7 6 4 6 9
+  extent:  437 17
+  otm:  2048 12 -3 2 8 4 -120 100 21 2 0 1 4 33 0 14 -3 1 8 -8 16 22 -6 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic -19
+  face: 16 [Liberation Sans]
+  tm: 21 17 4 2 1 12 35 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  5 6 9 11 11 16 14 4 6 7 7 11 5 6 5 5 11 11 11 11 11 11 11 11 11 11 6 6 11 11 11 12 19 14 13 14 14 13 12 15 14 4 11 14 12 18 14 15 13 15 14 13 12 14 13 18 13 13 12 6 5 7 11 11 6 11 12 11 12 11 6 12 12 6 6 11 6 18 12 12 12 12 8 11 6 12 11 14 11 11 10 7 6 7 11
+  extent:  543 21
+  otm:  2048 14 -4 3 10 5 -120 100 21 2 0 1 5 33 0 17 -4 1 8 -9 20 26 -7 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic -24
+  face: 16 [Liberation Sans]
+  tm: 27 22 5 3 1 15 44 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  7 7 11 13 13 20 17 5 8 8 9 14 7 8 7 7 13 13 13 13 13 13 13 13 13 13 8 8 14 14 14 15 23 16 16 17 17 16 15 19 17 6 13 17 15 20 17 19 16 19 17 16 15 17 16 23 16 16 15 8 7 8 14 13 8 13 15 13 15 13 8 14 15 7 7 13 7 21 15 14 15 15 9 13 8 14 13 19 13 13 12 9 7 9 14
+  extent:  662 27
+  otm:  2048 17 -5 4 12 6 -120 100 21 3 0 1 6 33 0 22 -5 1 8 -11 25 33 -9 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic -32
+  face: 16 [Liberation Sans]
+  tm: 36 29 7 4 1 20 59 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  9 11 15 18 18 28 23 7 11 11 12 19 9 11 9 9 18 18 18 18 18 18 18 18 18 18 11 11 19 19 19 20 31 22 23 23 23 21 20 25 23 9 18 23 20 27 23 25 21 25 23 21 19 23 21 30 21 21 20 11 9 11 19 18 11 18 20 18 20 18 11 20 20 9 9 18 9 28 20 20 20 20 12 18 11 19 17 25 18 18 16 12 9 12 19
+  extent:  897 36
+  otm:  2048 23 -7 5 16 8 -120 100 21 3 0 2 8 33 0 29 -7 1 8 -15 33 43 -12 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic -48
+  face: 16 [Liberation Sans]
+  tm: 53 43 10 5 2 29 88 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  13 16 23 27 27 43 35 11 16 17 19 28 13 16 13 13 27 27 27 27 27 27 27 27 27 27 16 16 28 28 28 29 47 35 35 35 35 32 29 37 35 12 27 35 29 40 35 37 32 37 35 32 29 35 32 45 32 32 29 16 13 16 28 27 16 27 29 27 29 27 16 29 29 13 13 27 13 43 29 29 29 29 19 27 16 29 27 37 27 27 24 19 13 19 28
+  extent:  1331 53
+  otm:  2048 35 -10 7 24 12 -120 100 21 5 0 2 12 33 0 43 -10 2 8 -23 49 65 -18 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic -72
+  face: 16 [Liberation Sans]
+  tm: 80 65 15 8 2 44 132 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  20 24 34 40 40 63 52 15 24 24 28 42 20 24 20 20 40 40 40 40 40 40 40 40 40 40 24 24 42 42 42 44 71 52 52 52 52 48 44 56 52 20 40 52 44 61 52 56 48 56 52 48 44 52 48 68 48 48 44 24 20 24 42 40 24 40 44 40 44 40 24 44 44 20 20 40 20 64 44 44 44 44 28 40 24 44 40 56 40 40 36 28 20 28 42
+  extent:  2000 80
+  otm:  2048 52 -15 11 36 18 -120 100 21 8 0 4 19 33 0 65 -15 2 8 -34 74 98 -27 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic 0
+  face: 16 [Liberation Sans]
+  tm: 17 14 3 1 1 10 29 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  4 5 7 9 9 14 12 3 5 6 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 5 5 9 9 9 10 16 12 11 12 12 11 10 12 12 5 9 12 10 14 12 12 11 12 12 11 10 12 11 15 11 10 10 5 4 4 9 9 5 9 10 8 9 9 5 9 10 4 4 9 4 14 10 10 9 9 6 9 5 10 9 13 9 9 7 6 4 6 9
+  extent:  437 17
+  otm:  2048 12 -3 2 8 4 -120 100 21 2 0 1 4 33 0 14 -3 1 8 -8 16 22 -6 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic 12
+  face: 16 [Liberation Sans]
+  tm: 12 10 2 1 0 7 20 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  3 3 5 6 6 8 8 3 4 4 4 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 4 4 6 6 6 6 10 8 8 8 8 7 7 9 8 3 6 8 7 11 8 9 8 9 8 7 7 8 7 11 8 7 7 4 3 4 6 6 4 7 7 6 7 6 4 7 7 4 4 7 4 10 7 7 7 7 5 5 4 7 6 8 5 6 6 4 3 4 6
+  extent:  312 12
+  otm:  2048 8 -2 2 5 3 -120 100 21 1 0 1 3 33 0 10 -2 0 8 -5 11 15 -4 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Sans] bold italic 20
+  face: 16 [Liberation Sans]
+  tm: 20 16 4 2 1 11 33 700 0 96 96 32 65532 31 32 255 0 0 39 0
+  widths:  5 6 9 10 10 16 13 4 6 7 7 11 5 6 5 5 10 10 10 10 10 10 10 10 10 10 6 6 11 11 11 11 18 13 13 13 13 12 11 14 13 5 10 13 11 15 13 14 12 14 13 12 11 13 12 17 13 12 11 6 5 7 11 10 6 10 11 10 11 10 6 11 11 5 5 10 5 16 11 11 11 11 7 10 6 11 9 14 9 10 9 7 6 7 10
+  extent:  498 20
+  otm:  2048 13 -4 3 9 4 -120 100 21 2 0 1 5 33 0 16 -4 1 8 -9 18 24 -7 panose 2 11 7 4 names [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular -8
+  face: 17 [Liberation Serif]
+  tm: 9 7 2 1 0 4 15 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  2 3 3 4 4 7 7 2 3 3 4 5 2 3 2 2 4 4 4 4 4 4 4 4 4 4 2 2 5 5 5 3 8 6 5 5 6 5 4 6 6 3 3 6 5 7 6 6 5 6 5 4 5 6 6 8 6 6 5 3 2 3 4 4 2 4 4 4 4 4 3 4 4 2 3 3 2 7 4 4 4 4 3 3 2 4 4 6 4 5 3 4 2 4 4
+  extent:  196 9
+  otm:  2048 6 -2 1 4 2 0 1 0 0 0 0 2 64 0 7 -2 0 8 -4 8 10 -2 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular -11
+  face: 17 [Liberation Serif]
+  tm: 12 10 2 1 0 6 20 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  3 4 5 6 6 9 9 2 4 4 6 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 3 3 6 6 6 5 10 8 7 7 8 7 6 7 8 4 4 8 7 10 8 8 7 8 7 5 8 8 7 11 8 8 7 4 3 4 5 6 4 5 5 5 5 5 4 5 6 3 3 6 3 9 6 6 6 5 4 4 4 5 6 7 6 6 5 5 2 5 6
+  extent:  278 12
+  otm:  2048 8 -2 2 6 3 0 1 0 1 -1 1 2 64 0 10 -2 0 8 -6 11 14 -3 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular -13
+  face: 17 [Liberation Serif]
+  tm: 15 12 3 2 1 7 24 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  3 4 6 7 6 11 10 2 4 4 7 7 3 4 3 4 6 6 6 6 6 6 6 6 6 6 3 4 7 7 7 6 12 10 8 8 9 7 7 8 9 4 5 9 7 12 9 9 7 9 8 7 8 9 8 13 9 8 8 4 4 4 6 7 4 6 7 6 7 6 4 7 7 3 3 6 3 9 7 7 7 7 4 6 4 7 7 9 5 7 5 6 2 6 7
+  extent:  308 15
+  otm:  2048 9 -3 2 7 3 0 1 0 1 -1 1 3 64 0 12 -3 1 8 -7 13 17 -4 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular -16
+  face: 17 [Liberation Serif]
+  tm: 17 14 3 1 1 9 29 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  4 5 5 8 8 13 12 3 5 5 8 9 4 6 4 4 8 8 8 8 8 8 8 8 8 8 3 4 9 9 9 7 15 11 10 11 11 9 9 11 11 5 6 12 9 14 12 12 9 12 10 9 9 11 11 15 11 11 9 5 4 5 8 8 5 7 8 7 8 7 4 7 7 3 4 8 3 11 7 8 8 8 5 6 4 7 7 11 7 7 6 7 3 8 9
+  extent:  365 17
+  otm:  2048 11 -3 2 8 4 0 1 0 1 -1 1 3 64 0 14 -3 1 8 -9 16 20 -5 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular -19
+  face: 17 [Liberation Serif]
+  tm: 21 17 4 2 1 10 35 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  5 6 8 10 9 16 15 4 6 6 9 11 5 6 5 5 9 9 9 9 9 9 9 9 9 9 4 5 11 11 11 8 17 13 12 13 13 11 11 14 13 6 7 13 11 16 13 14 11 14 13 11 12 13 13 18 13 13 11 6 5 6 8 10 6 8 10 9 10 8 6 9 9 4 4 9 4 14 9 10 10 10 6 8 5 9 9 13 9 9 8 9 3 9 10
+  extent:  446 21
+  otm:  2048 13 -4 3 10 5 0 1 0 1 -1 1 4 64 0 17 -4 1 8 -10 19 24 -6 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular -24
+  face: 17 [Liberation Serif]
+  tm: 26 21 5 2 1 13 44 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  6 8 10 12 12 20 19 4 8 8 12 14 6 8 6 7 12 12 12 12 12 12 12 12 12 12 6 7 14 14 14 10 22 17 16 16 17 15 13 17 17 8 9 17 15 21 17 17 14 17 16 12 14 16 16 23 17 17 14 8 7 8 10 12 8 11 12 11 12 11 8 11 12 6 6 12 6 18 12 12 12 12 8 9 7 12 12 17 12 12 10 12 5 12 13
+  extent:  573 26
+  otm:  2048 17 -5 4 12 6 0 1 0 1 -1 1 5 64 0 21 -5 1 8 -13 24 31 -7 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular -32
+  face: 17 [Liberation Serif]
+  tm: 36 29 7 4 1 18 58 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  8 11 13 16 16 27 25 5 11 11 15 18 8 10 8 9 16 16 16 16 16 16 16 16 16 16 9 9 18 18 18 14 29 22 21 21 23 20 18 23 23 11 13 22 19 28 23 23 18 23 21 18 19 22 23 29 23 23 19 11 8 11 15 16 10 14 16 14 16 14 10 15 15 9 9 16 9 23 15 16 16 16 11 11 9 15 15 23 15 15 14 15 5 15 17
+  extent:  755 36
+  otm:  2048 22 -7 5 16 8 0 1 0 2 -2 2 7 64 0 29 -7 1 8 -17 31 41 -10 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular -48
+  face: 17 [Liberation Serif]
+  tm: 53 43 10 5 2 26 87 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  12 14 18 24 24 40 37 8 16 16 23 27 12 16 12 13 24 24 24 24 24 24 24 24 24 24 12 13 27 27 27 20 44 34 32 32 35 29 27 35 35 15 19 35 29 43 35 35 27 35 32 27 29 35 35 45 35 35 29 16 13 16 23 24 16 21 24 21 24 21 15 24 23 12 12 23 12 37 23 23 24 24 16 19 13 24 23 35 24 22 22 23 8 23 26
+  extent:  1136 53
+  otm:  2048 33 -10 7 24 12 0 1 0 2 -3 2 10 64 0 43 -10 2 8 -26 47 61 -15 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular -72
+  face: 17 [Liberation Serif]
+  tm: 80 64 16 8 3 40 131 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  18 24 30 36 36 60 56 13 24 24 35 41 18 24 18 20 36 36 36 36 36 36 36 36 36 36 20 20 41 41 41 33 66 51 48 48 52 44 40 51 52 23 28 52 44 64 52 52 40 52 48 40 45 52 53 68 53 52 43 26 19 25 34 36 24 32 36 32 36 31 24 35 36 20 21 36 20 55 36 35 36 36 24 28 20 36 35 52 35 34 32 35 13 35 39
+  extent:  1719 80
+  otm:  2048 50 -16 11 36 18 0 1 0 4 -4 4 15 64 0 64 -16 3 8 -39 71 92 -22 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular 0
+  face: 17 [Liberation Serif]
+  tm: 17 14 3 1 1 9 29 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  4 5 5 8 8 13 12 3 5 5 8 9 4 6 4 4 8 8 8 8 8 8 8 8 8 8 3 4 9 9 9 7 15 11 10 11 11 9 9 11 11 5 6 12 9 14 12 12 9 12 10 9 9 11 11 15 11 11 9 5 4 5 8 8 5 7 8 7 8 7 4 7 7 3 4 8 3 11 7 8 8 8 5 6 4 7 7 11 7 7 6 7 3 8 9
+  extent:  365 17
+  otm:  2048 11 -3 2 8 4 0 1 0 1 -1 1 3 64 0 14 -3 1 8 -9 16 20 -5 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular 12
+  face: 17 [Liberation Serif]
+  tm: 12 10 2 1 0 6 20 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  3 4 5 6 6 9 9 2 4 4 6 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 3 3 6 6 6 5 10 8 7 7 8 7 6 7 8 4 4 8 7 10 8 8 7 8 7 5 8 8 7 11 8 8 7 4 3 4 5 6 4 5 5 5 5 5 4 5 6 3 3 6 3 9 6 6 6 5 4 4 4 5 6 7 6 6 5 5 2 5 6
+  extent:  278 12
+  otm:  2048 8 -2 2 5 3 0 1 0 1 -1 1 2 64 0 10 -2 0 8 -6 11 14 -3 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] regular 20
+  face: 17 [Liberation Serif]
+  tm: 20 16 4 2 1 10 33 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  5 6 7 9 9 15 14 4 6 6 9 10 5 6 5 5 9 9 9 9 9 9 9 9 9 9 4 5 10 10 10 8 16 12 12 12 13 11 10 13 13 6 7 13 11 16 13 13 11 13 12 10 12 13 12 17 13 13 11 6 5 6 8 9 6 8 9 8 9 8 6 8 9 4 5 9 4 14 9 9 9 9 6 7 5 9 9 13 8 9 8 9 3 9 10
+  extent:  435 20
+  otm:  2048 13 -4 3 9 5 0 1 0 1 -1 1 4 64 0 16 -4 1 8 -10 18 23 -5 panose 2 2 6 3 names [Liberation Serif] [Liberation Serif] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold -8
+  face: 17 [Liberation Serif]
+  tm: 9 7 2 1 0 5 15 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  2 2 4 4 4 9 7 2 3 3 4 5 2 3 2 2 4 4 4 4 4 4 4 4 4 4 3 3 5 5 5 4 7 6 6 6 6 5 5 7 6 3 4 6 5 8 6 6 5 8 6 4 5 6 6 8 5 6 4 3 2 3 5 4 3 4 4 4 4 4 3 4 4 2 3 3 2 6 4 4 4 4 4 3 3 4 4 6 4 4 3 3 3 3 4
+  extent:  197 9
+  otm:  2048 5 -2 1 4 2 0 1 0 1 0 0 2 32 0 7 -2 0 8 -4 8 11 -2 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold -11
+  face: 17 [Liberation Serif]
+  tm: 12 10 2 1 0 6 21 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  3 4 6 6 6 10 9 3 4 4 6 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 4 4 6 6 6 6 10 8 8 9 8 6 6 9 9 4 6 8 7 10 8 10 7 10 8 7 6 8 8 12 7 8 7 4 3 4 6 6 4 6 6 5 6 6 4 6 7 4 4 7 4 10 7 6 6 6 5 5 4 7 5 8 6 6 6 4 3 4 6
+  extent:  300 12
+  otm:  2048 7 -2 2 6 3 0 1 0 1 0 1 3 32 0 10 -2 0 8 -6 11 15 -3 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold -13
+  face: 17 [Liberation Serif]
+  tm: 15 12 3 2 1 7 25 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  3 4 7 7 7 15 11 4 4 4 7 7 3 4 3 4 7 7 7 7 7 7 7 7 7 7 4 4 7 7 7 7 12 9 9 9 9 7 7 9 9 4 7 9 8 11 9 10 8 10 9 8 8 8 9 13 9 8 8 4 4 4 8 7 4 6 6 6 6 6 4 7 7 4 4 8 4 10 7 6 6 6 6 6 4 7 5 8 6 6 6 5 3 5 7
+  extent:  318 15
+  otm:  2048 9 -3 2 7 3 0 1 0 1 0 1 3 32 0 12 -3 1 8 -7 13 17 -4 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold -16
+  face: 17 [Liberation Serif]
+  tm: 17 14 3 1 1 9 30 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  4 5 9 8 8 16 13 4 5 5 8 9 4 5 4 4 8 8 8 8 8 8 8 8 8 8 5 5 9 9 9 8 15 11 11 11 12 10 9 12 12 6 8 12 10 16 12 12 9 12 12 9 10 11 11 15 11 10 9 5 4 5 9 8 5 8 8 7 8 8 5 8 8 4 4 9 4 12 8 8 8 8 6 7 5 8 8 10 8 8 6 6 3 6 8
+  extent:  387 17
+  otm:  2048 11 -3 2 8 4 0 1 0 2 0 1 4 32 0 14 -3 1 8 -9 16 22 -5 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold -19
+  face: 17 [Liberation Serif]
+  tm: 21 17 4 2 1 11 36 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  5 5 11 10 10 18 16 5 6 6 10 11 5 6 5 5 10 10 10 10 10 10 10 10 10 10 5 5 11 11 11 10 18 13 13 14 14 13 12 15 14 7 10 14 12 18 14 15 12 15 14 11 13 13 13 19 13 13 12 6 5 6 11 10 6 10 10 9 10 9 6 10 10 5 6 11 5 15 10 10 10 10 8 8 6 10 9 14 9 9 8 7 3 7 10
+  extent:  481 21
+  otm:  2048 13 -4 3 10 5 0 1 0 2 0 1 5 32 0 17 -4 1 8 -10 19 26 -6 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold -24
+  face: 17 [Liberation Serif]
+  tm: 26 21 5 2 1 14 45 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  6 7 13 12 12 25 20 7 8 8 12 14 6 8 6 7 12 12 12 12 12 12 12 12 12 12 8 8 14 14 14 12 22 17 16 17 17 16 15 18 19 9 12 19 16 23 17 19 15 19 17 13 15 17 17 23 16 17 15 8 7 8 14 12 8 12 13 11 13 11 7 12 13 7 8 13 7 19 13 12 13 13 11 9 8 13 11 17 12 12 9 9 6 9 12
+  extent:  595 26
+  otm:  2048 16 -5 4 12 6 0 1 0 2 0 1 6 32 0 21 -5 1 8 -13 24 32 -7 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold -32
+  face: 17 [Liberation Serif]
+  tm: 36 29 7 4 1 18 60 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  8 11 18 16 16 33 27 9 11 11 16 18 8 11 8 9 16 16 16 16 16 16 16 16 16 16 11 11 18 18 18 16 30 23 22 23 23 21 20 24 25 11 16 26 21 31 23 25 20 25 23 18 21 23 23 32 23 23 21 11 9 11 19 16 11 16 18 14 18 14 12 16 18 9 11 17 9 27 18 16 18 18 14 12 11 18 16 23 16 15 13 13 6 13 17
+  extent:  802 36
+  otm:  2048 22 -7 5 16 8 0 1 0 3 0 2 8 32 0 29 -7 1 8 -17 32 43 -10 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold -48
+  face: 17 [Liberation Serif]
+  tm: 53 43 10 5 2 28 91 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  12 16 27 24 24 48 40 13 16 16 24 27 12 16 12 13 24 24 24 24 24 24 24 24 24 24 16 16 27 27 27 24 45 35 33 35 35 32 29 37 37 19 24 38 32 45 35 37 29 38 35 27 32 35 35 48 35 35 31 16 13 16 28 24 16 24 27 21 27 21 16 24 26 13 16 27 13 41 26 24 27 27 21 19 16 26 24 34 24 24 21 19 11 19 25
+  extent:  1200 53
+  otm:  2048 33 -10 7 24 12 0 1 0 5 -1 2 12 32 0 43 -10 2 8 -26 48 65 -15 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold -72
+  face: 17 [Liberation Serif]
+  tm: 80 64 16 8 3 41 136 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  18 23 40 36 36 73 60 20 24 24 36 41 18 24 18 20 36 36 36 36 36 36 36 36 36 36 24 24 41 41 41 36 67 52 48 52 52 48 43 56 56 28 36 55 48 68 52 56 43 57 52 40 48 52 52 72 51 52 47 24 20 24 42 36 24 36 40 32 40 32 25 36 40 20 24 40 20 60 40 36 40 40 32 28 24 40 36 53 37 37 32 28 15 28 37
+  extent:  1810 80
+  otm:  2048 49 -16 11 36 18 0 1 0 7 -1 4 19 32 0 64 -16 3 8 -39 73 97 -22 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold 0
+  face: 17 [Liberation Serif]
+  tm: 17 14 3 1 1 9 30 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  4 5 9 8 8 16 13 4 5 5 8 9 4 5 4 4 8 8 8 8 8 8 8 8 8 8 5 5 9 9 9 8 15 11 11 11 12 10 9 12 12 6 8 12 10 16 12 12 9 12 12 9 10 11 11 15 11 10 9 5 4 5 9 8 5 8 8 7 8 8 5 8 8 4 4 9 4 12 8 8 8 8 6 7 5 8 8 10 8 8 6 6 3 6 8
+  extent:  387 17
+  otm:  2048 11 -3 2 8 4 0 1 0 2 0 1 4 32 0 14 -3 1 8 -9 16 22 -5 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold 12
+  face: 17 [Liberation Serif]
+  tm: 12 10 2 1 0 6 20 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  3 4 6 6 6 10 9 3 4 4 6 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 4 4 6 6 6 6 10 8 8 9 8 6 6 9 9 4 6 8 7 10 8 10 7 10 8 7 6 8 8 12 7 8 7 4 3 4 6 6 4 6 6 5 6 6 4 6 7 4 4 7 4 10 7 6 6 6 5 5 4 7 5 8 6 6 6 4 3 4 6
+  extent:  300 12
+  otm:  2048 7 -2 2 5 3 0 1 0 1 0 1 3 32 0 10 -2 0 8 -6 11 15 -3 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold 20
+  face: 17 [Liberation Serif]
+  tm: 20 16 4 2 1 10 34 700 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  5 5 10 9 9 17 15 5 6 6 9 10 5 6 5 5 9 9 9 9 9 9 9 9 9 9 5 5 10 10 10 9 17 13 12 13 13 11 10 14 14 7 9 14 12 17 13 14 11 14 13 10 11 13 13 17 12 12 11 6 5 6 10 9 6 9 10 8 10 8 6 9 10 5 6 10 5 15 10 10 10 10 7 7 6 10 9 12 9 9 8 7 3 7 9
+  extent:  457 20
+  otm:  2048 12 -4 3 9 5 0 1 0 2 0 1 5 32 0 16 -4 1 8 -10 18 24 -5 panose 2 2 8 3 names [Liberation Serif] [Liberation Serif Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic -8
+  face: 17 [Liberation Serif]
+  tm: 9 7 2 1 0 4 15 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  2 3 3 4 4 7 6 2 3 3 4 5 2 3 2 2 4 4 4 4 4 4 4 4 4 4 3 3 5 5 5 4 7 5 5 5 6 5 5 6 6 3 4 5 4 7 5 6 5 6 5 4 4 6 5 7 5 4 4 3 2 3 3 4 3 4 4 4 4 4 2 4 4 2 2 4 2 6 4 4 4 4 3 3 2 4 4 5 4 4 3 3 2 3 4
+  extent:  191 9
+  otm:  2048 6 -2 1 4 2 -164 100 29 0 0 0 2 1 0 7 -2 0 8 -4 8 10 -2 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic -11
+  face: 17 [Liberation Serif]
+  tm: 12 10 2 1 0 6 20 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  3 4 4 6 6 10 9 2 4 4 6 7 3 4 3 3 6 6 6 6 6 6 6 6 6 6 4 4 7 7 7 6 10 7 7 7 8 7 7 8 8 4 5 7 6 9 7 8 7 8 7 6 6 8 6 8 7 6 6 3 3 5 5 6 4 6 6 5 6 5 3 6 6 3 3 5 3 9 6 6 6 6 4 4 3 6 5 7 5 5 4 4 3 4 6
+  extent:  276 12
+  otm:  2048 8 -2 2 6 3 -164 100 29 1 -1 1 3 1 0 10 -2 0 8 -6 11 14 -3 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic -13
+  face: 17 [Liberation Serif]
+  tm: 15 12 3 2 1 7 24 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  3 4 6 7 7 11 11 3 5 5 7 9 3 4 3 4 7 7 7 7 7 7 7 7 7 7 4 4 9 9 9 7 12 8 8 9 9 8 8 9 9 4 6 9 7 11 9 9 8 9 8 7 7 9 8 10 8 7 7 5 4 6 5 7 4 7 7 6 7 6 3 7 7 4 3 7 4 9 7 7 7 7 5 5 4 7 6 9 6 6 5 5 4 5 7
+  extent:  320 15
+  otm:  2048 9 -3 2 7 3 -164 100 29 1 -1 1 3 1 0 12 -3 1 8 -7 13 17 -4 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic -16
+  face: 17 [Liberation Serif]
+  tm: 17 14 3 1 1 9 29 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  4 4 8 8 8 13 12 3 5 5 8 11 4 5 4 4 8 8 8 8 8 8 8 8 8 8 5 5 11 11 11 8 15 10 9 11 11 10 10 12 11 5 7 11 9 13 11 11 10 11 9 8 9 12 10 13 10 8 9 7 4 7 7 8 5 8 8 7 8 7 5 8 8 4 5 8 4 12 8 8 8 8 6 6 5 8 8 11 8 7 6 6 4 6 9
+  extent:  382 17
+  otm:  2048 11 -3 2 8 4 -164 100 29 1 -1 1 4 1 0 14 -3 1 8 -9 16 21 -5 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic -19
+  face: 17 [Liberation Serif]
+  tm: 21 17 4 2 1 10 35 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  5 6 7 10 10 15 15 4 6 7 10 13 5 6 5 5 10 10 10 10 10 10 10 10 10 10 6 6 13 13 13 10 17 11 12 13 14 12 12 14 14 6 8 13 11 16 13 14 12 14 12 10 11 14 12 16 12 10 11 7 5 7 8 10 5 10 10 8 10 8 5 10 10 5 5 8 5 14 10 9 10 10 7 7 5 10 8 13 8 8 7 8 5 8 10
+  extent:  456 21
+  otm:  2048 13 -4 3 10 5 -164 100 29 1 -1 1 5 1 0 17 -4 1 8 -10 19 24 -6 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic -24
+  face: 17 [Liberation Serif]
+  tm: 26 21 5 2 1 13 44 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  6 7 10 12 12 17 18 5 8 8 12 16 6 8 6 7 12 12 12 12 12 12 12 12 12 12 8 8 16 16 16 12 22 14 15 16 17 15 15 17 17 8 11 16 13 20 16 17 15 17 15 12 13 17 15 20 15 13 13 10 7 10 10 12 7 12 12 11 12 11 8 12 12 7 7 11 7 17 12 12 12 12 10 9 7 12 11 15 11 11 9 10 7 10 13
+  extent:  573 26
+  otm:  2048 17 -5 4 12 6 -164 100 29 1 -1 1 6 1 0 21 -5 1 8 -13 24 31 -7 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic -32
+  face: 17 [Liberation Serif]
+  tm: 36 29 7 4 1 17 59 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  8 10 14 17 16 27 23 7 10 11 16 22 8 11 8 9 16 16 16 16 16 16 16 16 16 16 11 11 22 22 22 16 29 20 20 21 23 20 19 23 23 11 14 20 18 27 21 23 19 23 20 16 18 23 19 25 20 17 18 13 9 13 14 16 10 16 16 14 16 14 9 16 16 9 8 14 9 23 16 16 16 16 12 12 9 16 14 20 14 14 12 13 9 13 17
+  extent:  753 36
+  otm:  2048 22 -7 5 16 8 -164 100 29 2 -2 2 8 1 0 29 -7 1 8 -17 31 41 -10 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic -48
+  face: 17 [Liberation Serif]
+  tm: 53 43 10 5 2 26 88 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  12 15 20 25 24 39 34 10 15 16 24 32 12 16 12 13 24 24 24 24 24 24 24 24 24 24 16 16 32 32 32 24 44 29 29 32 35 29 28 35 35 16 21 32 27 40 32 35 28 35 29 24 27 35 28 39 29 26 27 19 13 20 20 24 15 24 24 21 24 21 13 24 24 13 13 21 13 35 24 24 24 24 19 19 13 24 21 30 21 21 19 19 13 19 26
+  extent:  1133 53
+  otm:  2048 33 -10 7 24 12 -164 100 29 2 -3 2 12 1 0 43 -10 2 8 -26 47 62 -15 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic -72
+  face: 17 [Liberation Serif]
+  tm: 80 64 16 8 3 39 132 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  18 24 30 37 36 59 54 15 23 23 36 49 18 24 18 20 36 36 36 36 36 36 36 36 36 36 24 24 49 49 49 36 66 44 44 48 52 44 44 52 52 24 32 48 40 60 48 52 44 52 44 36 40 52 44 59 44 41 40 29 20 31 30 36 26 36 36 32 36 32 20 36 36 20 20 32 20 52 36 36 36 36 28 28 20 36 32 48 32 32 28 29 20 29 39
+  extent:  1706 80
+  otm:  2048 50 -16 11 36 18 -164 100 29 4 -4 4 19 1 0 64 -16 3 8 -39 71 93 -22 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic 0
+  face: 17 [Liberation Serif]
+  tm: 17 14 3 1 1 9 29 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  4 4 8 8 8 13 12 3 5 5 8 11 4 5 4 4 8 8 8 8 8 8 8 8 8 8 5 5 11 11 11 8 15 10 9 11 11 10 10 12 11 5 7 11 9 13 11 11 10 11 9 8 9 12 10 13 10 8 9 7 4 7 7 8 5 8 8 7 8 7 5 8 8 4 5 8 4 12 8 8 8 8 6 6 5 8 8 11 8 7 6 6 4 6 9
+  extent:  382 17
+  otm:  2048 11 -3 2 8 4 -164 100 29 1 -1 1 4 1 0 14 -3 1 8 -9 16 21 -5 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic 12
+  face: 17 [Liberation Serif]
+  tm: 12 10 2 1 0 6 20 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  3 4 4 6 6 10 9 2 4 4 6 7 3 4 3 3 6 6 6 6 6 6 6 6 6 6 4 4 7 7 7 6 10 7 7 7 8 7 7 8 8 4 5 7 6 9 7 8 7 8 7 6 6 8 6 8 7 6 6 3 3 5 5 6 4 6 6 5 6 5 3 6 6 3 3 5 3 9 6 6 6 6 4 4 3 6 5 7 5 5 4 4 3 4 6
+  extent:  276 12
+  otm:  2048 8 -2 2 5 3 -164 100 29 1 -1 1 3 1 0 10 -2 0 8 -6 11 14 -3 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] italic 20
+  face: 17 [Liberation Serif]
+  tm: 20 16 4 2 1 10 33 400 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  5 6 7 9 9 14 15 4 6 6 9 12 5 6 5 5 9 9 9 9 9 9 9 9 9 9 6 6 12 12 12 9 16 11 11 12 13 11 11 13 13 6 8 12 10 15 12 13 11 13 11 9 10 13 11 14 11 10 10 7 5 8 8 9 5 9 9 8 9 8 5 9 9 6 5 8 5 13 9 9 9 9 7 7 5 9 8 12 8 8 7 7 5 7 10
+  extent:  433 20
+  otm:  2048 13 -4 3 9 5 -164 100 29 1 -1 1 5 1 0 16 -4 1 8 -10 18 23 -5 panose 2 2 5 3 names [Liberation Serif] [Liberation Serif Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic -8
+  face: 17 [Liberation Serif]
+  tm: 9 7 2 1 0 4 15 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  2 3 4 4 4 8 6 2 3 3 4 5 2 3 2 2 4 4 4 4 4 4 4 4 4 4 3 3 5 5 5 4 7 5 5 5 6 5 5 6 6 3 4 5 5 7 6 6 5 6 5 4 5 6 5 7 5 5 5 3 2 3 5 4 3 4 4 4 4 4 3 4 4 2 2 4 2 6 4 4 4 4 3 3 2 4 4 5 4 4 3 3 2 3 4
+  extent:  193 9
+  otm:  2048 5 -2 1 4 2 -164 100 29 1 0 0 2 33 0 7 -2 0 8 -4 8 10 -2 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic -11
+  face: 17 [Liberation Serif]
+  tm: 12 10 2 1 0 6 20 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  3 3 6 5 6 11 9 3 4 4 6 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 4 4 6 6 6 6 9 7 7 7 8 7 7 8 9 4 6 7 7 10 8 8 7 8 7 6 7 8 7 10 7 7 7 4 3 4 6 6 4 6 6 5 6 5 3 5 6 3 3 6 3 9 6 6 6 6 4 4 3 6 5 7 6 5 4 4 3 4 6
+  extent:  278 12
+  otm:  2048 7 -2 2 6 3 -164 100 29 1 0 1 3 33 0 10 -2 0 8 -6 11 14 -3 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic -13
+  face: 17 [Liberation Serif]
+  tm: 15 12 3 2 1 7 24 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  3 5 7 6 7 11 10 4 4 4 7 7 3 4 3 4 7 7 7 7 7 7 7 7 7 7 4 4 7 7 7 7 11 9 9 9 9 9 9 9 10 5 6 9 8 12 9 9 8 9 9 7 8 9 9 12 9 7 8 4 4 4 7 7 4 7 7 6 7 6 4 7 7 4 4 7 4 10 7 7 7 7 5 5 4 7 6 9 7 6 5 5 3 5 8
+  extent:  325 15
+  otm:  2048 9 -3 2 7 3 -164 100 29 1 0 1 3 33 0 12 -3 1 8 -7 13 17 -4 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic -16
+  face: 17 [Liberation Serif]
+  tm: 17 14 3 1 1 9 30 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  4 5 9 8 8 13 12 4 5 5 8 9 4 5 4 4 8 8 8 8 8 8 8 8 8 8 5 5 9 9 9 8 13 11 11 11 12 11 11 12 12 6 8 11 10 13 12 12 10 12 11 9 10 12 11 14 11 10 10 5 4 5 9 8 5 8 8 7 8 7 5 8 9 5 4 8 5 12 9 8 8 8 6 6 5 9 7 11 8 7 6 6 3 6 10
+  extent:  388 17
+  otm:  2048 11 -3 2 8 4 -164 100 29 2 0 1 4 33 0 14 -3 1 8 -9 16 21 -5 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic -19
+  face: 17 [Liberation Serif]
+  tm: 21 17 4 2 1 11 35 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  5 8 11 10 10 18 15 5 6 6 10 11 5 6 5 5 10 10 10 10 10 10 10 10 10 10 6 6 11 11 11 10 16 13 13 13 13 13 13 14 15 7 10 13 12 17 13 14 12 14 13 11 12 14 13 17 13 13 12 6 5 6 11 10 6 10 10 8 10 8 6 10 10 6 5 10 6 16 11 9 10 10 7 7 5 11 9 14 10 8 7 7 4 7 11
+  extent:  471 21
+  otm:  2048 13 -4 3 10 5 -164 100 29 2 0 1 5 33 0 17 -4 1 8 -10 19 25 -6 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic -24
+  face: 17 [Liberation Serif]
+  tm: 26 21 5 2 1 13 44 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  6 8 13 12 12 20 19 7 8 8 12 14 6 8 6 7 12 12 12 12 12 12 12 12 12 12 8 8 14 14 14 12 20 16 16 16 17 16 16 17 19 9 12 16 15 21 17 17 15 17 16 13 15 17 15 21 16 15 15 8 7 8 14 12 8 12 12 11 12 11 8 12 13 7 7 12 7 18 13 12 12 12 9 9 7 13 11 16 12 11 9 8 6 8 14
+  extent:  582 26
+  otm:  2048 16 -5 4 12 6 -164 100 29 2 0 1 6 33 0 21 -5 1 8 -13 24 31 -7 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic -32
+  face: 17 [Liberation Serif]
+  tm: 36 29 7 4 1 18 59 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  8 11 18 16 16 27 25 9 11 11 16 18 8 11 8 9 16 16 16 16 16 16 16 16 16 16 11 11 18 18 18 16 27 21 21 21 23 21 21 23 25 12 16 21 20 28 23 23 20 23 21 18 20 23 20 28 21 20 20 11 9 11 18 16 11 16 16 14 16 14 11 16 18 9 9 16 9 24 17 16 16 16 12 12 9 18 14 21 16 14 12 11 7 11 18
+  extent:  773 36
+  otm:  2048 22 -7 5 16 8 -164 100 29 3 0 2 8 33 0 29 -7 1 8 -17 31 42 -10 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic -48
+  face: 17 [Liberation Serif]
+  tm: 53 43 10 5 2 27 89 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  12 18 27 24 24 41 37 13 16 16 24 27 12 16 12 13 24 24 24 24 24 24 24 24 24 24 16 16 27 27 27 24 40 32 32 32 35 32 32 35 37 18 24 32 29 43 35 35 29 35 32 27 29 35 31 43 32 30 29 16 13 16 27 24 16 24 24 21 24 21 16 24 27 13 13 24 13 39 27 24 24 24 19 19 13 27 21 32 24 21 19 17 10 17 28
+  extent:  1165 53
+  otm:  2048 33 -10 7 24 12 -164 100 29 5 -1 2 12 33 0 43 -10 2 8 -26 47 63 -15 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic -72
+  face: 17 [Liberation Serif]
+  tm: 80 64 16 8 3 40 133 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  18 27 40 35 36 60 56 20 24 24 36 41 18 24 18 20 36 36 36 36 36 36 36 36 36 36 24 24 41 41 41 36 60 48 48 48 52 48 48 52 56 28 36 48 44 64 52 52 44 52 48 40 44 52 47 64 48 44 44 24 20 24 41 36 24 36 36 32 36 32 24 36 40 20 20 36 20 57 40 36 36 36 28 28 20 40 32 48 36 32 28 25 16 25 41
+  extent:  1747 80
+  otm:  2048 49 -16 11 36 18 -164 100 29 7 -1 4 19 33 0 64 -16 3 8 -39 71 94 -22 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic 0
+  face: 17 [Liberation Serif]
+  tm: 17 14 3 1 1 9 30 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  4 5 9 8 8 13 12 4 5 5 8 9 4 5 4 4 8 8 8 8 8 8 8 8 8 8 5 5 9 9 9 8 13 11 11 11 12 11 11 12 12 6 8 11 10 13 12 12 10 12 11 9 10 12 11 14 11 10 10 5 4 5 9 8 5 8 8 7 8 7 5 8 9 5 4 8 5 12 9 8 8 8 6 6 5 9 7 11 8 7 6 6 3 6 10
+  extent:  388 17
+  otm:  2048 11 -3 2 8 4 -164 100 29 2 0 1 4 33 0 14 -3 1 8 -9 16 21 -5 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic 12
+  face: 17 [Liberation Serif]
+  tm: 12 10 2 1 0 6 20 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  3 3 6 5 6 11 9 3 4 4 6 6 3 4 3 3 6 6 6 6 6 6 6 6 6 6 4 4 6 6 6 6 9 7 7 7 8 7 7 8 9 4 6 7 7 10 8 8 7 8 7 6 7 8 7 10 7 7 7 4 3 4 6 6 4 6 6 5 6 5 3 5 6 3 3 6 3 9 6 6 6 6 4 4 3 6 5 7 6 5 4 4 3 4 6
+  extent:  278 12
+  otm:  2048 7 -2 2 5 3 -164 100 29 1 0 1 3 33 0 10 -2 0 8 -6 11 14 -3 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Serif] bold italic 20
+  face: 17 [Liberation Serif]
+  tm: 20 16 4 2 1 10 33 700 0 96 96 32 65532 31 32 255 0 0 23 0
+  widths:  5 7 10 9 9 16 14 5 6 6 9 10 5 6 5 5 9 9 9 9 9 9 9 9 9 9 6 6 10 10 10 9 15 12 12 12 13 12 12 13 14 7 9 12 11 16 13 13 11 13 12 10 11 13 12 16 12 11 11 6 5 6 10 9 6 9 9 8 9 8 6 9 10 5 5 9 5 15 10 9 9 8 7 7 5 10 8 13 9 8 7 6 4 6 11
+  extent:  443 20
+  otm:  2048 12 -4 3 9 5 -164 100 29 2 0 1 5 33 0 16 -4 1 8 -10 18 24 -5 panose 2 2 7 3 names [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular -8
+  face: 16 [Liberation Mono]
+  tm: 9 7 2 1 0 5 10 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5
+  extent:  280 9
+  otm:  2048 5 -2 0 4 2 0 1 0 0 -2 0 2 64 0 7 -2 0 8 -4 8 6 -2 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular -11
+  face: 16 [Liberation Mono]
+  tm: 12 9 3 1 0 7 13 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
+  extent:  392 12
+  otm:  2048 7 -2 0 6 3 0 1 0 0 -2 1 3 64 0 9 -3 0 8 -5 11 8 -3 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular -13
+  face: 16 [Liberation Mono]
+  tm: 15 11 4 2 0 8 16 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
+  extent:  448 15
+  otm:  2048 8 -2 0 7 3 0 1 0 1 -2 1 3 64 0 11 -4 0 8 -6 13 10 -4 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular -16
+  face: 16 [Liberation Mono]
+  tm: 18 13 5 2 0 10 20 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 0 1 0 1 -3 1 4 64 0 13 -5 0 8 -8 16 12 -5 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular -19
+  face: 16 [Liberation Mono]
+  tm: 22 16 6 3 0 11 23 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11
+  extent:  616 22
+  otm:  2048 12 -4 0 10 5 0 1 0 1 -4 1 5 64 0 16 -6 0 8 -9 19 14 -6 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular -24
+  face: 16 [Liberation Mono]
+  tm: 27 20 7 3 0 14 29 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14
+  extent:  784 27
+  otm:  2048 15 -5 0 12 6 0 1 0 1 -5 1 6 64 0 20 -7 0 8 -12 24 18 -7 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular -32
+  face: 16 [Liberation Mono]
+  tm: 37 27 10 5 0 19 39 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19
+  extent:  1064 37
+  otm:  2048 20 -6 0 16 8 0 1 0 1 -6 2 8 64 0 27 -10 0 8 -15 31 24 -10 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular -48
+  face: 16 [Liberation Mono]
+  tm: 54 40 14 6 0 29 59 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29
+  extent:  1624 54
+  otm:  2048 29 -9 0 24 12 0 1 0 2 -9 2 12 64 0 40 -14 0 8 -23 47 36 -14 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular -72
+  face: 16 [Liberation Mono]
+  tm: 82 60 22 10 0 43 88 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43
+  extent:  2408 82
+  otm:  2048 44 -14 0 36 18 0 1 0 3 -14 4 19 64 0 60 -22 0 8 -35 71 53 -22 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular 0
+  face: 16 [Liberation Mono]
+  tm: 18 13 5 2 0 10 20 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 0 1 0 1 -3 1 4 64 0 13 -5 0 8 -8 16 12 -5 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular 12
+  face: 16 [Liberation Mono]
+  tm: 12 9 3 1 0 6 13 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
+  extent:  392 12
+  otm:  2048 6 -2 0 5 3 0 1 0 0 -2 1 3 64 0 9 -3 0 8 -5 10 8 -3 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] regular 20
+  face: 16 [Liberation Mono]
+  tm: 20 15 5 2 0 11 22 400 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11
+  extent:  616 20
+  otm:  2048 11 -3 0 9 4 0 1 0 1 -3 1 5 64 0 15 -5 0 8 -9 17 13 -5 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono] [Regular]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold -8
+  face: 16 [Liberation Mono]
+  tm: 9 7 2 1 0 5 9 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5
+  extent:  280 9
+  otm:  2048 5 -2 0 4 2 0 1 0 1 -1 0 2 32 0 7 -2 0 8 -4 8 6 -3 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold -11
+  face: 16 [Liberation Mono]
+  tm: 12 9 3 1 0 7 13 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
+  extent:  392 12
+  otm:  2048 7 -2 0 6 3 0 1 0 1 -1 1 3 32 0 9 -3 0 8 -5 11 8 -4 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold -13
+  face: 16 [Liberation Mono]
+  tm: 15 11 4 2 0 8 15 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
+  extent:  448 15
+  otm:  2048 8 -3 0 7 3 0 1 0 1 -2 1 3 32 0 11 -4 0 8 -6 13 9 -5 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold -16
+  face: 16 [Liberation Mono]
+  tm: 18 13 5 2 0 10 19 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 0 1 0 2 -2 1 4 32 0 13 -5 0 8 -8 16 11 -6 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold -19
+  face: 16 [Liberation Mono]
+  tm: 22 16 6 3 0 11 22 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11
+  extent:  616 22
+  otm:  2048 12 -4 0 10 5 0 1 0 2 -3 1 5 32 0 16 -6 0 8 -9 19 13 -7 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold -24
+  face: 16 [Liberation Mono]
+  tm: 27 20 7 3 0 14 28 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14
+  extent:  784 27
+  otm:  2048 15 -5 0 12 6 0 1 0 2 -3 1 6 32 0 20 -7 0 8 -12 24 17 -9 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold -32
+  face: 16 [Liberation Mono]
+  tm: 37 27 10 5 0 19 38 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19
+  extent:  1064 37
+  otm:  2048 20 -7 0 16 8 0 1 0 3 -4 2 8 32 0 27 -10 0 8 -15 32 22 -12 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold -48
+  face: 16 [Liberation Mono]
+  tm: 54 40 14 6 0 29 57 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29
+  extent:  1624 54
+  otm:  2048 30 -10 0 24 12 0 1 0 5 -6 2 12 32 0 40 -14 0 8 -23 47 33 -18 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold -72
+  face: 16 [Liberation Mono]
+  tm: 82 60 22 10 0 43 85 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43
+  extent:  2408 82
+  otm:  2048 46 -15 0 36 18 0 1 0 7 -10 4 19 32 0 60 -22 0 8 -35 71 50 -27 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold 0
+  face: 16 [Liberation Mono]
+  tm: 18 13 5 2 0 10 19 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 0 1 0 2 -2 1 4 32 0 13 -5 0 8 -8 16 11 -6 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold 12
+  face: 16 [Liberation Mono]
+  tm: 12 9 3 1 0 6 12 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
+  extent:  392 12
+  otm:  2048 7 -2 0 5 3 0 1 0 1 -1 1 3 32 0 9 -3 0 8 -5 10 7 -4 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold 20
+  face: 16 [Liberation Mono]
+  tm: 20 15 5 2 0 11 21 700 0 96 96 32 65059 31 32 0 0 0 54 0
+  widths:  11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11
+  extent:  616 20
+  otm:  2048 11 -4 0 9 4 0 1 0 2 -2 1 5 32 0 15 -5 0 8 -9 17 12 -7 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold] [Bold]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic -8
+  face: 16 [Liberation Mono]
+  tm: 9 7 2 1 0 5 10 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5
+  extent:  280 9
+  otm:  2048 5 -2 0 4 2 -120 100 21 0 -2 0 2 1 0 7 -2 0 8 -4 8 7 -2 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic -11
+  face: 16 [Liberation Mono]
+  tm: 12 9 3 1 0 7 14 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
+  extent:  392 12
+  otm:  2048 7 -2 0 6 3 -120 100 21 0 -2 1 3 1 0 9 -3 0 8 -5 11 9 -3 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic -13
+  face: 16 [Liberation Mono]
+  tm: 15 11 4 2 0 8 17 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
+  extent:  448 15
+  otm:  2048 8 -2 0 7 3 -120 100 21 1 -2 1 3 1 0 11 -4 0 8 -6 13 11 -4 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic -16
+  face: 16 [Liberation Mono]
+  tm: 18 13 5 2 0 10 21 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 -120 100 21 1 -3 1 4 1 0 13 -5 0 8 -8 16 13 -5 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic -19
+  face: 16 [Liberation Mono]
+  tm: 22 16 6 3 0 11 25 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11
+  extent:  616 22
+  otm:  2048 12 -4 0 10 5 -120 100 21 1 -4 1 5 1 0 16 -6 0 8 -9 19 16 -6 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic -24
+  face: 16 [Liberation Mono]
+  tm: 27 20 7 3 0 14 31 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14
+  extent:  784 27
+  otm:  2048 15 -5 0 12 6 -120 100 21 1 -5 1 6 1 0 20 -7 0 8 -12 24 20 -7 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic -32
+  face: 16 [Liberation Mono]
+  tm: 37 27 10 5 0 19 42 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19
+  extent:  1064 37
+  otm:  2048 20 -6 0 16 8 -120 100 21 1 -6 2 8 1 0 27 -10 0 8 -15 31 26 -10 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic -48
+  face: 16 [Liberation Mono]
+  tm: 54 40 14 6 0 29 63 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29
+  extent:  1624 54
+  otm:  2048 29 -9 0 24 12 -120 100 21 2 -9 2 12 1 0 40 -14 0 8 -23 47 40 -14 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic -72
+  face: 16 [Liberation Mono]
+  tm: 82 60 22 10 0 43 94 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43
+  extent:  2408 82
+  otm:  2048 44 -14 0 36 18 -120 100 21 3 -14 4 19 1 0 60 -22 0 8 -35 71 59 -22 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic 0
+  face: 16 [Liberation Mono]
+  tm: 18 13 5 2 0 10 21 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 -120 100 21 1 -3 1 4 1 0 13 -5 0 8 -8 16 13 -5 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic 12
+  face: 16 [Liberation Mono]
+  tm: 12 9 3 1 0 6 14 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
+  extent:  392 12
+  otm:  2048 6 -2 0 5 3 -120 100 21 0 -2 1 3 1 0 9 -3 0 8 -5 10 9 -3 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] italic 20
+  face: 16 [Liberation Mono]
+  tm: 20 15 5 2 0 11 23 400 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11
+  extent:  616 20
+  otm:  2048 11 -3 0 9 4 -120 100 21 1 -3 1 5 1 0 15 -5 0 8 -9 17 15 -5 panose 2 7 4 9 names [Liberation Mono] [Liberation Mono Italic] [Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic -8
+  face: 16 [Liberation Mono]
+  tm: 9 7 2 1 0 5 10 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5
+  extent:  280 9
+  otm:  2048 5 -2 0 4 2 -120 100 21 1 -1 0 2 33 0 7 -2 0 8 -4 8 6 -3 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic -11
+  face: 16 [Liberation Mono]
+  tm: 12 9 3 1 0 7 14 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
+  extent:  392 12
+  otm:  2048 7 -2 0 6 3 -120 100 21 1 -1 1 3 33 0 9 -3 0 8 -5 11 9 -4 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic -13
+  face: 16 [Liberation Mono]
+  tm: 15 11 4 2 0 8 17 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8 8
+  extent:  448 15
+  otm:  2048 8 -3 0 7 3 -120 100 21 1 -2 1 3 33 0 11 -4 0 8 -6 13 10 -5 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic -16
+  face: 16 [Liberation Mono]
+  tm: 18 13 5 2 0 10 20 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 -120 100 21 2 -2 1 4 33 0 13 -5 0 8 -8 16 13 -6 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic -19
+  face: 16 [Liberation Mono]
+  tm: 22 16 6 3 0 11 24 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11
+  extent:  616 22
+  otm:  2048 12 -4 0 10 5 -120 100 21 2 -3 1 5 33 0 16 -6 0 8 -9 19 15 -7 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic -24
+  face: 16 [Liberation Mono]
+  tm: 27 20 7 3 0 14 31 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14
+  extent:  784 27
+  otm:  2048 15 -5 0 12 6 -120 100 21 2 -3 1 6 33 0 20 -7 0 8 -12 24 19 -9 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic -32
+  face: 16 [Liberation Mono]
+  tm: 37 27 10 5 0 19 41 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19 19
+  extent:  1064 37
+  otm:  2048 20 -7 0 16 8 -120 100 21 3 -4 2 8 33 0 27 -10 0 8 -15 32 25 -12 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic -48
+  face: 16 [Liberation Mono]
+  tm: 54 40 14 6 0 29 61 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29 29
+  extent:  1624 54
+  otm:  2048 30 -10 0 24 12 -120 100 21 5 -6 2 12 33 0 40 -14 0 8 -23 47 38 -18 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic -72
+  face: 16 [Liberation Mono]
+  tm: 82 60 22 10 0 43 92 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43 43
+  extent:  2408 82
+  otm:  2048 46 -15 0 36 18 -120 100 21 7 -10 4 19 33 0 60 -22 0 8 -35 71 57 -27 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic 0
+  face: 16 [Liberation Mono]
+  tm: 18 13 5 2 0 10 20 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 -120 100 21 2 -2 1 4 33 0 13 -5 0 8 -8 16 13 -6 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic 12
+  face: 16 [Liberation Mono]
+  tm: 12 9 3 1 0 6 13 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7
+  extent:  392 12
+  otm:  2048 7 -2 0 5 3 -120 100 21 1 -1 1 3 33 0 9 -3 0 8 -5 10 8 -4 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+font: [Liberation Mono] bold italic 20
+  face: 16 [Liberation Mono]
+  tm: 20 15 5 2 0 11 22 700 0 96 96 32 65059 31 32 255 0 0 54 0
+  widths:  11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11 11
+  extent:  616 20
+  otm:  2048 11 -4 0 9 4 -120 100 21 2 -2 1 5 33 0 15 -5 0 8 -9 17 14 -7 panose 2 7 7 9 names [Liberation Mono] [Liberation Mono Bold Italic] [Bold Italic]
+  charset:  0 0x600001bf 0xdff70000
+missing: dontcare
+  face: 6 [Arial]
+  tm: 18 15 3 2 1 7 43 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  4 5 6 9 9 14 11 3 5 5 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 4 4 9 9 9 9 16 11 11 12 12 11 10 12 11 3 8 11 9 13 11 12 11 12 11 11 9 11 11 15 11 9 9 4 4 4 7 9 5 9 9 8 9 9 4 9 8 4 3 8 3 13 8 9 9 9 5 8 4 8 7 11 7 7 7 5 3 5 9
+  extent:  404 18
+  otm:  2048 12 -3 2 8 4 0 1 0 1 -2 1 4 64 0 14 -3 1 9 -11 16 32 -5 panose 2 11 6 4 names [Arial] [Arial] [Regular]
+  charset:  0 0x400001ff 0xffff0000
+missing: swiss
+  face: 6 [Arial]
+  tm: 18 15 3 2 1 7 43 400 0 96 96 32 65532 31 32 0 0 0 39 0
+  widths:  4 5 6 9 9 14 11 3 5 5 6 9 4 5 4 4 9 9 9 9 9 9 9 9 9 9 4 4 9 9 9 9 16 11 11 12 12 11 10 12 11 3 8 11 9 13 11 12 11 12 11 11 9 11 11 15 11 9 9 4 4 4 7 9 5 9 9 8 9 9 4 9 8 4 3 8 3 13 8 9 9 9 5 8 4 8 7 11 7 7 7 5 3 5 9
+  extent:  404 18
+  otm:  2048 12 -3 2 8 4 0 1 0 1 -2 1 4 64 0 14 -3 1 9 -11 16 32 -5 panose 2 11 6 4 names [Arial] [Arial] [Regular]
+  charset:  0 0x400001ff 0xffff0000
+missing: roman
+  face: 16 [Times New Roman]
+  tm: 19 15 4 3 1 6 42 400 0 96 96 32 65532 31 32 0 0 0 23 0
+  widths:  4 5 5 8 8 13 12 3 5 5 8 9 4 6 4 4 8 8 8 8 8 8 8 8 8 8 3 4 9 9 9 7 15 11 10 11 11 9 9 11 11 5 6 12 9 14 12 12 9 12 10 9 9 11 11 15 11 11 9 5 4 5 8 8 5 7 8 7 8 7 4 7 7 3 4 8 3 11 7 8 8 8 5 6 4 7 7 11 7 7 6 7 3 8 9
+  extent:  365 19
+  otm:  2048 11 -3 2 8 4 0 1 0 1 -2 1 4 64 0 14 -3 1 9 -9 16 32 -5 panose 2 2 6 3 names [Times New Roman] [Times New Roman] [Regular]
+  charset:  0 0x400001ff 0xffff0000
+missing: modern
+  face: 12 [Courier New]
+  tm: 18 14 4 2 0 10 11 400 0 96 96 32 65532 31 32 0 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 0 1 0 1 -4 1 4 64 0 13 -5 0 9 0 16 10 -11 panose 2 7 3 9 names [Courier New] [Courier New] [Regular]
+  charset:  0 0x400001ff 0xffff0000
+missing: fixed
+  face: 12 [Courier New]
+  tm: 18 14 4 2 0 10 11 400 0 96 96 32 65532 31 32 0 0 0 54 0
+  widths:  10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10 10
+  extent:  560 18
+  otm:  2048 10 -3 0 8 4 0 1 0 1 -4 1 4 64 0 13 -5 0 9 0 16 10 -11 panose 2 7 3 9 names [Courier New] [Courier New] [Regular]
+  charset:  0 0x400001ff 0xffff0000
+weights:  100:400/49 200:400/49 300:400/49 400:400/49 500:400/49 600:700/55 700:700/53 800:700/53 900:700/53
+underline and strike-out:  255 255 1 1
+ansi widths 0x80-0x9f:  7 10 3 7 4 13 7 7 4 14 9 4 13 10 7 10 10 3 3 4 4 5 7 13 4 13 7 4 12 10 7 9
+wide euro, em dash, oe:  7 13 12
+ansi and wide extents:  54 15 54 15
+enumerate: all, the three faces
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Western] type 4 lf 36 19 400 0 0 3 2 1 34 ntm 36 29 19 59 400 39 0 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Hebrew] type 4 lf 36 19 400 0 177 3 2 1 34 ntm 36 29 19 59 400 39 177 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Greek] type 4 lf 36 19 400 0 161 3 2 1 34 ntm 36 29 19 59 400 39 161 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Turkish] type 4 lf 36 19 400 0 162 3 2 1 34 ntm 36 29 19 59 400 39 162 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Baltic] type 4 lf 36 19 400 0 186 3 2 1 34 ntm 36 29 19 59 400 39 186 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Central European] type 4 lf 36 19 400 0 238 3 2 1 34 ntm 36 29 19 59 400 39 238 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Cyrillic] type 4 lf 36 19 400 0 204 3 2 1 34 ntm 36 29 19 59 400 39 204 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Vietnamese] type 4 lf 36 19 400 0 163 3 2 1 34 ntm 36 29 19 59 400 39 163 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Serif] [Liberation Serif] [Regular] [Western] type 4 lf 35 18 400 0 0 3 2 1 18 ntm 35 28 17 58 400 23 0 0x00000040 2048 2268 1124 0x600001bf
+  family: [Liberation Serif] [Liberation Serif] [Regular] [Hebrew] type 4 lf 35 18 400 0 177 3 2 1 18 ntm 35 28 17 58 400 23 177 0x00000040 2048 2268 1124 0x600001bf
+  family: [Liberation Serif] [Liberation Serif] [Regular] [Greek] type 4 lf 35 18 400 0 161 3 2 1 18 ntm 35 28 17 58 400 23 161 0x00000040 2048 2268 1124 0x600001bf
+  family: [Liberation Serif] [Liberation Serif] [Regular] [Turkish] type 4 lf 35 18 400 0 162 3 2 1 18 ntm 35 28 17 58 400 23 162 0x00000040 2048 2268 1124 0x600001bf
+  family: [Liberation Serif] [Liberation Serif] [Regular] [Baltic] type 4 lf 35 18 400 0 186 3 2 1 18 ntm 35 28 17 58 400 23 186 0x00000040 2048 2268 1124 0x600001bf
+  family: [Liberation Serif] [Liberation Serif] [Regular] [Central European] type 4 lf 35 18 400 0 238 3 2 1 18 ntm 35 28 17 58 400 23 238 0x00000040 2048 2268 1124 0x600001bf
+  family: [Liberation Serif] [Liberation Serif] [Regular] [Cyrillic] type 4 lf 35 18 400 0 204 3 2 1 18 ntm 35 28 17 58 400 23 204 0x00000040 2048 2268 1124 0x600001bf
+  family: [Liberation Serif] [Liberation Serif] [Regular] [Vietnamese] type 4 lf 35 18 400 0 163 3 2 1 18 ntm 35 28 17 58 400 23 163 0x00000040 2048 2268 1124 0x600001bf
+  family: [Liberation Mono] [Liberation Mono] [Regular] [Western] type 4 lf 36 19 400 0 0 3 2 1 49 ntm 36 26 19 39 400 54 0 0x00000040 2048 2320 1229 0x600001bf
+  family: [Liberation Mono] [Liberation Mono] [Regular] [Hebrew] type 4 lf 36 19 400 0 177 3 2 1 49 ntm 36 26 19 39 400 54 177 0x00000040 2048 2320 1229 0x600001bf
+  family: [Liberation Mono] [Liberation Mono] [Regular] [Greek] type 4 lf 36 19 400 0 161 3 2 1 49 ntm 36 26 19 39 400 54 161 0x00000040 2048 2320 1229 0x600001bf
+  family: [Liberation Mono] [Liberation Mono] [Regular] [Turkish] type 4 lf 36 19 400 0 162 3 2 1 49 ntm 36 26 19 39 400 54 162 0x00000040 2048 2320 1229 0x600001bf
+  family: [Liberation Mono] [Liberation Mono] [Regular] [Baltic] type 4 lf 36 19 400 0 186 3 2 1 49 ntm 36 26 19 39 400 54 186 0x00000040 2048 2320 1229 0x600001bf
+  family: [Liberation Mono] [Liberation Mono] [Regular] [Central European] type 4 lf 36 19 400 0 238 3 2 1 49 ntm 36 26 19 39 400 54 238 0x00000040 2048 2320 1229 0x600001bf
+  family: [Liberation Mono] [Liberation Mono] [Regular] [Cyrillic] type 4 lf 36 19 400 0 204 3 2 1 49 ntm 36 26 19 39 400 54 204 0x00000040 2048 2320 1229 0x600001bf
+  family: [Liberation Mono] [Liberation Mono] [Regular] [Vietnamese] type 4 lf 36 19 400 0 163 3 2 1 49 ntm 36 26 19 39 400 54 163 0x00000040 2048 2320 1229 0x600001bf
+  result:  1
+enumerate: the sans face, every charset
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Western] type 4 lf 36 19 400 0 0 3 2 1 34 ntm 36 29 19 59 400 39 0 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Hebrew] type 4 lf 36 19 400 0 177 3 2 1 34 ntm 36 29 19 59 400 39 177 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Greek] type 4 lf 36 19 400 0 161 3 2 1 34 ntm 36 29 19 59 400 39 161 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Turkish] type 4 lf 36 19 400 0 162 3 2 1 34 ntm 36 29 19 59 400 39 162 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Baltic] type 4 lf 36 19 400 0 186 3 2 1 34 ntm 36 29 19 59 400 39 186 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Central European] type 4 lf 36 19 400 0 238 3 2 1 34 ntm 36 29 19 59 400 39 238 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Cyrillic] type 4 lf 36 19 400 0 204 3 2 1 34 ntm 36 29 19 59 400 39 204 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans] [Regular] [Vietnamese] type 4 lf 36 19 400 0 163 3 2 1 34 ntm 36 29 19 59 400 39 163 0x00000040 2048 2288 1187 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold] [Bold] [Western] type 4 lf 36 20 700 0 0 3 2 1 34 ntm 36 29 20 58 700 39 0 0x00000020 2048 2288 1248 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold] [Bold] [Hebrew] type 4 lf 36 20 700 0 177 3 2 1 34 ntm 36 29 20 58 700 39 177 0x00000020 2048 2288 1248 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold] [Bold] [Greek] type 4 lf 36 20 700 0 161 3 2 1 34 ntm 36 29 20 58 700 39 161 0x00000020 2048 2288 1248 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold] [Bold] [Turkish] type 4 lf 36 20 700 0 162 3 2 1 34 ntm 36 29 20 58 700 39 162 0x00000020 2048 2288 1248 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold] [Bold] [Baltic] type 4 lf 36 20 700 0 186 3 2 1 34 ntm 36 29 20 58 700 39 186 0x00000020 2048 2288 1248 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold] [Bold] [Central European] type 4 lf 36 20 700 0 238 3 2 1 34 ntm 36 29 20 58 700 39 238 0x00000020 2048 2288 1248 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold] [Bold] [Cyrillic] type 4 lf 36 20 700 0 204 3 2 1 34 ntm 36 29 20 58 700 39 204 0x00000020 2048 2288 1248 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold] [Bold] [Vietnamese] type 4 lf 36 20 700 0 163 3 2 1 34 ntm 36 29 20 58 700 39 163 0x00000020 2048 2288 1248 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Italic] [Italic] [Western] type 4 lf 36 19 400 255 0 3 2 1 34 ntm 36 29 19 65 400 39 0 0x00000001 2048 2288 1185 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Italic] [Italic] [Hebrew] type 4 lf 36 19 400 255 177 3 2 1 34 ntm 36 29 19 65 400 39 177 0x00000001 2048 2288 1185 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Italic] [Italic] [Greek] type 4 lf 36 19 400 255 161 3 2 1 34 ntm 36 29 19 65 400 39 161 0x00000001 2048 2288 1185 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Italic] [Italic] [Turkish] type 4 lf 36 19 400 255 162 3 2 1 34 ntm 36 29 19 65 400 39 162 0x00000001 2048 2288 1185 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Italic] [Italic] [Baltic] type 4 lf 36 19 400 255 186 3 2 1 34 ntm 36 29 19 65 400 39 186 0x00000001 2048 2288 1185 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Italic] [Italic] [Central European] type 4 lf 36 19 400 255 238 3 2 1 34 ntm 36 29 19 65 400 39 238 0x00000001 2048 2288 1185 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Italic] [Italic] [Cyrillic] type 4 lf 36 19 400 255 204 3 2 1 34 ntm 36 29 19 65 400 39 204 0x00000001 2048 2288 1185 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Italic] [Italic] [Vietnamese] type 4 lf 36 19 400 255 163 3 2 1 34 ntm 36 29 19 65 400 39 163 0x00000001 2048 2288 1185 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic] [Western] type 4 lf 36 20 700 255 0 3 2 1 34 ntm 36 29 20 59 700 39 0 0x00000021 2048 2288 1249 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic] [Hebrew] type 4 lf 36 20 700 255 177 3 2 1 34 ntm 36 29 20 59 700 39 177 0x00000021 2048 2288 1249 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic] [Greek] type 4 lf 36 20 700 255 161 3 2 1 34 ntm 36 29 20 59 700 39 161 0x00000021 2048 2288 1249 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic] [Turkish] type 4 lf 36 20 700 255 162 3 2 1 34 ntm 36 29 20 59 700 39 162 0x00000021 2048 2288 1249 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic] [Baltic] type 4 lf 36 20 700 255 186 3 2 1 34 ntm 36 29 20 59 700 39 186 0x00000021 2048 2288 1249 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic] [Central European] type 4 lf 36 20 700 255 238 3 2 1 34 ntm 36 29 20 59 700 39 238 0x00000021 2048 2288 1249 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic] [Cyrillic] type 4 lf 36 20 700 255 204 3 2 1 34 ntm 36 29 20 59 700 39 204 0x00000021 2048 2288 1249 0x600001bf
+  family: [Liberation Sans] [Liberation Sans Bold Italic] [Bold Italic] [Vietnamese] type 4 lf 36 20 700 255 163 3 2 1 34 ntm 36 29 20 59 700 39 163 0x00000021 2048 2288 1249 0x600001bf
+  result:  1 callbacks 32
+enumerate: the serif face, ANSI
+  family: [Liberation Serif] [Liberation Serif] [Regular] [Western] type 4 lf 35 18 400 0 0 3 2 1 18 ntm 35 28 17 58 400 23 0 0x00000040 2048 2268 1124 0x600001bf
+  family: [Liberation Serif] [Liberation Serif Bold] [Bold] [Western] type 4 lf 35 18 700 0 0 3 2 1 18 ntm 35 28 18 60 700 23 0 0x00000020 2048 2268 1180 0x600001bf
+  family: [Liberation Serif] [Liberation Serif Italic] [Italic] [Western] type 4 lf 35 17 400 255 0 3 2 1 18 ntm 35 28 17 58 400 23 0 0x00000001 2048 2268 1098 0x600001bf
+  family: [Liberation Serif] [Liberation Serif Bold Italic] [Bold Italic] [Western] type 4 lf 35 18 700 255 0 3 2 1 18 ntm 35 28 18 59 700 23 0 0x00000021 2048 2268 1141 0x600001bf
+  result:  1 callbacks 4
+opaque box: 10 8 150 34 pixels 3640
+opaque box yellow rows: 8 34 10 150
+clipped: 10 40 60 58 pixels 900
+advances: 11 72 78 87 pixels 185
+advances cell 0: 11 75 17 84 pixels 22
+advances cell: 23 75 30 87 pixels 39
+advances cell: 35 75 43 84 pixels 34
+advances cell: 47 75 53 84 pixels 19
+advances cell: 59 75 66 84 pixels 31
+advances cell: 71 72 78 84 pixels 40
+align was: 0x00000000
+baseline: 11 108 70 120 pixels 226
+right bottom: 265 145 300 160 pixels 164
+centre: 57 142 102 154 pixels 154
+align now: 0x00000006
+position after one: 39 10
+position after two: 68 10
+current position: 11 12 67 24 pixels 180
+underline and strike-out rows:  74 79
+lines: 20 65 63 80 pixels 279
+lines levels:  0 77 104 124 140 154 167 178 189 199 208 217 225 233 240 255
+transparent box: 10 120 200 150 pixels 5423
+transparent text: 14 126 97 141 pixels 277
+colours: 0x00ffffff 0x0000ffff
+ansi: 11 172 55 184 pixels 170
+stretchdibits 4-bit:  8 8 8 8
+4-bit at size: 0x6fe54490
+4-bit grown: 0x148432da
+4-bit shrunk: 0x7d29cb39
+4-bit part: 0xa445494d
+stretchdibits 8-bit top-down:  8
+8-bit top-down: 0x3ef7551f
+stretchdibits 24-bit:  8 8
+24-bit: 0x4d779fdc
+24-bit grown: 0xc7f7e0ff
+rop2 was:  13
+xor lines: 0xa7bebe38
+rectangle:  1 1 1
+rectangles: 0xc84f5288
+createbitmap blits:  1 1 1 1
+mono blits: 0x728402e9
+createbitmap:  8 8 2 1
+patcopy: 0xdf3229d3

@@ -26,8 +26,6 @@ ReuseDDElParam                 20  0
 SendDlgItemMessageA            20  0
 SetCursor                       4  0
 SetWindowContextHelpId          8  0
-SystemParametersInfoA          16  0
-SystemParametersInfoW          16  0
 TabbedTextOutW                 32  0
 TranslateMDISysAccel            8  0
 UnpackDDElParam                16  0

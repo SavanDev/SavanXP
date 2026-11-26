@@ -1,9 +1,10 @@
 # Windows XP WordPad on SSW — the second Win32 profile
 
-> **Status: WP1 to WP5 complete (2026-11-25). WordPad starts up to its
+> **Status: WP1 to WP6 complete (2026-11-26). WordPad starts up to its
 > first window; SSW handles x86 software exceptions, runs a second thread,
-> has WordPad's files, heaps, atoms and locale, and the hooks, positions,
-> standard controls and clipboard MFC needs.** This is the plan of
+> has WordPad's files, heaps, atoms and locale, the hooks, positions,
+> standard controls and clipboard MFC needs, and TrueType text and the
+> pictures its frame draws.** This is the plan of
 > [W7](WIN32_SUBSYSTEM_ROADMAP.md#w7--later-profiles)'s first named profile.
 > Its inventory, the W0 record taken before any code, is
 > [WIN32_WORDPAD_PROFILE.md](../../userland/WIN32_WORDPAD_PROFILE.md); every
@@ -452,6 +453,18 @@ raster operations of the profile's list.
 **Done when:** a text fixture reports metrics and widths per face and size
 that agree with Windows XP within a stated tolerance, and its pixels outside
 text equal Windows XP's.
+
+**Done (2026-11-26).** `text.exe liberation`, with the Liberation faces,
+gives Windows XP RTM's metrics, widths, outline metrics, charset answers and
+enumeration entries number for number, and its `StretchDIBits`,
+`R2_XORPEN`, `Rectangle`, `CreateBitmap` and `PATCOPY` pictures have XP's
+CRCs; the ink of its text is within 3% of XP's, in the same boxes and the
+same greys (`win32-harness-test`, through `win32_text_compare.py`). On
+SavanXP `winhost` prints the harness's bytes (`win32-hello`). With the
+user's own Arial, Times New Roman and Courier New every metric and
+enumeration entry equals XP's and a few glyphs' advances differ by a pixel
+(`win32-text-xp-test`, local only). The interface's faces keep the UI
+strike. See [WIN32.md](../../userland/WIN32.md#user32-and-gdi32), "Text".
 
 ### WP7 — the RichEdit control
 

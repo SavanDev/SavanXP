@@ -355,7 +355,7 @@ uint32_t sxw_service(sxw_services *s, uint32_t thread, uint32_t guest_esp) {
                                                            5, 0, 1, 8, 1, 6, 2, 2, 2, 3, 1, 1, 2,
                                                            5, 4, 4, 5, 1, 2, 1, 2, 3, 4, 2, 1, 5,
                                                            1, 3, 2, 2, 5, 4, 5, 1, 1, 0, 2, 1, 3,
-                                                           4, 3, 3, 2, 3, 4};
+                                                           4, 3, 3, 2, 3, 4, 2, 1, 4, 5, 2};
     if (service >= sizeof(argument_count)) {
         write_text(s, "win32: unknown service\n");
         end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);
@@ -515,6 +515,12 @@ uint32_t sxw_service(sxw_services *s, uint32_t thread, uint32_t guest_esp) {
     case SXW_SVC_PATH_TO_HOST:
     case SXW_SVC_PATH_FROM_HOST:
         return sxw_file_service(s, service, a);
+    case SXW_SVC_FONT_OPEN:
+    case SXW_SVC_FONT_CLOSE:
+    case SXW_SVC_FONT_ADVANCES:
+    case SXW_SVC_FONT_GLYPH:
+    case SXW_SVC_FONT_FACE:
+        return sxw_font_service(s, service, a);
     default:
         return window_service(s, thread, service, a);
     }

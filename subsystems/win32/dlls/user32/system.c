@@ -156,6 +156,38 @@ BOOL WINAPI GetCursorPos(LPPOINT lpPoint) {
     return TRUE;
 }
 
+/* ---- System parameters ------------------------------------------------------------- */
+
+/* What gdi32 draws text with: edges smoothed in grey, XP's standard
+ * smoothing (docs/userland/WIN32.md, "Text"). Other actions fail, as they
+ * did while the call was only declared. */
+static BOOL system_parameters(UINT uiAction, LPVOID pvParam) {
+    switch (uiAction) {
+    case 0x004a: /* SPI_GETFONTSMOOTHING */
+    case 0x200a: /* SPI_GETFONTSMOOTHINGTYPE: FE_FONTSMOOTHINGSTANDARD */
+        if (pvParam == NULL) {
+            set_last_error(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        *(UINT *)pvParam = 1u;
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+BOOL WINAPI SystemParametersInfoW(UINT uiAction, UINT uiParam, LPVOID pvParam, UINT fWinIni) {
+    (void)uiParam;
+    (void)fWinIni;
+    return system_parameters(uiAction, pvParam);
+}
+
+BOOL WINAPI SystemParametersInfoA(UINT uiAction, UINT uiParam, LPVOID pvParam, UINT fWinIni) {
+    (void)uiParam;
+    (void)fWinIni;
+    return system_parameters(uiAction, pvParam);
+}
+
 /* ---- Rectangles ---------------------------------------------------------------------- */
 
 BOOL WINAPI SetRect(LPRECT lprc, int xLeft, int yTop, int xRight, int yBottom) {

@@ -1183,6 +1183,10 @@ static const sxw_clipboard_platform g_dragdata_platform = {
     .get = drag_get,
 };
 
+/* The system's faces, then the user's own Windows fonts if they copied them
+ * (docs/desktop/FONT_LIBRARY.md, "Where the font files live"). */
+static const char *const k_font_directories[] = {"/system/fonts", DRIVE_C "/windows/fonts", 0};
+
 static sxw_services g_services = {
     .process = &g_process,
     .write = write_stream,
@@ -1194,6 +1198,7 @@ static sxw_services g_services = {
     .clipboard = &g_clipboard_platform,
     .dragdata = &g_dragdata_platform,
     .drive_c = DRIVE_C,
+    .font_directories = k_font_directories,
 };
 
 static void load_registry(void) {

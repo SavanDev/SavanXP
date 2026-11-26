@@ -1,33 +1,54 @@
 LIBRARY gdi32.dll
 EXPORTS
+    AddFontResourceW
     BitBlt
+    CreateBitmap
     CreateCompatibleBitmap
     CreateCompatibleDC
     CreateFontIndirectW
     CreateFontW
+    CreatePen
     CreateSolidBrush
     DeleteDC
     DeleteObject
+    EnumFontFamiliesExW
+    ExtTextOutA
+    ExtTextOutW
+    GetBkColor
+    GetBkMode
+    GetCharWidthA
+    GetCharWidthW
+    GetCurrentPositionEx
     GetDCOrgEx
     GetDeviceCaps
     GetObjectA
     GetObjectW
+    GetOutlineTextMetricsW
     GetPixel
     GetStockObject
+    GetTextAlign
+    GetTextCharsetInfo
+    GetTextColor
+    GetTextExtentPoint32A
     GetTextExtentPoint32W
+    GetTextFaceW
     GetTextMetricsW
     LineDDA
     LineTo
     MoveToEx
     PatBlt
     PtVisible
+    Rectangle
     SelectObject
     SetBkColor
+    SetBkMode
     SetBrushOrgEx
     SetPixel
     SetROP2
+    SetTextAlign
     SetTextColor
     StretchBlt
+    StretchDIBits
     SxwCreateBitmapFromDIB
     SxwCreateSurfaceDC
     SxwSetBkMode

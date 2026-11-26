@@ -1251,9 +1251,15 @@ static const sxw_thread_platform g_thread_platform = {
     .milliseconds = milliseconds,
 };
 
+/* The folders the font services list (--fonts, up to four), by default the
+ * faces /system/fonts holds on SavanXP, from the source tree. */
+static const char *g_font_dirs[5];
+static int g_font_dir_count;
+static const char *const k_default_font_dirs[] = {SXW_HARNESS_FONT_DIRS, 0};
+
 static void usage(void) {
     fprintf(stderr, "usage: win32-harness [--dlls DIR] [--registry FILE] [--clipboard FILE] [--time SECONDS] "
-                    "[--input SCRIPT] program.exe [arguments...]\n");
+                    "[--input SCRIPT] [--fonts DIR]... program.exe [arguments...]\n");
     exit(2);
 }
 
@@ -1302,6 +1308,8 @@ int main(int argc, char **argv) {
             g_services.fixed_time = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--input") == 0 && i + 1 < argc) {
             g_script_path = argv[++i];
+        } else if (strcmp(argv[i], "--fonts") == 0 && i + 1 < argc && g_font_dir_count < 4) {
+            g_font_dirs[g_font_dir_count++] = argv[++i];
         } else if (argv[i][0] != '-') {
             exe = argv[i];
             join_arguments(argv + i + 1, argc - i - 1, tail, sizeof(tail));
@@ -1314,6 +1322,7 @@ int main(int argc, char **argv) {
     if (exe == NULL) {
         usage();
     }
+    g_services.font_directories = g_font_dir_count > 0 ? g_font_dirs : k_default_font_dirs;
     load_registry();
     clock_gettime(CLOCK_MONOTONIC, &g_started);
     if (g_script_path != NULL && (g_script = fopen(g_script_path, "r")) == NULL) {

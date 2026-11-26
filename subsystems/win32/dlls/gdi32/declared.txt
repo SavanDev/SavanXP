@@ -8,7 +8,6 @@ ArcTo                       36  0
 CloseMetaFile                4  0
 CombineRgn                  16  0
 CopyMetaFileW                8  0
-CreateBitmap                20  0
 CreateDCW                   16  0
 CreateDIBPatternBrushPt      8  0
 CreateHatchBrush             8  0
@@ -16,27 +15,20 @@ CreateICW                   16  0
 CreateMetaFileW              4  0
 CreatePalette                4  0
 CreatePatternBrush           4  0
-CreatePen                   12  0
 CreateRectRgn               16  0
 CreateRectRgnIndirect        4  0
 DeleteMetaFile               4  0
 DPtoLP                      12  0
 EndDoc                       4  0
 EndPage                      4  0
-EnumFontFamiliesExW         20  0
 EnumFontFamiliesW           16  0
 EnumMetaFile                16  0
 Escape                      20  0
 ExcludeClipRect             20  0
 ExtCreatePen                20  0
 ExtSelectClipRgn            12  0
-ExtTextOutW                 32  0
-GetBkColor                   4  -1
-GetBkMode                    4  0
-GetCharWidthW               16  0
 GetClipBox                   8  0
 GetClipRgn                   8  0
-GetCurrentPositionEx         8  0
 GetMapMode                   4  0
 GetNearestColor              8  -1
 GetObjectType                4  0
@@ -44,10 +36,6 @@ GetPaletteEntries           16  0
 GetPolyFillMode              4  0
 GetROP2                      4  0
 GetStretchBltMode            4  0
-GetTextAlign                 4  -1
-GetTextColor                 4  -1
-GetTextExtentPoint32A       16  0
-GetTextFaceW                12  0
 GetViewportExtEx             8  0
 GetViewportOrgEx             8  0
 GetWindowExtEx               8  0
@@ -64,7 +52,6 @@ PolyBezierTo                12  0
 PolyDraw                    16  0
 PolylineTo                  12  0
 RealizePalette               4  -1
-Rectangle                   20  0
 RectVisible                  8  0
 RestoreDC                    8  0
 SaveDC                       4  0
@@ -75,7 +62,6 @@ SelectClipRgn                8  0
 SelectPalette               12  0
 SetAbortProc                 8  0
 SetArcDirection              8  0
-SetBkMode                    8  0
 SetColorAdjustment           8  0
 SetDCBrushColor              8  0
 SetMapMode                   8  0
@@ -83,7 +69,6 @@ SetMapperFlags               8  0
 SetPolyFillMode              8  0
 SetRectRgn                  20  0
 SetStretchBltMode            8  0
-SetTextAlign                 8  -1
 SetTextCharacterExtra        8  0
 SetTextJustification        12  0
 SetViewportExtEx            16  0
@@ -92,5 +77,4 @@ SetWindowExtEx              16  0
 SetWindowOrgEx              16  0
 StartDocW                    8  0
 StartPage                    4  0
-StretchDIBits               52  0
 UnrealizeObject              4  0

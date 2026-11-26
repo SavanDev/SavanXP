@@ -105,6 +105,10 @@ static const fixture k_windowed[] = {
     {"clip.exe", "clip.out", 0u, 0, 0, 0},
 };
 static const fixture k_clip_put = {"clip.exe", "clip-put.out", 0u, 0, 0, 0};
+/* gdi32's text over the host's faces in /system/fonts; text-savanxp.out is
+ * the host harness's, which tests/host/win32_harness_test.py holds against
+ * Windows XP's (docs/userland/WIN32.md, "Text"). */
+static const fixture k_text = {"text.exe", "text-savanxp.out", 0u, 0, 0, 0};
 static const fixture k_clip_get = {"clip.exe", "clip-get.out", 0u, 0, 0, 0};
 
 #define DROP_READY "WIN32 DROP READY"
@@ -181,9 +185,38 @@ static int run(const fixture *f) {
  * window is then up), or 0. */
 static void (*g_on_ready)(void);
 
+/* Removes the lines from the one starting `from` up to the one starting
+ * `to`: what text.exe prints for the families nobody has, which Windows
+ * substitutes from whatever C:\windows\fonts holds. */
+static void cut_lines(char *text, long *size, const char *from, const char *to) {
+    long start = -1;
+    for (long i = 0; i < *size; ++i) {
+        if (i != 0 && text[i - 1] != '\n') {
+            continue;
+        }
+        const char *marker = start < 0 ? from : to;
+        long n = 0;
+        while (marker[n] != 0 && i + n < *size && text[i + n] == marker[n]) {
+            ++n;
+        }
+        if (marker[n] != 0) {
+            continue;
+        }
+        if (start < 0) {
+            start = i;
+            continue;
+        }
+        for (long j = i; j < *size; ++j) {
+            text[start + j - i] = text[j];
+        }
+        *size -= i - start;
+        return;
+    }
+}
+
 static int run_with(const fixture *f, char *argument) {
-    static char output[32768];
-    static char expected[32768];
+    static char output[196608];
+    static char expected[196608];
     char path[128];
     join(path, sizeof(path), TESTS, f->name);
 
@@ -252,6 +285,12 @@ static int run_with(const fixture *f, char *argument) {
     int status = -1;
     long reaped = sxn_waitpid(child, &status);
 
+    if (f == &k_text) {
+        long size = (long)total;
+        cut_lines(output, &size, "missing:", "weights:");
+        total = (uint32_t)size;
+        cut_lines(expected, &expected_size, "missing:", "weights:");
+    }
     int same = (long)total == expected_size;
     for (uint32_t i = 0; same && i < total; ++i) {
         same = output[i] == expected[i];
@@ -560,5 +599,6 @@ int main(int argc, char **argv) {
     failures += !run_with(&k_clip_put, "put");
     failures += !clip_across();
     failures += !run_with(&k_clip_get, "get");
+    failures += !run_with(&k_text, "liberation");
     sxn_exit(failures == 0 ? 0 : 1);
 }

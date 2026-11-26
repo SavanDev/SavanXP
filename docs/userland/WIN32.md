@@ -473,23 +473,76 @@ fills under any ROP3 that reads no source, draws lines under any ROP2 with
 the end point left out and a tie going to the smaller coordinate, the rule
 Windows XP's lines follow in every octant, and draws glyphs.
 
-**Text.** Every font is drawn with the platform's 13 px UI strike, MS Sans
-Serif ([UI_FONTS.md](../desktop/UI_FONTS.md)), compiled into `gdi32` from the
-same table the desktop uses. A weight of 600 or more, and the stock System
-font, which is bold on Windows, are drawn twice one pixel apart with one more
-pixel of advance, as Windows emboldens a bitmap font. The vertical metrics a
-font reports are the requested font's on Windows XP, because programs size
-windows from them: the System font is 16 pixels high with an ascent of 13,
-and a font made with `CreateFontW` has Tahoma's (MS Shell Dlg's) proportions
-at its height, an ascent and a descent of 2049 and 423 units of a 2048-unit
-em, each rounded (13 pixels at -11, 14 at -12). Solitaire's status bar is
-the System font's height plus its border. Glyphs sit on the font's baseline
-and the widths are the strike's. Text is therefore laid out alike but not
-drawn like Windows XP's TrueType faces, which is why fixtures keep it out of
-the pixels they compare with Windows XP. `TextOutW` is
-left- and top-aligned and opaque; `DrawTextW` breaks lines, aligns them,
-draws `&` prefixes and computes rectangles, but does not clip to its
-rectangle.
+**Text.** A font is drawn one of two ways (WP6).
+
+- **The interface's faces** (System, MS Shell Dlg, MS Shell Dlg 2, MS Sans
+  Serif, Microsoft Sans Serif, Tahoma) keep
+  the platform's 13 px UI strike, MS Sans Serif
+  ([UI_FONTS.md](../desktop/UI_FONTS.md)), compiled into `gdi32` from the
+  same table the desktop uses. A weight of 600 or more, and the stock
+  System font, are drawn twice one pixel apart with one more pixel of
+  advance, as Windows emboldens a bitmap font. Their vertical metrics are
+  the requested font's on Windows XP, because programs size windows from
+  them: System is 16 pixels high with an ascent of 13; the others have
+  Tahoma's proportions (2049 and 423 units of a 2048-unit em, 13 pixels at
+  -11). They do not follow the Appearance tab, a gap kept on purpose: a
+  Win32 dialog is laid out in those pixels.
+- **Any other face** is a TrueType file the host opens with `libsxfont`
+  ([FONT_LIBRARY.md](../desktop/FONT_LIBRARY.md#win32-through-winhost-wp6)):
+  `winhost` lists `/system/fonts` and `C:\windows\fonts`, the harness
+  `assets/fonts/liberation` and `assets/desktop/fonts` (or each `--fonts
+  DIR`). Services 58 to 62 (`SXW_SVC_FONT_OPEN`, `_CLOSE`, `_ADVANCES`,
+  `_GLYPH`, `_FACE`) open a font for a `LOGFONTW`, give its metrics and
+  advances, a glyph's coverage, and the faces to enumerate. A family the
+  host lacks takes its metric-compatible Liberation face (Arial, Times New
+  Roman, Courier New), else the default for its pitch and family, as does
+  a font made with no face.
+
+The rules the host follows, each measured on Windows XP RTM with
+`text.exe`:
+
+- **Size.** An `lfHeight` of 0 is -16; a negative one is the em in pixels;
+  a positive one is the cell, and the em is the one whose ascent and
+  descent add up nearest to it, or, in a face with a `VDMX` table, the
+  first record that equals it, else the last below it (Arial at 12 is
+  9 ppem).
+- **Metrics.** Ascent and descent from `VDMX` at that size, else from the
+  scaled `usWinAscent` and `usWinDescent`. The rest of `TEXTMETRICW` and
+  `OUTLINETEXTMETRICW` scale from font units by the em, or by the cell for
+  a positive height in a face without `VDMX`, through a 16.16 factor
+  rounded first; the enumeration's numbers are rounded once. The cap and x
+  heights are half and a quarter of the em whatever OS/2 says, the caret
+  slope is `hhea`'s, the italic angle is in tenths rounded down, and an
+  underline or strike-out thinner than half a pixel reports 0 and is drawn
+  a pixel thick. Weights 600 to 699 take the regular file with synthetic
+  bold and report 700.
+- **Advances** are the hinted ones (FreeType's v35 interpreter takes them
+  from `hdmx` where the face has one); a fixed-pitch face has one advance,
+  its `advanceWidthMax` scaled.
+- **Drawing.** `ExtTextOutW` fills its rectangle (`ETO_OPAQUE`), clips to
+  it (`ETO_CLIPPED`), takes per-character advances, the alignment
+  (`TA_CENTER` leaves an odd width's spare pixel on the left),
+  `TA_UPDATECP`, the background mode, and underline and strike-out bands.
+  Grey edges are drawn where the face's `gasp` asks for them, in sixteenths
+  of coverage blended in linear light with a gamma of 2.3, XP's standard
+  smoothing; `SystemParametersInfoW` answers `SPI_GETFONTSMOOTHING` 1 and
+  `SPI_GETFONTSMOOTHINGTYPE` `FE_FONTSMOOTHINGSTANDARD`.
+- **Enumeration.** `EnumFontFamiliesExW` gives one entry per charset the
+  face's code-page ranges hold, in XP's order (Western, Hebrew, Arabic,
+  Greek, Turkish, Baltic, Central European, Cyrillic, Vietnamese, ...),
+  with English script names; its metrics are at an em of 32 pixels. A
+  family's faces come by full name, as XP's Fonts key lists them; families
+  by name. A signed file (`DSIG`) adds `NTM_DSIG` and `NTM_TT_OPENTYPE`.
+
+What still parts from Windows XP: the ink of a glyph by a pixel or a few
+(FreeType's rasterizer is not XP's), the advances of a few glyphs of
+Microsoft's own faces by one pixel (Arial and Times New Roman at some
+sizes; their hinting is not reproduced glyph for glyph), the order of the
+families in a whole enumeration (XP lists them as they were installed), and
+`AddFontResourceW`, which answers 0: fonts come from the directories only.
+`TextOutW` is `ExtTextOutW` with no rectangle. `DrawTextW` breaks lines,
+aligns them, draws `&` prefixes and computes rectangles, but does not clip
+to its rectangle.
 
 What is refused or bounded, and why:
 
@@ -533,6 +586,13 @@ white. Each rule below was checked against Windows XP (`cards.exe`,
   pixel under its centre. Neither size may pass 4096 when they differ.
 - `DeleteObject` on a selected bitmap succeeds, and the bitmap goes when it
   is deselected.
+- `StretchDIBits` draws 1, 4, 8, 24 and 32-bit DIBs, bottom-up or
+  top-down, at their size, grown, shrunk or in part, under any ROP3;
+  `CreateBitmap` makes a monochrome or 32-bit bitmap from the caller's bits
+  (another depth, a colour one left black). `CreatePen` gives a pen of any
+  colour, drawn a pixel wide whatever its width, or `PS_NULL`; `LineTo` and
+  `Rectangle` draw with it under any ROP2, `R2_XORPEN` the ruler's
+  (`text.exe`, against Windows XP's CRCs).
 - Not done: a solid colour brush on a monochrome bitmap is made the nearer of
   black and white, where Windows dithers it. Nothing in the profile draws
   one.
@@ -966,6 +1026,7 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `hooks.exe` | WP5, what MFC does to every window: the CBT, window procedure, message and filter hooks with their codes and order, `CallNextHookEx` and unhooking; subclassing with `SetWindowLongW` and `CallWindowProcW`, window longs, the system classes and properties; the window tree; positions, deferred positions, `SetParent`, non-client edges and scroll bars, show and focus; carets; `ScrollWindowEx`; menus built and changed at run time; a modeless and a modal dialog built in memory, driven through `IsDialogMessageW`. It needs no input, writes the messages its procedures and hooks get (the list is in `logged()`) and prints no handle or screen position | `expected/hooks.out`, status 0 |
 | `controls.exe` | WP5: Edit, ListBox, ComboBox (simple, drop-down, drop-down list, owner-drawn) and ScrollBar controls asked every message the profile uses, then driven by its input script (typing, selections, clicks, double clicks, keys, the lists dropped and chosen from, the scroll bars' arrows, track and thumb, a context menu); it writes their notifications, owner-drawn measures and drawings, styles, sizes and final state, and on F2 the controls' pixels outside their text. It dumps the window with a drop-down list open and with the context menu open | `expected/controls.out`, status 0 |
 | `clip.exe` | WP5: the clipboard calls refused while it is closed; text, Rich Text Format and a format of its own set and read back; the formats Windows makes and their order, the owner, the sequence, a format rendered when asked for, `WM_DESTROYCLIPBOARD`; a file list read with `DragQueryFileW` and `DragQueryPoint`, wide and ANSI, and `DragAcceptFiles`. With `put` it leaves text, RTF and its own format; with `get` it writes what another program left. With `drop` it shows a window that takes files, with a child that does not, and writes the first `WM_DROPFILES` it gets: the names with `DragQueryFileW` and the point with `DragQueryPoint` | `expected/clip.out`; run as `clip.exe put` then `clip.exe get`: `clip-put.out` and `clip-get.out`; status 0. `clip-drop.out` is the harness's: an input script cannot drag from another program on Windows XP |
+| `text.exe` | WP6: with `liberation`, the three Liberation families added with `AddFontResourceW`; without it, Arial, Times New Roman and Courier New. Per face, style and size (-8 to -72, 0, 12, 20): `GetTextMetricsW`, `GetCharWidthW` over ASCII, an extent, `GetOutlineTextMetricsW`, `GetTextCharsetInfo`; the faces substituted for missing families, weights, ANSI and wide widths, three enumerations; then pictures read back with `GetPixel`: the ink's box and count for opaque, clipped, aligned, positioned, underlined and transparent text, the grey levels of a smoothed line, and CRCs of `StretchDIBits` (4, 8 and 24 bits), `R2_XORPEN` lines, `Rectangle`, `CreateBitmap` blits and `PATCOPY`. It prints the screen's depth and `SPI_GETFONTSMOOTHING` first | `expected/text-liberation.out`, Windows XP RTM's, compared through `tests/host/win32_text_compare.py` (ink counts within 3%, grey levels within one, family lines in any order, the faces substituted for missing families skipped: XP has Arial there); `text-savanxp.out`, the harness's own, byte for byte, which `win32test` holds `winhost` to outside the substituted faces. Plain `text.exe` against XP's output is `win32-text-xp-test`, with the user's own XP fonts (`SAVANXP_WIN32_TEXT`), a pixel per glyph of slack |
 
 The bytes Windows XP wrote are kept in `subsystems/win32/fixtures/expected/`
 (`-text` in `.gitattributes`: CRLF and Windows-1252 as they came). Both hosts'

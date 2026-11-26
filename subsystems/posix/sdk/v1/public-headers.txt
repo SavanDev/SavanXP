@@ -19,6 +19,7 @@ audio/audiod_protocol.h
 elevation/elevation_protocol.h
 shared/version.h
 sxe/sxe_format.h
+sxfont/font.h
 sxgfx/gfx2d.h
 sxgfx/pixels.h
 sxgfx/sxchrome.h

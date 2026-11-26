@@ -141,7 +141,10 @@ target_include_directories(mouse PRIVATE "${CMAKE_SOURCE_DIR}/system/compositord
 
 # The Win32 subsystem's host (docs/userland/WIN32.md#winhost): a SUN program
 # that loads a PE32 executable and its DLLs below 4 GiB and runs it as 32-bit
-# code. Its sources live with the subsystem in subsystems/win32/.
+# code. Its sources live with the subsystem in subsystems/win32/. It stays a
+# static program at 0x400000, below where sol.exe must load, so libsxfont is
+# linked into it whole (system/font/sxfont.c over freetype_sun) rather than
+# mapped; gdi32's fonts come from it (loader/fonts.c).
 savanxp_program(NAME winhost NATIVE SOURCES
     subsystems/win32/host/winhost.c
     subsystems/win32/loader/loader.c
@@ -149,12 +152,15 @@ savanxp_program(NAME winhost NATIVE SOURCES
     subsystems/win32/loader/files.c
     subsystems/win32/loader/threads.c
     subsystems/win32/loader/clipboard.c
+    subsystems/win32/loader/fonts.c
     subsystems/win32/loader/registry.c
-    subsystems/win32/pe/pe.c)
+    subsystems/win32/pe/pe.c
+    system/font/sxfont.c)
 target_include_directories(winhost PRIVATE
     "${CMAKE_SOURCE_DIR}/subsystems/win32/include"
     "${CMAKE_SOURCE_DIR}/subsystems/win32/loader"
     "${CMAKE_SOURCE_DIR}/subsystems/win32/pe")
+target_link_libraries(winhost PRIVATE freetype_sun)
 
 # SSL's launcher (docs/userland/LINUX.md#the-launcher): `linux GUEST_PATH`
 # starts a Linux program from the guest tree under /system/linux.

@@ -26,7 +26,7 @@
 #include <string.h>
 
 #include "abi/savanxp_abi.h"
-#include "savanxp/font.h"
+#include "sxfont/font.h"
 #include "sxfont/ui.h"
 #include "sxgfx/gfx2d.h"
 #include "sxgfx/pixels.h"
