@@ -1,10 +1,11 @@
 /*
- * locale.c -- kernel32's locale: one, Spanish (Argentina), LCID 0x2C0A.
+ * locale.c -- kernel32's locale: one, English (United States), LCID 0x0409,
+ * the language the rest of SavanXP speaks.
  *
  * SavanXP has no regional setting yet, so every locale query answers with
- * the locale of the Windows XP the profiles were taken from, and its values
- * are that Windows' own (the table below is what GetLocaleInfoW answered
- * there, locale.exe's output). Dates and times are formatted from the same
+ * the locale of the English Windows XP the fixtures are checked on, and its
+ * values are that Windows' own (the table below is what GetLocaleInfoW
+ * answered there, locale.exe's output). Dates and times are formatted from the same
  * pictures with the same rules; CompareStringW sorts as that locale does,
  * by letters, then accents, then case, with the hyphen and the apostrophe
  * weighed last in a word sort. See docs/userland/WIN32.md, "The locale".
@@ -21,7 +22,7 @@ typedef unsigned char u8;
 
 __declspec(dllimport) u32 WINAPI SxwService(u32 service, const u32 *arguments);
 
-#define LOCALE_SPANISH_ARGENTINA 0x2c0au
+#define LOCALE_ENGLISH_US 0x0409u
 #define LOCALE_SYSTEM_DEFAULT 0x0800u
 #define LOCALE_USER_DEFAULT 0x0400u
 #define LOCALE_NOUSEROVERRIDE 0x80000000u
@@ -49,19 +50,19 @@ __declspec(dllimport) u32 WINAPI SxwService(u32 service, const u32 *arguments);
 #define CSTR_GREATER_THAN 3
 
 LCID WINAPI GetUserDefaultLCID(void) {
-    return LOCALE_SPANISH_ARGENTINA;
+    return LOCALE_ENGLISH_US;
 }
 
 LCID WINAPI GetSystemDefaultLCID(void) {
-    return LOCALE_SPANISH_ARGENTINA;
+    return LOCALE_ENGLISH_US;
 }
 
 LCID WINAPI GetThreadLocale(void) {
-    return LOCALE_SPANISH_ARGENTINA;
+    return LOCALE_ENGLISH_US;
 }
 
 static int known_locale(LCID locale) {
-    return locale == LOCALE_SPANISH_ARGENTINA || locale == LOCALE_USER_DEFAULT || locale == LOCALE_SYSTEM_DEFAULT ||
+    return locale == LOCALE_ENGLISH_US || locale == LOCALE_USER_DEFAULT || locale == LOCALE_SYSTEM_DEFAULT ||
            locale == 0;
 }
 
@@ -90,104 +91,104 @@ static const struct {
     u32 type;
     const WCHAR *value;
 } k_values[] = {
-    {0x0001u, L"2c0a"},
-    {0x0002u, L"Espa\xf1" L"ol (Argentina)"},
-    {0x0003u, L"ESS"},
-    {0x0004u, L"Espa\xf1" L"ol"},
-    {0x0005u, L"54"},
-    {0x0006u, L"Argentina"},
-    {0x0007u, L"ARG"},
-    {0x0008u, L"Argentina"},
-    {0x0009u, L"2c0a"},
-    {0x000au, L"54"},
-    {0x000bu, L"850"},
+    {0x0001u, L"0409"},
+    {0x0002u, L"English (United States)"},
+    {0x0003u, L"ENU"},
+    {0x0004u, L"English"},
+    {0x0005u, L"1"},
+    {0x0006u, L"United States"},
+    {0x0007u, L"USA"},
+    {0x0008u, L"United States"},
+    {0x0009u, L"0409"},
+    {0x000au, L"1"},
+    {0x000bu, L"437"},
     {0x000cu, L","},
-    {0x000du, L"0"},
-    {0x000eu, L","},
-    {0x000fu, L"."},
+    {0x000du, L"1"},
+    {0x000eu, L"."},
+    {0x000fu, L","},
     {0x0010u, L"3;0"},
     {0x0011u, L"2"},
     {0x0012u, L"1"},
     {0x0013u, L"0123456789"},
     {0x0014u, L"$"},
-    {0x0015u, L"ARS"},
-    {0x0016u, L","},
-    {0x0017u, L"."},
+    {0x0015u, L"USD"},
+    {0x0016u, L"."},
+    {0x0017u, L","},
     {0x0018u, L"3;0"},
     {0x0019u, L"2"},
     {0x001au, L"2"},
-    {0x001bu, L"2"},
-    {0x001cu, L"2"},
+    {0x001bu, L"0"},
+    {0x001cu, L"0"},
     {0x001du, L"/"},
     {0x001eu, L":"},
-    {0x001fu, L"dd/MM/yyyy"},
-    {0x0020u, L"dddd, dd' de 'MMMM' de 'yyyy"},
-    {0x0021u, L"1"},
-    {0x0022u, L"1"},
+    {0x001fu, L"M/d/yyyy"},
+    {0x0020u, L"dddd, MMMM dd, yyyy"},
+    {0x0021u, L"0"},
+    {0x0022u, L"0"},
     {0x0023u, L"0"},
     {0x0024u, L"1"},
-    {0x0025u, L"1"},
-    {0x0026u, L"1"},
-    {0x0027u, L"1"},
-    {0x0028u, L"a.m."},
-    {0x0029u, L"p.m."},
-    {0x002au, L"Lunes"},
-    {0x002bu, L"Martes"},
-    {0x002cu, L"Mi\xe9" L"rcoles"},
-    {0x002du, L"Jueves"},
-    {0x002eu, L"Viernes"},
-    {0x002fu, L"S\xe1" L"bado"},
-    {0x0030u, L"Domingo"},
-    {0x0031u, L"Lun"},
-    {0x0032u, L"Mar"},
-    {0x0033u, L"Mi\xe9"},
-    {0x0034u, L"Jue"},
-    {0x0035u, L"Vie"},
-    {0x0036u, L"S\xe1" L"b"},
-    {0x0037u, L"Dom"},
-    {0x0038u, L"Enero"},
-    {0x0039u, L"Febrero"},
-    {0x003au, L"Marzo"},
-    {0x003bu, L"Abril"},
-    {0x003cu, L"Mayo"},
-    {0x003du, L"Junio"},
-    {0x003eu, L"Julio"},
-    {0x003fu, L"Agosto"},
-    {0x0040u, L"Septiembre"},
-    {0x0041u, L"Octubre"},
-    {0x0042u, L"Noviembre"},
-    {0x0043u, L"Diciembre"},
-    {0x0044u, L"Ene"},
+    {0x0025u, L"0"},
+    {0x0026u, L"0"},
+    {0x0027u, L"0"},
+    {0x0028u, L"AM"},
+    {0x0029u, L"PM"},
+    {0x002au, L"Monday"},
+    {0x002bu, L"Tuesday"},
+    {0x002cu, L"Wednesday"},
+    {0x002du, L"Thursday"},
+    {0x002eu, L"Friday"},
+    {0x002fu, L"Saturday"},
+    {0x0030u, L"Sunday"},
+    {0x0031u, L"Mon"},
+    {0x0032u, L"Tue"},
+    {0x0033u, L"Wed"},
+    {0x0034u, L"Thu"},
+    {0x0035u, L"Fri"},
+    {0x0036u, L"Sat"},
+    {0x0037u, L"Sun"},
+    {0x0038u, L"January"},
+    {0x0039u, L"February"},
+    {0x003au, L"March"},
+    {0x003bu, L"April"},
+    {0x003cu, L"May"},
+    {0x003du, L"June"},
+    {0x003eu, L"July"},
+    {0x003fu, L"August"},
+    {0x0040u, L"September"},
+    {0x0041u, L"October"},
+    {0x0042u, L"November"},
+    {0x0043u, L"December"},
+    {0x0044u, L"Jan"},
     {0x0045u, L"Feb"},
     {0x0046u, L"Mar"},
-    {0x0047u, L"Abr"},
+    {0x0047u, L"Apr"},
     {0x0048u, L"May"},
     {0x0049u, L"Jun"},
     {0x004au, L"Jul"},
-    {0x004bu, L"Ago"},
+    {0x004bu, L"Aug"},
     {0x004cu, L"Sep"},
     {0x004du, L"Oct"},
     {0x004eu, L"Nov"},
-    {0x004fu, L"Dic"},
+    {0x004fu, L"Dec"},
     {0x0050u, L""},
     {0x0051u, L"-"},
-    {0x0052u, L"4"},
-    {0x0053u, L"4"},
+    {0x0052u, L"3"},
+    {0x0053u, L"0"},
     {0x0054u, L"1"},
-    {0x0055u, L"1"},
+    {0x0055u, L"0"},
     {0x0056u, L"1"},
     {0x0057u, L"0"},
-    {0x0059u, L"es"},
-    {0x005au, L"AR"},
-    {0x005bu, L"11"},
-    {0x1001u, L"Spanish"},
-    {0x1002u, L"Argentina"},
-    {0x1003u, L"hh:mm:ss tt"},
+    {0x0059u, L"en"},
+    {0x005au, L"US"},
+    {0x005bu, L"244"},
+    {0x1001u, L"English"},
+    {0x1002u, L"United States"},
+    {0x1003u, L"h:mm:ss tt"},
     {0x1004u, L"1252"},
     {0x1005u, L"0"},
-    {0x1006u, L"MMMM' de 'yyyy"},
-    {0x1007u, L"Argentine Peso"},
-    {0x1008u, L"Peso"},
+    {0x1006u, L"MMMM, yyyy"},
+    {0x1007u, L"US Dollar"},
+    {0x1008u, L"US Dollar"},
     {0x1009u, L"1"},
     {0x100au, L"1"},
     {0x100bu, L"0"},
@@ -197,8 +198,8 @@ static const struct {
     {0x100fu, L""},
     {0x1010u, L"1"},
     {0x1011u, L"10000"},
-    {0x1012u, L"20284"},
-    {0x1013u, L"Predeterminado"},
+    {0x1012u, L"037"},
+    {0x1013u, L"Default"},
     {0x1014u, L"1"},
 };
 
@@ -544,11 +545,12 @@ int WINAPI GetTimeFormatW(LCID Locale, DWORD dwFlags, const SYSTEMTIME *lpTime, 
 }
 
 /* The pictures Windows XP lists for this locale, the default first. */
-static const WCHAR *const k_short_dates[] = {L"dd/MM/yyyy", L"dd/MM/yy", L"d/M/yy", L"dd-MM-yy", L"yyyy-MM-dd", 0};
-static const WCHAR *const k_long_dates[] = {L"dddd, dd' de 'MMMM' de 'yyyy", L"dddd d' de 'MMMM' de 'yyyy",
-                                             L"d' de 'MMMM' de 'yyyy", 0};
-static const WCHAR *const k_year_months[] = {L"MMMM' de 'yyyy", 0};
-static const WCHAR *const k_times[] = {L"hh:mm:ss tt", L"h:mm:ss tt", L"HH:mm:ss", L"H:mm:ss", 0};
+static const WCHAR *const k_short_dates[] = {L"M/d/yyyy", L"M/d/yy",     L"MM/dd/yy",  L"MM/dd/yyyy",
+                                              L"yy/MM/dd", L"yyyy-MM-dd", L"dd-MMM-yy", 0};
+static const WCHAR *const k_long_dates[] = {L"dddd, MMMM dd, yyyy", L"MMMM dd, yyyy", L"dddd, dd MMMM, yyyy",
+                                             L"dd MMMM, yyyy", 0};
+static const WCHAR *const k_year_months[] = {L"MMMM, yyyy", 0};
+static const WCHAR *const k_times[] = {L"h:mm:ss tt", L"hh:mm:ss tt", L"H:mm:ss", L"HH:mm:ss", 0};
 
 typedef BOOL(CALLBACK *enum_picture)(LPWSTR picture);
 
@@ -608,13 +610,13 @@ typedef struct weight {
 
 /* Latin-1's letters: the base letter and the accent, 0 for none. */
 static const char k_base[] = "AAAAAAACEEEEIIIIDNOOOOO*OUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";
-static const u8 k_accent[64] = {2, 1, 3, 4, 5, 6, 9, 7, 2, 1, 3, 5, 2, 1, 3, 5, 8, 0, 2, 1, 3, 4, 5, 0,
+static const u8 k_accent[64] = {2, 1, 3, 4, 5, 6, 9, 7, 2, 1, 3, 5, 2, 1, 3, 5, 8, 4, 2, 1, 3, 4, 5, 0,
                                 8, 2, 1, 3, 5, 1, 0, 0, 2, 1, 3, 4, 5, 6, 9, 7, 2, 1, 3, 5, 2, 1, 3, 5,
-                                8, 0, 2, 1, 3, 4, 5, 0, 8, 2, 1, 3, 5, 1, 0, 5};
+                                8, 4, 2, 1, 3, 4, 5, 0, 8, 2, 1, 3, 5, 1, 0, 5};
 
-/* The alphabet's order: n, then ñ, then o (Spanish's own letter). */
+/* The alphabet's order, a to z: ñ is n with a tilde, as English sorts it. */
 static u32 letter_rank(u32 lower) {
-    return lower <= 'n' ? lower - 'a' : lower - 'a' + 1u;
+    return lower - 'a';
 }
 
 static weight weigh(WCHAR c, u32 flags) {
@@ -638,9 +640,7 @@ static weight weigh(WCHAR c, u32 flags) {
     }
     if (c >= 0xc0u && c <= 0xffu && c != 0xd7u && c != 0xf7u) {
         const char base = k_base[c - 0xc0u];
-        if (c == 0xf1u || c == 0xd1u) {
-            w.primary = 0x1000u + 4u * letter_rank('n') + 4u; /* ñ, between n and o */
-        } else if (c == 0xdfu) {
+        if (c == 0xdfu) {
             w.primary = 0x1000u + 4u * letter_rank('s') + 1u;
         } else if (c == 0xdeu || c == 0xfeu) {
             w.primary = 0x1000u + 4u * 27u; /* thorn, after z */

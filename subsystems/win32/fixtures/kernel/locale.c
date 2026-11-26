@@ -1,11 +1,11 @@
 /*
  * locale.exe -- WP4's fixture for the locale and win.ini
  * (WIN32_WORDPAD_ROADMAP.md): every value GetLocaleInfoW has for the user's
- * locale, Spanish (Argentina), the date and time formats WordPad's Fecha y
- * hora lists and how they format a fixed instant, CompareStringW on pairs
+ * locale, English (United States), the date and time formats WordPad's Date
+ * and Time lists and how they format a fixed instant, CompareStringW on pairs
  * that show the collation, and win.ini's answers to names it does not hold.
  *
- * It needs Windows XP set to Spanish (Argentina), as the profiles' machine
+ * It needs Windows XP set to English (United States), as the test machine
  * is; nothing it prints depends on the date, the clock or the time zone.
  */
 #include "print.h"
@@ -76,7 +76,7 @@ static void locale_values(void) {
         say_w(value);
     }
     line("LOCALE_SDECIMAL by number");
-    say_int(GetLocaleInfoW(0x2c0au, 0x000eu, value, 128));
+    say_int(GetLocaleInfoW(GetUserDefaultLCID(), 0x000eu, value, 128));
     say(" ");
     say_w(value);
     line("LOCALE_IMEASURE as a number");

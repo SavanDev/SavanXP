@@ -305,6 +305,10 @@ changes not released yet; each released version has its own file in
 
 ### Changed
 
+- **Win32 programs run in English (United States), LCID 0x0409, as the rest of the system.** `GetLocaleInfoW`, the
+  date and time formats and `CompareStringW` give an English Windows XP's answers; ñ sorts as n with a tilde.
+  [The locale](docs/userland/WIN32.md#the-locale).
+
 - **Window titles hold 127 characters instead of 31.** `sxnwm_set_title`, `gfx_set_title` and the `.sxe` name go
   whole through a new `long_title` tail of the surface header; owned windows keep 63. A caption narrower than its
   title ends in "...". Device Manager's sheets are always "`<device>` Properties".

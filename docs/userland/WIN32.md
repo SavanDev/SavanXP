@@ -959,7 +959,7 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `wstartup.exe` | It starts as `wordpad.exe` does, a Unicode program over `msvcrt.dll` (`__wgetmainargs`, `_wcmdln`, `_onexit`), then checks what WordPad's and MFC's start-up need, failure paths included: moveable and fixed global memory, local memory, the C heap, TLS, critical sections, the interlocked functions, the version, `lstr` functions, code pages (1252 and UTF-8, a default character), the wide C strings, number conversions both ways, `floor`, `ceil` and `modf`, the wide printf family (integers, strings, floating point with its edges, lengths, truncation), module paths cut short, resources by id, `"#100"` and name, rectangles, registered clipboard formats, a font's `LOGFONTW`, the registry, `OleInitialize` twice and `__dllonexit`. It prints no path, handle, TLS index, locale or screen size | Run as `wstartup.exe alpha "two words" 3`: `expected/wstartup.out`, status 5 |
 | `files.exe` | WP4: in its own folder, `CreateFileW` with every disposition, reads, writes, `SetFilePointer` past the end and before the start, `SetEndOfFile`, `GetFileTime` against the clock, share modes, another spelling of a name, folders, `FindFirstFileW` with masks, deletes and moves, full paths, the current directory, the volume, and the file-time conversions at their limits. It prints no handle, time, drive letter or serial | Run from a folder on C:: `expected/files.out`, status 0 |
 | `memory.exe` | WP4: the process heap, private heaps (growing, zeroing, in place, a fixed maximum), moveable memory shared for DDE, and local and global atoms (integer atoms, case, references, the name length limits) | `expected/memory.out`, status 0 |
-| `locale.exe` | WP4: every value `GetLocaleInfoW` has for Spanish (Argentina), dates and times from the locale's pictures and others with every flag, their enumerations, `CompareStringW` on pairs with each flag, and win.ini's defaults | `expected/locale.out`, status 0 |
+| `locale.exe` | WP4: every value `GetLocaleInfoW` has for English (United States), dates and times from the locale's pictures and others with every flag, their enumerations, `CompareStringW` on pairs with each flag, and win.ini's defaults | `expected/locale.out`, status 0 |
 | `threads.exe` | WP3, with `tlog.dll` and `tquiet.dll`: a thread started suspended, suspend counts, TLS slots and static TLS with its callbacks, thread notifications in order and `DisableThreadLibraryCalls`, events, mutexes, semaphores and waits, a contended critical section, `_beginthreadex` with a priority, a message-only window on the second thread taking sent, posted and thread messages, and a thread left waiting as the process ends | `expected/threads.out`, status 5 |
 | `resource.exe` | Its own resources (`resource.rc`): strings, bitmaps in both header formats at 1, 4 and 24 bits, an icon, a cursor and an accelerator table. It loads them as `sol.exe` does, then copies, converts and stretches the bitmaps (grown by 2, grown to odd sizes, shrunk), and drives the accelerators with posted keys | `expected/resource.out`, status 0 |
 | `dialog.exe` | A menu of two popups with separators and an accelerator shown after a tab, an accelerator table, and two dialogs built from the same resource types and styles as `sol.exe`'s (`dialog.rc`): one of owner-drawn buttons with a default and a cancel button, like Deck, and one of group boxes, radio buttons the program checks itself, automatic check boxes and static text left and right, like Options; then `MessageBoxW`, `ShellAboutW` and `InitCommonControlsEx`. Its input script uses the menus by pointer and by keyboard alone, a grayed item, both dialogs by pointer and by keyboard (Tab, arrows, Space, mnemonics, Enter, Escape), an accelerator for a menu command and one for a command no menu has. It writes the messages its procedures get (the list is in `logged()`), where each control is, the buttons' states, and pixels of the controls outside their text | `expected/dialog.out`, status 5 |
@@ -1013,7 +1013,7 @@ these files built with Clang and lld 23.1.4:
 | `wstartup.exe` | `af71162775ebce60f5e4d270ef63586e51f75e027c9ada29c63061a78771b5b9` (2026-11-21) |
 | `files.exe` | `893a956e8b18a9f809136feba5d97ede2121317a420004c0ebc65fd2b1dd2554` (2026-11-25) |
 | `memory.exe` | `8be7fbf78b8ede6d847b70234e9c9645a831fad0918fc892f5d576e18aca06d1` (2026-11-25) |
-| `locale.exe` | `5f756142b8495f17f10972a14ea87fa5f2b4c8998c054662d7000e9d0e58eb4e` (2026-11-25) |
+| `locale.exe` | `ca1fc79771bd4d8f5476107f7dc377170d7c8cbfee89dbad978e70c21722c493` (2026-11-26, on the English Windows XP) |
 | `threads.exe` | `4d55ea8c3684da784e93499a1fc51e5a60f525969f9f46bea7178f2988e9235a` (2026-11-25) |
 | `tlog.dll` | `e3dba5a8e2d46e32b345029bb6fe844a0169ea279e113414588892a6188d541b` (2026-11-25) |
 | `tquiet.dll` | `bacb05d74ff972ee18001a7925c70cfeb76d11a5cc91c84cd8598a0fc89e8697` (2026-11-25) |
@@ -1078,6 +1078,13 @@ list's height prints no item: Windows XP leaves `itemID` as it finds it.
 `expected/controls-menu.ppm.gz` (the context menu open) are the harness's
 images; outside the text, the caret's blink and the menu's drop shadow they
 are Windows XP's screen.
+
+Since 2026-11-26 the locale is the English one (see [The locale](#the-locale)),
+and what depends on it comes from a second machine, an English Windows XP
+(RTM) set to English (United States): `expected/locale.out`, and
+`expected/clip.out`, whose only change was the clipboard's `CF_LOCALE`
+(`0x0409`). `clip.exe put` and `clip.exe get` wrote there byte for byte what
+they had written on the Spanish machine.
 
 ## Input scripts
 
@@ -1293,9 +1300,12 @@ Under `winhost` they stand on SUN's file calls, `sxn_seek_file`,
 
 ## The locale
 
-One locale, Spanish (Argentina), LCID `0x2C0A`, the locale of the Windows
-XP the profiles were taken from: SavanXP has no regional setting yet. Its
-values are that Windows' own, taken from what `locale.exe` printed there.
+One locale, English (United States), LCID `0x0409`, the language the rest
+of SavanXP speaks: SavanXP has no regional setting yet. Its values are
+Windows XP's own, taken from what `locale.exe` printed on an English Windows
+XP (RTM) test machine. Until 2026-11-26 it was Spanish (Argentina), the
+locale of the machine the profiles were taken from; it was switched so the
+whole system shows one language.
 
 - `GetLocaleInfoW` answers every value Windows XP has for it, in text or
   with `LOCALE_RETURN_NUMBER`, but `LOCALE_FONTSIGNATURE`; another locale
@@ -1304,8 +1314,8 @@ values are that Windows' own, taken from what `locale.exe` printed there.
   the caller's, with Windows' letters and quoting and the time flags, which
   drop a field with the text before it. `EnumDateFormatsW` and
   `EnumTimeFormatsW` list Windows XP's pictures, the default first.
-- `CompareStringW` sorts by letters (ñ its own, between n and o), then
-  accents, then case (lower first); symbols sort before digits and letters,
+- `CompareStringW` sorts by letters (ñ is n with a tilde), then accents,
+  then case (lower first); symbols sort before digits and letters,
   and in a word sort the hyphen and the apostrophe count only last.
   `NORM_IGNORECASE`, `NORM_IGNORENONSPACE`, `NORM_IGNORESYMBOLS` and
   `SORT_STRINGSORT` as on Windows.
