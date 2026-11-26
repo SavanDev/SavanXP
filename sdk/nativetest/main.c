@@ -4385,6 +4385,18 @@ static void run_session_end_client(int mark) {
     long sleeper = sxn_event_create(SXN_EVENT_MANUAL_RESET);
     int declined = 0;
 
+    /* The shell role is the session's to give, to a process sessiond
+     * started: this one is nativetest's child, so windowd refuses it and the
+     * window it then asks for as an ordinary client is still granted. */
+    {
+        struct sxnwm_client refused;
+        struct sxnwm_shell shell;
+        if (sxnwm_connect_shell(&refused, &shell) != -SAVANXP_EACCES || shell.windows != 0 || shell.request_fd != -1) {
+            (void)sxn_log("nativetest: session-end: the shell role was not refused");
+            sxn_exit(1);
+        }
+        (void)sxn_log("nativetest: session-end: the shell role is refused to a process the session did not start");
+    }
     if (sxnwm_connect(&window) < 0) {
         (void)sxn_log("nativetest: session-end: the client got no window");
         sxn_exit(1);

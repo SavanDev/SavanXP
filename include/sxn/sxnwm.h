@@ -110,21 +110,35 @@ static inline long sxnwm_attach_input(struct sxnwm_client* ctx, long ring_fd) {
     return 0;
 }
 
+/* The shell's half of a connection (wm/wm_shell_protocol.h): the window list
+ * the WM keeps current, mapped read-only, and the pipe the shell's requests
+ * go on. Only sxnwm_connect_shell fills it. */
+struct sxnwm_shell {
+    const struct savanxp_wm_window_list* windows;
+    long request_fd;
+};
+
 /* Connect to windowd and get a window: the hello asks for input on a ring
  * (a native client reads no pipe), the welcome brings the surface section,
- * the wake and submit events and the ring, which are mapped here. The read
- * of the welcome blocks: there is no native poll yet, and a WM that accepted
- * the connection answers within a pass of its loop. 0 or negative -errno. */
-static inline long sxnwm_connect_with_launch_flags(struct sxnwm_client* ctx, uint32_t launch_flags) {
+ * the wake and submit events and the ring, which are mapped here; and for the
+ * shell (`shell` not 0), the window list section after the ring. The read of
+ * the welcome blocks: there is no native poll yet, and a WM that accepted the
+ * connection answers within a pass of its loop. 0 or negative -errno. */
+static inline long sxnwm_connect_hello(struct sxnwm_client* ctx, uint32_t launch_flags, struct sxnwm_shell* shell) {
     int32_t handles[2] = {-1, -1};
-    long received[4] = {-1, -1, -1, -1};
+    long received[5] = {-1, -1, -1, -1, -1};
     struct savanxp_wm_hello hello = {0};
     struct savanxp_wm_event record = {0};
     uint32_t index = 0;
+    uint32_t expected = 4u;
     long result = 0;
 
     if (ctx == 0 || (launch_flags & ~SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN) != 0u) {
         return -SAVANXP_EINVAL;
+    }
+    if (shell != 0) {
+        shell->windows = 0;
+        shell->request_fd = -1;
     }
     ctx->header = 0;
     ctx->ring = 0;
@@ -138,7 +152,8 @@ static inline long sxnwm_connect_with_launch_flags(struct sxnwm_client* ctx, uin
     hello.magic = SAVANXP_WM_HELLO_MAGIC;
     hello.version = SAVANXP_WM_PROTOCOL_VERSION;
     hello.launch_flags = launch_flags;
-    hello.flags = SAVANXP_WM_HELLO_INPUT_RING | SAVANXP_WM_HELLO_REQUEST_EVENT;
+    hello.flags = SAVANXP_WM_HELLO_INPUT_RING | SAVANXP_WM_HELLO_REQUEST_EVENT |
+                  (shell != 0 ? SAVANXP_WM_HELLO_SHELL : 0u);
     if (sxn_write(handles[0], &hello, sizeof(hello)) != (long)sizeof(hello)) {
         result = -SAVANXP_EPIPE;
         goto fail;
@@ -157,14 +172,21 @@ static inline long sxnwm_connect_with_launch_flags(struct sxnwm_client* ctx, uin
         result = record.payload.welcome.status;
         goto fail;
     }
-    /* section, wake, submit, ring, and the request event when the welcome
-     * says it is there */
+    /* section, wake, submit, ring, the window list for the shell, and the
+     * request event when the welcome says it is there */
+    if (shell != 0 && (record.payload.welcome.flags & SAVANXP_WM_WELCOME_SHELL) == 0u) {
+        result = -SAVANXP_EACCES;
+        goto fail;
+    }
+    if (shell != 0) {
+        expected += 1u;
+    }
     if (record.payload.welcome.handle_count !=
-        ((record.payload.welcome.flags & SAVANXP_WM_WELCOME_REQUEST_EVENT) != 0u ? 5u : 4u)) {
+        expected + ((record.payload.welcome.flags & SAVANXP_WM_WELCOME_REQUEST_EVENT) != 0u ? 1u : 0u)) {
         result = -SAVANXP_EIO;
         goto fail;
     }
-    for (index = 0; index < 4u; index += 1) {
+    for (index = 0; index < expected; index += 1) {
         received[index] = sxn_pipe_receive_handle(handles[1]);
         if (received[index] < 0) {
             result = received[index];
@@ -183,23 +205,41 @@ static inline long sxnwm_connect_with_launch_flags(struct sxnwm_client* ctx, uin
     if (result == 0) {
         result = sxnwm_attach_input(ctx, received[3]);
     }
+    if (result == 0 && shell != 0) {
+        long base = sxn_map_view(received[4], SXN_SECTION_READ);
+        if (base <= 0) {
+            result = base < 0 ? base : -SAVANXP_ENOMEM;
+        } else {
+            shell->windows = (const struct savanxp_wm_window_list*)base;
+        }
+    }
     if (result != 0) {
         goto fail;
     }
     /* The views keep the sections alive; only the channels stay open. */
     (void)sxn_close(received[0]);
     (void)sxn_close(received[3]);
-    (void)sxn_close(handles[0]);
+    if (shell != 0) {
+        (void)sxn_close(received[4]);
+        /* The shell's requests go on the pipe the hello went on. */
+        shell->request_fd = handles[0];
+    } else {
+        (void)sxn_close(handles[0]);
+    }
     ctx->wake_fd = received[1];
     ctx->submit_fd = received[2];
     ctx->events_fd = handles[1];
     return 0;
 
 fail:
-    for (index = 0; index < 4u; index += 1) {
+    for (index = 0; index < 5u; index += 1) {
         if (received[index] >= 0) {
             (void)sxn_close(received[index]);
         }
+    }
+    if (shell != 0 && shell->windows != 0) {
+        (void)sxn_unmap_view((unsigned long)shell->windows);
+        shell->windows = 0;
     }
     if (ctx->request_fd >= 0) {
         (void)sxn_close(ctx->request_fd);
@@ -210,6 +250,31 @@ fail:
     ctx->header = 0;
     ctx->ring = 0;
     return result;
+}
+
+static inline long sxnwm_connect_with_launch_flags(struct sxnwm_client* ctx, uint32_t launch_flags) {
+    return sxnwm_connect_hello(ctx, launch_flags, 0);
+}
+
+/* The shell's connection (gfx_open_shell in POSIX): its main window is the
+ * background, and only it may open role windows (panels, popups) and register
+ * hotkeys. The WM grants the role to one process the session started at a
+ * time; anybody else gets -EACCES
+ * (docs/desktop/DESKTOP_ARCHITECTURE.md#who-is-the-shell-decided-by-parentage). */
+static inline long sxnwm_connect_shell(struct sxnwm_client* ctx, struct sxnwm_shell* shell) {
+    if (shell == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return sxnwm_connect_hello(ctx, 0u, shell);
+}
+
+/* One request of the shell's (savanxp_wm_shell_request: activate, minimize,
+ * close a task, register a hotkey). 0, or -errno. */
+static inline long sxnwm_shell_request(const struct sxnwm_shell* shell, const struct savanxp_wm_shell_request* request) {
+    if (shell == 0 || shell->request_fd < 0 || request == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return sxn_write(shell->request_fd, request, sizeof(*request)) == (long)sizeof(*request) ? 0 : -SAVANXP_EPIPE;
 }
 
 /* Ordinary windows keep the default launch policy. Fullscreen games use

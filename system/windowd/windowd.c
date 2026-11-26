@@ -1916,8 +1916,9 @@ static int connect_client(
         goto fail;
     }
 
-    /* Five at most, in a queue of eight. The client takes them all before it
-     * asks for an owned window, whose section uses that queue. */
+    /* Six at most, in a queue of eight: a SUN shell has both the ring and the
+     * window list. The client takes them all before it asks for an owned
+     * window, whose section uses that queue. */
     if (pipe_send_handle(connection->write_fd, section_fd) < 0 ||
         pipe_send_handle(connection->write_fd, wake_event) < 0 ||
         pipe_send_handle(connection->write_fd, submit_event_fd) < 0)
@@ -1925,13 +1926,21 @@ static int connect_client(
         goto fail;
     }
     handle_count = 3u;
-    if (input_ring_fd >= 0 || window_list_section_fd >= 0)
+    if (input_ring_fd >= 0)
     {
-        if (pipe_send_handle(connection->write_fd, input_ring_fd >= 0 ? input_ring_fd : window_list_section_fd) < 0)
+        if (pipe_send_handle(connection->write_fd, input_ring_fd) < 0)
         {
             goto fail;
         }
-        handle_count = 4u;
+        handle_count += 1u;
+    }
+    if (window_list_section_fd >= 0)
+    {
+        if (pipe_send_handle(connection->write_fd, window_list_section_fd) < 0)
+        {
+            goto fail;
+        }
+        handle_count += 1u;
     }
     if (request_event_fd >= 0)
     {

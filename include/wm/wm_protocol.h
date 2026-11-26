@@ -20,9 +20,10 @@
  *   3. The WM answers on the event pipe with a SAVANXP_WM_EVENT_WELCOME record
  *      (savanxp_wm_welcome). With status 0, the handles are already queued on
  *      that pipe, in this order: the surface section, the wake event, the
- *      session's submit event, then the input ring (if asked) or the window
- *      list section (for the shell, wm/wm_shell_protocol.h), then the
- *      WM's request event (if asked, SAVANXP_WM_HELLO_REQUEST_EVENT).
+ *      session's submit event, then the input ring (if asked), then the
+ *      window list section (for the shell, wm/wm_shell_protocol.h), then the
+ *      WM's request event (if asked, SAVANXP_WM_HELLO_REQUEST_EVENT). A SUN
+ *      shell asks for the ring and gets both.
  *
  * From then on everything is as in v4:
  *
