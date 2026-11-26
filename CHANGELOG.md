@@ -8,6 +8,9 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **The UI, caption and monospace faces can be replaced at run time (SDK 2.0).** `gfx_face_install` puts another
+  face in a slot of the text primitives; `sx_font_gfx_face` makes one from a `libsxfont` strike. The baked faces stay
+  the default, pixel for pixel. Host test `pixels-text-test`. [Faces at run time](docs/desktop/UI_FONTS.md#faces-at-run-time).
 - **Scalable TrueType fonts at run time: `libsxfont.so.0.4` over FreeType 2.15.0 (SDK 2.0).** `savanxp/font.h`
   for SUN and POSIX: faces at any size, 1-bit or grey as each face's gasp says, Windows-style metrics, face
   matching with Arial/Times New Roman/Courier New substitutes. Liberation Sans, Serif and Mono ship in

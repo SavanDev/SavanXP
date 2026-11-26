@@ -170,6 +170,14 @@ int sx_font_catalog_entry(const struct sx_font_catalog *catalog, unsigned index,
 int sx_font_catalog_match(const struct sx_font_catalog *catalog, const struct sx_font_request *request,
                           struct sx_font_match *out);
 
+/* A face for the platform's text primitives (sxgfx/pixels.h,
+ * gfx_face_install) that draws with this strike: its ascent, its height as
+ * the line, the advance of 'M' as the monospace cell. The face points at the
+ * strike, so it is removed from its slot (gfx_face_install(slot, NULL))
+ * before the strike closes. */
+struct gfx_face;
+int sx_font_gfx_face(struct sx_font_strike *strike, struct gfx_face *out);
+
 /* A static English description of a result; never NULL. */
 const char *sx_font_error_string(int result);
 

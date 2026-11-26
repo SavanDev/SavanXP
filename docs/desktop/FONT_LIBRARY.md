@@ -59,6 +59,7 @@ engine, or takes turns (as `winhost`'s threads already do).
 | `sx_font_glyph_advance` | A glyph's advance in pixels, without drawing it |
 | `sx_font_glyph_render` | A glyph's coverage, one byte per pixel, with its advance and its offsets from the origin |
 | `sx_font_catalog_create`, `_add`, `_count`, `_entry`, `_match` | The faces to choose from, and the one a request gets |
+| `sx_font_gfx_face` | A face for the platform's text primitives, drawn with a strike, to install in a slot of `libgfx2d` ([UI_FONTS.md](UI_FONTS.md#faces-at-run-time)) |
 | `sx_font_error_string` | A static English description of a result |
 
 Every call that can fail returns `SX_FONT_OK` or a negative
@@ -249,6 +250,11 @@ a SUN program that maps `libsxfont.so.0.4` and reads the same files from
 - the catalog's matches, substitutes, fallbacks and synthesis, and the
   errors: a file of text, a CFF font, a truncated file, sizes out of range,
   a glyph past the face.
+- that Liberation Sans installed in `libgfx2d`'s UI slot measures the
+  strike's advances and draws, through `gfx_blit_text`, exactly the canvas
+  composed glyph by glyph from the strike, that Liberation Mono gives the
+  monospace slot an 8-pixel cell, and that the baked faces come back. On
+  SavanXP this runs in `fonttest` against the mapped `libgfx2d.so.0.4`.
 
 ## Not done
 

@@ -54,6 +54,39 @@ gasp table: 1-bit and hinted at reading sizes, grey only in large headings
 fails on any grey coverage byte, and on any glyph that pokes out of the line
 its ascent and descent declare.
 
+## Faces at run time
+
+The three faces are slots (`GFX_FACE_UI`, `GFX_FACE_MONO`,
+`GFX_FACE_TITLE` in `sxgfx/pixels.h`, the same values as the painter's
+`sx_font_id`). Each slot draws with its baked table until a program installs
+another face with `gfx_face_install`, and installing `NULL` brings the table
+back. A face is a small table of its own: ascent, line height, the
+monospace cell, and a `glyph` call (with an optional `advance` call for
+measuring) that hands over coverage. `libsxfont` builds one from a strike
+(`sx_font_gfx_face`, [FONT_LIBRARY.md](FONT_LIBRARY.md)), so a PIE program
+that links it can draw its interface in a TrueType face.
+
+- **Nothing changes unless a program installs a face.** The baked faces go
+  through the same slot code, and `pixels-text-test` holds their output to
+  checksums recorded from `pixels.c` before slots existed: every pixel,
+  width and height of the three faces, plain and clipped.
+- **`libgfx2d` does not depend on `libsxfont`.** A face is plain data and
+  function pointers, so static programs, which carry `pixels.c` in their
+  runtime, keep the tables and pull no FreeType; only a program that links
+  `libsxfont` can install one of its faces.
+- **The baked monospace face keeps its bit-mask path**, which an 80x24
+  terminal repaint needs; an installed monospace face advances by its cell
+  whatever each glyph says, as the grid requires.
+- **The slots are the process's.** A program installs its faces before it
+  draws, from the thread that draws, and removes a face before closing what
+  it points at (a `libsxfont` strike).
+- **The 1-bit rule still holds for what the chrome is drawn with**: a
+  `libsxfont` face meant for the interface is opened with
+  `SX_FONT_FORCE_MONO`.
+
+The kernel's console and boot screen, and `gdi32` until the WordPad
+roadmap's WP6, keep drawing from the tables directly.
+
 ## Changing a face
 
 1. Put the source in `assets/desktop/fonts/` with its license, and add it to

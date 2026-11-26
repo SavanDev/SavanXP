@@ -8,6 +8,8 @@
  * PixelSans and ImpactfulBits are baked as committed tables
  * (gfx_font_pixelsans.inc, gfx_font_impactfulbits.inc) but are not linked
  * into the graphics library yet.
+ * These are each face slot's default; a program may install another face in
+ * a slot (gfx_face_install, "Face slots" below).
  */
 #include "gfx_font_noto.inc"
 #include "gfx_font_title.inc"
@@ -201,7 +203,136 @@ void gfx_frame(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int 
     }
 }
 
-/* --- Proportional UI face (default desktop/UI text) --------------------- */
+/* --- Face slots ------------------------------------------------------------
+ *
+ * Each face is a slot that draws with its baked table until a program installs
+ * another face (pixels.h, docs/desktop/UI_FONTS.md). The baked faces are
+ * faces like any other, so an installed one takes the very same drawing and
+ * measuring paths; only the baked monospace face keeps its bit-mask fast path,
+ * which an 80x24 terminal repaint needs. */
+
+static void baked_ui_glyph(void* context, unsigned int codepoint, struct gfx_glyph* out) {
+    const struct sx_noto_glyph* g = sx_noto_glyph(codepoint);
+    (void)context;
+    out->width = g->width;
+    out->rows = g->rows;
+    out->left = g->left;
+    out->top = g->top;
+    out->advance = g->advance;
+    out->pitch = g->width;
+    out->coverage = kNotoCoverage + g->offset;
+}
+
+static int baked_ui_advance(void* context, unsigned int codepoint) {
+    (void)context;
+    return sx_noto_glyph(codepoint)->advance;
+}
+
+static void baked_title_glyph(void* context, unsigned int codepoint, struct gfx_glyph* out) {
+    const struct sx_title_glyph* g = sx_title_glyph(codepoint);
+    (void)context;
+    out->width = g->width;
+    out->rows = g->rows;
+    out->left = g->left;
+    out->top = g->top;
+    out->advance = g->advance;
+    out->pitch = g->width;
+    out->coverage = kTitleCoverage + g->offset;
+}
+
+/* The baked monospace face as a face, for completeness: its drawing never goes
+ * through here (baked_mono_blit), but a caller may ask the slot for it. */
+static void baked_mono_glyph(void* context, unsigned int codepoint, struct gfx_glyph* out) {
+    (void)context;
+    (void)codepoint;
+    out->width = 0;
+    out->rows = 0;
+    out->left = 0;
+    out->top = 0;
+    out->advance = SX_CONSOLE_GLYPH_W;
+    out->pitch = 0;
+    out->coverage = 0;
+}
+
+static const struct gfx_face kBakedFaces[GFX_FACE_SLOTS] = {
+    {SX_NOTO_ASCENT, SX_NOTO_LINE_HEIGHT, 0, baked_ui_glyph, baked_ui_advance, 0},
+    {SX_CONSOLE_GLYPH_H, SX_CONSOLE_GLYPH_H, SX_CONSOLE_GLYPH_W, baked_mono_glyph, 0, 0},
+    {SX_TITLE_ASCENT, SX_TITLE_LINE_HEIGHT, 0, baked_title_glyph, 0, 0},
+};
+
+static struct gfx_face g_faces[GFX_FACE_SLOTS] = {
+    {SX_NOTO_ASCENT, SX_NOTO_LINE_HEIGHT, 0, baked_ui_glyph, baked_ui_advance, 0},
+    {SX_CONSOLE_GLYPH_H, SX_CONSOLE_GLYPH_H, SX_CONSOLE_GLYPH_W, baked_mono_glyph, 0, 0},
+    {SX_TITLE_ASCENT, SX_TITLE_LINE_HEIGHT, 0, baked_title_glyph, 0, 0},
+};
+static int g_face_installed[GFX_FACE_SLOTS];
+
+int gfx_face_install(int slot, const struct gfx_face* face) {
+    if (slot < 0 || slot >= GFX_FACE_SLOTS) {
+        return -1;
+    }
+    if (face == 0) {
+        g_faces[slot] = kBakedFaces[slot];
+        g_face_installed[slot] = 0;
+        return 0;
+    }
+    if (face->glyph == 0 || face->line_height < 1 || (slot == GFX_FACE_MONO && face->cell_width < 1)) {
+        return -1;
+    }
+    g_faces[slot] = *face;
+    g_face_installed[slot] = 1;
+    return 0;
+}
+
+int gfx_face_installed(int slot) {
+    return slot >= 0 && slot < GFX_FACE_SLOTS && g_face_installed[slot];
+}
+
+static int face_advance(const struct gfx_face* face, unsigned int codepoint) {
+    struct gfx_glyph glyph;
+    if (face->advance != 0) {
+        return face->advance(face->context, codepoint);
+    }
+    face->glyph(face->context, codepoint, &glyph);
+    return glyph.advance;
+}
+
+/* y is the top of the text box; glyphs sit on a baseline `ascent` below it.
+ * has_clip restricts blended pixels to [clip_x0, clip_x1) x [clip_y0, clip_y1)
+ * so a glyph that only partially overlaps the caller's clip rect does not get
+ * fully re-blended outside it (matters when a layer is repainted once per
+ * occlusion fragment, which would otherwise double-blend the same glyph).
+ * `cell` is the monospace grid's advance, or 0 to advance by each glyph's. */
+static void face_blit(const struct gfx_face* face, int cell, uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y,
+                      const char* text, uint32_t colour, int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    int pen_x = x;
+    int baseline = y + face->ascent;
+    while (text != 0 && *text != '\0') {
+        struct gfx_glyph g;
+        int row;
+        int column;
+        face->glyph(face->context, sx_utf8_next(&text), &g);
+        for (row = 0; row < g.rows && g.coverage != 0; ++row) {
+            int py = baseline - g.top + row;
+            if (has_clip && (py < clip_y0 || py >= clip_y1)) {
+                continue;
+            }
+            for (column = 0; column < g.width; ++column) {
+                int px = pen_x + g.left + column;
+                if (has_clip && (px < clip_x0 || px >= clip_x1)) {
+                    continue;
+                }
+                unsigned int alpha = g.coverage[row * g.pitch + column];
+                if (alpha != 0) {
+                    gfx_pixel_blend(pixels, info, px, py, colour, alpha);
+                }
+            }
+        }
+        pen_x += cell != 0 ? cell : g.advance;
+    }
+}
+
+/* --- The UI face ---------------------------------------------------------- */
 
 int gfx_text_width(const char* text) {
     int width = 0;
@@ -209,130 +340,68 @@ int gfx_text_width(const char* text) {
         return 0;
     }
     while (*text != '\0') {
-        width += sx_noto_glyph(sx_utf8_next(&text))->advance;
+        width += face_advance(&g_faces[GFX_FACE_UI], sx_utf8_next(&text));
     }
     return width;
 }
 
 int gfx_text_height(void) {
-    return SX_NOTO_LINE_HEIGHT;
-}
-
-/* y is the top of the text box; glyphs sit on a baseline SX_NOTO_ASCENT below.
- * has_clip restricts blended pixels to [clip_x0, clip_x1) x [clip_y0, clip_y1)
- * so a glyph that only partially overlaps the caller's clip rect does not get
- * fully re-blended outside it (matters when a layer is repainted once per
- * occlusion fragment, which would otherwise double-blend the same glyph). */
-static void gfx_blit_text_impl(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
-                                int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
-    int pen_x = x;
-    int baseline = y + SX_NOTO_ASCENT;
-    while (text != 0 && *text != '\0') {
-        const struct sx_noto_glyph* g = sx_noto_glyph(sx_utf8_next(&text));
-        int row;
-        int column;
-        for (row = 0; row < g->rows; ++row) {
-            int py = baseline - g->top + row;
-            if (has_clip && (py < clip_y0 || py >= clip_y1)) {
-                continue;
-            }
-            for (column = 0; column < g->width; ++column) {
-                int px = pen_x + g->left + column;
-                if (has_clip && (px < clip_x0 || px >= clip_x1)) {
-                    continue;
-                }
-                unsigned int alpha = kNotoCoverage[g->offset + (unsigned int)row * g->width + column];
-                if (alpha != 0) {
-                    gfx_pixel_blend(pixels, info, px, py, colour, alpha);
-                }
-            }
-        }
-        pen_x += g->advance;
-    }
+    return g_faces[GFX_FACE_UI].line_height;
 }
 
 void gfx_blit_text(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
-    gfx_blit_text_impl(pixels, info, x, y, text, colour, 0, 0, 0, 0, 0);
+    face_blit(&g_faces[GFX_FACE_UI], 0, pixels, info, x, y, text, colour, 0, 0, 0, 0, 0);
 }
 
 void gfx_blit_text_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
                          int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
-    gfx_blit_text_impl(pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
+    face_blit(&g_faces[GFX_FACE_UI], 0, pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
 }
 
-/* --- 18px RetroSans caption variant ------------------------------------- */
+/* --- The caption face ----------------------------------------------------- */
 
 int gfx_text_width_title(const char* text) {
+    const struct gfx_face* face = &g_faces[GFX_FACE_TITLE];
     int pen_x = 0;
     int right = 0;
     if (text == 0) {
         return 0;
     }
     while (*text != '\0') {
-        const struct sx_title_glyph* g = sx_title_glyph(sx_utf8_next(&text));
-        int glyph_right = pen_x + g->left + g->width;
+        struct gfx_glyph g;
+        face->glyph(face->context, sx_utf8_next(&text), &g);
+        int glyph_right = pen_x + g.left + g.width;
         if (glyph_right > right) {
             right = glyph_right;
         }
-        pen_x += g->advance;
+        pen_x += g.advance;
     }
-    /* The pixel atlas can extend a final stem past its advance. Keep that
-     * pixel in the painter's clip box instead of shaving it off at the edge. */
+    /* A pixel face can extend a final stem past its advance. Keep that pixel
+     * in the painter's clip box instead of shaving it off at the edge. */
     return right > pen_x ? right : pen_x;
 }
 
 int gfx_text_height_title(void) {
-    return SX_TITLE_LINE_HEIGHT;
-}
-
-/* The title face has the same baseline contract as the regular UI face, just
- * with a smaller pixel coverage atlas. Keeping the clipped path here
- * means the painter's region/clip behavior is identical for every font. */
-static void gfx_blit_text_title_impl(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
-                                     int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
-    int pen_x = x;
-    int baseline = y + SX_TITLE_ASCENT;
-    while (text != 0 && *text != '\0') {
-        const struct sx_title_glyph* g = sx_title_glyph(sx_utf8_next(&text));
-        int row;
-        int column;
-        for (row = 0; row < g->rows; ++row) {
-            int py = baseline - g->top + row;
-            if (has_clip && (py < clip_y0 || py >= clip_y1)) {
-                continue;
-            }
-            for (column = 0; column < g->width; ++column) {
-                int px = pen_x + g->left + column;
-                if (has_clip && (px < clip_x0 || px >= clip_x1)) {
-                    continue;
-                }
-                unsigned int alpha = kTitleCoverage[g->offset + (unsigned int)row * g->width + column];
-                if (alpha != 0) {
-                    gfx_pixel_blend(pixels, info, px, py, colour, alpha);
-                }
-            }
-        }
-        pen_x += g->advance;
-    }
+    return g_faces[GFX_FACE_TITLE].line_height;
 }
 
 void gfx_blit_text_title(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
-    gfx_blit_text_title_impl(pixels, info, x, y, text, colour, 0, 0, 0, 0, 0);
+    face_blit(&g_faces[GFX_FACE_TITLE], 0, pixels, info, x, y, text, colour, 0, 0, 0, 0, 0);
 }
 
 void gfx_blit_text_title_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
                               int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
-    gfx_blit_text_title_impl(pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
+    face_blit(&g_faces[GFX_FACE_TITLE], 0, pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
 }
 
-/* --- Fixed 8x16 UniFont (monospace terminal text) ----------------------- */
+/* --- The monospace face --------------------------------------------------- */
 
 int gfx_cell_width(void) {
-    return SX_CONSOLE_GLYPH_W;
+    return g_faces[GFX_FACE_MONO].cell_width;
 }
 
 int gfx_cell_height(void) {
-    return SX_CONSOLE_GLYPH_H;
+    return g_faces[GFX_FACE_MONO].line_height;
 }
 
 int gfx_text_width_mono(const char* text) {
@@ -346,7 +415,7 @@ int gfx_text_width_mono(const char* text) {
         (void)sx_utf8_next(&text);
         ++count;
     }
-    return count * SX_CONSOLE_GLYPH_W;
+    return count * g_faces[GFX_FACE_MONO].cell_width;
 }
 
 /* The effective clip is the caller's clip intersected with the surface:
@@ -355,7 +424,7 @@ int gfx_text_width_mono(const char* text) {
  * four edges and recomputes info->pitch / 4 -- a division -- on each one. An
  * 80x24 grid is ~245k iterations per repaint, so that per-pixel division was
  * the dominant cost of drawing monospace text. */
-static void gfx_blit_text_mono_impl(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+static void baked_mono_blit(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
                                      int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
     int clip_left = 0;
     int clip_top = 0;
@@ -430,11 +499,21 @@ static void gfx_blit_text_mono_impl(uint32_t* pixels, const struct savanxp_fb_in
     }
 }
 
+static void mono_blit(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
+                      int has_clip, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+    if (g_face_installed[GFX_FACE_MONO]) {
+        const struct gfx_face* face = &g_faces[GFX_FACE_MONO];
+        face_blit(face, face->cell_width, pixels, info, x, y, text, colour, has_clip, clip_x0, clip_y0, clip_x1, clip_y1);
+        return;
+    }
+    baked_mono_blit(pixels, info, x, y, text, colour, has_clip, clip_x0, clip_y0, clip_x1, clip_y1);
+}
+
 void gfx_blit_text_mono(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour) {
-    gfx_blit_text_mono_impl(pixels, info, x, y, text, colour, 0, 0, 0, 0, 0);
+    mono_blit(pixels, info, x, y, text, colour, 0, 0, 0, 0, 0);
 }
 
 void gfx_blit_text_mono_clip(uint32_t* pixels, const struct savanxp_fb_info* info, int x, int y, const char* text, uint32_t colour,
                               int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
-    gfx_blit_text_mono_impl(pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
+    mono_blit(pixels, info, x, y, text, colour, 1, clip_x0, clip_y0, clip_x1, clip_y1);
 }

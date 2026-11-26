@@ -832,6 +832,13 @@ target_include_directories(savanxp-gfx2d-test PRIVATE
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 set_target_properties(savanxp-gfx2d-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
 
+# The text primitives of pixels.c drawing for real, baked faces and installed
+# ones (docs/desktop/UI_FONTS.md, "Faces at run time"); gfx2d-test stubs them.
+add_executable(savanxp-pixels-text-test system/gfx/pixels.c tests/host/pixels_text_test.c)
+target_include_directories(savanxp-pixels-text-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
+target_compile_options(savanxp-pixels-text-test PRIVATE -O1 -Wall -Wextra)
+add_test(NAME pixels-text-test COMMAND savanxp-pixels-text-test)
+
 # Exercise the real call-free menu selector without retaining painting code.
 add_executable(savanxp-sxgui-menu-test system/gfx/sxgui.c tests/host/sxgui_menu_test.c)
 target_include_directories(savanxp-sxgui-menu-test PRIVATE "${CMAKE_SOURCE_DIR}/include")
@@ -963,9 +970,11 @@ set_target_properties(savanxp-sximg-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD
 add_executable(savanxp-sxfont-test
     system/font/sxfont.c
     system/font/sxfont_selftest.c
+    system/gfx/pixels.c
     tests/host/sxfont_test.c)
 target_include_directories(savanxp-sxfont-test PRIVATE
     "${CMAKE_SOURCE_DIR}/system/font"
+    "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 target_link_libraries(savanxp-sxfont-test PRIVATE freetype_host)
 target_compile_definitions(savanxp-sxfont-test PRIVATE
@@ -1386,7 +1395,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-iconview-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-webengine-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-device-inventory-test savanxp-lifecycle-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test savanxp-sxfont-test
+    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-iconview-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-webengine-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-device-inventory-test savanxp-lifecycle-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test savanxp-sxfont-test savanxp-pixels-text-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)

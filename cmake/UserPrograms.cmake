@@ -257,8 +257,9 @@ if(TARGET enginetest)
     add_dependencies(enginetest netsurf_symbols)
 endif()
 # libsxfont in a SUN program (docs/desktop/FONT_LIBRARY.md): the self-test the
-# host test also runs, over the faces in /system/fonts; the font-test scenario.
-savanxp_program(NAME fonttest TEST NATIVE DEPENDS libsxfont LINK_PROFILE PIE
+# host test also runs, over the faces in /system/fonts, drawing also through
+# the mapped libgfx2d's face slots; the font-test scenario.
+savanxp_program(NAME fonttest TEST NATIVE DEPENDS libsxfont libgfx2d LINK_PROFILE PIE
     SOURCES system/font/fonttest.c system/font/sxfont_selftest.c)
 # How a DT_NEEDED resolves: the exact file, else the highest newer minor of the
 # same ABI (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution"). One

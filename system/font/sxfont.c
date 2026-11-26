@@ -8,6 +8,7 @@
  * the choice of face -- is the document's, section by section. */
 
 #include "savanxp/font.h"
+#include "sxgfx/pixels.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -657,6 +658,43 @@ int sx_font_glyph_render(struct sx_font_strike *strike, unsigned glyph, struct s
     out->width = out->pitch = width;
     out->height = height;
     out->coverage = bytes != 0 ? coverage : NULL;
+    return SX_FONT_OK;
+}
+
+/* --- The platform's text primitives -------------------------------------- */
+
+static void gfx_face_glyph(void *context, unsigned int codepoint, struct gfx_glyph *out) {
+    struct sx_font_strike *strike = context;
+    struct sx_font_glyph glyph;
+    memset(out, 0, sizeof *out);
+    if (sx_font_glyph_render(strike, sx_font_glyph_index(strike->face, codepoint), &glyph) != SX_FONT_OK) return;
+    out->width = (int)glyph.width;
+    out->rows = (int)glyph.height;
+    out->left = glyph.left;
+    out->top = glyph.top;
+    out->advance = glyph.advance;
+    out->pitch = (int)glyph.pitch;
+    out->coverage = glyph.coverage;
+}
+
+static int gfx_face_advance(void *context, unsigned int codepoint) {
+    struct sx_font_strike *strike = context;
+    int advance = 0;
+    (void)sx_font_glyph_advance(strike, sx_font_glyph_index(strike->face, codepoint), &advance);
+    return advance;
+}
+
+int sx_font_gfx_face(struct sx_font_strike *strike, struct gfx_face *out) {
+    if (out == NULL) return SX_FONT_ERROR_ARGUMENT;
+    memset(out, 0, sizeof *out);
+    if (strike == NULL) return SX_FONT_ERROR_ARGUMENT;
+    int cell = gfx_face_advance(strike, 'M');
+    out->ascent = strike->metrics.ascent;
+    out->line_height = strike->metrics.height;
+    out->cell_width = cell > 0 ? cell : strike->metrics.max_advance;
+    out->glyph = gfx_face_glyph;
+    out->advance = gfx_face_advance;
+    out->context = strike;
     return SX_FONT_OK;
 }
 

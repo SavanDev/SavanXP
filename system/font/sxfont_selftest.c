@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "savanxp/font.h"
+#include "sxgfx/pixels.h"
 
 struct context {
     sxfont_selftest_load load;
@@ -303,6 +304,9 @@ static unsigned long text_checksum(struct context *c, struct sx_font_face *face,
 }
 
 static const char kSample[] = "SavanXP: WordPad, ni\xf1o 0123";
+/* The same line in UTF-8, as the text primitives take it; kSample's bytes
+ * are its codepoints (Latin-1). */
+static const char kSampleUtf8[] = "SavanXP: WordPad, ni\xc3\xb1o 0123";
 
 static void check_glyphs(struct context *c, struct sx_font_engine *engine, const struct file *files) {
     static const struct {
@@ -519,6 +523,78 @@ static void check_catalog(struct context *c, struct sx_font_engine *engine, cons
     sx_font_catalog_destroy(catalog);
 }
 
+/* --- Through the platform's text primitives ------------------------------ */
+
+#define CANVAS_W 240
+#define CANVAS_H 24
+
+/* Liberation Sans in the UI slot draws what the strike draws: the canvas
+ * gfx_blit_text paints equals one composed here glyph by glyph, pen by
+ * advance, baseline at the strike's ascent. Then the baked face is back. */
+static void check_text_primitives(struct context *c, struct sx_font_engine *engine, const struct file *files) {
+    static uint32_t drawn[CANVAS_W * CANVAS_H], composed[CANVAS_W * CANVAS_H];
+    int baked_height = gfx_text_height();
+    int baked_width = gfx_text_width(kSampleUtf8);
+    struct sx_font_face *sans = open_face(c, engine, &files[SANS], kFiles[SANS]);
+    struct sx_font_face *mono = open_face(c, engine, &files[MONO], kFiles[MONO]);
+    if (sans == NULL || mono == NULL) {
+        sx_font_face_close(sans);
+        sx_font_face_close(mono);
+        return;
+    }
+    struct sx_font_strike *strike = open_strike(c, sans, 13, SX_FONT_FORCE_MONO);
+    struct sx_font_strike *cells = open_strike(c, mono, 13, SX_FONT_FORCE_MONO);
+    struct gfx_face face, cell_face;
+    if (strike == NULL || cells == NULL || sx_font_gfx_face(strike, &face) != SX_FONT_OK ||
+        sx_font_gfx_face(cells, &cell_face) != SX_FONT_OK) {
+        fail(c, "a strike becomes a face for the text primitives");
+        sx_font_face_close(sans);
+        sx_font_face_close(mono);
+        return;
+    }
+    expect_int(c, "the strike's face: ascent", face.ascent, 12);
+    expect_int(c, "the strike's face: line", face.line_height, 15);
+    expect_int(c, "the UI slot takes the strike's face", gfx_face_install(GFX_FACE_UI, &face), 0);
+    expect_int(c, "the UI slot's line is the strike's", gfx_text_height(), 15);
+    expect_int(c, "the UI slot measures the strike's advances", gfx_text_width(kSampleUtf8), 177);
+
+    struct savanxp_fb_info info;
+    memset(&info, 0, sizeof info);
+    info.width = CANVAS_W;
+    info.height = CANVAS_H;
+    info.pitch = CANVAS_W * 4u;
+    info.bpp = 32u;
+    info.buffer_size = info.pitch * CANVAS_H;
+    for (int i = 0; i < CANVAS_W * CANVAS_H; i++) drawn[i] = composed[i] = 0x00ffffffu;
+    gfx_blit_text(drawn, &info, 4, 3, kSampleUtf8, 0x00000000u);
+    int pen = 4, baseline = 3 + 12;
+    for (const char *p = kSample; *p != '\0'; p++) {
+        struct sx_font_glyph glyph;
+        sx_font_glyph_render(strike, sx_font_glyph_index(sans, (unsigned char)*p), &glyph);
+        for (unsigned y = 0; y < glyph.height; y++) {
+            for (unsigned x = 0; x < glyph.width; x++) {
+                int px = pen + glyph.left + (int)x, py = baseline - glyph.top + (int)y;
+                if (px >= 0 && py >= 0 && px < CANVAS_W && py < CANVAS_H && glyph.coverage[y * glyph.pitch + x] != 0)
+                    composed[py * CANVAS_W + px] = 0x00000000u;
+            }
+        }
+        pen += glyph.advance;
+    }
+    expect_int(c, "gfx_blit_text draws the strike's glyphs", memcmp(drawn, composed, sizeof drawn) == 0, 1);
+
+    expect_int(c, "the monospace slot takes Liberation Mono", gfx_face_install(GFX_FACE_MONO, &cell_face), 0);
+    expect_int(c, "Liberation Mono's cell at 13 ppem", gfx_cell_width(), 8);
+    expect_int(c, "Liberation Mono's cell height at 13 ppem", gfx_cell_height(), 15);
+
+    gfx_face_install(GFX_FACE_UI, NULL);
+    gfx_face_install(GFX_FACE_MONO, NULL);
+    expect_int(c, "the baked UI face is back: line", gfx_text_height(), baked_height);
+    expect_int(c, "the baked UI face is back: width", gfx_text_width(kSampleUtf8), baked_width);
+    expect_int(c, "the baked monospace face is back", gfx_cell_width(), 8);
+    sx_font_face_close(sans);
+    sx_font_face_close(mono);
+}
+
 int sxfont_selftest(sxfont_selftest_load load, sxfont_selftest_report report, void *user) {
     struct context c = {load, report, user, 0};
     struct file files[12];
@@ -544,6 +620,7 @@ int sxfont_selftest(sxfont_selftest_load load, sxfont_selftest_report report, vo
     check_space_and_bold(&c, engine, files);
     check_cache(&c, engine, files);
     check_catalog(&c, engine, files);
+    check_text_primitives(&c, engine, files);
     sx_font_engine_destroy(engine);
     return c.failures;
 }
