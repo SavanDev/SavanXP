@@ -27,6 +27,22 @@ is the neutral wire contract, `abi/savanxp_abi.h` (`savanxp_fb_info`,
 `savanxp_input_event`, `SAVANXP_KEY_*`, ...), plus the C library's `string.h`
 and `stdlib.h`.
 
+**Open: the check does not print nothing today** (found 2026-11-25, while
+`libsxfont` was added; to investigate). It prints two lines:
+
+- `system/gfx/wallpaper.c` includes `savanxp/img.h`, for `libsximg`'s
+  `sx_image_info` and `sx_image_decode_into`.
+- `system/gfx/mime_icon.c` includes `savanxp/sxe.h`, for the SXE icon reader
+  (`sxe_icons_open`, `_best`, `_pixels`).
+
+Both headers declare call-free code that SUN and POSIX share, so neither
+breaks the no-system-call rule. What breaks is where the headers live: under
+the POSIX SDK. Still to decide is whether such neutral headers move out of
+`subsystems/` or the rule names them as allowed. Until then the check has
+these two known lines, and a new one is still a violation: `libsxfont`'s
+adapter for the text primitives (`sx_font_gfx_face`) lives in `libsxfont`
+for that reason, not in `system/gfx`.
+
 ## Where each piece lives
 
 | Piece | Platform (`system/gfx`, `include/sxgfx`) | POSIX (`subsystems/posix/sdk/v1`) | SUN (`system/runtime`, `include/sxn`) |
