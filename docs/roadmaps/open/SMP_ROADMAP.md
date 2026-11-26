@@ -1068,20 +1068,37 @@ leaving the lock, the cause is in a part that should be inert then:
 - two new struct fields;
 - a kernel 2.5 KB larger, with `.bss` 16 KB larger and one page further on.
 
+It is the last one. `b04c1632` with no code changed, but each object the
+branch grows padded by the same bytes in the same sections (an
+`__asm__(".pushsection .text.zz_layout_pad ... .skip N")` at the end of each
+source), builds a kernel whose sections have the branch's sizes and start
+addresses, with 4118 of 4491 common symbols at the branch's addresses (201
+without the padding). Interleaved in three worktrees of equal path length,
+6 rounds:
+
+| Kernel | Runs with an HDA underrun | Where |
+| --- | --- | --- |
+| `b04c1632` | 1 of 6 | 397 KB into the first stream |
+| `b04c1632`, padded | 6 of 6 | 25-27 KB into the first (4), 137-150 KB into the second (6) |
+| The branch | 6 of 6 | 140-153 KB into the second (6), and 255 and 300 KB |
+
+The padded base fails at the branch's two points, and fails at the first one
+more often than the branch does. The regression is how
+TCG runs a kernel laid out that way, not anything the branch does. What it
+exposes is two moments where `audiod` already has almost no margin on
+master: the startup in
+[AUDIO_DAEMON.md](../../media/AUDIO_DAEMON.md#who-holds-the-device), and the
+capture checks.
+
 **Owed before it can merge:**
-1. *Isolate the cause.* Under KVM (`--accel kvm`, 2 cores, 4 interleaved
-   pairs) the branch passed both runs that booted and the base passed 4/4,
-   which fits a failure that needs TCG's timing, though two runs prove little. The branch's other two runs
-   stopped in OVMF before `BdsDxe: loading Boot0002`, with the kernel never
-   loaded. Two stalls in four, both on the branch side, are not explained
-   either. Not run when the work stopped:
-   - a probe of reads of a device that does not defer its writes (only `/boot`
-     here, mounted read-only, which nothing in the scenario should read);
-   - the door, tick and idle changes alone, and the struct fields alone;
-   - a kernel padded to the same size with nothing else changed: TCG's
-     software TLB and translation blocks depend on layout, and two of the rows
-     above being equal is what a layout effect would also show;
-   - more KVM pairs, and where the firmware stalls come from.
+1. *Give `audiod` its margin at the two points.* The cause is isolated: layout,
+   above. What stays owed is the fragility it exposes, on master as much as
+   on the branch: the startup that starts the stream before it can feed it,
+   and whatever the capture checks hold up about 141 KB into the second
+   stream. Under KVM (`--accel kvm`, 2 cores, 4 interleaved pairs) the branch
+   passed both runs that booted and the base passed 4/4. The branch's other
+   two runs stopped in OVMF before `BdsDxe: loading Boot0002`, with the
+   kernel never loaded; those stalls are not explained.
 2. *`SXN_SYS_PORT_ACCEPT` and `PORT_ACCEPT_EX` are not storage-free.* `audiod`
    calls one every turn of its loop, so it parks during every read, though
    the call touches only handles and pipes.
