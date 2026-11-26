@@ -314,6 +314,9 @@ changes not released yet; each released version has its own file in
 
 ### Changed
 
+- **The shell's shared data modules move to `system/shell/` and make no system call.** Program Manager's registry,
+  shortcuts, Start menu pins and shortcuts and file associations go through `include/shell/shell_io.h`, which each
+  subsystem implements. Behaviour is unchanged ([The shell's data](docs/desktop/DESKTOP_ARCHITECTURE.md#the-shells-data-and-its-io)).
 - **`sysinfo` is a SUN program**, `/system/sysinfo.sxe` from `system/sysinfo`, and `sysinfo.sxe` on the rescue system;
   `/bin/sysinfo` is retired. Its report is unchanged. A SUN program's `sxn_write` now reaches the text console, as a
   POSIX write does ([KERNEL_NATIVE_API.md](docs/kernel/KERNEL_NATIVE_API.md)).

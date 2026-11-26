@@ -1,14 +1,11 @@
-#include "start_pins.h"
+#include "shell/start_pins.h"
 
+#include "shell/shell_io.h"
 #include "sxgfx/pe_version.h"
 
-#include <dirent.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 /* See start_pins.h. */
 
@@ -49,33 +46,17 @@ static int join(char *out, size_t capacity, const char *folder, const char *name
 static int exe_description(const char *path, char *out, size_t capacity)
 {
     uint8_t *file = malloc(START_PINS_PE_MAX);
-    size_t total = 0;
-    int fd;
+    long total;
     int found = 0;
 
     if (file == 0)
     {
         return 0;
     }
-    fd = open(path, O_RDONLY);
-    if (fd >= 0)
+    total = shell_io_read_file(path, file, START_PINS_PE_MAX);
+    if (total >= 0)
     {
-        for (;;)
-        {
-            ssize_t count = read(fd, file + total, START_PINS_PE_MAX - total);
-
-            if (count <= 0)
-            {
-                break;
-            }
-            total += (size_t)count;
-            if (total == START_PINS_PE_MAX)
-            {
-                break;
-            }
-        }
-        close(fd);
-        found = pe_version_string(file, total, "FileDescription", out, capacity);
+        found = pe_version_string(file, (size_t)total, "FileDescription", out, capacity);
     }
     free(file);
     if (found)
@@ -105,49 +86,40 @@ static int exe_description(const char *path, char *out, size_t capacity)
     return found;
 }
 
-/* A copy of each default shortcut, into the new folder. */
-static void seed(const char *folder)
+/* One default shortcut, copied into the new folder. */
+static void seed_one(const char *name, void *context)
 {
-    DIR *handle = opendir(START_PINS_DEFAULTS_DIR);
-    struct dirent *entry;
+    const char *folder = (const char *)context;
+    char from[SHORTCUT_PATH_CAPACITY];
+    char to[SHORTCUT_PATH_CAPACITY];
+    struct shortcut link;
 
-    if (handle == 0)
+    if (name[0] != '.' && shortcut_is_shortcut_name(name) &&
+        join(from, sizeof(from), START_PINS_DEFAULTS_DIR, name) &&
+        join(to, sizeof(to), folder, name) && shortcut_load(from, &link) == 0)
     {
-        return;
+        (void)shortcut_save(to, &link);
     }
-    while ((entry = readdir(handle)) != 0)
-    {
-        char from[SHORTCUT_PATH_CAPACITY];
-        char to[SHORTCUT_PATH_CAPACITY];
-        struct shortcut link;
-
-        if (entry->d_name[0] != '.' && shortcut_is_shortcut_name(entry->d_name) &&
-            join(from, sizeof(from), START_PINS_DEFAULTS_DIR, entry->d_name) &&
-            join(to, sizeof(to), folder, entry->d_name) && shortcut_load(from, &link) == 0)
-        {
-            (void)shortcut_save(to, &link);
-        }
-    }
-    closedir(handle);
 }
 
 int start_pins_folder(char *out, size_t capacity)
 {
-    struct stat info;
+    struct shell_io_info info;
 
-    if (!join(out, capacity, savanxp_profile_dir(), START_PINS_FOLDER))
+    if (!join(out, capacity, shell_io_profile_directory(), START_PINS_FOLDER))
     {
         return -1;
     }
-    if (stat(out, &info) == 0)
+    if (shell_io_query(out, &info) == 0)
     {
-        return S_ISDIR(info.st_mode) ? 0 : -1;
+        return info.type == SHELL_IO_DIRECTORY ? 0 : -1;
     }
-    if (savanxp_mkdir(out) < 0)
+    if (shell_io_make_directory(out) < 0)
     {
         return -1;
     }
-    seed(out);
+    /* A copy of each default shortcut, into the new folder. */
+    (void)shell_io_list(START_PINS_DEFAULTS_DIR, seed_one, out);
     return 0;
 }
 
@@ -157,37 +129,41 @@ int start_pins_can_pin(const char *path)
            (shortcut_is_program_path(path) || ends_with_nocase(path, ".exe") || shortcut_is_shortcut_name(path));
 }
 
+struct survey_state
+{
+    const char *folder;
+    const struct shortcut *link;
+    int count;
+    int already;
+};
+
+static void survey_one(const char *name, void *context)
+{
+    struct survey_state *state = (struct survey_state *)context;
+    char path[SHORTCUT_PATH_CAPACITY];
+    struct shortcut pin;
+
+    if (name[0] == '.' || !shortcut_is_shortcut_name(name))
+    {
+        return;
+    }
+    state->count += 1;
+    if (join(path, sizeof(path), state->folder, name) && shortcut_load(path, &pin) == 0 &&
+        strcmp(pin.target, state->link->target) == 0 && strcmp(pin.args, state->link->args) == 0)
+    {
+        state->already = 1;
+    }
+}
+
 /* How many pins there are, and whether one already opens `link`'s target
  * with its argument. */
 static int survey(const char *folder, const struct shortcut *link, int *already)
 {
-    DIR *handle = opendir(folder);
-    struct dirent *entry;
-    int count = 0;
+    struct survey_state state = {folder, link, 0, 0};
 
-    *already = 0;
-    if (handle == 0)
-    {
-        return 0;
-    }
-    while ((entry = readdir(handle)) != 0)
-    {
-        char path[SHORTCUT_PATH_CAPACITY];
-        struct shortcut pin;
-
-        if (entry->d_name[0] == '.' || !shortcut_is_shortcut_name(entry->d_name))
-        {
-            continue;
-        }
-        count += 1;
-        if (join(path, sizeof(path), folder, entry->d_name) && shortcut_load(path, &pin) == 0 &&
-            strcmp(pin.target, link->target) == 0 && strcmp(pin.args, link->args) == 0)
-        {
-            *already = 1;
-        }
-    }
-    closedir(handle);
-    return count;
+    (void)shell_io_list(folder, survey_one, &state);
+    *already = state.already;
+    return state.count;
 }
 
 enum start_pin_result start_pins_pin(const char *path)
@@ -196,7 +172,7 @@ enum start_pin_result start_pins_pin(const char *path)
     char name[160];
     char pin[SHORTCUT_PATH_CAPACITY];
     struct shortcut link;
-    struct stat info;
+    struct shell_io_info info;
     int already;
 
     if (!start_pins_can_pin(path) || start_pins_folder(folder, sizeof(folder)) != 0)
@@ -253,7 +229,7 @@ enum start_pin_result start_pins_pin(const char *path)
         return START_PIN_FAILED;
     }
     /* A name already taken by another target gets " (2)" and on. */
-    for (int attempt = 2; stat(pin, &info) == 0 && attempt < 100; ++attempt)
+    for (int attempt = 2; shell_io_query(pin, &info) == 0 && attempt < 100; ++attempt)
     {
         size_t stem = strlen(name) - (sizeof(SHORTCUT_EXTENSION) - 1u);
 
@@ -268,7 +244,7 @@ int start_pins_unpin(const char *shortcut_path)
     size_t length;
 
     if (shortcut_path == 0 || !shortcut_is_shortcut_name(shortcut_path) ||
-        !join(folder, sizeof(folder), savanxp_profile_dir(), START_PINS_FOLDER))
+        !join(folder, sizeof(folder), shell_io_profile_directory(), START_PINS_FOLDER))
     {
         return -1;
     }
@@ -279,5 +255,5 @@ int start_pins_unpin(const char *shortcut_path)
     {
         return -1;
     }
-    return unlink(shortcut_path) == 0 ? 0 : -1;
+    return shell_io_delete_file(shortcut_path) == 0 ? 0 : -1;
 }

@@ -166,6 +166,40 @@ menu (System > Program Manager); the session does not start it. It launches
 programs itself: `gfx_desktop_launch*` is a `spawn` in the caller, and the
 program connects to `windowd` on its own.
 
+### The shell's data and its I/O
+
+The desktop, Program Manager and Files read the same data: the Program
+Manager registry (`progman_registry`), shortcuts (`shortcut`), the Start
+menu's pins and shortcuts (`start_pins`, `start_shortcuts`) and the file
+associations (`file_assoc`). One copy of that logic serves all three. It lives
+in `system/shell/`, with its headers in `include/shell/`.
+
+These modules make no system call. Whatever they read, write, list, create,
+delete or start goes through `include/shell/shell_io.h`, and each subsystem
+links its own implementation: `subsystems/posix/userland/shell_io_posix.c` for
+the POSIX programs, and a SUN one for the desktop once it moves to SUN. The
+I/O is split out instead of copying the modules per subsystem because a copy
+drifts: the two would answer "what does opening this file do" differently.
+
+What the interface promises holds on both sides:
+
+- Paths are absolute, and errors are `-errno`.
+- `shell_io_read_file` reads up to a capacity from the start of the file. A
+  caller that wants room for a NUL asks for one byte less.
+- `shell_io_query` gives the type, size and mtime. Program Manager's disk
+  signature hashes the size and mtime, so both sides have to report the same
+  values for the same file.
+- `shell_io_list` passes `.` and `..` through when the system lists them. The
+  caller filters them out.
+- `shell_io_launch` starts a program in a shortcut's working directory when
+  the shortcut has one. POSIX swaps the caller's directory around the spawn.
+  SUN has no spawn in a directory yet, and the desktop's move to SUN is the
+  consumer that adds one.
+
+The modules still take their fallback icon type from
+`subsystems/posix/userland/desktop_icons.h`, which includes the POSIX
+`libc.h`. That goes when the desktop moves.
+
 ### The Task List is removed
 
 NT 3.x's Task List (`taskman.exe`) was the switcher of a desktop without a

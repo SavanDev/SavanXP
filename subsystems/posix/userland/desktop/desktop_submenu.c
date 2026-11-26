@@ -1,6 +1,6 @@
 #include "desktop.h"
 
-#include "progman_registry.h"
+#include "shell/progman_registry.h"
 #include "desktop_icons.h"
 
 /*

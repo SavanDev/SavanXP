@@ -1,7 +1,8 @@
 #pragma once
 
-#include "libc.h"
-#include "shortcut.h"
+#include <stddef.h>
+
+#include "shell/shortcut.h"
 
 /*
  * The folder of what is pinned to the Start menu (docs/desktop/START_MENU.md,

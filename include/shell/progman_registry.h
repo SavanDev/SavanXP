@@ -1,6 +1,9 @@
 #pragma once
 
-#include "libc.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include "abi/savanxp_abi.h"
 #include "desktop_icons.h"
 
 /*
@@ -29,6 +32,7 @@
  *   - It tolerates CRLF and spaces around keys and values.
  *   - No malloc (this libc has none): everything fits in fixed-capacity arrays
  *     and strings are truncated instead of overflowing.
+ *   - No system call: reading and listing go through shell/shell_io.h.
  *
  * SINCE SXE PHASE 3 (docs/userland/SXE_FORMAT.md) this file changed role: it
  * is NO LONGER the catalog of the programs' identity, it is the user's
@@ -70,23 +74,23 @@
 #define PROGMAN_NAME_CAPACITY 32
 #define PROGMAN_DESC_CAPACITY 64
 #define PROGMAN_PATH_CAPACITY SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY
-#define PROGMAN_REGISTRY_NAME "progman.ini" /* in the profile: savanxp_settings_path */
-/* Tope del archivo que se lee a un buffer estatico. */
+#define PROGMAN_REGISTRY_NAME "progman.ini" /* in the profile: shell_io_settings_path */
+/* The most of the file read into a static buffer. */
 #define PROGMAN_REGISTRY_MAX_BYTES 8192
 
 enum progman_registry_source
 {
-    /* Defaults horneados: ni el archivo ni el escaneo aportaron un solo item. */
+    /* Baked-in defaults: neither the file nor the scan gave a single item. */
     PROGMAN_REGISTRY_SOURCE_DEFAULTS = 0,
     PROGMAN_REGISTRY_SOURCE_FILE = 1,
-    /* No habia .ini utilizable y el catalogo lo armo el escaneo del disco. */
+    /* There was no usable .ini and the disk scan built the catalog. */
     PROGMAN_REGISTRY_SOURCE_SCAN = 2,
 };
 
 /*
- * Campos que el .ini declaro EXPLICITAMENTE. Sin esto no se puede distinguir
- * "el usuario eligio este nombre" de "quedo el valor por defecto", y el .sxe
- * pisaria decisiones del usuario o al reves.
+ * The fields the .ini declared EXPLICITLY. Without this "the user chose this
+ * name" cannot be told from "the default was left", and the .sxe would
+ * overwrite the user's decisions or the other way round.
  */
 #define PROGMAN_OVERRIDE_NONE 0x00000000u
 #define PROGMAN_OVERRIDE_NAME 0x00000001u
@@ -105,7 +109,7 @@ enum progman_registry_source
 #define PROGMAN_SXE_DONE 1
 #define PROGMAN_SXE_DONE_TOUCHED 2
 
-/* icon_slot cuando el binario no trajo icono propio: se usa icon_id. */
+/* icon_slot when the binary brought no icon of its own: icon_id is used. */
 #define PROGMAN_ICON_SLOT_NONE (-1)
 
 struct progman_item
@@ -113,15 +117,15 @@ struct progman_item
     char name[PROGMAN_NAME_CAPACITY];
     char path[PROGMAN_PATH_CAPACITY];
     char description[PROGMAN_DESC_CAPACITY];
-    /* Vacio salvo que icon= haya resuelto a un programa (propio o de un alias
-     * legado): ahi apply_sxe lee el .sxicon de ESTE path en vez del de
-     * `path`. Vacio con PROGMAN_OVERRIDE_ICON puesto = nombre sin alias
-     * (p.ej. "desktop") -- se queda en icon_id generico, sin leer nada. */
+    /* Empty unless icon= resolved to a program (its own or a legacy alias's):
+     * then apply_sxe reads the .sxicon of THIS path instead of `path`'s.
+     * Empty with PROGMAN_OVERRIDE_ICON set = a name without an alias (e.g.
+     * "desktop") -- it stays at the generic icon_id, reading nothing. */
     char icon_borrow_path[PROGMAN_PATH_CAPACITY];
-    uint32_t icon_id;      /* enum desktop_icon_id; ultimo recurso si nada mas resolvio */
+    uint32_t icon_id;      /* enum desktop_icon_id; last resort when nothing else resolved */
     uint32_t launch_flags; /* SAVANXP_DESKTOP_LAUNCH_FLAG_* */
     uint32_t overrides;    /* PROGMAN_OVERRIDE_* */
-    int icon_slot;         /* indice en el pool de iconos .sxicon, o NONE */
+    int icon_slot;         /* index in the .sxicon icon pool, or NONE */
     int group_index;
     int sxe_state;         /* PROGMAN_SXE_*: whether its resources were already read */
 };
@@ -145,30 +149,32 @@ struct progman_group
  * disk in front of it.
  */
 int progman_registry_load_file(void);
-/* Carga solo los defaults horneados (instalacion fresca / recuperacion). */
+/* Loads only the baked-in defaults (fresh installation / recovery). */
 void progman_registry_load_defaults(void);
-/* Parsea desde memoria. Devuelve la cantidad de items validos cargados. Es el
- * punto de entrada que usa el selftest para ejercitar el parser sin disco. */
+/* Parses from memory. Returns how many valid items were loaded. It is the
+ * entry point the selftest uses to exercise the parser without a disk. */
 int progman_registry_parse(const char *text, size_t length);
 
 /*
- * Predicado de existencia, inyectable para poder testear el pruning sin disco:
- * progman pasa el que abre el path, el selftest uno falso.
+ * An existence predicate, injectable so the pruning can be tested without a
+ * disk: progman passes the one that looks at the path, the selftest a fake.
  */
 typedef int (*progman_path_exists_fn)(const char *path);
 
 /*
- * Descarta los items cuyo path no existe y, con ellos, los grupos que quedan
- * vacios; los items que sobreviven quedan reapuntados a los indices nuevos.
- * Devuelve cuantos items se descartaron.
+ * Drops the items whose path does not exist and, with them, the groups left
+ * empty; the surviving items are pointed at the new indices. Returns how many
+ * items were dropped.
  *
- * Es una etapa APARTE del parseo a proposito: parsear es una funcion pura del
- * texto (y asi la ejercita el selftest), y esto es la politica que toca el
- * disco. Aplica igual a los defaults horneados y a lo que venga del .ini: una
- * entrada que no se puede lanzar es ruido venga de donde venga.
+ * It is a stage SEPARATE from parsing on purpose: parsing is a pure function
+ * of the text (and the selftest exercises it that way), and this is the
+ * policy that touches the disk. It applies alike to the baked-in defaults and
+ * to what comes from the .ini: an entry that cannot be started is noise
+ * wherever it comes from.
  *
- * Esto SI puede dejar el registro vacio -- si de verdad no hay nada lanzable,
- * mostrar nada es lo honesto. El escaneo corre despues y tiene su chance.
+ * This CAN leave the registry empty -- if there really is nothing to start,
+ * showing nothing is the honest thing. The scan runs afterwards and gets its
+ * chance.
  */
 int progman_registry_prune_missing(progman_path_exists_fn exists);
 
@@ -218,7 +224,7 @@ int progman_registry_apply_sxe(void);
  *     progman_registry_apply_sxe(): pruning reorders items, and apply_sxe
  *     assigns icon slots against the final indices.
  *   - The groups it creates and the items it adds are sorted alphabetically,
- *     after the ones already there. readdir order is the image's order, not
+ *     after the ones already there. Listing order is the image's order, not
  *     one that helps anybody find something in a list.
  *
  * `exists` is the same injectable predicate as the pruning's. With 0 it uses
@@ -240,13 +246,13 @@ int progman_registry_scan_programs(progman_path_exists_fn exists);
  */
 uint32_t progman_registry_disk_signature(void);
 
-/* Cuantos ejecutables abrio el ultimo escaneo. Lo reporta el smoke: es la
- * magnitud a mirar antes de decidir si hace falta una cache. */
+/* How many executables the last scan opened. The smoke reports it: it is the
+ * number to look at before deciding whether a cache is needed. */
 int progman_registry_scan_examined(void);
 
 /*
- * Icono propio del item, traido de su .sxicon. Devuelve 0 si el binario no
- * trajo uno; ahi el llamador cae a desktop_icon_large(item->icon_id).
+ * The item's own icon, taken from its .sxicon. Returns 0 when the binary
+ * brought none; the caller then falls back to desktop_icon_large(item->icon_id).
  */
 const struct desktop_embedded_bitmap *progman_item_icon(const struct progman_item *item);
 
@@ -261,9 +267,9 @@ int progman_group_count(void);
 const struct progman_group *progman_group_at(int index);
 int progman_item_count(void);
 const struct progman_item *progman_item_at(int index);
-/* Item i-esimo dentro de un grupo (los items guardan su group_index). */
+/* The i-th item within a group (the items keep their group_index). */
 const struct progman_item *progman_group_item_at(int group_index, int item_index);
 
-/* Valida parser, defaults, mapeo de iconos/flags, truncado y limites de
- * capacidad. Devuelve 0 si todo pasa. */
+/* Checks the parser, the defaults, the icon/flag mapping, truncation and the
+ * capacity limits. Returns 0 when all pass. */
 int progman_registry_selftest(void);

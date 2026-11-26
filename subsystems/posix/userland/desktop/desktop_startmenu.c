@@ -1,10 +1,10 @@
 #include "desktop.h"
 
 #include "shared/version.h"
-#include "shortcut.h"
+#include "shell/shortcut.h"
 #include "start_logo.h"
-#include "start_pins.h"
-#include "start_shortcuts.h"
+#include "shell/start_pins.h"
+#include "shell/start_shortcuts.h"
 
 /*
  * The Start menu: a popup of the desktop, anchored at the bottom left above
@@ -635,7 +635,7 @@ static void shortcut_command(int id)
     if (id == STARTMENU_CMD_OPEN)
     {
         desktop_close_popups();
-        (void)shortcut_open_path(desktop_main_window(), g_pending_shortcut_path);
+        (void)shortcut_open_path(g_pending_shortcut_path);
     }
     else if (id == STARTMENU_CMD_UNPIN)
     {
@@ -678,7 +678,7 @@ static void startmenu_close(void)
     if (g_pending_shortcut >= 0)
     {
         g_pending_shortcut = -1;
-        (void)shortcut_open_path(desktop_main_window(), g_pending_shortcut_path);
+        (void)shortcut_open_path(g_pending_shortcut_path);
     }
 }
 

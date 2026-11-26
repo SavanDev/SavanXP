@@ -1,21 +1,23 @@
-#include "progman_registry.h"
+#include "shell/progman_registry.h"
 
 #include "savanxp/sxe.h"
+#include "shell/shell_io.h"
 
-#include <dirent.h>
 #include <stdio.h>
+#include <string.h>
 
-/* Las apps de diagnostico se compilan solo si el build las pide, igual que en
- * windowd_menu.c: --no-test-apps las saca del rootfs y de los defaults a la vez. */
+/* The diagnostic apps are built only when the build asks for them, as in
+ * windowd_menu.c: --no-test-apps takes them out of the rootfs and the defaults
+ * at once. */
 #ifndef DESKTOP_INCLUDE_TEST_APPS
 #define DESKTOP_INCLUDE_TEST_APPS 1
 #endif
 
-/* Grupo al que van los items declarados antes de cualquier [group]. */
+/* The group items declared before any [group] go to. */
 #define PROGMAN_IMPLICIT_GROUP_NAME "Programs"
 
-/* current_group cuando se agoto la capacidad de grupos: los items que caen bajo
- * el se descartan en vez de reasignarse a un grupo equivocado. */
+/* current_group once the group capacity ran out: the items falling under it
+ * are dropped instead of being reassigned to the wrong group. */
 #define PROGMAN_GROUP_NONE (-1)
 #define PROGMAN_GROUP_DROPPED (-2)
 
@@ -70,36 +72,37 @@ struct progman_default_item
  * becomes the only catalog.
  */
 /*
- * Icono generico en TODAS las filas: ninguna necesita un id horneado propio.
- * El real de cada programa viaja en su .sxicon (todos estan estampados desde
- * la fase 2), y esto es la red de seguridad para el caso limite de que
- * progman.ini falte/este corrupto Y ADEMAS el binario no se pueda leer.
+ * The generic icon in EVERY row: none needs a baked-in id of its own. Each
+ * program's real one travels in its .sxicon (all are stamped since phase 2),
+ * and this is the safety net for the corner case where progman.ini is
+ * missing or corrupt AND the binary cannot be read either.
  */
 static const struct progman_default_item k_default_items[] = {
-    /* Categorias y orden, LOS MISMOS que los manifiestos declaran.
+    /* Categories and order, THE SAME ones the manifests declare.
      *
-     * Esta tabla fue durante mucho tiempo el unico sitio con la lista de programas
-     * y se fue quedando atras: decia Main/Games/Diagnostics mientras todos los .sxres
-     * decian Accessories/System/Games/Diagnostics. El escaneo del catalogo rearmaba
-     * desde los manifiestos y todo funcionaba, asi que el desacuerdo no se veia
-     * --solo se veia al leer las dos cosas, que es como se descubrio-- y en la
-     * practice lo que gobierna es el manifiesto. Esta tabla es el plan B para cuando
-     * no hay binarios que escanear, y un plan B que no coincide con el plan A es
-     * una segunda respuesta a la misma pregunta.
+     * For a long time this table was the only place with the list of programs,
+     * and it fell behind: it said Main/Games/Diagnostics while every .sxres said
+     * Accessories/System/Games/Diagnostics. The catalog scan rebuilt it from the
+     * manifests and everything worked, so the disagreement did not show -- it
+     * only showed when reading both, which is how it was found -- and in
+     * practice the manifest is what governs. This table is plan B for when there
+     * are no binaries to scan, and a plan B that does not match plan A is a
+     * second answer to the same question.
      *
-     * El ORDEN de los grupos tambien coincide, y por un motivo que no es estetico: el
-     * escaneo los ordena alfabeticamente y las solapas del lanzador son el numero de
-     * grupo. Con Main primero y System ausente, "la cuarta solapa" que dice
-     * tools/shoot_session.py no existia. Aqui es lo mismo: se lee de arriba abajo.
+     * The ORDER of the groups matches too, and for a reason that is not
+     * cosmetic: the scan sorts them alphabetically and the launcher's tabs are
+     * the group number. With Main first and System missing, "the fourth tab"
+     * that tools/shoot_session.py talks about did not exist. Here it is the
+     * same: it reads top to bottom.
      */
     {"Accessories", "Calculator", "/bin/calc", "Standard calculator", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Command Prompt", "/system/console.sxe", "Windows-style console running the shell", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Files", "/bin/filesapp", "Browse the disk and preview files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    /* El reproductor SIEMPRE es una entrada cuando el port esta construido, porque
-     * /bin/mediaplayer existe entonces. Si el port no esta, el pruning lo descarta
-     * --igual que a Doom, que tambien vive en el volumen-- y no hace falta ningun
-     * lanzador que explique su ausencia: quien lo explica es el propio reproductor,
-     * desde main, con ldso_missing(). */
+    /* The player is ALWAYS an entry when the port is built, because
+     * /bin/mediaplayer exists then. Without the port the pruning drops it --
+     * like Doom, which also lives on the volume -- and no launcher is needed to
+     * explain its absence: the player itself explains it, from main, with
+     * ldso_missing(). */
     {"Accessories", "Media Player", "/bin/mediaplayer", "Play video and audio files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Notepad", "/bin/notepad", "Edit text files", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Accessories", "Paint", "/bin/paint", "Draw and edit bitmap pictures", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
@@ -115,7 +118,7 @@ static const struct progman_default_item k_default_items[] = {
     {"Games", "Minesweeper", "/bin/mines", "Clear the minefield without stepping on a mine", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Settings", "Add/Remove Programs", "/bin/appwiz", "Uninstall programs installed outside the system image", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"Settings", "System Properties", "/bin/aboutapp", "Version, hardware and installation", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
-    {"System", "Program Manager", "/bin/progman", "Launcher de programas", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
+    {"System", "Program Manager", "/bin/progman", "Program launcher", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
     {"System", "Task Manager", "/system/taskmgr.sxe", "Processes, performance and network", DESKTOP_ICON_DESKTOP, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE},
 };
 
@@ -148,7 +151,7 @@ static int is_space_char(char value)
     return value == ' ' || value == '\t' || value == '\r' || value == '\n';
 }
 
-/* Recorta espacios al principio y al final, mutando el buffer de linea. */
+/* Trims spaces at the start and the end, changing the line buffer. */
 static char *trim(char *text)
 {
     size_t length;
@@ -195,19 +198,19 @@ static int text_contains_word(const char *text, const char *word)
 }
 
 /*
- * Resuelve el valor de "icon=" a un PATH cuyo .sxicon tomar prestado, o 0 si
- * no hay ninguno -- ahi el item se queda con el icono generico (icon_id por
- * defecto), el mismo desenlace que un path que despues no se puede leer.
+ * Resolves the value of "icon=" to a PATH whose .sxicon to borrow, or 0 when
+ * there is none -- then the item keeps the generic icon (the default
+ * icon_id), the same outcome as a path that later cannot be read.
  *
- * Dos formas validas:
- *   - Un path absoluto ("icon=/bin/notepad"): se usa tal cual, sin validar
- *     que exista aca -- eso lo hace apply_sxe al intentar leerlo, y fallar
- *     ahi es indistinguible de cualquier otro binario ilegible.
- *   - Un alias legado de antes de este cambio: nombres cortos que ANTES
- *     elegian de un catalogo horneado por id. Ahora resuelven al PROGRAMA que
- *     hoy dibuja ese icono (su propio .sxicon, estampado en build), no a un
- *     array de pixeles hardcodeado. "desktop" nunca tuvo alias -- era
- *     literalmente el generico -- y sigue sin tenerlo.
+ * Two valid forms:
+ *   - An absolute path ("icon=/bin/notepad"): used as it is, without checking
+ *     here that it exists -- apply_sxe does that when it tries to read it, and
+ *     failing there is indistinguishable from any other unreadable binary.
+ *   - A legacy alias from before this change: short names that USED TO pick
+ *     from a catalog baked in by id. They now resolve to the PROGRAM that
+ *     draws that icon today (its own .sxicon, stamped at build time), not to
+ *     a hard-coded pixel array. "desktop" never had an alias -- it was
+ *     literally the generic one -- and still has none.
  */
 static const char *icon_reference_path(const char *value)
 {
@@ -243,8 +246,8 @@ static const char *icon_reference_path(const char *value)
     {
         return "/bin/mousetest";
     }
-    /* "desktop", "doom" (se fue del set: ver docs/userland/SXE_FORMAT.md), o
-     * cualquier nombre que este lector no reconoce. */
+    /* "desktop", "doom" (it left the set: see docs/userland/SXE_FORMAT.md), or
+     * any name this reader does not recognise. */
     return 0;
 }
 
@@ -294,8 +297,9 @@ static int find_group(const char *name)
     return PROGMAN_GROUP_NONE;
 }
 
-/* Un item solo entra si tiene un path absoluto: una entrada sin path (o con uno
- * relativo) no se puede lanzar, asi que se descarta en vez de mostrarse rota. */
+/* An item only goes in with an absolute path: an entry without a path (or
+ * with a relative one) cannot be started, so it is dropped instead of being
+ * shown broken. */
 static int append_item(const struct progman_item *item)
 {
     if (item == 0 || g_item_count >= PROGMAN_MAX_ITEMS)
@@ -392,7 +396,7 @@ int progman_registry_parse(const char *text, size_t length)
         end = offset;
         if (offset < copy_length)
         {
-            offset += 1u; /* saltear el '\n' */
+            offset += 1u; /* skip the '\n' */
         }
         buffer[end] = '\0';
 
@@ -404,7 +408,7 @@ int progman_registry_parse(const char *text, size_t length)
 
         if (line[0] == '[')
         {
-            /* Cambio de seccion: cerrar el item que estuviera abierto. */
+            /* A new section: close the item that was open. */
             if (has_pending)
             {
                 (void)append_item(&pending);
@@ -418,17 +422,17 @@ int progman_registry_parse(const char *text, size_t length)
             {
                 if (current_group == PROGMAN_GROUP_NONE)
                 {
-                    /* Items antes del primer [group]: grupo implicito. */
+                    /* Items before the first [group]: implicit group. */
                     current_group = append_group(PROGMAN_IMPLICIT_GROUP_NAME);
                 }
                 begin_item(&pending, current_group);
                 has_pending = 1;
             }
-            /* Secciones desconocidas: se ignoran (compat hacia adelante). */
+            /* Unknown sections are ignored (forward compatibility). */
             continue;
         }
 
-        /* clave=valor */
+        /* key=value */
         for (scan = 0; line[scan] != '\0'; ++scan)
         {
             if (line[scan] == '=')
@@ -449,9 +453,9 @@ int progman_registry_parse(const char *text, size_t length)
             if (has_pending)
             {
                 /*
-                 * Cada clave presente marca su bit de override: es lo que
-                 * despues le dice a apply_sxe que ese campo lo eligio el
-                 * usuario y no debe pisarse con lo que declare el binario.
+                 * Each key present sets its override bit: it is what later
+                 * tells apply_sxe that the user chose that field and it must
+                 * not be overwritten with what the binary declares.
                  */
                 if (strcmp(key, "name") == 0)
                 {
@@ -469,10 +473,10 @@ int progman_registry_parse(const char *text, size_t length)
                 }
                 else if (strcmp(key, "icon") == 0)
                 {
-                    /* Un path o alias resuelto se guarda para que apply_sxe
-                     * lea el .sxicon prestado; sin ninguno de los dos, el
-                     * campo queda vacio (ya lo dejo asi begin_item) y el item
-                     * se conforma con el icon_id generico. */
+                    /* A resolved path or alias is kept so apply_sxe reads
+                     * the borrowed .sxicon; with neither, the field stays
+                     * empty (begin_item left it so) and the item settles for
+                     * the generic icon_id. */
                     copy_field(pending.icon_borrow_path, sizeof(pending.icon_borrow_path), icon_reference_path(value));
                     pending.overrides |= PROGMAN_OVERRIDE_ICON;
                 }
@@ -481,7 +485,7 @@ int progman_registry_parse(const char *text, size_t length)
                     pending.launch_flags = launch_flags_from_text(value);
                     pending.overrides |= PROGMAN_OVERRIDE_FLAGS;
                 }
-                /* Claves desconocidas: ignoradas. */
+                /* Unknown keys are ignored. */
             }
             else if (current_group >= 0 && strcmp(key, "name") == 0)
             {
@@ -503,36 +507,17 @@ int progman_registry_load_file(void)
 {
     static char file_buffer[PROGMAN_REGISTRY_MAX_BYTES];
     char path[256];
-    int fd = savanxp_settings_path(PROGMAN_REGISTRY_NAME, 0, path, sizeof(path)) == 0
-        ? (int)savanxp_open_mode(path, SAVANXP_OPEN_READ)
+    long total = shell_io_settings_path(PROGMAN_REGISTRY_NAME, 0, path, sizeof(path)) == 0
+        ? shell_io_read_file(path, file_buffer, sizeof(file_buffer))
         : -1;
-    size_t total = 0;
 
-    if (fd >= 0)
-    {
-        for (;;)
-        {
-            long result = savanxp_read(fd, file_buffer + total, sizeof(file_buffer) - total);
-            if (result <= 0)
-            {
-                break;
-            }
-            total += (size_t)result;
-            if (total >= sizeof(file_buffer))
-            {
-                break;
-            }
-        }
-        (void)savanxp_close(fd);
-    }
-
-    if (total != 0 && progman_registry_parse(file_buffer, total) > 0)
+    if (total > 0 && progman_registry_parse(file_buffer, (size_t)total) > 0)
     {
         return g_item_count;
     }
-    /* Sin archivo, ilegible, o sin ningun item valido: registro VACIO. Lo que
-     * llene el menu -- el escaneo, y solo si tampoco encuentra nada, los
-     * defaults -- lo decide el llamador. */
+    /* No file, an unreadable one, or one without a single valid item: an
+     * EMPTY registry. What fills the menu -- the scan, and only if that finds
+     * nothing either, the defaults -- is the caller's decision. */
     reset_registry();
     g_source = PROGMAN_REGISTRY_SOURCE_DEFAULTS;
     return 0;
@@ -597,7 +582,7 @@ int progman_registry_prune_missing(progman_path_exists_fn exists)
         return 0;
     }
 
-    /* 1) Compactar los items que sobreviven, recontando por grupo. */
+    /* 1) Compact the surviving items, counting them again by group. */
     for (group_index = 0; group_index < g_group_count; ++group_index)
     {
         g_groups[group_index].item_count = 0;
@@ -622,7 +607,7 @@ int progman_registry_prune_missing(progman_path_exists_fn exists)
     }
     g_item_count = write_index;
 
-    /* 2) Compactar los grupos que quedaron vacios, anotando el remapeo. */
+    /* 2) Compact away the groups left empty, noting the remapping. */
     for (group_index = 0; group_index < g_group_count; ++group_index)
     {
         if (g_groups[group_index].item_count == 0)
@@ -640,9 +625,9 @@ int progman_registry_prune_missing(progman_path_exists_fn exists)
     }
     g_group_count = surviving_groups;
 
-    /* 3) Reapuntar los items a los indices nuevos. Ningun item sobreviviente
-     * puede apuntar a un grupo descartado: un grupo se descarta justamente
-     * porque se quedo sin items. */
+    /* 3) Point the items at the new indices. No surviving item can point at a
+     * dropped group: a group is dropped precisely because it ran out of
+     * items. */
     for (read_index = 0; read_index < g_item_count; ++read_index)
     {
         g_items[read_index].group_index = group_remap[g_items[read_index].group_index];
@@ -651,7 +636,7 @@ int progman_registry_prune_missing(progman_path_exists_fn exists)
     return dropped;
 }
 
-/* --- recursos SXE --------------------------------------------------------- */
+/* --- SXE resources ------------------------------------------------------- */
 
 /*
  * Copies the best icon in the blob into the item's slot. Only square images
@@ -858,25 +843,19 @@ int progman_registry_apply_sxe(void)
     return touched;
 }
 
-/* --- escaneo de programas instalados -------------------------------------- */
+/* --- scan of installed programs ------------------------------------------ */
 
 static int g_last_scan_examined = 0;
 
 static int default_path_exists(const char *path)
 {
-    long fd;
+    struct shell_io_info info;
 
     if (path == 0 || path[0] == '\0')
     {
         return 0;
     }
-    fd = savanxp_open_mode(path, SAVANXP_OPEN_READ);
-    if (fd < 0)
-    {
-        return 0;
-    }
-    (void)savanxp_close((int)fd);
-    return 1;
+    return shell_io_query(path, &info) == 0;
 }
 
 static const char *path_basename(const char *path)
@@ -1001,51 +980,54 @@ static int scan_candidate(const char *path)
     return 1;
 }
 
+struct scan_context
+{
+    const char *directory;
+    progman_path_exists_fn exists;
+    int added;
+};
+
+static void scan_entry(const char *name, void *opaque)
+{
+    struct scan_context *context = (struct scan_context *)opaque;
+    char full_path[PROGMAN_PATH_CAPACITY];
+    int written;
+
+    if (name[0] == '.')
+    {
+        return;
+    }
+    written = snprintf(full_path, sizeof(full_path), "%s/%s", context->directory, name);
+    /* A truncated path would point at ANOTHER file, not the one meant: it is
+     * dropped instead of opened. */
+    if (written < 0 || (size_t)written >= sizeof(full_path))
+    {
+        return;
+    }
+    if (!context->exists(full_path))
+    {
+        return;
+    }
+    g_last_scan_examined += 1;
+    context->added += scan_candidate(full_path);
+}
+
 static int scan_directory(const char *directory, progman_path_exists_fn exists)
 {
-    char full_path[PROGMAN_PATH_CAPACITY];
-    DIR *handle = opendir(directory);
-    struct dirent *entry = 0;
-    int added = 0;
+    struct scan_context context = {directory, exists, 0};
 
-    if (handle == 0)
-    {
-        return 0;
-    }
-    while ((entry = readdir(handle)) != 0)
-    {
-        if (entry->d_name[0] == '.')
-        {
-            continue;
-        }
-        {
-            int written = snprintf(full_path, sizeof(full_path), "%s/%s", directory, entry->d_name);
-            /* Un path truncado apuntaria a OTRO archivo, no al que se quiso:
-             * se descarta en vez de abrirlo. */
-            if (written < 0 || (size_t)written >= sizeof(full_path))
-            {
-                continue;
-            }
-        }
-        if (!exists(full_path))
-        {
-            continue;
-        }
-        g_last_scan_examined += 1;
-        added += scan_candidate(full_path);
-    }
-    closedir(handle);
-    return added;
+    (void)shell_io_list(directory, scan_entry, &context);
+    return context.added;
 }
 
 /*
- * Ordena alfabeticamente los grupos que CREO el escaneo, dejando adelante y
- * en su orden a los que venian del .ini -- ese orden lo eligio el usuario.
+ * Sorts alphabetically the groups the scan CREATED, leaving the ones from the
+ * .ini in front and in their order -- the user chose that order.
  *
- * Sin esto el orden de las solapas es el del readdir, o sea el de la imagen:
- * determinista, pero arbitrario para cualquiera que busque un grupo en una
- * lista. Los items guardan su group_index, asi que mover un grupo obliga a
- * reapuntarlos, igual que hace el pruning.
+ * Without this the order of the tabs is the listing's, that is, the image's:
+ * deterministic, but arbitrary for anyone looking for a group in a list. The
+ * items keep their group_index, so moving a group means pointing them again,
+ * as the pruning does.
  */
 static void sort_scanned_groups(int first)
 {
@@ -1094,15 +1076,15 @@ static void sort_scanned_groups(int first)
     }
 }
 
-/* Ordena alfabeticamente por nombre el tramo que agrego el escaneo, dejando
- * intacto lo que ya estaba. Los items guardan su group_index, asi que mover
- * uno de lugar no lo cambia de grupo: alcanza con ordenar el tramo entero para
- * que cada grupo quede ordenado por dentro. */
+/* Sorts by name the stretch the scan added, leaving what was already there
+ * alone. The items keep their group_index, so moving one does not change its
+ * group: sorting the whole stretch is enough for each group to be sorted
+ * inside. */
 static void sort_scanned_items(int first)
 {
-    /* Estatico y no en el stack: struct progman_item pasa los 400 bytes y esta
-     * libc corre con un stack acotado, el mismo criterio que el resto de los
-     * scratch de este archivo. */
+    /* Static and not on the stack: struct progman_item is over 400 bytes and
+     * this libc runs with a bounded stack, the same rule as the rest of this
+     * file's scratch buffers. */
     static struct progman_item pivot;
     int index;
 
@@ -1136,8 +1118,8 @@ int progman_registry_scan_programs(progman_path_exists_fn exists)
     sort_scanned_groups(first_group);
     sort_scanned_items(first);
 
-    /* El escaneo solo se adjudica la fuente si armo el catalogo el: con un
-     * .ini valido delante, el arreglo lo sigue firmando el usuario. */
+    /* The scan only claims the source when it built the catalog itself: with
+     * a valid .ini in front, the arrangement is still the user's. */
     if (first == 0 && added > 0)
     {
         g_source = PROGMAN_REGISTRY_SOURCE_SCAN;
@@ -1163,29 +1145,52 @@ static uint32_t signature_mix(uint32_t hash, const void *data, size_t length)
 /* A path's name, whether it exists, its size and its mtime. */
 static uint32_t signature_mix_path(uint32_t hash, const char *path)
 {
-    struct savanxp_stat_ex info;
+    struct shell_io_info info;
     uint8_t present;
 
     hash = signature_mix(hash, path, strlen(path) + 1u);
     memset(&info, 0, sizeof(info));
-    present = savanxp_stat_ex(path, &info) >= 0 ? 1u : 0u;
+    present = shell_io_query(path, &info) == 0 ? 1u : 0u;
     hash = signature_mix(hash, &present, sizeof(present));
     if (present)
     {
-        hash = signature_mix(hash, &info.st_size, sizeof(info.st_size));
-        hash = signature_mix(hash, &info.st_mtime, sizeof(info.st_mtime));
+        hash = signature_mix(hash, &info.size, sizeof(info.size));
+        hash = signature_mix(hash, &info.mtime, sizeof(info.mtime));
     }
     return hash;
+}
+
+struct signature_context
+{
+    const char *directory;
+    uint32_t hash;
+};
+
+static void signature_entry(const char *name, void *opaque)
+{
+    struct signature_context *context = (struct signature_context *)opaque;
+    char path[PROGMAN_PATH_CAPACITY];
+    int written;
+
+    if (name[0] == '.')
+    {
+        return;
+    }
+    written = snprintf(path, sizeof(path), "%s/%s", context->directory, name);
+    if (written < 0 || (size_t)written >= sizeof(path))
+    {
+        return;
+    }
+    context->hash = signature_mix_path(context->hash, path);
 }
 
 uint32_t progman_registry_disk_signature(void)
 {
     char path[PROGMAN_PATH_CAPACITY];
     uint32_t hash = 2166136261u;
-    DIR *handle;
     int index;
 
-    if (savanxp_settings_path(PROGMAN_REGISTRY_NAME, 0, path, sizeof(path)) == 0)
+    if (shell_io_settings_path(PROGMAN_REGISTRY_NAME, 0, path, sizeof(path)) == 0)
     {
         hash = signature_mix_path(hash, path);
     }
@@ -1194,28 +1199,10 @@ uint32_t progman_registry_disk_signature(void)
     const char *scan_dirs[] = {PROGMAN_SCAN_DIR, "/system"};
     for (int dir = 0; dir < 2; ++dir)
     {
-        handle = opendir(scan_dirs[dir]);
-        if (handle != 0)
-        {
-            struct dirent *entry;
+        struct signature_context context = {scan_dirs[dir], hash};
 
-            while ((entry = readdir(handle)) != 0)
-            {
-                int written;
-
-                if (entry->d_name[0] == '.')
-                {
-                    continue;
-                }
-                written = snprintf(path, sizeof(path), "%s/%s", scan_dirs[dir], entry->d_name);
-                if (written < 0 || (size_t)written >= sizeof(path))
-                {
-                    continue;
-                }
-                hash = signature_mix_path(hash, path);
-            }
-            closedir(handle);
-        }
+        (void)shell_io_list(scan_dirs[dir], signature_entry, &context);
+        hash = context.hash;
     }
 
     /* What the current catalog points at outside the scanned directory:
@@ -1353,8 +1340,8 @@ static void selftest_defaults(void)
     int groups_ok = 1;
 
     progman_registry_load_defaults();
-    expect(progman_item_count() > 0, "defaults sin items");
-    expect(progman_group_count() > 0, "defaults sin grupos");
+    expect(progman_item_count() > 0, "defaults without items");
+    expect(progman_group_count() > 0, "defaults without groups");
     expect(progman_registry_source() == PROGMAN_REGISTRY_SOURCE_DEFAULTS, "defaults source");
 
     for (index = 0; index < progman_item_count(); ++index)
@@ -1369,9 +1356,9 @@ static void selftest_defaults(void)
             groups_ok = 0;
         }
     }
-    expect(paths_ok, "defaults con path invalido");
-    expect(groups_ok, "defaults con group_index invalido");
-    /* Fuera de rango devuelve NULL en vez de basura. */
+    expect(paths_ok, "defaults with an invalid path");
+    expect(groups_ok, "defaults with an invalid group_index");
+    /* Out of range returns NULL instead of garbage. */
     expect(progman_item_at(-1) == 0 && progman_item_at(progman_item_count()) == 0, "defaults bounds item");
     expect(progman_group_at(-1) == 0 && progman_group_at(progman_group_count()) == 0, "defaults bounds group");
 }
@@ -1379,8 +1366,8 @@ static void selftest_defaults(void)
 static void selftest_well_formed(void)
 {
     static const char kText[] =
-        "# comentario\n"
-        "; otro comentario\n"
+        "# comment\n"
+        "; another comment\n"
         "\n"
         "[group]\n"
         "name=Main\n"
@@ -1412,36 +1399,37 @@ static void selftest_well_formed(void)
     expect(progman_registry_source() == PROGMAN_REGISTRY_SOURCE_FILE, "parse source");
 
     group = progman_group_at(0);
-    expect(group != 0 && strcmp(group->name, "Main") == 0, "grupo 0 nombre");
-    expect(group != 0 && group->item_count == 2, "grupo 0 item_count");
+    expect(group != 0 && strcmp(group->name, "Main") == 0, "group 0 name");
+    expect(group != 0 && group->item_count == 2, "group 0 item_count");
     group = progman_group_at(1);
-    expect(group != 0 && strcmp(group->name, "Diagnostics") == 0, "grupo 1 nombre");
-    expect(group != 0 && group->item_count == 1, "grupo 1 item_count");
+    expect(group != 0 && strcmp(group->name, "Diagnostics") == 0, "group 1 name");
+    expect(group != 0 && group->item_count == 1, "group 1 item_count");
 
-    /* Esta funcion es parseo PURO, no llama a apply_sxe: lo que se puede
-     * verificar de icon= aca es a que PATH resolvio (icon_borrow_path), no
-     * el bitmap final -- eso lo cubre selftest_sxe, contra binarios reales. */
+    /* This function is PURE parsing and does not call apply_sxe: what can be
+     * checked of icon= here is which PATH it resolved to (icon_borrow_path),
+     * not the final bitmap -- selftest_sxe covers that, against real
+     * binaries. */
     item = progman_item_at(0);
-    expect(item != 0 && strcmp(item->name, "Shell") == 0, "item 0 nombre");
+    expect(item != 0 && strcmp(item->name, "Shell") == 0, "item 0 name");
     expect(item != 0 && strcmp(item->path, "/system/console.sxe") == 0, "item 0 path");
     expect(item != 0 && strcmp(item->description, "Terminal") == 0, "item 0 desc");
     expect(item != 0 && strcmp(item->icon_borrow_path, "/system/console.sxe") == 0, "item 0 icon= legacy alias resolves to a path");
     expect(item != 0 && item->launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_NONE, "item 0 flags");
 
-    /* Espacios alrededor de clave y valor recortados. */
+    /* Spaces around key and value trimmed. */
     item = progman_item_at(1);
-    expect(item != 0 && strcmp(item->name, "Doom") == 0, "item 1 nombre trim");
+    expect(item != 0 && strcmp(item->name, "Doom") == 0, "item 1 name trim");
     expect(item != 0 && strcmp(item->path, "/bin/doomgeneric") == 0, "item 1 path trim");
-    /* "doom" ya no tiene alias (se fue del set horneado): un progman.ini
-     * viejo con icon=doom tiene que degradar limpio a "sin path prestado",
-     * no romper el parseo ni caer en cualquier otra cosa. */
-    expect(item != 0 && item->icon_borrow_path[0] == '\0', "item 1 icon=doom sin alias, sin path");
+    /* "doom" has no alias any more (it left the baked-in set): an old
+     * progman.ini with icon=doom has to degrade cleanly to "no borrowed
+     * path", neither breaking the parse nor landing on anything else. */
+    expect(item != 0 && item->icon_borrow_path[0] == '\0', "item 1 icon=doom without an alias, without a path");
     expect(item != 0 && item->launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN, "item 1 flag fullscreen");
 
-    /* Indexado por grupo. */
+    /* Indexed by group. */
     item = progman_group_item_at(1, 0);
     expect(item != 0 && strcmp(item->name, "Keys") == 0, "group_item_at");
-    expect(progman_group_item_at(1, 1) == 0, "group_item_at fuera de rango");
+    expect(progman_group_item_at(1, 1) == 0, "group_item_at out of range");
 }
 
 static void selftest_crlf_and_unknown(void)
@@ -1454,17 +1442,17 @@ static void selftest_crlf_and_unknown(void)
         "[item]\r\n"
         "name=Files\r\n"
         "path=/bin/filesapp\r\n"
-        "futuro=algo\r\n"
-        "icon=inexistente\r\n";
+        "future=something\r\n"
+        "icon=nonexistent\r\n";
     const struct progman_item *item = 0;
 
     expect(progman_registry_parse(kText, sizeof(kText) - 1u) == 1, "crlf parse count");
     item = progman_item_at(0);
-    expect(item != 0 && strcmp(item->name, "Files") == 0, "crlf nombre");
+    expect(item != 0 && strcmp(item->name, "Files") == 0, "crlf name");
     expect(item != 0 && strcmp(item->path, "/bin/filesapp") == 0, "crlf path");
-    /* Nombre sin alias: no hay path que prestar, cae al generico en vez de romper. */
-    expect(item != 0 && item->icon_borrow_path[0] == '\0', "icon= sin alias no guarda path");
-    expect(item != 0 && item->icon_id == DESKTOP_ICON_DESKTOP, "icono desconocido -> generico");
+    /* A name without an alias: no path to borrow, it falls to the generic one instead of breaking. */
+    expect(item != 0 && item->icon_borrow_path[0] == '\0', "icon= without an alias keeps no path");
+    expect(item != 0 && item->icon_id == DESKTOP_ICON_DESKTOP, "unknown icon -> generic");
 }
 
 static void selftest_invalid_items(void)
@@ -1473,41 +1461,41 @@ static void selftest_invalid_items(void)
         "[group]\n"
         "name=Main\n"
         "[item]\n"
-        "name=SinPath\n"
-        "desc=no tiene path\n"
+        "name=NoPath\n"
+        "desc=has no path\n"
         "[item]\n"
-        "name=Relativo\n"
-        "path=bin/relativo\n"
+        "name=Relative\n"
+        "path=bin/relative\n"
         "[item]\n"
-        "name=Valido\n"
-        "path=/bin/valido\n";
+        "name=Valid\n"
+        "path=/bin/valid\n";
     const struct progman_item *item = 0;
 
-    /* Solo el tercero es lanzable. */
-    expect(progman_registry_parse(kText, sizeof(kText) - 1u) == 1, "items invalidos descartados");
+    /* Only the third can be started. */
+    expect(progman_registry_parse(kText, sizeof(kText) - 1u) == 1, "invalid items dropped");
     item = progman_item_at(0);
-    expect(item != 0 && strcmp(item->name, "Valido") == 0, "sobrevive el item valido");
+    expect(item != 0 && strcmp(item->name, "Valid") == 0, "the valid item survives");
 }
 
 static void selftest_implicit_group(void)
 {
     static const char kText[] =
         "[item]\n"
-        "name=Huerfano\n"
-        "path=/bin/huerfano\n";
+        "name=Orphan\n"
+        "path=/bin/orphan\n";
     const struct progman_group *group = 0;
 
-    expect(progman_registry_parse(kText, sizeof(kText) - 1u) == 1, "item sin grupo");
-    expect(progman_group_count() == 1, "grupo implicito creado");
+    expect(progman_registry_parse(kText, sizeof(kText) - 1u) == 1, "item without a group");
+    expect(progman_group_count() == 1, "implicit group created");
     group = progman_group_at(0);
-    expect(group != 0 && strcmp(group->name, PROGMAN_IMPLICIT_GROUP_NAME) == 0, "nombre del grupo implicito");
+    expect(group != 0 && strcmp(group->name, PROGMAN_IMPLICIT_GROUP_NAME) == 0, "implicit group name");
 }
 
 static void selftest_truncation(void)
 {
     static char text[512];
     static const char kLongName[] =
-        "NombreLarguisimoQueSuperaLaCapacidadDelCampoNombreYDebeTruncarse";
+        "AVeryLongNameThatExceedsTheNameFieldCapacityAndMustBeTruncated";
     const struct progman_item *item = 0;
     size_t offset = 0;
 
@@ -1515,11 +1503,11 @@ static void selftest_truncation(void)
     offset = append_text(text, sizeof(text), offset, kLongName);
     offset = append_text(text, sizeof(text), offset, "\npath=/bin/x\n");
 
-    expect(progman_registry_parse(text, offset) == 1, "truncado parse");
+    expect(progman_registry_parse(text, offset) == 1, "truncation parse");
     item = progman_item_at(0);
-    /* Trunca dentro de capacidad y sigue NUL-terminado. */
-    expect(item != 0 && strlen(item->name) == PROGMAN_NAME_CAPACITY - 1u, "nombre truncado a capacidad");
-    expect(item != 0 && strncmp(item->name, kLongName, PROGMAN_NAME_CAPACITY - 1u) == 0, "prefijo del nombre preservado");
+    /* Truncates within the capacity and stays NUL-terminated. */
+    expect(item != 0 && strlen(item->name) == PROGMAN_NAME_CAPACITY - 1u, "name truncated to the capacity");
+    expect(item != 0 && strncmp(item->name, kLongName, PROGMAN_NAME_CAPACITY - 1u) == 0, "name prefix kept");
 }
 
 static void selftest_capacity(void)
@@ -1534,25 +1522,26 @@ static void selftest_capacity(void)
         offset = append_text(text, sizeof(text), offset, "[item]\nname=X\npath=/bin/x\n");
     }
 
-    /* Se corta en la capacidad en vez de desbordar los arrays. */
-    expect(progman_registry_parse(text, offset) == PROGMAN_MAX_ITEMS, "clamp a PROGMAN_MAX_ITEMS");
-    expect(progman_item_count() == PROGMAN_MAX_ITEMS, "item_count clampeado");
+    /* It stops at the capacity instead of overflowing the arrays. */
+    expect(progman_registry_parse(text, offset) == PROGMAN_MAX_ITEMS, "clamp to PROGMAN_MAX_ITEMS");
+    expect(progman_item_count() == PROGMAN_MAX_ITEMS, "item_count clamped");
 }
 
 static void selftest_empty(void)
 {
-    expect(progman_registry_parse(0, 0) == 0, "entrada nula");
-    expect(progman_registry_parse("", 0) == 0, "entrada vacia");
-    expect(progman_registry_parse("# solo comentarios\n", 19) == 0, "solo comentarios");
-    /* Tras una entrada vacia el registro queda vacio, y los defaults lo repueblan:
-     * es el camino de ultimo recurso, cuando ni el .ini ni el escaneo aportan. */
-    expect(progman_item_count() == 0, "registro vacio tras parse vacio");
+    expect(progman_registry_parse(0, 0) == 0, "null input");
+    expect(progman_registry_parse("", 0) == 0, "empty input");
+    expect(progman_registry_parse("# comments only\n", 16) == 0, "comments only");
+    /* After an empty input the registry is empty, and the defaults fill it
+     * again: the last-resort path, when neither the .ini nor the scan give
+     * anything. */
+    expect(progman_item_count() == 0, "empty registry after an empty parse");
     progman_registry_load_defaults();
-    expect(progman_item_count() > 0, "defaults repueblan");
+    expect(progman_item_count() > 0, "defaults fill it again");
 }
 
-/* Predicado falso: solo "existen" los paths de esta lista, asi el pruning se
- * ejercita sin depender de que haya en el disco al correr el selftest. */
+/* A fake predicate: only the paths in this list "exist", so the pruning is
+ * exercised without depending on what is on the disk when the selftest runs. */
 static int fake_exists(const char *path)
 {
     static const char *const kInstalled[] = {"/bin/a2", "/bin/c1"};
@@ -1593,33 +1582,33 @@ static void selftest_prune(void)
     const struct progman_group *group;
 
     expect(progman_registry_parse(kText, sizeof(kText) - 1) == 4, "prune fixture 4 items");
-    expect(progman_group_count() == 3, "prune fixture 3 grupos");
+    expect(progman_group_count() == 3, "prune fixture 3 groups");
 
-    /* Se caen /bin/a1 y /bin/b1: Alpha se queda con un item y Beta, que pierde
-     * el unico que tenia, desaparece entero. */
-    expect(progman_registry_prune_missing(fake_exists) == 2, "prune descarta 2");
-    expect(progman_item_count() == 2, "prune deja 2 items");
-    expect(progman_group_count() == 2, "prune descarta el grupo vacio");
+    /* /bin/a1 and /bin/b1 go: Alpha keeps one item and Beta, which loses the
+     * only one it had, disappears altogether. */
+    expect(progman_registry_prune_missing(fake_exists) == 2, "prune drops 2");
+    expect(progman_item_count() == 2, "prune leaves 2 items");
+    expect(progman_group_count() == 2, "prune drops the empty group");
 
-    /* Gamma tiene que haber bajado del indice 2 al 1, y su item seguirlo. */
+    /* Gamma has to have moved down from index 2 to 1, and its item with it. */
     group = progman_group_at(0);
-    expect(group != 0 && strcmp(group->name, "Alpha") == 0, "prune conserva Alpha en 0");
+    expect(group != 0 && strcmp(group->name, "Alpha") == 0, "prune keeps Alpha at 0");
     group = progman_group_at(1);
-    expect(group != 0 && strcmp(group->name, "Gamma") == 0, "prune corre Gamma a 1");
+    expect(group != 0 && strcmp(group->name, "Gamma") == 0, "prune moves Gamma to 1");
 
     item = progman_item_at(0);
-    expect(item != 0 && strcmp(item->path, "/bin/a2") == 0 && item->group_index == 0, "prune reapunta A2");
+    expect(item != 0 && strcmp(item->path, "/bin/a2") == 0 && item->group_index == 0, "prune repoints A2");
     item = progman_item_at(1);
-    expect(item != 0 && strcmp(item->path, "/bin/c1") == 0 && item->group_index == 1, "prune reapunta C1");
+    expect(item != 0 && strcmp(item->path, "/bin/c1") == 0 && item->group_index == 1, "prune repoints C1");
 
-    /* group_item_at tiene que seguir coherente con los indices nuevos. */
+    /* group_item_at has to stay consistent with the new indices. */
     item = progman_group_item_at(1, 0);
-    expect(item != 0 && strcmp(item->path, "/bin/c1") == 0, "prune group_item_at tras remapeo");
+    expect(item != 0 && strcmp(item->path, "/bin/c1") == 0, "prune group_item_at after the remap");
 
-    /* Un predicado nulo no toca nada; correrlo dos veces es idempotente. */
-    expect(progman_registry_prune_missing(0) == 0, "prune con predicado nulo");
-    expect(progman_registry_prune_missing(fake_exists) == 0, "prune idempotente");
-    expect(progman_item_count() == 2 && progman_group_count() == 2, "prune idempotente conserva");
+    /* A null predicate touches nothing; running it twice is idempotent. */
+    expect(progman_registry_prune_missing(0) == 0, "prune with a null predicate");
+    expect(progman_registry_prune_missing(fake_exists) == 0, "prune idempotent");
+    expect(progman_item_count() == 2 && progman_group_count() == 2, "prune idempotent keeps");
 }
 
 static int fake_exists_renamed(const char *path)
@@ -1663,9 +1652,9 @@ static void selftest_prune_follows_sxe_name(void)
         "system relocation follows the extensionless legacy name");
 }
 
-/* Compara dos bitmaps por contenido, no por puntero: es lo que hace falta
- * para probar que un icono PRESTADO es de verdad el del programa referenciado
- * y no cualquier otra cosa que haya quedado en el slot. */
+/* Compares two bitmaps by content, not by pointer: it is what it takes to
+ * prove that a BORROWED icon really is the referenced program's and not
+ * anything else left in the slot. */
 static int bitmaps_equal(const struct desktop_embedded_bitmap *a, const struct desktop_embedded_bitmap *b)
 {
     uint32_t index;
@@ -1691,20 +1680,20 @@ static int bitmaps_equal(const struct desktop_embedded_bitmap *a, const struct d
 }
 
 /*
- * Precedencia .ini > .sxe > default (docs/userland/SXE_FORMAT.md, fase 3).
+ * Precedence .ini > .sxe > default (docs/userland/SXE_FORMAT.md, phase 3).
  *
- * Corre contra los binarios REALES de la imagen, que es la unica forma de
- * probar esto: el paso que se valida es justamente el que abre el ejecutable.
- * Con el estampado por default TODO binario tiene .sxmeta -- init incluido,
- * aunque nunca declaro un init.sxres --, asi que el item de abajo que usa
- * /bin/init no prueba "sin recursos": prueba que un .ini que declara nombre Y
- * descripcion le gana en los dos campos al estampado automatico, y que lo que
- * ese automatico nunca aporta (icono, flags) sigue sin tocarse.
+ * It runs against the image's REAL binaries, the only way to test this: the
+ * step being checked is precisely the one that opens the executable. With
+ * default stamping EVERY binary has a .sxmeta -- init included, although it
+ * never declared an init.sxres -- so the item below that uses /bin/init does
+ * not test "no resources": it tests that an .ini declaring name AND
+ * description beats the automatic stamp in both fields, and that what the
+ * automatic stamp never provides (icon, flags) stays untouched.
  *
- * "icon=" ya no elige de un catalogo horneado: apunta a un PROGRAMA. Este
- * fixture cubre las tres formas -- path explicito, alias legado, y un nombre
- * sin alias -- contra binarios reales, porque el paso que se valida es
- * justamente el que abre el ejecutable prestado.
+ * "icon=" no longer picks from a baked-in catalog: it points at a PROGRAM.
+ * This fixture covers the three forms -- explicit path, legacy alias, and a
+ * name without an alias -- against real binaries, because the step being
+ * checked is precisely the one that opens the borrowed executable.
  */
 static void selftest_sxe(void)
 {
@@ -1714,19 +1703,19 @@ static void selftest_sxe(void)
         "[item]\n"
         "path=/bin/notepad\n"
         "[item]\n"
-        "name=Mi Bloc\n"
+        "name=My Notes\n"
         "path=/bin/notepad\n"
         "icon=/bin/aboutapp\n"
         "[item]\n"
-        "name=Legado\n"
+        "name=Legacy\n"
         "path=/bin/notepad\n"
         "icon=shell\n"
         "[item]\n"
-        "name=Generico\n"
+        "name=Generic\n"
         "path=/bin/notepad\n"
         "icon=desktop\n"
         "[item]\n"
-        "name=Arranque\n"
+        "name=Startup\n"
         "desc=PID 1\n"
         "path=/bin/init\n"
         "[item]\n"
@@ -1736,54 +1725,54 @@ static void selftest_sxe(void)
 
     expect(progman_registry_parse(kText, sizeof(kText) - 1) == 6, "sxe fixture 6 items");
 
-    /* Antes de aplicar, nadie tiene icono propio. */
+    /* Before applying, nobody has an icon of its own. */
     item = progman_item_at(0);
-    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "sin aplicar no hay icon_slot");
-    expect(progman_item_icon(item) == 0, "sin aplicar no hay bitmap");
+    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "no icon_slot before applying");
+    expect(progman_item_icon(item) == 0, "no bitmap before applying");
 
-    /* Los bits de override tienen que reflejar lo que el .ini declaro. */
-    expect(item != 0 && item->overrides == PROGMAN_OVERRIDE_NONE, "item 0 sin overrides");
+    /* The override bits have to reflect what the .ini declared. */
+    expect(item != 0 && item->overrides == PROGMAN_OVERRIDE_NONE, "item 0 without overrides");
     item = progman_item_at(1);
-    expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_NAME) != 0, "item 1 override de nombre");
-    expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_ICON) != 0, "item 1 override de icono");
-    expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_DESCRIPTION) == 0, "item 1 sin override de desc");
-    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/aboutapp") == 0, "icon=/path se guarda tal cual");
+    expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_NAME) != 0, "item 1 name override");
+    expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_ICON) != 0, "item 1 icon override");
+    expect(item != 0 && (item->overrides & PROGMAN_OVERRIDE_DESCRIPTION) == 0, "item 1 without a desc override");
+    expect(item != 0 && strcmp(item->icon_borrow_path, "/bin/aboutapp") == 0, "icon=/path is kept as it is");
 
     /* item0 (its own icon), item1 and item2 (borrow an icon), item3 (the
      * binary's description although the icon stays generic) and item5 (the
      * console, its own icon and name) make 5; item4 (init, no icon= and no
      * resources of its own to give) changes nothing. */
-    expect(progman_registry_apply_sxe() == 5, "apply_sxe toca 5 items");
+    expect(progman_registry_apply_sxe() == 5, "apply_sxe touches 5 items");
 
-    /* Item 0: sin overrides, todo sale del binario. */
+    /* Item 0: no overrides, everything comes from the binary. */
     item = progman_item_at(0);
-    expect(item != 0 && strcmp(item->name, "Notepad") == 0, "nombre desde el .sxmeta");
-    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "descripcion desde el .sxmeta");
-    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "icono desde el .sxicon");
+    expect(item != 0 && strcmp(item->name, "Notepad") == 0, "name from the .sxmeta");
+    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "description from the .sxmeta");
+    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "icon from the .sxicon");
     icon = progman_item_icon(item);
-    expect(icon != 0 && icon->pixels != 0, "bitmap del icono disponible");
-    expect(icon != 0 && icon->width == 32u && icon->height == 32u, "icono de 32x32");
+    expect(icon != 0 && icon->pixels != 0, "icon bitmap available");
+    expect(icon != 0 && icon->width == 32u && icon->height == 32u, "32x32 icon");
     /* The Start menu's icon is the binary's own 16x16 drawing, not the 32x32. */
     icon = progman_item_icon_small(item);
     expect(icon != 0 && icon->pixels != 0 && icon->width == 16u && icon->height == 16u,
         "16x16 icon from the .sxicon");
 
     /*
-     * Item 1: icon=/bin/aboutapp, un PATH explicito -- la forma nueva y
-     * principal. aboutapp.sxres declara icon=desktop, asi que su .sxicon real
-     * es pixel a pixel el mismo que el generico horneado: comparar contra
-     * desktop_icon_large(DESKTOP_ICON_DESKTOP) prueba que el prestamo trajo
-     * el binario correcto, no cualquier cosa.
+     * Item 1: icon=/bin/aboutapp, an explicit PATH -- the new and main form.
+     * aboutapp.sxres declares icon=desktop, so its real .sxicon is pixel for
+     * pixel the baked-in generic one: comparing against
+     * desktop_icon_large(DESKTOP_ICON_DESKTOP) proves the borrowing brought
+     * the right binary, not just anything.
      */
     item = progman_item_at(1);
-    expect(item != 0 && strcmp(item->name, "Mi Bloc") == 0, "el nombre del .ini le gana al .sxmeta");
-    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "icon=/path toma prestado un .sxicon");
+    expect(item != 0 && strcmp(item->name, "My Notes") == 0, "the .ini name beats the .sxmeta");
+    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "icon=/path borrows a .sxicon");
     icon = progman_item_icon(item);
     expect(bitmaps_equal(icon, desktop_icon_large(DESKTOP_ICON_DESKTOP)),
-        "el icono prestado es el de aboutapp (=generico, aboutapp declara icon=desktop)");
-    /* Lo que el .ini NO declaro sigue viniendo del binario que este item
-     * lanza (notepad), no del que le presta el icono (aboutapp). */
-    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc sin override viene del propio binario");
+        "the borrowed icon is aboutapp's (=generic, aboutapp declares icon=desktop)");
+    /* What the .ini did NOT declare still comes from the binary this item
+     * starts (notepad), not from the one lending it the icon (aboutapp). */
+    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc without an override comes from the item's own binary");
 
     /*
      * Item 2: icon=shell, a LEGACY ALIAS from before icons came from the
@@ -1796,37 +1785,37 @@ static void selftest_sxe(void)
      */
     item = progman_item_at(2);
     expect(item != 0 && strcmp(item->icon_borrow_path, "/system/console.sxe") == 0, "legacy alias resolves to the program's path");
-    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "alias legado tambien presta el .sxicon");
+    expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "a legacy alias lends the .sxicon too");
     icon = progman_item_icon(item);
     expect(bitmaps_equal(icon, progman_item_icon(progman_item_at(5))),
-        "el icono prestado por alias es el mismo que la consola adopta para si misma");
+        "the icon borrowed by alias is the one the console adopts for itself");
 
     /*
-     * Item 3: icon=desktop, un nombre SIN alias -- "desktop" nunca lo tuvo,
-     * era literalmente el generico. Se queda en icon_id por defecto y NO
-     * intenta leer nada, ni siquiera el .sxicon propio de notepad: el usuario
-     * pidio explicitamente el generico, y eso tiene que ganarle a lo que el
-     * binario traiga.
+     * Item 3: icon=desktop, a name WITHOUT an alias -- "desktop" never had
+     * one, it was literally the generic icon. It stays at the default icon_id
+     * and does NOT try to read anything, not even notepad's own .sxicon: the
+     * user asked explicitly for the generic one, and that has to beat what
+     * the binary brings.
      */
     item = progman_item_at(3);
-    expect(item != 0 && item->icon_borrow_path[0] == '\0', "nombre sin alias no guarda path");
-    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "sin alias no se presta ningun .sxicon");
-    expect(item != 0 && item->icon_id == DESKTOP_ICON_DESKTOP, "sin alias cae al icon_id generico");
-    expect(progman_item_icon(item) == 0, "sin alias no hay bitmap prestado");
-    /* La descripcion si sigue viniendo del binario: el override fue solo del
-     * icono, no del resto de los campos. */
-    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc de un item sin override de desc");
+    expect(item != 0 && item->icon_borrow_path[0] == '\0', "a name without an alias keeps no path");
+    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "without an alias no .sxicon is borrowed");
+    expect(item != 0 && item->icon_id == DESKTOP_ICON_DESKTOP, "without an alias it falls to the generic icon_id");
+    expect(progman_item_icon(item) == 0, "without an alias there is no borrowed bitmap");
+    /* The description does still come from the binary: the override was of
+     * the icon only, not of the other fields. */
+    expect(item != 0 && strcmp(item->description, "Edit text files") == 0, "desc of an item without a desc override");
 
     /*
-     * Item 4: init, con SOLO el estampado automatico (nombre/version/
-     * subsystem/build_id, nada de icono ni flags) y un .ini que cubre nombre
-     * Y descripcion a mano. Nada del automatico deberia asomar en ninguno de
-     * los dos campos que el .ini ya declaro.
+     * Item 4: init, with ONLY the automatic stamp (name/version/subsystem/
+     * build_id, no icon and no flags) and an .ini that covers name AND
+     * description by hand. Nothing from the automatic stamp should show in
+     * either of the two fields the .ini already declared.
      */
     item = progman_item_at(4);
-    expect(item != 0 && strcmp(item->name, "Arranque") == 0, "el .ini le gana el nombre al automatico");
-    expect(item != 0 && strcmp(item->description, "PID 1") == 0, "el .ini le gana la desc al automatico");
-    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "el automatico nunca trae icono propio");
+    expect(item != 0 && strcmp(item->name, "Startup") == 0, "the .ini beats the automatic stamp on the name");
+    expect(item != 0 && strcmp(item->description, "PID 1") == 0, "the .ini beats the automatic stamp on the desc");
+    expect(item != 0 && item->icon_slot == PROGMAN_ICON_SLOT_NONE, "the automatic stamp never brings an icon");
 
     /* Item 5: /system/console.sxe without any override -- it adopts its own .sxicon
      * by the normal path (the one item 0 uses with notepad). It is what item
@@ -1836,41 +1825,41 @@ static void selftest_sxe(void)
     expect(item != 0 && strcmp(item->name, "Command Prompt") == 0, "item 5 name from the console's .sxmeta");
     expect(item != 0 && item->icon_slot != PROGMAN_ICON_SLOT_NONE, "item 5 the console's own icon");
     icon = progman_item_icon(item);
-    expect(icon != 0 && icon->width == 32u && icon->height == 32u, "item 5 icono de 32x32");
+    expect(icon != 0 && icon->width == 32u && icon->height == 32u, "item 5 32x32 icon");
 
-    /* Aplicar dos veces no debe duplicar ni corromper nada. */
-    expect(progman_registry_apply_sxe() == 5, "apply_sxe es idempotente");
+    /* Applying twice must neither duplicate nor corrupt anything. */
+    expect(progman_registry_apply_sxe() == 5, "apply_sxe is idempotent");
     item = progman_item_at(0);
-    expect(item != 0 && strcmp(item->name, "Notepad") == 0, "idempotente conserva el nombre");
+    expect(item != 0 && strcmp(item->name, "Notepad") == 0, "idempotent keeps the name");
 
 #if DESKTOP_INCLUDE_TEST_APPS
     {
-        /* gfxdemo declara launch_flags=fullscreen en su manifiesto: un item
-         * que no escribe flags= tiene que heredarlo del binario. */
+        /* gfxdemo declares launch_flags=fullscreen in its manifest: an item
+         * that writes no flags= has to inherit it from the binary. */
         static const char kFlagsText[] =
             "[item]\n"
             "path=/bin/gfxdemo\n";
 
-        expect(progman_registry_parse(kFlagsText, sizeof(kFlagsText) - 1) == 1, "fixture de flags");
+        expect(progman_registry_parse(kFlagsText, sizeof(kFlagsText) - 1) == 1, "flags fixture");
         (void)progman_registry_apply_sxe();
         item = progman_item_at(0);
         expect(item != 0 && item->launch_flags == SAVANXP_DESKTOP_LAUNCH_FLAG_FULLSCREEN,
-            "launch_flags desde el .sxmeta");
+            "launch_flags from the .sxmeta");
     }
 #endif
 
-    /* Un path que no existe no debe romper el paso ni dejar basura. */
+    /* A path that does not exist must neither break the step nor leave garbage. */
     {
         static const char kMissingText[] =
             "[item]\n"
-            "name=Fantasma\n"
-            "path=/bin/__no_existe__\n";
+            "name=Ghost\n"
+            "path=/bin/__does_not_exist__\n";
 
-        expect(progman_registry_parse(kMissingText, sizeof(kMissingText) - 1) == 1, "fixture inexistente");
-        expect(progman_registry_apply_sxe() == 0, "path inexistente no toca nada");
+        expect(progman_registry_parse(kMissingText, sizeof(kMissingText) - 1) == 1, "missing fixture");
+        expect(progman_registry_apply_sxe() == 0, "a missing path touches nothing");
         item = progman_item_at(0);
-        expect(item != 0 && strcmp(item->name, "Fantasma") == 0, "path inexistente conserva el nombre");
-        expect(progman_item_icon(item) == 0, "path inexistente sin icono");
+        expect(item != 0 && strcmp(item->name, "Ghost") == 0, "a missing path keeps the name");
+        expect(progman_item_icon(item) == 0, "a missing path has no icon");
     }
 }
 

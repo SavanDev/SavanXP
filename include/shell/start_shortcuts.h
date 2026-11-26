@@ -1,8 +1,9 @@
 #pragma once
 
-#include "libc.h"
-#include "shortcut.h"
-#include "start_pins.h"
+#include "shell/shortcut.h"
+#include "shell/start_pins.h"
+
+#include <stdint.h>
 
 /*
  * The Start menu's own shortcuts (docs/desktop/START_MENU.md, "Shortcuts"):

@@ -1,18 +1,15 @@
-#include "start_shortcuts.h"
+#include "shell/start_shortcuts.h"
 
-#include "shortcut.h"
-#include "start_pins.h"
+#include "shell/shell_io.h"
+#include "shell/shortcut.h"
+#include "shell/start_pins.h"
 
 #include "savanxp/sxe.h"
 #include "sxe/sxe_format.h"
 #include "sxgfx/pe_icon.h"
 
-#include <dirent.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 /* See start_shortcuts.h. */
 
@@ -48,37 +45,21 @@ static int ends_with_nocase(const char *text, const char *suffix)
 
 static int exists(const char *path)
 {
-    struct stat info;
+    struct shell_io_info info;
 
-    return path[0] != '\0' && stat(path, &info) == 0;
+    return path[0] != '\0' && shell_io_query(path, &info) == 0;
 }
 
 /* A Windows program's own icon. */
 static int icon_from_pe(const char *path, uint32_t *out)
 {
-    int fd = open(path, O_RDONLY);
-    size_t total = 0;
+    long total = shell_io_read_file(path, g_pe_scratch, sizeof(g_pe_scratch));
 
-    if (fd < 0)
+    if (total < 0)
     {
         return 0;
     }
-    for (;;)
-    {
-        ssize_t count = read(fd, g_pe_scratch + total, sizeof(g_pe_scratch) - total);
-
-        if (count <= 0)
-        {
-            break;
-        }
-        total += (size_t)count;
-        if (total == sizeof(g_pe_scratch))
-        {
-            break;
-        }
-    }
-    close(fd);
-    return pe_icon_from_file(g_pe_scratch, total, START_SHORTCUTS_ICON_EXTENT, out);
+    return pe_icon_from_file(g_pe_scratch, (size_t)total, START_SHORTCUTS_ICON_EXTENT, out);
 }
 
 /* The 16x16 image of `icons`, or the nearest one sampled to it. */
@@ -184,23 +165,17 @@ static void add(const char *folder, const char *file_name)
     g_count += 1;
 }
 
+static void scan_entry(const char *name, void *context)
+{
+    if (name[0] != '.' && shortcut_is_shortcut_name(name))
+    {
+        add((const char *)context, name);
+    }
+}
+
 static void scan(const char *folder)
 {
-    DIR *handle = opendir(folder);
-    struct dirent *entry;
-
-    if (handle == 0)
-    {
-        return;
-    }
-    while ((entry = readdir(handle)) != 0)
-    {
-        if (entry->d_name[0] != '.' && shortcut_is_shortcut_name(entry->d_name))
-        {
-            add(folder, entry->d_name);
-        }
-    }
-    closedir(handle);
+    (void)shell_io_list(folder, scan_entry, (void *)folder);
 }
 
 int start_shortcuts_load(void)

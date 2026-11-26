@@ -1,12 +1,11 @@
-#include "shortcut.h"
+#include "shell/shortcut.h"
 
-#include "file_assoc.h"
+#include "shell/file_assoc.h"
+#include "shell/shell_io.h"
 #include "savanxp/sxe.h"
 
 #include <stdio.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 static char lower_char(char value)
 {
@@ -73,10 +72,8 @@ int shortcut_is_linux_program(const char *path)
         part = *end ? end + 1 : end;
     }
     unsigned char header[64];
-    FILE *file = fopen(path, "rb");
-    if (!file) return 0;
-    const size_t count = fread(header, 1, sizeof(header), file); fclose(file);
-    return count == sizeof(header) && !memcmp(header, "\177ELF\2\1\1", 7) &&
+    const long count = shell_io_read_file(path, header, sizeof(header));
+    return count == (long)sizeof(header) && !memcmp(header, "\177ELF\2\1\1", 7) &&
         (header[16] == 2 || header[16] == 3) && !header[17] && header[18] == 62 && !header[19];
 }
 
@@ -213,10 +210,9 @@ int shortcut_format(const struct shortcut *shortcut, char *out, size_t capacity)
 int shortcut_load(const char *path, struct shortcut *out)
 {
     char text[SHORTCUT_MAX_BYTES];
-    long fd = savanxp_open_mode(path, SAVANXP_OPEN_READ);
-    long total = 0;
+    long total = shell_io_read_file(path, text, sizeof(text));
 
-    if (fd < 0)
+    if (total < 0)
     {
         if (out != 0)
         {
@@ -224,16 +220,6 @@ int shortcut_load(const char *path, struct shortcut *out)
         }
         return -1;
     }
-    while (total < (long)sizeof(text))
-    {
-        long count = savanxp_read((int)fd, text + total, sizeof(text) - (size_t)total);
-        if (count <= 0)
-        {
-            break;
-        }
-        total += count;
-    }
-    savanxp_close((int)fd);
     return shortcut_parse(text, (size_t)total, out);
 }
 
@@ -241,21 +227,12 @@ int shortcut_save(const char *path, const struct shortcut *shortcut)
 {
     char text[SHORTCUT_MAX_BYTES];
     int length = shortcut_format(shortcut, text, sizeof(text));
-    long fd;
-    long written;
 
     if (length < 0)
     {
         return -1;
     }
-    fd = savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
-    if (fd < 0)
-    {
-        return -1;
-    }
-    written = savanxp_write((int)fd, text, (size_t)length);
-    savanxp_close((int)fd);
-    return written == (long)length ? 0 : -1;
+    return shell_io_write_file(path, text, (size_t)length) == 0 ? 0 : -1;
 }
 
 static const char *base_name(const char *path)
@@ -316,17 +293,13 @@ void shortcut_for_target(const char *target, struct shortcut *out, char *name, s
 
 static int is_directory(const char *path)
 {
-    struct stat info;
-    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+    struct shell_io_info info;
+    return shell_io_query(path, &info) == 0 && info.type == SHELL_IO_DIRECTORY;
 }
 
-static long launch(const struct savanxp_gfx_context *context, const char *program, const char *argument)
+static long launch(const char *workdir, const char *program, const char *argument)
 {
-    if (argument != 0 && argument[0] != '\0')
-    {
-        return gfx_desktop_launch_arg(context, program, argument, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
-    }
-    return gfx_desktop_launch_ex(context, program, SAVANXP_DESKTOP_LAUNCH_FLAG_NONE);
+    return shell_io_launch(program, argument, workdir);
 }
 
 /* Files and the desktop keep one association snapshot for both actions. */
@@ -337,20 +310,21 @@ static void ensure_associations(void)
 }
 
 /* A document: its Open association, or Notepad when nobody claims it. */
-static enum shortcut_open_kind open_document(const struct savanxp_gfx_context *context, const char *path)
+static enum shortcut_open_kind open_document(const char *workdir, const char *path)
 {
     const char *program;
     ensure_associations();
     program = file_assoc_program_for_file(path);
     if (program != 0)
     {
-        return launch(context, program, path) >= 0 ? SHORTCUT_OPEN_ASSOCIATED : SHORTCUT_OPEN_FAILED;
+        return launch(workdir, program, path) >= 0 ? SHORTCUT_OPEN_ASSOCIATED : SHORTCUT_OPEN_FAILED;
     }
-    return launch(context, SHORTCUT_EDITOR_PATH, path) >= 0 ? SHORTCUT_OPEN_EDITOR : SHORTCUT_OPEN_FAILED;
+    return launch(workdir, SHORTCUT_EDITOR_PATH, path) >= 0 ? SHORTCUT_OPEN_EDITOR : SHORTCUT_OPEN_FAILED;
 }
 
-/* What a path opens as, without following shortcuts. */
-static enum shortcut_open_kind open_plain(const struct savanxp_gfx_context *context, const char *path, const char *args, int edit)
+/* What a path opens as, without following shortcuts; whatever it starts
+ * starts in `workdir` when there is one. */
+static enum shortcut_open_kind open_plain(const char *workdir, const char *path, const char *args, int edit)
 {
     if (edit)
     {
@@ -358,31 +332,28 @@ static enum shortcut_open_kind open_plain(const struct savanxp_gfx_context *cont
         if (is_directory(path) || shortcut_is_program_path(path) || shortcut_is_linux_program(path)) return SHORTCUT_OPEN_FAILED;
         ensure_associations();
         editor = file_assoc_editor_for_file(path);
-        return editor && launch(context, editor, path) >= 0 ? SHORTCUT_OPEN_ASSOCIATED : SHORTCUT_OPEN_FAILED;
+        return editor && launch(workdir, editor, path) >= 0 ? SHORTCUT_OPEN_ASSOCIATED : SHORTCUT_OPEN_FAILED;
     }
     if (is_directory(path))
     {
-        return launch(context, SHORTCUT_FILES_PATH, path) >= 0 ? SHORTCUT_OPEN_FOLDER : SHORTCUT_OPEN_FAILED;
+        return launch(workdir, SHORTCUT_FILES_PATH, path) >= 0 ? SHORTCUT_OPEN_FOLDER : SHORTCUT_OPEN_FAILED;
     }
     if (shortcut_is_linux_program(path))
     {
         /* The desktop API passes one argument. The physical guest path is
          * the launcher's desktop mode; Linux sees the stripped guest path. */
-        return launch(context, "/system/linux.sxe", path) >= 0 ? SHORTCUT_OPEN_PROGRAM : SHORTCUT_OPEN_FAILED;
+        return launch(workdir, "/system/linux.sxe", path) >= 0 ? SHORTCUT_OPEN_PROGRAM : SHORTCUT_OPEN_FAILED;
     }
     if (shortcut_is_program_path(path))
     {
-        return launch(context, path, args) >= 0 ? SHORTCUT_OPEN_PROGRAM : SHORTCUT_OPEN_FAILED;
+        return launch(workdir, path, args) >= 0 ? SHORTCUT_OPEN_PROGRAM : SHORTCUT_OPEN_FAILED;
     }
-    return open_document(context, path);
+    return open_document(workdir, path);
 }
 
-static enum shortcut_open_kind act_on_path(const struct savanxp_gfx_context *context, const char *path, int edit)
+static enum shortcut_open_kind act_on_path(const char *path, int edit)
 {
     struct shortcut shortcut;
-    enum shortcut_open_kind kind;
-    char saved_directory[SHORTCUT_PATH_CAPACITY];
-    int changed_directory = 0;
 
     if (path == 0 || path[0] == '\0')
     {
@@ -390,7 +361,7 @@ static enum shortcut_open_kind act_on_path(const struct savanxp_gfx_context *con
     }
     if (!shortcut_is_shortcut_name(path) || is_directory(path))
     {
-        return open_plain(context, path, 0, edit);
+        return open_plain(0, path, 0, edit);
     }
     if (shortcut_load(path, &shortcut) != 0)
     {
@@ -401,42 +372,32 @@ static enum shortcut_open_kind act_on_path(const struct savanxp_gfx_context *con
     {
         return SHORTCUT_OPEN_FAILED;
     }
-    /* The program inherits the working directory at spawn, so the caller's
-     * is swapped for the shortcut's around the launch. */
-    if (shortcut.workdir[0] != '\0' && getcwd(saved_directory, sizeof(saved_directory)) != 0 &&
-        chdir(shortcut.workdir) == 0)
-    {
-        changed_directory = 1;
-    }
-    kind = open_plain(context, shortcut.target, shortcut.args, edit);
-    if (changed_directory)
-    {
-        (void)chdir(saved_directory);
-    }
-    return kind;
+    /* What it starts, starts in the shortcut's working directory. */
+    return open_plain(shortcut.workdir, shortcut.target, shortcut.args, edit);
 }
 
-enum shortcut_open_kind shortcut_open_path(const struct savanxp_gfx_context *context, const char *path)
+enum shortcut_open_kind shortcut_open_path(const char *path)
 {
-    return act_on_path(context, path, 0);
+    return act_on_path(path, 0);
 }
 
-enum shortcut_open_kind shortcut_edit_path(const struct savanxp_gfx_context *context, const char *path)
+enum shortcut_open_kind shortcut_edit_path(const char *path)
 {
-    return act_on_path(context, path, 1);
+    return act_on_path(path, 1);
 }
 
 int shortcut_can_edit_path(const char *path)
 {
     struct shortcut shortcut;
-    struct stat info;
+    struct shell_io_info info;
     if (!path || !path[0]) return 0;
     if (shortcut_is_shortcut_name(path))
     {
         if (shortcut_load(path, &shortcut) != 0 || shortcut_is_shortcut_name(shortcut.target)) return 0;
         path = shortcut.target;
     }
-    if (stat(path, &info) != 0 || !S_ISREG(info.st_mode) || shortcut_is_program_path(path) || shortcut_is_linux_program(path)) return 0;
+    if (shell_io_query(path, &info) != 0 || info.type != SHELL_IO_FILE || shortcut_is_program_path(path) ||
+        shortcut_is_linux_program(path)) return 0;
     ensure_associations();
     return file_assoc_editor_for_file(path) != 0;
 }
@@ -498,9 +459,9 @@ int shortcut_selftest(void)
         "linux programs: only the guest tree, no dot components");
     {
         /* Present only in test images; when it is there it must be a Linux program. */
-        struct stat fixture;
+        struct shell_io_info fixture;
 
-        if (stat("/system/linux/fixtures/hello", &fixture) == 0)
+        if (shell_io_query("/system/linux/fixtures/hello", &fixture) == 0)
         {
             expect(shortcut_is_linux_program("/system/linux/fixtures/hello"), "linux programs: a guest ELF");
         }

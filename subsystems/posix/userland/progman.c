@@ -1,7 +1,7 @@
 #include "libc.h"
 #include "savanxp/sxgui.h"
 
-#include "progman_registry.h"
+#include "shell/progman_registry.h"
 
 #include <stdio.h>
 #include <unistd.h>

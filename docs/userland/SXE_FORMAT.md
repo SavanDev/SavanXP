@@ -51,7 +51,7 @@
 Today an executable cannot speak about itself, and that is why three tables
 exist to compensate:
 
-1. [progman_registry.h:33](../../subsystems/posix/userland/progman_registry.h:33) —
+1. [progman_registry.h](../../include/shell/progman_registry.h) —
    icons are referenced **by name** against a set baked at build time. Its own
    comment says: *"per-program icons would need an icon format + loader:
    separate work"*. This document is that work.

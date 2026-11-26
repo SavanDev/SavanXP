@@ -1,6 +1,8 @@
 #pragma once
 
-#include "libc.h"
+#include <stddef.h>
+
+#include "abi/savanxp_abi.h"
 
 /*
  * File associations (docs/userland/SXE_FORMAT.md, phase 5).
@@ -22,17 +24,18 @@
  * text/plain" table in here would bring back exactly the kind of central table
  * this design came to remove.
  *
- * No malloc: fixed capacities and truncation, as in progman_registry.
+ * No malloc: fixed capacities and truncation, as in progman_registry. It
+ * makes no system call: reading and listing go through shell/shell_io.h.
  */
 
-/* Con punto y en minusculas: ".txt". Alcanza para lo que declara un .sxres. */
+/* With the dot and in lower case: ".txt". Enough for what a .sxres declares. */
 #define FILE_ASSOC_EXT_CAPACITY 16
 #define FILE_ASSOC_PATH_CAPACITY SAVANXP_DESKTOP_LAUNCH_PATH_CAPACITY
 #define FILE_ASSOC_MAX_ENTRIES 64
 
 /* Policy lines: `.ext=/path/program` (Open), or `edit:.ext=/path/editor`.
  * `open:.ext` is also accepted; '#' and ';' start comments. */
-#define FILE_ASSOC_POLICY_NAME "assoc.ini" /* in the profile: savanxp_settings_path */
+#define FILE_ASSOC_POLICY_NAME "assoc.ini" /* in the profile: shell_io_settings_path */
 #define FILE_ASSOC_POLICY_MAX_BYTES 4096
 #define FILE_ASSOC_DEFAULTS_PATH "/system/assoc.ini"
 
@@ -57,42 +60,44 @@ struct file_assoc_entry
  * The caller keeps this in memory for its lifetime; there is no disk cache. */
 int file_assoc_load(void);
 
-/* Solo la politica, sin escanear. El escaneo se agrega encima. */
+/* Only the policy, without scanning. The scan is added on top. */
 int file_assoc_load_policy(void);
 
-/* Parseo puro del texto de politica: el punto de entrada del selftest, que asi
- * ejercita el formato sin depender de que haya un assoc.ini en el disco. */
+/* Parses policy text alone: the selftest's entry point, which exercises the
+ * format this way without depending on an assoc.ini being on the disk. */
 int file_assoc_parse_policy(const char *text, size_t length);
 
 /*
- * Escanea los directorios de programas y agrega lo que declaren, sin pisar lo
- * que ya fijo la politica. Devuelve cuantas asociaciones agrego.
+ * Scans the program directories and adds what they declare, without
+ * overwriting what the policy already set. Returns how many associations it
+ * added.
  *
- * `exists` es inyectable por el mismo motivo que en progman_registry: permite
- * testear el escaneo sin depender de que haya en el disco. 0 = usar el real.
+ * `exists` can be injected for the same reason as in progman_registry: it
+ * lets the scan be tested without depending on what is on the disk. 0 = use
+ * the real one.
  */
 typedef int (*file_assoc_path_exists_fn)(const char *path);
 int file_assoc_scan_programs(file_assoc_path_exists_fn exists);
 
 /*
- * Programa asociado al archivo, o 0 si ninguno lo reclama. El llamador decide
- * que hacer con el 0 -- filesapp cae a su editor por defecto --, porque "no
- * hay asociacion" no es un error.
+ * The program associated with the file, or 0 when none claims it. The caller
+ * decides what to do with the 0 -- filesapp falls back to its default editor
+ * -- because "no association" is not an error.
  */
 const char *file_assoc_program_for_file(const char *file_path);
 /* Edit has no implicit fallback. A missing association returns NULL. */
 const char *file_assoc_editor_for_file(const char *file_path);
 
-/* Extension de un path, con punto y en minusculas. Devuelve 0 si no tiene.
- * Expuesto porque el llamador suele querer mostrarla. */
+/* A path's extension, with the dot and in lower case. Returns 0 when it has
+ * none. Exposed because the caller usually wants to show it. */
 const char *file_assoc_extension_of(const char *file_path, char *out, size_t capacity);
 
-/* Cuantos ejecutables abrio el ultimo escaneo. Es la magnitud que hay que
- * mirar antes de decidir si hace falta una cache en disco. */
+/* How many executables the last scan opened. It is the number to look at
+ * before deciding whether a disk cache is needed. */
 int file_assoc_scan_examined(void);
 
 int file_assoc_count(void);
 const struct file_assoc_entry *file_assoc_at(int index);
 
-/* Valida parseo, precedencia, truncado, limites y el escaneo. 0 si todo pasa. */
+/* Checks parsing, precedence, truncation, bounds and the scan. 0 when all pass. */
 int file_assoc_selftest(void);

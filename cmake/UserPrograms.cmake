@@ -523,19 +523,21 @@ savanxp_program(NAME desktop DEPENDS libgfx2d libsxfont libsxgui libsxgfx libsxi
     system/gfx/wallpaper.c
     subsystems/posix/userland/display_settings.c
     subsystems/posix/userland/desktop_icons.c
-    subsystems/posix/userland/progman_registry.c
-    subsystems/posix/userland/shortcut.c
-    subsystems/posix/userland/start_shortcuts.c
-    subsystems/posix/userland/start_pins.c
+    system/shell/progman_registry.c
+    system/shell/shortcut.c
+    system/shell/start_shortcuts.c
+    system/shell/start_pins.c
+    system/shell/file_assoc.c
+    subsystems/posix/userland/shell_io_posix.c
     system/gfx/pe_version.c
-    subsystems/posix/userland/file_assoc.c
     system/gfx/mime_icon.c
     system/gfx/pe_resource.c
     system/gfx/pe_icon.c
     subsystems/posix/userland/mime_icon_posix.c)
 savanxp_program(NAME progman DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/progman.c
-    subsystems/posix/userland/progman_registry.c
+    system/shell/progman_registry.c
+    subsystems/posix/userland/shell_io_posix.c
     subsystems/posix/userland/desktop_icons.c)
 savanxp_program(NAME appwiz DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/appwiz.c
@@ -545,12 +547,13 @@ savanxp_program(NAME aboutapp DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_
 savanxp_program(NAME filesapp DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/filesapp.c
     subsystems/posix/userland/file_copy.c
-    subsystems/posix/userland/file_assoc.c
+    system/shell/file_assoc.c
     system/gfx/mime_icon.c
     system/gfx/mime_icon_large.c
     subsystems/posix/userland/mime_icon_posix.c
-    subsystems/posix/userland/shortcut.c
-    subsystems/posix/userland/start_pins.c
+    system/shell/shortcut.c
+    system/shell/start_pins.c
+    subsystems/posix/userland/shell_io_posix.c
     system/gfx/pe_resource.c
     system/gfx/pe_version.c)
 # The editor is the app with the best automated check in the tree: the

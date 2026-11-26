@@ -2,7 +2,7 @@
 
 #include "desktop_icons.h"
 #include "sxgfx/mime_icon.h"
-#include "shortcut.h"
+#include "shell/shortcut.h"
 #include "savanxp/sxe.h"
 
 #include <dirent.h>
@@ -934,7 +934,7 @@ static void open_item(int index)
     {
         return;
     }
-    if (shortcut_open_path(desktop_main_window(), g_items[index].path) == SHORTCUT_OPEN_FAILED)
+    if (shortcut_open_path(g_items[index].path) == SHORTCUT_OPEN_FAILED)
     {
         char text[VIEW_NAME_CAPACITY + 32];
 
@@ -1170,7 +1170,7 @@ static void run_command(int id)
         }
         break;
     case VIEW_CMD_EDIT:
-        if (subject_valid() && shortcut_edit_path(desktop_main_window(), g_items[g_subject].path) == SHORTCUT_OPEN_FAILED)
+        if (subject_valid() && shortcut_edit_path(g_items[g_subject].path) == SHORTCUT_OPEN_FAILED)
             desktop_confirm("Desktop", "Cannot edit this file.", 0, 0);
         break;
     case VIEW_CMD_RENAME:

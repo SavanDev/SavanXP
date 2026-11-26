@@ -9,11 +9,11 @@
 
 #include "shared/version.h"
 
-#include "file_assoc.h"
+#include "shell/file_assoc.h"
 #include "file_copy.h"
 #include "sxgfx/mime_icon.h"
-#include "shortcut.h"
-#include "start_pins.h"
+#include "shell/shortcut.h"
+#include "shell/start_pins.h"
 
 #include <string.h>
 #include <strings.h>
@@ -1019,7 +1019,7 @@ static void filesapp_activate_selected(void)
         (void)filesapp_navigate(full_path);
         return;
     }
-    switch (shortcut_open_path(&g_app.gfx, full_path))
+    switch (shortcut_open_path(full_path))
     {
     case SHORTCUT_OPEN_PROGRAM:
     case SHORTCUT_OPEN_FOLDER:
@@ -2660,7 +2660,7 @@ static void on_context_command(int id, void *user)
         {
             char path[FILESAPP_PATH_CAPACITY];
             if (filesapp_join_path(g_current_path, g_subject, path, sizeof(path)) &&
-                shortcut_edit_path(&g_app.gfx, path) != SHORTCUT_OPEN_FAILED)
+                shortcut_edit_path(path) != SHORTCUT_OPEN_FAILED)
                 filesapp_set_status("Opening with associated editor...");
             else filesapp_set_status("Cannot edit it.");
         }

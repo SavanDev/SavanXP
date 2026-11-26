@@ -1,6 +1,9 @@
 #pragma once
 
-#include "libc.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include "abi/savanxp_abi.h"
 
 /*
  * Shortcuts and what "open" means to the shell (docs/desktop/DESKTOP_ICONS.md).
@@ -15,7 +18,8 @@
  *
  * '#' and ';' start a comment; unknown keys are ignored, so the format can
  * grow. The desktop and Files share this module, so both open things the
- * same way. No malloc: fixed capacities and truncation.
+ * same way. No malloc: fixed capacities and truncation. It makes no system
+ * call: reading, writing and starting programs go through shell/shell_io.h.
  */
 
 #define SHORTCUT_EXTENSION ".sxlnk"
@@ -72,14 +76,13 @@ enum shortcut_open_kind
  * Opens `path` as the shell does on a double click: a program starts, a
  * folder opens in Files, a document opens with its associated program (or
  * Notepad), and a shortcut opens its target -- with its argument and in its
- * working directory. `context` is the caller's window, as for
- * gfx_desktop_launch. Returns how it was opened.
+ * working directory. Returns how it was opened.
  */
-enum shortcut_open_kind shortcut_open_path(const struct savanxp_gfx_context *context, const char *path);
+enum shortcut_open_kind shortcut_open_path(const char *path);
 
 /* Edit follows the same single shortcut and working-directory rules as Open,
  * but only launches an explicitly associated editor, without a fallback. */
-enum shortcut_open_kind shortcut_edit_path(const struct savanxp_gfx_context *context, const char *path);
+enum shortcut_open_kind shortcut_edit_path(const char *path);
 int shortcut_can_edit_path(const char *path);
 
 /* Parse, format and naming checks. Returns the number of failures. */

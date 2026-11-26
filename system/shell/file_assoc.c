@@ -1,15 +1,15 @@
-#include "file_assoc.h"
+#include "shell/file_assoc.h"
 
 #include "savanxp/sxe.h"
+#include "shell/shell_io.h"
 
-#include <dirent.h>
 #include <stdio.h>
 #include <string.h>
 
 static struct file_assoc_entry g_entries[FILE_ASSOC_MAX_ENTRIES];
 static int g_entry_count = 0;
-/* Cuantos ejecutables se abrieron en el ultimo escaneo. Lo reporta el smoke:
- * es la magnitud que hay que mirar antes de decidir si hace falta una cache. */
+/* How many executables the last scan opened. The smoke reports it: it is the
+ * number to look at before deciding whether a cache is needed. */
 static int g_last_scan_examined = 0;
 
 /* --- helpers -------------------------------------------------------------- */
@@ -69,9 +69,9 @@ static char *trim(char *text)
 }
 
 /*
- * Normaliza una extension a ".ext" en minusculas. Acepta que venga con o sin
- * punto: un assoc.ini escrito a mano es probable que tenga las dos formas, y
- * rechazar una de las dos seria una trampa sin ningun beneficio.
+ * Normalises an extension to a lower-case ".ext". It is accepted with or
+ * without the dot: an assoc.ini written by hand is likely to have both forms,
+ * and refusing one of them would be a trap with no benefit.
  */
 static int normalize_extension(const char *source, char *out, size_t capacity)
 {
@@ -129,8 +129,8 @@ static int set_entry(const char *extension, const char *program, int from_policy
     }
     if (program == 0 || program[0] != '/')
     {
-        /* Un programa sin path absoluto no se puede lanzar: se descarta en vez
-         * de guardarse roto. */
+        /* A program without an absolute path cannot be started: it is dropped
+         * instead of being kept broken. */
         return 0;
     }
 
@@ -190,7 +190,7 @@ const char *file_assoc_extension_of(const char *file_path, char *out, size_t cap
     return out;
 }
 
-/* --- politica del usuario ------------------------------------------------- */
+/* --- user policy --------------------------------------------------------- */
 
 static int parse_entries(const char *text, size_t length, int from_policy)
 {
@@ -266,24 +266,10 @@ int file_assoc_parse_policy(const char *text, size_t length)
 static int load_policy_file(const char *path, int from_policy)
 {
     static char file_buffer[FILE_ASSOC_POLICY_MAX_BYTES];
-    int fd = (int)savanxp_open_mode(path, SAVANXP_OPEN_READ);
-    long total = 0;
+    /* One byte short of the buffer, as parse_entries keeps one for the NUL. */
+    long total = shell_io_read_file(path, file_buffer, sizeof(file_buffer) - 1u);
 
-    if (fd < 0)
-    {
-        /* Missing policy is normal: lower-priority sources still apply. */
-        return 0;
-    }
-    while (total < (long)(sizeof(file_buffer) - 1u))
-    {
-        long got = savanxp_read(fd, file_buffer + total, sizeof(file_buffer) - 1u - (size_t)total);
-        if (got <= 0)
-        {
-            break;
-        }
-        total += got;
-    }
-    (void)savanxp_close(fd);
+    /* Missing policy is normal: lower-priority sources still apply. */
     if (total <= 0)
     {
         return 0;
@@ -295,25 +281,20 @@ int file_assoc_load_policy(void)
 {
     char path[256];
     g_entry_count = 0;
-    if (savanxp_settings_path(FILE_ASSOC_POLICY_NAME, 0, path, sizeof(path)) != 0) return 0;
+    if (shell_io_settings_path(FILE_ASSOC_POLICY_NAME, 0, path, sizeof(path)) != 0) return 0;
     return load_policy_file(path, 1);
 }
 
-/* --- escaneo de capacidades ----------------------------------------------- */
+/* --- capability scan ----------------------------------------------------- */
 
 static int default_path_exists(const char *path)
 {
-    long fd = savanxp_open_mode(path, SAVANXP_OPEN_READ);
+    struct shell_io_info info;
 
-    if (fd < 0)
-    {
-        return 0;
-    }
-    (void)savanxp_close((int)fd);
-    return 1;
+    return shell_io_query(path, &info) == 0;
 }
 
-/* Lee las extensiones que declara un binario y las registra. */
+/* Reads the extensions a binary declares and registers them. */
 static int scan_program(const char *path, void *meta_buffer, size_t meta_capacity)
 {
     struct sxe_meta meta;
@@ -341,47 +322,52 @@ static int scan_program(const char *path, void *meta_buffer, size_t meta_capacit
     return added;
 }
 
+struct scan_context
+{
+    const char *directory;
+    file_assoc_path_exists_fn exists;
+    void *meta_buffer;
+    size_t meta_capacity;
+    int added;
+};
+
+static void scan_entry(const char *name, void *opaque)
+{
+    struct scan_context *context = (struct scan_context *)opaque;
+    char full_path[FILE_ASSOC_PATH_CAPACITY];
+    int written;
+
+    if (name[0] == '.')
+    {
+        return;
+    }
+    written = snprintf(full_path, sizeof(full_path), "%s/%s", context->directory, name);
+    /* A truncated path would point at ANOTHER file, not the one meant: it is
+     * dropped instead of opened. */
+    if (written < 0 || (size_t)written >= sizeof(full_path))
+    {
+        return;
+    }
+    if (context->exists != 0 && !context->exists(full_path))
+    {
+        return;
+    }
+    g_last_scan_examined += 1;
+    context->added += scan_program(full_path, context->meta_buffer, context->meta_capacity);
+}
+
 static int scan_directory(const char *directory, file_assoc_path_exists_fn exists, void *meta_buffer, size_t meta_capacity)
 {
-    char full_path[FILE_ASSOC_PATH_CAPACITY];
-    DIR *handle = opendir(directory);
-    struct dirent *entry = 0;
-    int added = 0;
+    struct scan_context context = {directory, exists, meta_buffer, meta_capacity, 0};
 
-    if (handle == 0)
-    {
-        return 0;
-    }
-    while ((entry = readdir(handle)) != 0)
-    {
-        if (entry->d_name[0] == '.')
-        {
-            continue;
-        }
-        {
-            int written = snprintf(full_path, sizeof(full_path), "%s/%s", directory, entry->d_name);
-            /* Un path truncado apuntaria a OTRO archivo, no al que se quiso:
-             * se descarta en vez de abrirlo. */
-            if (written < 0 || (size_t)written >= sizeof(full_path))
-            {
-                continue;
-            }
-        }
-        if (exists != 0 && !exists(full_path))
-        {
-            continue;
-        }
-        g_last_scan_examined += 1;
-        added += scan_program(full_path, meta_buffer, meta_capacity);
-    }
-    closedir(handle);
-    return added;
+    (void)shell_io_list(directory, scan_entry, &context);
+    return context.added;
 }
 
 int file_assoc_scan_programs(file_assoc_path_exists_fn exists)
 {
-    /* Estatico y no en el stack, igual que el resto de los scratch de userland:
-     * son 4 KiB reusados por cada binario del escaneo. */
+    /* Static and not on the stack, like the rest of userland's scratch
+     * buffers: 4 KiB reused for every binary of the scan. */
     _Alignas(4) static uint8_t meta_buffer[SXE_META_MAX_BYTES];
     int added = 0;
 
@@ -408,7 +394,7 @@ int file_assoc_load(void)
     return g_entry_count;
 }
 
-/* --- consulta ------------------------------------------------------------- */
+/* --- lookup -------------------------------------------------------------- */
 
 const char *file_assoc_program_for_file(const char *file_path)
 {
@@ -468,58 +454,58 @@ static void selftest_extension_of(void)
     char extension[FILE_ASSOC_EXT_CAPACITY];
 
     expect(file_assoc_extension_of("/notas.txt", extension, sizeof(extension)) != 0 &&
-        strcmp(extension, ".txt") == 0, "extension simple");
-    /* Mayusculas normalizadas: un .TXT tiene que resolver como un .txt. */
+        strcmp(extension, ".txt") == 0, "simple extension");
+    /* Upper case normalised: a .TXT has to resolve as a .txt. */
     expect(file_assoc_extension_of("/NOTAS.TXT", extension, sizeof(extension)) != 0 &&
-        strcmp(extension, ".txt") == 0, "extension en mayusculas");
-    /* Solo cuenta el ultimo componente. */
+        strcmp(extension, ".txt") == 0, "upper-case extension");
+    /* Only the last component counts. */
     expect(file_assoc_extension_of("/v1.2/README", extension, sizeof(extension)) == 0,
-        "punto en un directorio no es extension");
+        "a dot in a directory is no extension");
     expect(file_assoc_extension_of("/bin/progman", extension, sizeof(extension)) == 0,
-        "binario sin extension");
+        "binary without an extension");
     expect(file_assoc_extension_of("/archivo.", extension, sizeof(extension)) == 0,
-        "punto final sin extension");
+        "trailing dot is no extension");
     expect(file_assoc_extension_of("/.oculto", extension, sizeof(extension)) != 0 &&
-        strcmp(extension, ".oculto") == 0, "archivo que empieza con punto");
-    expect(file_assoc_extension_of(0, extension, sizeof(extension)) == 0, "path nulo");
-    /* Extension mas larga que la capacidad: se trunca, no desborda. */
+        strcmp(extension, ".oculto") == 0, "file starting with a dot");
+    expect(file_assoc_extension_of(0, extension, sizeof(extension)) == 0, "null path");
+    /* An extension longer than the capacity is truncated, not overflowed. */
     expect(file_assoc_extension_of("/x.extensionmuylargaquenoentra", extension, sizeof(extension)) != 0,
-        "extension larga truncada");
-    expect(strlen(extension) == sizeof(extension) - 1u, "truncado a la capacidad");
+        "long extension truncated");
+    expect(strlen(extension) == sizeof(extension) - 1u, "truncated to the capacity");
 }
 
 static void selftest_policy(void)
 {
     static const char kText[] =
-        "# comentario\n"
-        "; otro comentario\n"
+        "# comment\n"
+        "; another comment\n"
         ".txt=/bin/notepad\n"
         "  .md  =  /bin/notepad  \n"
-        "cfg=/bin/notepad\n"          /* sin punto: se acepta igual */
+        "cfg=/bin/notepad\n"          /* no dot: accepted all the same */
         ".BAT=/system/console.sxe\n"     /* upper case: normalised */
-        "sin_igual\n"                 /* linea invalida: se ignora */
-        ".rel=relativo/programa\n"    /* path relativo: se descarta */
-        ".vacio=\n";                  /* sin programa: se descarta */
+        "no_equals\n"                 /* invalid line: ignored */
+        ".rel=relative/program\n"     /* relative path: dropped */
+        ".empty=\n";                  /* no program: dropped */
 
-    expect(file_assoc_parse_policy(kText, sizeof(kText) - 1) == 4, "politica: 4 entradas validas");
-    expect(file_assoc_count() == 4, "politica: cuenta");
+    expect(file_assoc_parse_policy(kText, sizeof(kText) - 1) == 4, "policy: 4 valid entries");
+    expect(file_assoc_count() == 4, "policy: count");
     expect(file_assoc_program_for_file("/a.txt") != 0 &&
-        strcmp(file_assoc_program_for_file("/a.txt"), "/bin/notepad") == 0, "politica: .txt");
+        strcmp(file_assoc_program_for_file("/a.txt"), "/bin/notepad") == 0, "policy: .txt");
     expect(file_assoc_program_for_file("/a.md") != 0 &&
-        strcmp(file_assoc_program_for_file("/a.md"), "/bin/notepad") == 0, "politica: espacios recortados");
+        strcmp(file_assoc_program_for_file("/a.md"), "/bin/notepad") == 0, "policy: spaces trimmed");
     expect(file_assoc_program_for_file("/a.cfg") != 0, "policy: extension without a dot");
     expect(file_assoc_program_for_file("/a.bat") != 0 &&
         strcmp(file_assoc_program_for_file("/a.bat"), "/system/console.sxe") == 0, "policy: upper case is normalised");
-    expect(file_assoc_program_for_file("/a.rel") == 0, "politica: descarta path relativo");
-    expect(file_assoc_program_for_file("/a.vacio") == 0, "politica: descarta programa vacio");
+    expect(file_assoc_program_for_file("/a.rel") == 0, "policy: drops a relative path");
+    expect(file_assoc_program_for_file("/a.empty") == 0, "policy: drops an empty program");
     expect(file_assoc_program_for_file("/a.desconocida") == 0, "policy: undeclared extension");
-    expect(file_assoc_program_for_file("/bin/progman") == 0, "politica: archivo sin extension");
+    expect(file_assoc_program_for_file("/bin/progman") == 0, "policy: file without an extension");
 
-    /* Fuera de rango devuelve 0 en vez de basura. */
-    expect(file_assoc_at(-1) == 0 && file_assoc_at(file_assoc_count()) == 0, "politica: bounds");
+    /* Out of range returns 0 instead of garbage. */
+    expect(file_assoc_at(-1) == 0 && file_assoc_at(file_assoc_count()) == 0, "policy: bounds");
 
-    /* Texto vacio deja el registro vacio, no lo rompe. */
-    expect(file_assoc_parse_policy("", 0) == 0 && file_assoc_count() == 0, "politica vacia");
+    /* Empty text leaves the registry empty, not broken. */
+    expect(file_assoc_parse_policy("", 0) == 0 && file_assoc_count() == 0, "empty policy");
 }
 
 static void selftest_precedence(void)
@@ -528,17 +514,17 @@ static void selftest_precedence(void)
     const struct file_assoc_entry *entry = 0;
 
     /*
-     * La politica gana sobre lo que declaren los binarios. notepad declara
-     * .txt en su manifiesto, asi que sin este orden el escaneo se lo llevaria.
+     * Policy wins over what the binaries declare. notepad declares .txt in
+     * its manifest, so without this order the scan would take it.
      */
-    expect(file_assoc_parse_policy(kText, sizeof(kText) - 1) == 1, "precedencia: fixture");
+    expect(file_assoc_parse_policy(kText, sizeof(kText) - 1) == 1, "precedence: fixture");
     (void)file_assoc_scan_programs(0);
     expect(file_assoc_program_for_file("/a.txt") != 0 &&
         strcmp(file_assoc_program_for_file("/a.txt"), "/system/console.sxe") == 0,
-        "precedencia: la politica le gana al binario");
+        "precedence: policy beats the binary");
 
     entry = file_assoc_at(0);
-    expect(entry != 0 && entry->from_policy == 1, "precedencia: marcada como politica");
+    expect(entry != 0 && entry->from_policy == 1, "precedence: marked as policy");
 }
 
 static int deny_all(const char *path)
@@ -552,56 +538,55 @@ static void selftest_scan(void)
     const char *program = 0;
 
     /*
-     * Escaneo contra los binarios REALES de la imagen. notepad declara
-     * ext_open=.txt,.ini,.cfg,.md en su manifiesto: si el estampado o el
-     * lector se rompieran, esto se cae. Es el unico check que ata la
-     * declaracion del .sxres con la resolucion en vivo.
+     * A scan of the image's REAL binaries. notepad declares
+     * ext_open=.txt,.ini,.cfg,.md in its manifest: if the stamping or the
+     * reader broke, this fails. It is the only check tying the .sxres
+     * declaration to the live resolution.
      */
-    expect(file_assoc_parse_policy("", 0) == 0, "escaneo: sin politica previa");
-    expect(file_assoc_scan_programs(0) > 0, "escaneo: alguna extension declarada");
+    expect(file_assoc_parse_policy("", 0) == 0, "scan: no earlier policy");
+    expect(file_assoc_scan_programs(0) > 0, "scan: some extension declared");
 
-    program = file_assoc_program_for_file("/notas.txt");
-    expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "escaneo: .txt lo toma notepad");
+    program = file_assoc_program_for_file("/notes.txt");
+    expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "scan: notepad takes .txt");
     program = file_assoc_program_for_file("/config.ini");
-    expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "escaneo: .ini lo toma notepad");
-    program = file_assoc_program_for_file("/algo.md");
-    expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "escaneo: .md lo toma notepad");
+    expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "scan: notepad takes .ini");
+    program = file_assoc_program_for_file("/notes.md");
+    expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "scan: notepad takes .md");
 
     /* Media: the association has to point at the LAUNCHER, not the backend.
-
      * A mediaplayer-ffmpeg belongs to the port and may be absent;
      * /bin/mediaplayer is always there and is the one that delegates or
      * explains. It is what makes opening an .avi on an image without FFmpeg
      * show the notice instead of failing, and the only thing tying that to
      * reality is this line: the capabilities come from the stamped .sxres, so
      * if the stamping breaks, this fails. */
-    program = file_assoc_program_for_file("/cancion.mp3");
-    expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "escaneo: .mp3 lo toma el lanzador");
-    program = file_assoc_program_for_file("/pelicula.avi");
-    expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "escaneo: .avi lo toma el lanzador");
+    program = file_assoc_program_for_file("/song.mp3");
+    expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "scan: the launcher takes .mp3");
+    program = file_assoc_program_for_file("/movie.avi");
+    expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "scan: the launcher takes .avi");
     program = file_assoc_program_for_file("/audio.flac");
-    expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "escaneo: .flac lo toma el lanzador");
+    expect(program != 0 && strcmp(program, "/bin/mediaplayer") == 0, "scan: the launcher takes .flac");
 
-    /* Una extension que nadie declara sigue sin duenio. */
-    expect(file_assoc_program_for_file("/algo.xyz") == 0, "scan: extension nobody owns");
+    /* An extension nobody declares stays without an owner. */
+    expect(file_assoc_program_for_file("/thing.xyz") == 0, "scan: extension nobody owns");
 
-    /* El escaneo tiene que ser idempotente: correrlo dos veces no puede
-     * duplicar entradas ni cambiar a quien resuelve. */
+    /* The scan has to be idempotent: running it twice can neither duplicate
+     * entries nor change who resolves. */
     {
         int before = file_assoc_count();
 
         (void)file_assoc_scan_programs(0);
-        expect(file_assoc_count() == before, "escaneo: idempotente");
-        program = file_assoc_program_for_file("/notas.txt");
-        expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "escaneo: idempotente conserva");
+        expect(file_assoc_count() == before, "scan: idempotent");
+        program = file_assoc_program_for_file("/notes.txt");
+        expect(program != 0 && strcmp(program, "/bin/notepad") == 0, "scan: idempotent keeps the owner");
     }
 
-    /* Con un predicado que niega todo, no se abre ningun binario y no queda
-     * ninguna asociacion: prueba que la inyeccion corta de verdad el escaneo. */
-    expect(file_assoc_parse_policy("", 0) == 0, "escaneo: reset");
-    expect(file_assoc_scan_programs(deny_all) == 0, "escaneo: predicado que niega todo");
-    expect(file_assoc_count() == 0, "escaneo: sin entradas con predicado falso");
-    expect(file_assoc_scan_examined() == 0, "escaneo: no abrio ningun binario");
+    /* With a predicate that denies everything, no binary is opened and no
+     * association is left: it proves the injection really cuts the scan. */
+    expect(file_assoc_parse_policy("", 0) == 0, "scan: reset");
+    expect(file_assoc_scan_programs(deny_all) == 0, "scan: predicate that denies everything");
+    expect(file_assoc_count() == 0, "scan: no entries with a false predicate");
+    expect(file_assoc_scan_examined() == 0, "scan: opened no binary");
 }
 
 static void selftest_actions(void)
