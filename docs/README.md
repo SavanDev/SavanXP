@@ -235,7 +235,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 - [`GRAPHICS_PERF.md`](desktop/GRAPHICS_PERF.md) — graphics measurements and the
   interpretation of the performance tables.
 - [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the
-  rule that every UI font is 1-bit, and how to change a face.
+  rule that every UI font is 1-bit, the faces from files, choosing them
+  (`appearance.cfg`) and how a change reaches running programs, and how to
+  change a shipped face.
 - [`FONT_LIBRARY.md`](desktop/FONT_LIBRARY.md) — `libsxfont`, scalable TrueType
   fonts at run time over FreeType: the API, the v35 hinting and gasp smoothing,
   metrics as Windows reports them, the glyph cache, face matching and
@@ -250,8 +252,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   `sxgui_context_menu_open`).
 - [`DISPLAY_PROPERTIES.md`](desktop/DISPLAY_PROPERTIES.md) — Display Properties:
   the wallpaper configuration (`desktop.cfg`) and how the desktop follows it,
-  the shipped wallpapers, and changing the resolution while the session runs
-  (the session's largest mode, the layout after a change, `display.cfg`).
+  the shipped wallpapers, the Appearance tab (the interface's fonts and
+  Effects), and changing the resolution while the session runs (the
+  session's largest mode, the layout after a change, `display.cfg`).
 - [`IMAGE_VIEWER.md`](desktop/IMAGE_VIEWER.md) — the SUN Image Viewer: BMP/PNG/JPEG,
   fit and zoom, scrolling and folder navigation, fullscreen, decode limits and tests.
 - [`FILES.md`](desktop/FILES.md) — Files, the file browser: My Computer (the

@@ -688,6 +688,19 @@ static inline long sxnwm_set_fullscreen(struct sxnwm_client* owner, int enabled)
         0, enabled != 0, 0, 0, SAVANXP_WM_WINDOW_ROLE_NORMAL, 0, 0, 0, 2000);
 }
 
+/* The user changed a setting every window draws with (SAVANXP_WM_SETTINGS_*),
+ * already saved: windowd applies it to its own drawing and tells every
+ * process with a window, this one included, with a SAVANXP_WM_EVENT_SETTINGS
+ * record. From a main window (Display Properties' Appearance tab;
+ * docs/desktop/DISPLAY_PROPERTIES.md#appearance). */
+static inline long sxnwm_settings_changed(struct sxnwm_client* owner, uint32_t changed) {
+    if (owner == 0 || owner->header == 0 || changed == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return sxnwm_window_request_ex(owner, SAVANXP_WM_WINDOW_ACTION_SETTINGS_CHANGED, 0, changed, 0, 0,
+        SAVANXP_WM_WINDOW_ROLE_NORMAL, 0u, 0, 0, 2000);
+}
+
 /* windowd may relay the whole desktop before it answers a new display mode. */
 #define SXNWM_DISPLAY_MODE_WAIT_MS 3000l
 

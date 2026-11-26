@@ -108,6 +108,13 @@ struct sxngui_app {
     void (*on_drag_leave)(struct sxngui_app *app);
     void (*on_drop)(struct sxngui_app *app, int x, int y, uint32_t effect);
     void (*on_drag_end)(struct sxngui_app *app, uint32_t effect);
+
+    /* The person changed a setting every window draws with
+     * (SAVANXP_WM_SETTINGS_*). The frame has already applied it (new faces
+     * in, an open context menu closed) and calls on_resize, so a layout
+     * measured from the text is measured again, then repaints; this hears
+     * which settings, for a program that shows them. NULL to skip. */
+    void (*on_settings)(struct sxngui_app *app, uint32_t changed);
 };
 
 /* A modeless window (docs/desktop/OWNED_WINDOWS.md#modeless-windows):
@@ -149,6 +156,14 @@ unsigned long sxngui_uptime_ms(void);
  * not map libsxfont. sxngui_app_init calls it; a SUN program that draws
  * without the frame (windowd) calls it before it draws. */
 int sxngui_load_interface_faces(void);
+/* The person picked other faces (SAVANXP_WM_SETTINGS_FONTS): reads
+ * appearance.cfg again and installs its faces in place of the ones loaded.
+ * The frame calls it on the WM's settings record and repaints; a program
+ * without the frame calls it itself. How many came from files. */
+int sxngui_reload_interface_faces(void);
+/* The frame's file reader, for sxfont/ui.h's calls: the whole file from
+ * malloc, or NULL. */
+void *sxngui_read_whole_file(const char *path, size_t *size);
 
 /* Connect to windowd, publish `presentation` (the program's compiled-in
  * resources, <program>.sunres.h), load the interface faces and bind the

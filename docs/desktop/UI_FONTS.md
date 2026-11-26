@@ -110,9 +110,11 @@ that draw the interface read them when they start:
   tens of thousands of glyphs, and the terminal's grid needs its 8x16 cell.
 
 **Who loads them.** `sxfont_ui_load` (`include/sxfont/ui.h`, unit
-`system/font/sxfont_ui.c` in the runtime's `gui` group) opens each file at
-the table's size with `SX_FONT_FORCE_MONO` and installs it in its slot; the
-first call does the work and later ones answer the same. Each subsystem
+`system/font/sxfont_ui.c` in the runtime's `gui` group) reads the person's
+choice ([Choosing the faces](#choosing-the-faces)), opens each file at its
+size with `SX_FONT_FORCE_MONO` and installs it in its slot; the first call
+does the work and later ones answer the same. With no choice saved, the
+files are the tables' faces at the tables' sizes. Each subsystem
 reads the files its own way: SUN's frame calls it from `sxngui_app_init`
 (`sxngui_load_interface_faces`), POSIX's from `sxgui_app_init`
 (`sxgui_load_interface_faces`), and the two programs that draw without a
@@ -143,6 +145,66 @@ as the tables do.
 the two files (about 135 KB) and two strikes, whose glyph caches start at
 16 KB and grow as glyphs are drawn ([FONT_LIBRARY.md](FONT_LIBRARY.md#the-glyph-cache)).
 
+## Choosing the faces
+
+The person picks the body face (menus, dialogs, labels, the text programs
+draw in it) and the caption face, each with a size, on Display Properties'
+Appearance tab ([DISPLAY_PROPERTIES.md](DISPLAY_PROPERTIES.md#appearance)).
+The choice is `appearance.cfg` in the profile's Settings folder:
+
+```
+body_font=/system/fonts/MSSansSerif.ttf
+body_size=13
+caption_font=/system/fonts/RetroSans.ttf
+caption_size=17
+```
+
+- **Any TrueType file in `/system/fonts`**, the Liberation faces included.
+  A path that does not open (a file removed since) falls back to the
+  default face at its default size, and that to the table.
+- **Sizes are pixels per em, 10 to 16 for the body and 10 to 20 for
+  captions.** Not points: the MS Sans Serif file's em is its whole 13-pixel
+  cell, so 8 pt (11 pixels per em at 96 DPI) would draw it smaller than the
+  face it is. The limits are the lines that still fit the toolkit's
+  24-pixel fields and `windowd`'s 24-pixel title bar, whose heights do not
+  follow the text.
+- **Still 1-bit.** Every face is opened with `SX_FONT_FORCE_MONO`, whatever
+  its gasp table asks, so an outline face draws hard pixels like the
+  defaults ([the rule](#the-rule-every-ui-face-is-1-bit)).
+- **The monospace face is not offered**: the terminal's grid needs
+  UniFont's 8x16 cell.
+- **Who reads it.** Each program reads its own profile's file
+  (`sxn_settings_path`, `savanxp_settings_path`); a process with no profile
+  (the system's `/`), which is `windowd`, reads the session user's,
+  `/users/user/Settings/appearance.cfg`, as `compositord` reads
+  `effects.cfg`.
+
+**A change reaches running programs.** Display Properties saves the file and
+asks `windowd` (`sxnwm_settings_changed`, POSIX `gfx_settings_changed`,
+action `SAVANXP_WM_WINDOW_ACTION_SETTINGS_CHANGED`). `windowd` reloads its
+own faces for captions, logs `windowd: interface faces changed, N from
+files`, repaints the screen and sends a `SAVANXP_WM_EVENT_SETTINGS` record
+to every process with a window. Both frames handle it the same way
+(`sxngui_reload_interface_faces`, `sxgui_reload_interface_faces`): the new
+faces go in, an open context menu closes because it was measured with the
+old ones, `on_resize` runs so a layout measured from the text is measured
+again, `on_settings` hears it, and the windows repaint. The desktop, which
+has its own loop, does the same for the taskbar, the icons and its menus.
+`sxfont_ui_reload` installs the new faces before it closes the old ones, so
+the slots never point at a closed strike.
+
+**What does not follow.** Static programs keep the tables, as before.
+Layouts placed once at start-up in fixed pixels (most dialogs) keep their
+places and draw the new text in them; a face much larger than the default
+can crowd a fixed-size control. Win32 programs keep drawing from the tables
+until `gdi32` reaches `libsxfont` (the WordPad roadmap's WP6).
+
+`sxfont-ui-test` holds the file's format, the fallback, the 1-bit rule for
+an outline face and the reload; `appearance-smoke` changes the body face
+with Notepad open and checks the new face reaches Notepad, Display
+Properties itself and a program started afterwards, and that the default
+comes back.
+
 ## Changing a face
 
 1. Put the source in `assets/desktop/fonts/` with its license, and add it to
@@ -151,7 +213,7 @@ the two files (about 135 KB) and two strikes, whose glyph caches start at
    size and keep the one with no grey pixels).
 3. Bake it with the command in `assets/README.md`, keeping the table's prefix,
    and make the file the runtimes load: the TTF itself, or `genfont.py
-   sfdttf` for a bitmap strike. Update `kInterfaceFaces` in
+   sfdttf` for a bitmap strike. Update `kItems` in
    `system/font/sxfont_ui.c` and the staging in `CMakeLists.txt` if the file
    or the size changes.
 4. Run `./build.sh test` (the 1-bit check, and `ui-face-files-test`, which

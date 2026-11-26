@@ -1046,7 +1046,12 @@ static void gfx_discard_stashes(uint32_t window_id) {
     g_gfx_drag_stash[window_id].count = 0;
 }
 
-/* Lee un registro entero sin bloquear: 1 leido, 0 nada, negativo error. */
+/* The SAVANXP_WM_EVENT_SETTINGS masks read since gfx_take_settings_changed
+ * last answered. */
+static uint32_t g_gfx_settings_changed;
+
+/* Reads one whole record without blocking: 1 read, 0 nothing, negative an
+ * error. */
 static int gfx_read_wm_event(int fd, struct savanxp_wm_event* record) {
     struct savanxp_pollfd pollfd;
     long result = 0;
@@ -1093,6 +1098,8 @@ static int gfx_drain_for(int fd, uint32_t window_id, uint32_t kind, struct savan
             gfx_stash_motion(&record->payload.motion);
         } else if (record->kind == SAVANXP_WM_EVENT_DRAG) {
             gfx_stash_drag(record->window_id, &record->payload.drag);
+        } else if (record->kind == SAVANXP_WM_EVENT_SETTINGS) {
+            g_gfx_settings_changed |= record->payload.settings.changed;
         }
     }
     return 0;
@@ -1557,6 +1564,27 @@ long gfx_set_fullscreen(const struct savanxp_gfx_context* context, int enabled) 
     }
     return gfx_window_request(context, SAVANXP_WM_WINDOW_ACTION_SET_FULLSCREEN,
                               0, enabled != 0, 0, 0, 0, 2000);
+}
+
+long gfx_settings_changed(const struct savanxp_gfx_context* context, uint32_t changed) {
+    if (context == 0 || context->header == 0 || context->window_id != 0 || changed == 0) {
+        return -SAVANXP_EINVAL;
+    }
+    return gfx_window_request(context, SAVANXP_WM_WINDOW_ACTION_SETTINGS_CHANGED, 0, changed, 0, 0, 0, 2000);
+}
+
+uint32_t gfx_take_settings_changed(void) {
+    uint32_t changed;
+
+    if (g_gfx_wm.events_fd >= 0) {
+        struct savanxp_wm_event record;
+        /* Nothing asks for this kind by name: a drain files every record,
+         * and settings land in g_gfx_settings_changed on the way. */
+        (void)gfx_drain_for(g_gfx_wm.events_fd, 0xffffffffu, 0, &record);
+    }
+    changed = g_gfx_settings_changed;
+    g_gfx_settings_changed = 0;
+    return changed;
 }
 
 long gfx_set_pointer_capture(const struct savanxp_gfx_context* context, int enabled) {

@@ -3,14 +3,16 @@
  *
  * The desktop's look, in the shape of the period's Display control panel: a
  * Desktop tab that picks the wallpaper, its position and the colour behind it,
- * and a Settings tab with the screen's resolution and colour quality. Both
- * tabs show the result on a small monitor before anything is applied. The
- * Settings tab also opens Effects to configure window and pointer shadows.
+ * an Appearance tab with the interface's fonts and the visual effects, and a
+ * Settings tab with the screen's resolution and colour quality. Every tab
+ * shows the result before anything is applied.
  *
  * This program never draws the real background. It writes the configuration
  * (write_wallpaper) and the desktop, which re-reads it, repaints on its own.
  * The resolution it asks windowd for (sxnwm_set_display_mode), and saves only
- * once the user keeps it. How the pieces fit is in
+ * once the user keeps it. The fonts it saves in appearance.cfg and announces
+ * through windowd (sxnwm_settings_changed), and every window takes them. How
+ * the pieces fit is in
  * docs/desktop/DISPLAY_PROPERTIES.md.
  *
  * A SUN program (docs/userland/SUN.md). The format of desktop.cfg, the image
@@ -20,11 +22,15 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "abi/savanxp_abi.h"
+#include "savanxp/font.h"
+#include "sxfont/ui.h"
 #include "sxgfx/gfx2d.h"
 #include "sxgfx/pixels.h"
+#include "sxgfx/sxchrome.h"
 #include "sxgfx/sxgui.h"
 #include "sxgfx/wallpaper.h"
 #include "sxn/sxn.h"
@@ -232,9 +238,11 @@ static int display_image_load(struct desktop_wallpaper_image *image, const char 
 #define DISPLAY_TILE_THRESHOLD 256
 
 #define DISPLAY_TAB_DESKTOP 0
-#define DISPLAY_TAB_SETTINGS 1
+#define DISPLAY_TAB_APPEARANCE 1
+#define DISPLAY_TAB_SETTINGS 2
 
-static const char *const k_tab_labels[] = {"Desktop", "Settings"};
+/* The period's order: Appearance between Desktop and Settings. */
+static const char *const k_tab_labels[] = {"Desktop", "Appearance", "Settings"};
 #define DISPLAY_TAB_COUNT ((int)(sizeof(k_tab_labels) / sizeof(k_tab_labels[0])))
 
 enum display_widget
@@ -248,6 +256,14 @@ enum display_widget
     W_POSITION,
     W_COLOR_LABEL,
     W_COLOR,
+    /* Appearance */
+    W_ITEM_LABEL,
+    W_ITEM,
+    W_FONT_LABEL,
+    W_FONT,
+    W_SIZE_LABEL,
+    W_SIZE,
+    W_EFFECTS,
     /* Settings */
     W_DISPLAY_LABEL,
     W_DISPLAY_NAME,
@@ -259,7 +275,6 @@ enum display_widget
     W_QUALITY_GROUP,
     W_QUALITY,
     W_RESOLUTION_NOTE,
-    W_EFFECTS,
     /* Under the sheet */
     W_OK,
     W_CANCEL,
@@ -271,8 +286,10 @@ static struct sxgui_widget g_widgets[W_COUNT];
 
 #define DISPLAY_FIRST_DESKTOP_WIDGET W_BACKGROUND_LABEL
 #define DISPLAY_LAST_DESKTOP_WIDGET W_COLOR
+#define DISPLAY_FIRST_APPEARANCE_WIDGET W_ITEM_LABEL
+#define DISPLAY_LAST_APPEARANCE_WIDGET W_EFFECTS
 #define DISPLAY_FIRST_SETTINGS_WIDGET W_DISPLAY_LABEL
-#define DISPLAY_LAST_SETTINGS_WIDGET W_EFFECTS
+#define DISPLAY_LAST_SETTINGS_WIDGET W_RESOLUTION_NOTE
 
 /* ---- state ---------------------------------------------------------------- */
 
@@ -690,6 +707,216 @@ static void update_resolution_text(void)
 
 static const char *const k_quality_names[] = {"Highest (32 bit)"};
 
+/* ---- the interface's fonts ------------------------------------------------
+ *
+ * appearance.cfg (sxfont/ui.h): a face and a size for the window text and
+ * for title bars. The faces offered are the
+ * TrueType files in /system/fonts, named as their files name themselves. */
+
+#define DISPLAY_FONT_DIRECTORY "/system/fonts"
+#define DISPLAY_MAX_FONTS 32
+#define DISPLAY_FONT_NAME_MAX (SX_FONT_NAME_MAX * 2)
+
+static const char *const k_item_names[SXFONT_UI_ITEMS] = {"Menus and window text", "Title bars"};
+
+struct font_entry
+{
+    char path[SXFONT_UI_PATH_MAX];
+    char name[DISPLAY_FONT_NAME_MAX];
+};
+
+static struct font_entry g_fonts[DISPLAY_MAX_FONTS];
+static const char *g_font_names[DISPLAY_MAX_FONTS];
+static int g_font_count = 0;
+static int g_fonts_scanned = 0;
+
+/* "10" .. "20": the sizes the item on show may take. */
+static char g_size_text[SXFONT_UI_CAPTION_MAX_SIZE + 1][4];
+static const char *g_size_names[SXFONT_UI_CAPTION_MAX_SIZE + 1];
+
+static struct sxfont_ui_config g_appearance_saved;
+static struct sxfont_ui_config g_appearance_pending;
+/* The pending configuration's faces, for the preview; NULL without
+ * libsxfont, and then the preview draws with the faces on screen. */
+static struct sxfont_ui_faces *g_appearance_faces;
+static int g_appearance_faces_stale = 1;
+
+static int find_font(const char *path)
+{
+    int index;
+
+    for (index = 0; index < g_font_count; ++index)
+    {
+        if (strcmp(g_fonts[index].path, path) == 0)
+        {
+            return index;
+        }
+    }
+    return -1;
+}
+
+/* The family, and the style unless it is the regular one. */
+static void font_name(struct sx_font_engine *engine, const char *path, char *name, size_t capacity)
+{
+    size_t size = 0;
+    void *data = sxngui_read_whole_file(path, &size);
+    struct sx_font_face *face = 0;
+    struct sx_font_face_info info;
+    const char *base = strrchr(path, '/');
+
+    snprintf(name, capacity, "%s", base != 0 ? base + 1 : path);
+    if (data == 0)
+    {
+        return;
+    }
+    if (engine != 0 && sx_font_face_open(engine, data, size, 0, &face) == SX_FONT_OK &&
+        sx_font_face_info(face, &info) == SX_FONT_OK && info.family[0] != '\0')
+    {
+        if (info.style[0] == '\0' || strcmp(info.style, "Regular") == 0)
+        {
+            snprintf(name, capacity, "%s", info.family);
+        }
+        else
+        {
+            snprintf(name, capacity, "%s %s", info.family, info.style);
+        }
+    }
+    if (face != 0)
+    {
+        sx_font_face_close(face);
+    }
+    free(data);
+}
+
+static int add_font(struct sx_font_engine *engine, const char *path)
+{
+    int index = find_font(path);
+
+    if (index >= 0)
+    {
+        return index;
+    }
+    if (g_font_count == DISPLAY_MAX_FONTS || path[0] != '/' || strlen(path) >= SXFONT_UI_PATH_MAX)
+    {
+        return -1;
+    }
+    index = g_font_count++;
+    copy_text(g_fonts[index].path, sizeof(g_fonts[index].path), path);
+    font_name(engine, path, g_fonts[index].name, sizeof(g_fonts[index].name));
+    return index;
+}
+
+/* The files in /system/fonts, by name, and the ones the configuration names
+ * from elsewhere. Read the first time the Appearance tab shows: opening a
+ * dozen faces costs a moment the other tabs need not wait for. */
+static void scan_fonts(void)
+{
+    struct sx_font_engine *engine = 0;
+    long directory;
+    int index;
+
+    if (g_fonts_scanned)
+    {
+        return;
+    }
+    g_fonts_scanned = 1;
+    (void)sx_font_engine_create(&engine);
+    directory = sxn_open_directory(DISPLAY_FONT_DIRECTORY);
+    if (directory >= 0)
+    {
+        struct sxn_directory_entry entry;
+
+        while (sxn_read_directory(directory, &entry) > 0)
+        {
+            size_t length = strlen(entry.name);
+            char path[SXFONT_UI_PATH_MAX];
+
+            if (length > 4 && lower_char(entry.name[length - 4]) == '.' && lower_char(entry.name[length - 3]) == 't' &&
+                lower_char(entry.name[length - 2]) == 't' && lower_char(entry.name[length - 1]) == 'f')
+            {
+                snprintf(path, sizeof(path), "%s/%s", DISPLAY_FONT_DIRECTORY, entry.name);
+                (void)add_font(engine, path);
+            }
+        }
+        (void)sxn_close(directory);
+    }
+    /* By name, as a font list is. */
+    for (index = 1; index < g_font_count; ++index)
+    {
+        struct font_entry moving = g_fonts[index];
+        int at = index;
+
+        while (at > 0 && compare_names(g_fonts[at - 1].name, moving.name) > 0)
+        {
+            g_fonts[at] = g_fonts[at - 1];
+            --at;
+        }
+        g_fonts[at] = moving;
+    }
+    for (index = 0; index < SXFONT_UI_ITEMS; ++index)
+    {
+        (void)add_font(engine, g_appearance_pending.items[index].path);
+    }
+    sx_font_engine_destroy(engine);
+    for (index = 0; index < g_font_count; ++index)
+    {
+        g_font_names[index] = g_fonts[index].name;
+    }
+    g_widgets[W_FONT].items = g_font_names;
+    g_widgets[W_FONT].item_count = g_font_count;
+}
+
+/* The item on show's font and size in the two lists. */
+static void sync_appearance_controls(void)
+{
+    int item = g_widgets[W_ITEM].value;
+    unsigned min_size;
+    unsigned max_size;
+    unsigned size;
+    int count = 0;
+
+    if (item < 0 || item >= SXFONT_UI_ITEMS)
+    {
+        item = 0;
+    }
+    min_size = sxfont_ui_min_size(item);
+    max_size = sxfont_ui_max_size(item);
+    for (size = min_size; size <= max_size; ++size)
+    {
+        snprintf(g_size_text[count], sizeof(g_size_text[count]), "%u", size);
+        g_size_names[count] = g_size_text[count];
+        ++count;
+    }
+    g_widgets[W_SIZE].items = g_size_names;
+    g_widgets[W_SIZE].item_count = count;
+    g_widgets[W_SIZE].value = (int)(g_appearance_pending.items[item].size - min_size);
+    g_widgets[W_FONT].value = find_font(g_appearance_pending.items[item].path);
+}
+
+/* The preview's faces follow the pending configuration. */
+static void refresh_appearance_faces(void)
+{
+    if (!g_appearance_faces_stale)
+    {
+        return;
+    }
+    g_appearance_faces_stale = 0;
+    sxfont_ui_faces_close(g_appearance_faces);
+    g_appearance_faces = sxfont_ui_faces_open(&g_appearance_pending, sxngui_read_whole_file);
+}
+
+static void read_appearance_config(struct sxfont_ui_config *config)
+{
+    char path[SXFONT_UI_PATH_MAX];
+
+    if (sxn_settings_path(SXFONT_UI_SETTINGS_NAME, 0, path, sizeof(path)) == 0)
+    {
+        sxfont_ui_read_config(config, sxngui_read_whole_file, path);
+        return;
+    }
+    sxfont_ui_default_config(config);
+}
+
 /* ---- painting ------------------------------------------------------------- */
 
 static struct sx_rect page_rect(void)
@@ -854,6 +1081,137 @@ static void paint_spectrum(struct sx_painter *painter)
     sxgui_draw_sunken_edge(painter, sx_rect_make(band.x - 1, band.y - 1, band.width + 2, band.height + 2));
 }
 
+/* ---- the Appearance preview ----------------------------------------------- */
+
+#define DISPLAY_APPEARANCE_PREVIEW_HEIGHT 176
+
+static struct sx_rect appearance_preview_rect(void)
+{
+    struct sx_rect page = page_rect();
+
+    return sx_rect_make(page.x + DISPLAY_PAGE_PAD, page.y + DISPLAY_PAGE_PAD,
+        page.width - DISPLAY_PAGE_PAD * 2, DISPLAY_APPEARANCE_PREVIEW_HEIGHT);
+}
+
+static uint32_t mix_colour(uint32_t from, uint32_t to, int step, int steps)
+{
+    int r = (int)((from >> 16) & 0xffu) + ((int)((to >> 16) & 0xffu) - (int)((from >> 16) & 0xffu)) * step / steps;
+    int g = (int)((from >> 8) & 0xffu) + ((int)((to >> 8) & 0xffu) - (int)((from >> 8) & 0xffu)) * step / steps;
+    int b = (int)(from & 0xffu) + ((int)(to & 0xffu) - (int)(from & 0xffu)) * step / steps;
+
+    return gfx_rgb((uint8_t)r, (uint8_t)g, (uint8_t)b);
+}
+
+/* The caption's height for the title face on show, as a title bar keeps
+ * room around its text. */
+static int preview_caption_height(struct sx_painter *painter)
+{
+    int previous = sx_painter_set_font(painter, SX_FONT_UI_TITLE);
+    int height = sx_painter_text_height(painter) + 4;
+
+    (void)sx_painter_set_font(painter, previous);
+    return height < 18 ? 18 : height;
+}
+
+/* A framed window with its caption, as windowd draws one; the client area
+ * it leaves is returned. */
+static struct sx_rect paint_preview_window(struct sx_painter *painter, struct sx_rect frame, const char *title, int active)
+{
+    int caption_height = preview_caption_height(painter);
+    struct sx_rect caption = sx_rect_make(frame.x + 3, frame.y + 3, frame.width - 6, caption_height);
+    uint32_t left = active ? SXCHROME_COLOR_CAPTION_ACTIVE : SXCHROME_COLOR_CAPTION_INACTIVE;
+    uint32_t right = active ? SXCHROME_COLOR_CAPTION_ACTIVE_GRADIENT : SXCHROME_COLOR_CAPTION_INACTIVE_GRADIENT;
+    int x;
+
+    sxchrome_fill_raised(painter, frame, SXCHROME_COLOR_FACE, 0);
+    for (x = 0; x < caption.width; ++x)
+    {
+        sx_painter_vline(painter, caption.x + x, caption.y, caption.height,
+            mix_colour(left, right, x, caption.width > 1 ? caption.width - 1 : 1));
+    }
+    if (sx_painter_push_clip(painter, caption))
+    {
+        int previous = sx_painter_set_font(painter, SX_FONT_UI_TITLE);
+
+        sx_painter_draw_text(painter, caption.x + 4, caption.y + (caption.height - sx_painter_text_height(painter)) / 2,
+            title, active ? SXCHROME_COLOR_CAPTION_TEXT : SXCHROME_COLOR_CAPTION_INACTIVE_TEXT);
+        (void)sx_painter_set_font(painter, previous);
+        sx_painter_pop_clip(painter);
+    }
+    return sx_rect_make(frame.x + 3, caption.y + caption.height + 1, frame.width - 6,
+        frame.height - caption_height - 7);
+}
+
+/* The period's sample: an inactive window, an active one with its menu
+ * and its text, and a message box over them, in the pending faces. */
+static void paint_appearance_preview(struct sx_painter *painter)
+{
+    struct sx_rect area = appearance_preview_rect();
+    struct sx_rect client;
+    int text_height;
+    int x;
+
+    refresh_appearance_faces();
+    if (g_appearance_faces != 0)
+    {
+        sxfont_ui_faces_install(g_appearance_faces);
+    }
+    sxgui_draw_sunken_edge(painter, area);
+    area = sx_rect_make(area.x + SXGUI_BORDER_SUNKEN, area.y + SXGUI_BORDER_SUNKEN,
+        area.width - SXGUI_BORDER_SUNKEN * 2, area.height - SXGUI_BORDER_SUNKEN * 2);
+    if (sx_painter_push_clip(painter, area))
+    {
+        text_height = sx_painter_text_height(painter);
+        sx_painter_fill_rect(painter, area, painter_color(g_pending.color));
+
+        (void)paint_preview_window(painter, sx_rect_make(area.x + 8, area.y + 8, area.width - 52, 84),
+            "Inactive Window", 0);
+
+        client = paint_preview_window(painter, sx_rect_make(area.x + 18, area.y + 36, area.width - 34, area.height - 44),
+            "Active Window", 1);
+        /* The menu bar: a normal entry, a disabled one, a selected one. */
+        x = client.x + 6;
+        sx_painter_draw_text(painter, x, client.y + 2, "Normal", SXGUI_COLOR_TEXT);
+        x += sx_painter_text_width(painter, "Normal") + 12;
+        sxchrome_draw_text_disabled(painter, x, client.y + 2, "Disabled");
+        x += sx_painter_text_width(painter, "Disabled") + 12;
+        sx_painter_fill_rect(painter, sx_rect_make(x - 4, client.y, sx_painter_text_width(painter, "Selected") + 8, text_height + 4),
+            SXGUI_COLOR_SELECT);
+        sx_painter_draw_text(painter, x, client.y + 2, "Selected", SXGUI_COLOR_SELECT_TEXT);
+        {
+            struct sx_rect field = sx_rect_make(client.x + 2, client.y + text_height + 6, client.width - 4,
+                client.y + client.height - (client.y + text_height + 6) - 2);
+
+            sxgui_draw_sunken_edge(painter, field);
+            sx_painter_fill_rect(painter, sx_rect_make(field.x + 2, field.y + 2, field.width - 4, field.height - 4),
+                SXGUI_COLOR_FIELD);
+            sx_painter_draw_text(painter, field.x + 6, field.y + 4, "Window Text", SXGUI_COLOR_TEXT);
+        }
+
+        {
+            int box_width = 152;
+            int box_height = preview_caption_height(painter) + text_height * 2 + 34;
+            struct sx_rect box = sx_rect_make(area.x + area.width - box_width - 30, area.y + area.height - box_height - 14,
+                box_width, box_height);
+            struct sx_rect button;
+
+            client = paint_preview_window(painter, box, "Message Box", 1);
+            sx_painter_draw_text(painter, client.x + 8, client.y + 6, "Message Text", SXGUI_COLOR_TEXT);
+            button = sx_rect_make(client.x + (client.width - 60) / 2, client.y + client.height - text_height - 12,
+                60, text_height + 8);
+            sxchrome_fill_raised(painter, button, SXCHROME_COLOR_FACE, 0);
+            sx_painter_draw_text(painter, button.x + (button.width - sx_painter_text_width(painter, "OK")) / 2,
+                button.y + (button.height - text_height) / 2, "OK", SXGUI_COLOR_TEXT);
+        }
+        sx_painter_pop_clip(painter);
+    }
+    /* The rest of the sheet keeps the faces on screen. */
+    if (g_appearance_faces != 0)
+    {
+        sxfont_ui_faces_install(sxfont_ui_current());
+    }
+}
+
 static void on_paint(struct sxngui_app *app)
 {
     struct sx_painter *painter = &app->ui.painter;
@@ -866,6 +1224,10 @@ static void on_paint(struct sxngui_app *app)
     {
         paint_preview(painter, 1);
         paint_spectrum(painter);
+    }
+    else if (g_widgets[W_TABS].value == DISPLAY_TAB_APPEARANCE)
+    {
+        paint_appearance_preview(painter);
     }
     else
     {
@@ -903,7 +1265,9 @@ static void sync_controls(void)
     update_resolution_text();
     set_widget_enabled(&g_widgets[W_APPLY],
         !desktop_wallpaper_config_equal(&g_pending, &g_saved) || g_pending_mode != g_current_mode ||
-        g_effects_pending != g_effects_saved || g_effects_unsaved);
+        g_effects_pending != g_effects_saved || g_effects_unsaved ||
+        !sxfont_ui_config_equal(&g_appearance_pending, &g_appearance_saved));
+    sync_appearance_controls();
     sxngui_app_request_repaint(&g_app);
 }
 
@@ -1254,6 +1618,26 @@ static void apply_pending(int quit)
             return;
         }
     }
+    if (!sxfont_ui_config_equal(&g_appearance_pending, &g_appearance_saved))
+    {
+        char config[SXFONT_UI_CONFIG_BYTES];
+        size_t length = sxfont_ui_format_config(&g_appearance_pending, config, sizeof(config));
+
+        if (length == 0 || write_setting(SXFONT_UI_SETTINGS_NAME, config, length) < 0)
+        {
+            show_message("Appearance", "The fonts could not be saved. Please try again.");
+            return;
+        }
+        g_appearance_saved = g_appearance_pending;
+        /* Every window takes the new faces, this sheet included: the frame
+         * reloads them when windowd's settings record comes back. */
+        if (sxnwm_settings_changed(&g_app.wm, SAVANXP_WM_SETTINGS_FONTS) < 0)
+        {
+            (void)sxngui_reload_interface_faces();
+            show_message("Appearance", "The fonts were saved. Open windows show them when they start again.");
+        }
+        sync_controls();
+    }
     write_wallpaper();
     if (g_pending_mode == g_current_mode || !g_mode_mutable)
     {
@@ -1324,10 +1708,17 @@ static void show_tab(int tab)
 {
     int index;
 
+    if (tab == DISPLAY_TAB_APPEARANCE)
+    {
+        scan_fonts();
+        sync_appearance_controls();
+    }
     for (index = DISPLAY_FIRST_DESKTOP_WIDGET; index <= DISPLAY_LAST_SETTINGS_WIDGET; ++index)
     {
-        int on_desktop = index <= DISPLAY_LAST_DESKTOP_WIDGET;
-        int visible = on_desktop ? tab == DISPLAY_TAB_DESKTOP : tab == DISPLAY_TAB_SETTINGS;
+        int page = index <= DISPLAY_LAST_DESKTOP_WIDGET ? DISPLAY_TAB_DESKTOP
+            : index <= DISPLAY_LAST_APPEARANCE_WIDGET  ? DISPLAY_TAB_APPEARANCE
+                                                       : DISPLAY_TAB_SETTINGS;
+        int visible = tab == page;
 
         if (index == W_RESOLUTION_NOTE && g_mode_mutable)
         {
@@ -1449,6 +1840,66 @@ static void on_color_changed(struct sxgui_widget *widget, void *user)
     }
     snprintf(current, sizeof(current), "%06X", (unsigned int)(g_pending.color & 0xffffffu));
     open_prompt("Other Color", "Red, green and blue, as RRGGBB:", current, accept_color);
+}
+
+static void on_item_changed(struct sxgui_widget *widget, void *user)
+{
+    (void)widget;
+    (void)user;
+    sync_controls();
+}
+
+static void on_font_changed(struct sxgui_widget *widget, void *user)
+{
+    int item = g_widgets[W_ITEM].value;
+
+    (void)user;
+    if (item >= 0 && item < SXFONT_UI_ITEMS && widget->value >= 0 && widget->value < g_font_count &&
+        strcmp(g_appearance_pending.items[item].path, g_fonts[widget->value].path) != 0)
+    {
+        copy_text(g_appearance_pending.items[item].path, sizeof(g_appearance_pending.items[item].path),
+            g_fonts[widget->value].path);
+        g_appearance_faces_stale = 1;
+        sync_controls();
+    }
+}
+
+static void on_size_changed(struct sxgui_widget *widget, void *user)
+{
+    int item = g_widgets[W_ITEM].value;
+    unsigned size;
+
+    (void)user;
+    if (item < 0 || item >= SXFONT_UI_ITEMS || widget->value < 0)
+    {
+        return;
+    }
+    size = sxfont_ui_min_size(item) + (unsigned)widget->value;
+    if (size <= sxfont_ui_max_size(item) && size != g_appearance_pending.items[item].size)
+    {
+        g_appearance_pending.items[item].size = size;
+        g_appearance_faces_stale = 1;
+        sync_controls();
+    }
+}
+
+/* Another program changed the fonts (or this one, through windowd): the
+ * frame has the new faces in; what is saved is what the file says now. */
+static void on_settings(struct sxngui_app *app, uint32_t changed)
+{
+    (void)app;
+    if ((changed & SAVANXP_WM_SETTINGS_FONTS) != 0u)
+    {
+        int pending_edits = !sxfont_ui_config_equal(&g_appearance_pending, &g_appearance_saved);
+
+        read_appearance_config(&g_appearance_saved);
+        if (!pending_edits)
+        {
+            g_appearance_pending = g_appearance_saved;
+            g_appearance_faces_stale = 1;
+        }
+        sync_controls();
+    }
 }
 
 static void on_ok(struct sxgui_widget *widget, void *user)
@@ -1601,6 +2052,29 @@ static void build_widgets(void)
         "This display adapter cannot change its resolution.");
     g_widgets[W_RESOLUTION_NOTE].flags |= SXGUI_FLAG_DISABLED;
 
+    /* Appearance: the preview, then the item and its font and size, and
+     * Effects at the bottom right, where the period's sheet has it. */
+    {
+        struct sx_rect preview = appearance_preview_rect();
+        int item_y = preview.y + preview.height + 10;
+        int font_y = item_y + DISPLAY_ROW + SXGUI_FIELD_HEIGHT + 8;
+        int font_width = 236;
+        int size_x = x + font_width + DISPLAY_PAGE_PAD;
+        int size_width = page.x + page.width - DISPLAY_PAGE_PAD - size_x;
+
+        g_widgets[W_ITEM_LABEL] = sxgui_label(sx_rect_make(x, item_y, font_width, DISPLAY_ROW), "Item:");
+        g_widgets[W_ITEM] = sxgui_combobox(sx_rect_make(x, item_y + DISPLAY_ROW, font_width, SXGUI_FIELD_HEIGHT),
+            k_item_names, SXFONT_UI_ITEMS, SXFONT_UI_ITEM_BODY);
+        g_widgets[W_ITEM].on_action = on_item_changed;
+        g_widgets[W_FONT_LABEL] = sxgui_label(sx_rect_make(x, font_y, font_width, DISPLAY_ROW), "Font:");
+        g_widgets[W_FONT] = sxgui_combobox(sx_rect_make(x, font_y + DISPLAY_ROW, font_width, SXGUI_FIELD_HEIGHT),
+            g_font_names, 0, -1);
+        g_widgets[W_FONT].on_action = on_font_changed;
+        g_widgets[W_SIZE_LABEL] = sxgui_label(sx_rect_make(size_x, font_y, size_width, DISPLAY_ROW), "Size:");
+        g_widgets[W_SIZE] = sxgui_combobox(sx_rect_make(size_x, font_y + DISPLAY_ROW, size_width, SXGUI_FIELD_HEIGHT),
+            g_size_names, 0, 0);
+        g_widgets[W_SIZE].on_action = on_size_changed;
+    }
     g_widgets[W_EFFECTS] = sxgui_button(
         sx_rect_make(x + page.width - DISPLAY_PAGE_PAD * 2 - 85,
             page.y + page.height - DISPLAY_PAGE_PAD - SXGUI_BUTTON_HEIGHT, 85, SXGUI_BUTTON_HEIGHT),
@@ -1635,6 +2109,8 @@ int main(void)
 
     read_wallpaper_config(&g_saved);
     g_pending = g_saved;
+    read_appearance_config(&g_appearance_saved);
+    g_appearance_pending = g_appearance_saved;
     scan_backgrounds();
     /* A wallpaper from elsewhere on the disk joins the list, as one picked
      * with Browse would. */
@@ -1655,6 +2131,7 @@ int main(void)
         g_widgets[W_OK].rect.y + SXGUI_BUTTON_HEIGHT + DISPLAY_MARGIN);
     g_app.on_paint = on_paint;
     g_app.on_key = on_key;
+    g_app.on_settings = on_settings;
     /* The countdown of "Keep these settings?". */
     g_app.on_tick = on_tick;
     g_app.tick_interval_ms = 250;

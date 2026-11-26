@@ -351,6 +351,15 @@ long gfx_desktop_set_cursor_shape(const struct savanxp_gfx_context* context, uin
  * from the program's resources. Titles longer than
  * SAVANXP_WM_LONG_TITLE_CAPACITY - 1 are cut. The POSIX side of
  * sxnwm_set_title. 0, -EINVAL or -EIO. */
+/* The POSIX side of sxnwm_settings_changed: a setting every window draws
+ * with changed (SAVANXP_WM_SETTINGS_*), already saved; windowd tells every
+ * process. From a main window. 0, -EINVAL or the WM's answer. */
+long gfx_settings_changed(const struct savanxp_gfx_context* context, uint32_t changed);
+/* The SAVANXP_WM_SETTINGS_* the WM announced since the last call, 0 for
+ * none; reading clears them. sxgui_app reloads the interface faces and
+ * repaints on SAVANXP_WM_SETTINGS_FONTS; a program with its own loop calls
+ * it once a turn (the desktop does). */
+uint32_t gfx_take_settings_changed(void);
 /* Fullscreen at desktop resolution; restores window geometry when disabled. */
 long gfx_set_fullscreen(const struct savanxp_gfx_context* context, int enabled);
 /* Request relative pointer input while the main window is active. The WM

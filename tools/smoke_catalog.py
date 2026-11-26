@@ -545,6 +545,13 @@ SCENARIOS: dict[str, Scenario] = {
         900.0, "handoff: starting /bin/init", "taskbar", completion="host",
         ready_wait=45.0, host_action="visual", visual_scenario="effects",
     ),
+    "appearance-smoke": _qemu_scenario(
+        "", "APPEARANCE SMOKE PASS", "APPEARANCE SMOKE FAIL",
+        "Display Properties' Appearance tab: a new interface face reaches running windows and new ones, and back",
+        600.0, "handoff: starting /bin/init", "taskbar", completion="host",
+        ready_wait=45.0, host_action="visual", visual_scenario="appearance",
+        remove_paths=("/users/user/Settings/appearance.cfg",),
+    ),
     "cursor-settings-smoke": _qemu_scenario(
         "", "CURSOR SETTINGS SMOKE PASS", "CURSOR SETTINGS SMOKE FAIL",
         "Mouse Properties schemes, licenses, pointer speed, live changes, cancel and restart persistence",

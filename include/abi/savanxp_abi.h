@@ -1435,7 +1435,18 @@ enum savanxp_wm_window_action {
     SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE = 6,
     /* Main window fullscreen at desktop resolution; width is 0/1 (off/on). */
     SAVANXP_WM_WINDOW_ACTION_SET_FULLSCREEN = 7,
+    /* The user changed a setting every window draws with: `width` is a mask
+     * of SAVANXP_WM_SETTINGS_*. The WM applies it to what it draws itself
+     * and sends a SAVANXP_WM_EVENT_SETTINGS record to every process with a
+     * window, the asker included. Whoever asks saved the setting first. Only
+     * from a main window; -EINVAL for an empty or unknown mask. */
+    SAVANXP_WM_WINDOW_ACTION_SETTINGS_CHANGED = 8,
 };
+
+/* What changed (SAVANXP_WM_WINDOW_ACTION_SETTINGS_CHANGED,
+ * savanxp_wm_settings_event.changed). */
+#define SAVANXP_WM_SETTINGS_FONTS 0x00000001u /* appearance.cfg: the interface faces (sxfont/ui.h) */
+#define SAVANXP_WM_SETTINGS_ALL 0x00000001u
 
 /*
  * Window roles (docs/desktop/DESKTOP_ARCHITECTURE.md#window-roles). A role is a
@@ -1782,6 +1793,15 @@ enum savanxp_wm_event_kind {
     /* A drag over the window, dropped on it, or ended (the source).
      * payload.drag. docs/desktop/DRAG_AND_DROP.md */
     SAVANXP_WM_EVENT_DRAG = 5,
+    /* A setting every window draws with changed: read it again, measure
+     * again and repaint. Sent to each process's main window (window_id 0)
+     * once, for all its windows. payload.settings. A client that does not
+     * know the kind skips the record, as any unknown one. */
+    SAVANXP_WM_EVENT_SETTINGS = 6,
+};
+
+struct savanxp_wm_settings_event {
+    uint32_t changed; /* SAVANXP_WM_SETTINGS_* */
 };
 
 enum savanxp_wm_drag_phase {
@@ -1872,6 +1892,7 @@ struct savanxp_wm_event {
         struct savanxp_gui_pointer_motion motion;
         struct savanxp_wm_welcome welcome;
         struct savanxp_wm_drag_event drag;
+        struct savanxp_wm_settings_event settings;
         uint8_t bytes[24];
     } payload;
 };

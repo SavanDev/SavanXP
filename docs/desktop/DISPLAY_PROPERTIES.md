@@ -4,13 +4,16 @@
 > its position and the colour behind it. Phase 2, the Settings tab: the
 > resolution changes while the session runs, with the period's "keep these
 > settings?" countdown ([Changing the resolution](#changing-the-resolution)).
-> Colour quality stays at 32 bits, the only depth the system draws. Settings
-> also offers [Effects](#effects) for persistent window and pointer shadows.
+> Colour quality stays at 32 bits, the only depth the system draws.
 > **A SUN program since 2026-11-19** ([SUN.md](../userland/SUN.md)), with
-> the same look and behaviour it had on POSIX.
+> the same look and behaviour it had on POSIX. **The Appearance tab since
+> 2026-11-26** ([Appearance](#appearance)): the interface's fonts, changed
+> while programs run, and [Effects](#effects), which moved there from
+> Settings.
 
 Display Properties (`/system/display.sxe`, `system/display/display.c`) is
-the period's Display control panel with two of its tabs, Desktop and Settings.
+the period's Display control panel with three of its tabs, Desktop,
+Appearance and Settings.
 It opens from the desktop's context menu (**Properties**), from Program
 Manager's **Options** menu, or by name.
 
@@ -134,6 +137,10 @@ or the developer's preferences.
   teal and the period's desktop blue; its last row, **Other...**, asks for
   any `RRGGBB`. The closed list shows the colour itself, painted over the
   name.
+- **Appearance tab**: a preview of an inactive window, an active one with
+  its menu and text, and a message box, drawn in the pending fonts; the
+  item, its font and its size; and **Effects...**
+  ([Appearance](#appearance)).
 - **Settings tab**: the preview with the taskbar, the adapter, the resolution
   slider (`sxgui_trackbar`, a toolkit widget) and the colour quality, which is
   always 32 bits. On an adapter that cannot change mode the slider is
@@ -218,9 +225,39 @@ left unanswered until it reverts, then a real restart (`set-action
 reboot=reset`, since the harness runs QEMU with `-no-reboot`) after which the
 desktop sets 1024x768 again.
 
+## Appearance
+
+The interface's two faces, each with a size: **Menus and window text** (the
+body face: menus, dialogs, labels and the text programs draw in it) and
+**Title bars** (the caption face). **Item** picks which one the lists show;
+**Font** offers every TrueType file in `/system/fonts` by the name the file
+gives itself, and **Size** the pixels per em the item allows. The preview
+redraws in the pending faces at once; nothing else changes until Apply.
+
+Apply (or OK) writes `appearance.cfg` in the person's profile
+(`sxn_settings_path`) and asks `windowd` to tell every window
+(`sxnwm_settings_changed` with `SAVANXP_WM_SETTINGS_FONTS`): the title bars,
+the desktop, every running toolkit program and this sheet itself redraw in
+the new faces, and a program started later reads them when it starts. The
+file's format, the size limits, the 1-bit rule and what does not follow a
+change are in [UI_FONTS.md](UI_FONTS.md#choosing-the-faces). When the file
+cannot be written nothing is announced and Apply stays available; when
+`windowd` does not answer, the sheet takes the faces itself and says the
+other windows show them once they start again.
+
+The preview opens the pending faces with `sxfont_ui_faces_open`, installs
+them while it paints and puts the process's own back afterwards, so the
+rest of the sheet keeps the faces on screen. The list of faces is read the
+first time the tab is shown: opening every file to read its name costs a
+moment the other tabs need not wait for.
+
+`./build.sh smoke appearance-smoke` changes the body face with Notepad open
+and back again, by keyboard ([UI_FONTS.md](UI_FONTS.md#choosing-the-faces)).
+
 ## Effects
 
-The **Effects...** button on Settings opens a modal dialog with **Show shadows
+The **Effects...** button on Appearance, where the period's sheet has it,
+opens a modal dialog with **Show shadows
 under windows** and **Show shadow under mouse pointer**. Both default to on.
 The dialog's OK stages the choices in the property sheet; Cancel or Escape
 leaves its pending choices alone. The sheet's Apply or OK sends both choices

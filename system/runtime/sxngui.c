@@ -3,6 +3,7 @@
 #include "sxn/sxngui.h"
 #include "sxn/sxnclip.h"
 #include "sxfont/ui.h"
+#include "sxn/sxnprofile.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -43,9 +44,36 @@ static void *sxngui_read_file(const char *path, size_t *size)
     return data;
 }
 
+/* The person's appearance.cfg. A process with no profile of its own (the
+ * system's: windowd) draws for the session, and reads the session's. */
+static const char *sxngui_appearance_path(char *path, size_t capacity)
+{
+    const char *profile = sxn_profile_directory();
+
+    if (profile == 0 || strcmp(profile, "/") == 0)
+    {
+        return SXFONT_UI_SESSION_SETTINGS;
+    }
+    return sxn_settings_path(SXFONT_UI_SETTINGS_NAME, 0, path, capacity) == 0 ? path : 0;
+}
+
 int sxngui_load_interface_faces(void)
 {
-    return sxfont_ui_load(sxngui_read_file);
+    char path[SXFONT_UI_PATH_MAX];
+
+    return sxfont_ui_load(sxngui_read_file, sxngui_appearance_path(path, sizeof(path)));
+}
+
+int sxngui_reload_interface_faces(void)
+{
+    char path[SXFONT_UI_PATH_MAX];
+
+    return sxfont_ui_reload(sxngui_read_file, sxngui_appearance_path(path, sizeof(path)));
+}
+
+void *sxngui_read_whole_file(const char *path, size_t *size)
+{
+    return sxngui_read_file(path, size);
 }
 
 /* ---- the toolkit's host ----------------------------------------------------- */
@@ -792,6 +820,30 @@ static void sxngui_drag_event(struct sxngui_app *app, const struct savanxp_wm_dr
     }
 }
 
+/* SAVANXP_WM_EVENT_SETTINGS: the faces first, then everything measured and
+ * painted with them again. A context menu was measured with the old faces
+ * and is closed rather than left the wrong size. */
+static void sxngui_settings_event(struct sxngui_app *app, uint32_t changed)
+{
+    if ((changed & SAVANXP_WM_SETTINGS_FONTS) != 0u)
+    {
+        (void)sxngui_reload_interface_faces();
+        if (sxgui_context_menu_active(&app->ui))
+        {
+            sxgui_context_menu_close(&app->ui);
+        }
+    }
+    if (app->on_resize != 0)
+    {
+        app->on_resize(app);
+    }
+    if (app->on_settings != 0)
+    {
+        app->on_settings(app, changed);
+    }
+    app->needs_repaint = 1;
+}
+
 /* The main window's input, from the ring. */
 static void sxngui_drain_main(struct sxngui_app *app)
 {
@@ -799,6 +851,11 @@ static void sxngui_drain_main(struct sxngui_app *app)
 
     while (sxnwm_poll_input(&app->wm, &record) == 0)
     {
+        if (record.kind == SAVANXP_WM_EVENT_SETTINGS)
+        {
+            sxngui_settings_event(app, record.payload.settings.changed);
+            continue;
+        }
         if (record.kind == SAVANXP_WM_EVENT_DRAG)
         {
             sxngui_drag_event(app, &record.payload.drag);

@@ -817,6 +817,17 @@ int main(void)
         {
             g_background_repaint = 1;
         }
+        /* The person picked other interface faces (Display Properties'
+         * Appearance tab): the icons' labels and the taskbar are drawn
+         * again with them, and an open menu, measured with the old ones,
+         * closes. */
+        if ((gfx_take_settings_changed() & SAVANXP_WM_SETTINGS_FONTS) != 0u)
+        {
+            (void)sxgui_reload_interface_faces();
+            desktop_close_popups();
+            g_background_repaint = 1;
+            g_taskbar_repaint = 1;
+        }
 
         if (now >= next_wallpaper_check_ms)
         {

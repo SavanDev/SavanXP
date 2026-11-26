@@ -1389,11 +1389,11 @@ def scenario_system(s):
 
 
 def scenario_display(s):
-    """Display Properties, both tabs (docs/desktop/DISPLAY_PROPERTIES.md).
+    """Display Properties, its three tabs (docs/desktop/DISPLAY_PROPERTIES.md).
 
     Opened by name through the console. The focus starts on the wallpaper
     list; SHIFT+TAB takes it back to the tab control and the arrow walks to
-    Settings. ESC is Cancel, so nothing is written.
+    Appearance and Settings. ESC is Cancel, so nothing is written.
     """
     s.run("display")
     image = s.shot("display-desktop")
@@ -1401,6 +1401,10 @@ def scenario_display(s):
                 "the Desktop tab lists the wallpapers")
     s.qmp.chord("shift", "tab")
     time.sleep(1.0)
+    s.qmp.tap("right", pause=3.0)
+    image = s.shot("display-appearance")
+    expect_text(image, (0, 0, image.size[0], image.size[1]), "Menus and window text", TEXT, FIELD,
+                "the Appearance tab names the item whose font it shows")
     s.qmp.tap("right", pause=3.0)
     image = s.shot("display-settings")
     expect_text(image, (0, 0, image.size[0], image.size[1]), "Screen resolution", TEXT, FACE,
@@ -1860,7 +1864,8 @@ def scenario_effects(s):
         s.qmp.click()
         time.sleep(1)
 
-    def open_settings():
+    def open_appearance():
+        # Effects... is on the Appearance tab, as in the period's sheet.
         s.run("display")
         s.qmp.chord("shift", "tab")
         s.qmp.tap("right", pause=2)
@@ -1880,7 +1885,7 @@ def scenario_effects(s):
             if tick != checked:
                 raise Failure("unexpected checkbox state: %s = %s" % (label, tick))
 
-    open_settings()
+    open_appearance()
     open_effects((True, True))
     click_text(labels[0])
     s.qmp.tap("esc", pause=1)
@@ -1888,7 +1893,7 @@ def scenario_effects(s):
     click_text(labels[0])
     s.qmp.tap("ret", pause=1)
     s.qmp.tap("esc", pause=2)  # Outer Cancel discards staged edits.
-    open_settings()
+    open_appearance()
     open_effects((True, True))
     current = (True, True)
     applied = {}
@@ -1938,17 +1943,94 @@ def scenario_effects(s):
             raise Failure("effects persistence: machine did not restart")
         time.sleep(0.5)
     time.sleep(75)
-    open_settings()
+    open_appearance()
     open_effects((False, False))
     s.qmp.tap("esc", pause=1)
     s.qmp.tap("esc", pause=1)
 
 
+def scenario_appearance(s):
+    """The interface's fonts change while programs run (docs/desktop/DISPLAY_PROPERTIES.md#appearance).
+
+    Notepad holds a line of text. Display Properties' Appearance tab, by
+    keyboard: TAB to the item, TAB to the font, UP to the face before MS Sans
+    Serif in the list (a Liberation one), then TAB through Size, Effects...,
+    OK and Cancel to Apply. windowd says it took the new faces, the sheet
+    redraws itself with them, and once it closes Notepad's line is drawn in
+    them too: the baked body face no longer matches either. A Display
+    Properties opened afterwards reads appearance.cfg and starts in them. DOWN
+    puts MS Sans Serif back and OK applies it: Notepad's line matches the
+    baked face again, pixel for pixel.
+    """
+    screen = (0, 0, 1280, 800)
+    sample = "fontsample"
+    item = "Menus and window text"
+    marker = "windowd: interface faces changed, 2 from files"
+
+    def changes():
+        with io.open(s.serial, encoding="utf-8", errors="replace") as log:
+            return log.read().count(marker)
+
+    def open_appearance():
+        s.run("display")
+        s.qmp.chord("shift", "tab")
+        time.sleep(1.0)
+        s.qmp.tap("right", pause=3.0)
+
+    def to_font():
+        s.qmp.tap("tab", pause=0.5)   # item
+        s.qmp.tap("tab", pause=0.5)   # font
+
+    def wait_change(count, what):
+        deadline = time.time() + 30
+        while changes() < count:
+            if time.time() > deadline:
+                raise Failure("windowd did not announce the new faces after " + what)
+            time.sleep(0.5)
+        time.sleep(3.0)
+
+    if s.serial is None:
+        raise Failure("the scenario reads windowd's line from the serial log")
+    s.open_notepad()
+    s.qmp.type_text(sample)
+    time.sleep(1.0)
+    expect_text(s.shot("notepad-baked"), screen, sample, TEXT, FIELD, "Notepad's line in the default face")
+
+    open_appearance()
+    image = s.shot("appearance-default")
+    expect_text(image, screen, item, TEXT, FIELD, "the item list in the default face")
+    before = changes()
+    to_font()
+    s.qmp.tap("up", pause=2.0)
+    for _ in range(5):                # size, Effects..., OK, Cancel, Apply
+        s.qmp.tap("tab", pause=0.5)
+    s.qmp.tap("spc")
+    wait_change(before + 1, "Apply")
+    image = s.shot("appearance-applied")
+    if find_text(image, screen, item, TEXT, FIELD)[0] is not None:
+        raise Failure("the sheet still draws its item list in the baked face after Apply")
+    s.qmp.tap("esc", pause=3.0)
+    image = s.shot("notepad-new-face")
+    if find_text(image, screen, sample, TEXT, FIELD)[0] is not None:
+        raise Failure("Notepad still draws its line in the baked face after the change")
+
+    open_appearance()
+    image = s.shot("appearance-reopened")
+    if find_text(image, screen, item, TEXT, FIELD)[0] is not None:
+        raise Failure("a sheet opened after the change does not start in the new face")
+    to_font()
+    s.qmp.tap("down", pause=2.0)
+    s.qmp.tap("ret")
+    wait_change(before + 2, "OK")
+    expect_text(s.shot("notepad-restored"), screen, sample, TEXT, FIELD,
+                "Notepad's line in the default face once it is back")
+
+
 def scenario_resolution(s):
     """Changing the resolution (docs/desktop/DISPLAY_PROPERTIES.md).
 
-    Display Properties' Settings tab, by keyboard: SHIFT+TAB to the tabs, the
-    arrow to Settings, TAB to the slider, Home and two steps right is
+    Display Properties' Settings tab, by keyboard: SHIFT+TAB to the tabs, two
+    arrows to Settings, TAB to the slider, Home and two steps right is
     1024x768, Enter is OK. The screen changes mode at once and asks whether to
     keep it; Enter is Yes. Then once more to 800x600 with Apply, and no answer:
     after the countdown the screen is back at 1024x768. Last, a restart: the
@@ -1958,6 +2040,7 @@ def scenario_resolution(s):
         s.run("display")
         s.qmp.chord("shift", "tab")
         time.sleep(1.0)
+        s.qmp.tap("right", pause=2.0)
         s.qmp.tap("right", pause=2.0)
         s.qmp.tap("tab", pause=1.0)
 
@@ -1984,7 +2067,6 @@ def scenario_resolution(s):
     open_settings()
     s.qmp.tap("left", pause=2.0)
     s.qmp.tap("tab", pause=0.5)   # colour quality
-    s.qmp.tap("tab", pause=0.5)   # Effects
     s.qmp.tap("tab", pause=0.5)   # OK
     s.qmp.tap("tab", pause=0.5)   # Cancel
     s.qmp.tap("tab", pause=0.5)   # Apply
@@ -4827,6 +4909,7 @@ SCENARIOS = {
     "wallpaperpng": scenario_wallpaperpng,
     "wallpaperjpeg": scenario_wallpaperjpeg,
     "effects": scenario_effects,
+    "appearance": scenario_appearance,
     "resolution": scenario_resolution,
     "taskbar": scenario_taskbar,
     "startmenu": scenario_startmenu,

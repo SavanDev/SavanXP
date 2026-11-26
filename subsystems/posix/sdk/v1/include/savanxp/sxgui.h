@@ -82,6 +82,13 @@ struct sxgui_app {
     void (*on_drag_leave)(struct sxgui_app *app);
     void (*on_drop)(struct sxgui_app *app, int x, int y, uint32_t effect);
     void (*on_drag_end)(struct sxgui_app *app, uint32_t effect);
+
+    /* The person changed a setting every window draws with
+     * (SAVANXP_WM_SETTINGS_*). The frame has already applied it (new faces
+     * in, an open context menu closed) and calls on_resize, so a layout
+     * measured from the text is measured again, then repaints; this hears
+     * which settings. NULL to skip. */
+    void (*on_settings)(struct sxgui_app *app, uint32_t changed);
 };
 
 /* Margin sxgui_app_autosize leaves to the right of and below the widgets'
@@ -120,6 +127,11 @@ int sxgui_app_init(struct sxgui_app *app, const char *name, struct sxgui_widget 
  * does not map libsxfont. sxgui_app_init calls it; a program that draws
  * without sxgui_app (the desktop) calls it before it draws. */
 int sxgui_load_interface_faces(void);
+/* The person picked other faces (SAVANXP_WM_SETTINGS_FONTS, read with
+ * gfx_take_settings_changed): reads appearance.cfg again and installs its
+ * faces in place of the loaded ones. sxgui_app does it and repaints; a
+ * program with its own loop calls it itself. How many came from files. */
+int sxgui_reload_interface_faces(void);
 /* Asks for a usable area of width x height and waits briefly for the WM to
  * apply it, so the first frame is not shown at the old size. Returns 1 if the
  * WM has applied it, 0 if it did not arrive in time (it arrives later as

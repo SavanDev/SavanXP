@@ -43,9 +43,31 @@ static void *sxgui_app_read_file(const char *path, size_t *size)
 
 /* The interface faces from /system/fonts, for a POSIX program that draws
  * without sxgui_app (the desktop): sxgui_app_init calls it too. */
+/* The person's appearance.cfg; a process with no profile of its own draws
+ * for the session and reads the session's. */
+static const char *sxgui_app_appearance_path(char *path, size_t capacity)
+{
+    const char *profile = savanxp_profile_dir();
+
+    if (profile == 0 || strcmp(profile, "/") == 0)
+    {
+        return SXFONT_UI_SESSION_SETTINGS;
+    }
+    return savanxp_settings_path(SXFONT_UI_SETTINGS_NAME, 0, path, capacity) == 0 ? path : 0;
+}
+
 int sxgui_load_interface_faces(void)
 {
-    return sxfont_ui_load(sxgui_app_read_file);
+    char path[SXFONT_UI_PATH_MAX];
+
+    return sxfont_ui_load(sxgui_app_read_file, sxgui_app_appearance_path(path, sizeof(path)));
+}
+
+int sxgui_reload_interface_faces(void)
+{
+    char path[SXFONT_UI_PATH_MAX];
+
+    return sxfont_ui_reload(sxgui_app_read_file, sxgui_app_appearance_path(path, sizeof(path)));
 }
 
 /* The toolkit's host for every POSIX program, whether it runs sxgui_app or
@@ -688,6 +710,34 @@ int sxgui_app_run(struct sxgui_app *app)
         while (gfx_poll_window_drag(&app->gfx, &drag_event) > 0)
         {
             sxgui_app_drag_event(app, &drag_event);
+        }
+
+        /* The person changed a setting every window draws with: the faces
+         * first, then everything measured and painted with them again. A
+         * context menu was measured with the old faces and is closed. */
+        {
+            uint32_t changed = gfx_take_settings_changed();
+
+            if (changed != 0u)
+            {
+                if ((changed & SAVANXP_WM_SETTINGS_FONTS) != 0u)
+                {
+                    (void)sxgui_reload_interface_faces();
+                    if (sxgui_context_menu_active(&app->ui))
+                    {
+                        sxgui_context_menu_close(&app->ui);
+                    }
+                }
+                if (app->on_resize != 0)
+                {
+                    app->on_resize(app);
+                }
+                if (app->on_settings != 0)
+                {
+                    app->on_settings(app, changed);
+                }
+                app->needs_repaint = 1;
+            }
         }
 
         if (!app->running)

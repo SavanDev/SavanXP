@@ -4764,6 +4764,27 @@ int main(int argc, char** argv) {
             header.requests.window.window_id == 0u && header.requests.window.width == 1024u &&
             header.requests.window.height == 768u);
     }
+
+    /* A settings change is a window request the same way: an empty mask
+     * never reaches windowd, and the request carries the mask. Staged in a
+     * header of our own, so no window is told; appearance-smoke drives the
+     * real one (docs/desktop/DISPLAY_PROPERTIES.md#appearance). */
+    {
+        static struct savanxp_gpu_client_surface_header header;
+        struct sxnwm_client window = {0};
+        check(sxnwm_settings_changed(0, SAVANXP_WM_SETTINGS_FONTS) == -SAVANXP_EINVAL);
+        check(sxnwm_settings_changed(&window, SAVANXP_WM_SETTINGS_FONTS) == -SAVANXP_EINVAL);
+        window.header = &header;
+        window.request_fd = -1;
+        check(sxnwm_settings_changed(&window, 0) == -SAVANXP_EINVAL);
+        check(header.requests.window_sequence == 0u);
+        header.requests.window_reply_sequence = 2u;
+        header.requests.window_reply_status = 0;
+        check(sxnwm_settings_changed(&window, SAVANXP_WM_SETTINGS_FONTS) == 0);
+        check(header.requests.window_sequence == 2u &&
+            header.requests.window.action == SAVANXP_WM_WINDOW_ACTION_SETTINGS_CHANGED &&
+            header.requests.window.window_id == 0u && header.requests.window.width == SAVANXP_WM_SETTINGS_FONTS);
+    }
     check(sxn_info(&info) == 0);
     check(info.abi_version == SXN_ABI_VERSION);
     check(info.subsystem_id == 1u);

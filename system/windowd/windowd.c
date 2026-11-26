@@ -4009,6 +4009,46 @@ static int set_display_mode(
     return 0;
 }
 
+/* SAVANXP_WM_WINDOW_ACTION_SETTINGS_CHANGED: the person saved a setting every
+ * window draws with. windowd takes it for its own drawing (captions, the
+ * switcher, the consent prompt) and passes the record to every process with
+ * a window: once, to its main window, since one event channel serves all of
+ * a process's windows. */
+static int settings_changed(struct windowd_session *session, struct windowd_dirty_rect *dirty, uint32_t changed)
+{
+    struct savanxp_wm_event event;
+    int index;
+
+    if (changed == 0u || (changed & ~SAVANXP_WM_SETTINGS_ALL) != 0u)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    if ((changed & SAVANXP_WM_SETTINGS_FONTS) != 0u)
+    {
+        char line[] = "windowd: interface faces changed, 0 from files\n";
+        line[sizeof(line) - 14] = (char)('0' + sxngui_reload_interface_faces());
+        puts_fd(2, line);
+    }
+    memset(&event, 0, sizeof(event));
+    event.kind = SAVANXP_WM_EVENT_SETTINGS;
+    event.payload.settings.changed = changed;
+    if (session->desktop_windows[0].pid > 0)
+    {
+        (void)route_event(&session->desktop_windows[0], &event);
+    }
+    for (index = 0; index < WINDOWD_MAX_OVERLAY_CLIENTS; ++index)
+    {
+        struct windowd_client *client = &session->overlay_clients[index];
+
+        if (client->pid > 0 && client->owner_slot < 0 && client->role != WINDOWD_ROLE_POPUP)
+        {
+            (void)route_event(client, &event);
+        }
+    }
+    windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
+    return 0;
+}
+
 static void service_client_window_requests(
     struct windowd_session *session,
     struct windowd_dirty_rect *dirty,
@@ -4053,6 +4093,11 @@ static void service_client_window_requests(
         (client == &session->desktop_windows[0] || (overlay_slot_valid(slot) && client->owner_slot < 0)))
     {
         status = set_display_mode(session, dirty, request.width, request.height);
+    }
+    else if (request.action == SAVANXP_WM_WINDOW_ACTION_SETTINGS_CHANGED &&
+        (client == &session->desktop_windows[0] || (overlay_slot_valid(slot) && client->owner_slot < 0)))
+    {
+        status = settings_changed(session, dirty, request.width);
     }
     else if (client == &session->desktop_windows[0])
     {

@@ -8,6 +8,9 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Display Properties gains an Appearance tab: the interface's fonts, applied live (SDK 2.0).** Face and size for
+  window text and title bars in `appearance.cfg`; Effects moved there. `sxnwm_settings_changed`, `gfx_settings_changed`,
+  `SAVANXP_WM_EVENT_SETTINGS`; `appearance-smoke`. [Appearance](docs/desktop/DISPLAY_PROPERTIES.md#appearance).
 - **The interface's body and caption faces are files in `/system/fonts` (SDK 2.0).** `windowd` (now a PIE), the desktop
   and toolkit programs draw from `MSSansSerif.ttf` and `RetroSans.ttf`, pixel for pixel the baked tables, which static
   programs keep. Test `ui-face-files-test`. [Interface faces from files](docs/desktop/UI_FONTS.md#interface-faces-from-files).
