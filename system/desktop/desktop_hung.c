@@ -1,5 +1,7 @@
 #include "desktop.h"
 
+#include "sxn/sxn.h"
+
 #include <stdio.h>
 
 /*
@@ -90,7 +92,7 @@ static void hung_close(void)
 {
 }
 
-static uint32_t hung_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+static uint32_t hung_pointer(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
     uint32_t up = g_last_buttons & ~pointer->buttons;
@@ -115,8 +117,10 @@ static uint32_t hung_pointer(struct savanxp_gfx_context *gfx, const struct savan
         {
             if (button == HUNG_BUTTON_END && g_target_id != 0)
             {
-                /* windowd takes the window down when it sees the process gone. */
-                (void)savanxp_kill((int)g_target_id, SAVANXP_SIGKILL);
+                /* windowd takes the window down when it sees the process
+                 * gone. The status is what POSIX's kill reports for SIGKILL,
+                 * so the program's parent reads the same either way. */
+                (void)sxn_terminate((long)g_target_id, 128 + SAVANXP_SIGKILL);
             }
             desktop_hung_dismissed(g_target_id);
             actions |= DESKTOP_ACTION_CLOSE;
@@ -127,7 +131,7 @@ static uint32_t hung_pointer(struct savanxp_gfx_context *gfx, const struct savan
     return actions;
 }
 
-static void hung_paint(struct savanxp_gfx_context *gfx)
+static void hung_paint(struct desktop_surface *gfx)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;

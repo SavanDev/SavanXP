@@ -1,8 +1,14 @@
 #pragma once
 
-#include "libc.h"
-#include "savanxp/sxgui.h"
-#include "savanxp/wm_shell_protocol.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "abi/savanxp_abi.h"
+#include "sxgfx/gfx2d.h"
+#include "sxgfx/pixels.h"
+#include "sxgfx/sxgui.h"
+#include "wm/wm_shell_protocol.h"
 
 /*
  * The desktop: one process that owns everything the shell shows -- the
@@ -11,9 +17,30 @@
  * as the shell and knows nothing about what any of those windows shows: their
  * sizes, places and behaviour are decided here.
  *
- * desktop.c runs the windows and the loop; every other desktop_*.c is a module
- * that paints one window and reacts to its pointer.
+ * A SUN program (docs/userland/SUN.md): desktop.c runs the windows over
+ * sxnwm and the loop; every other desktop_*.c is a module that paints one
+ * window and reacts to its pointer. What the shell's data needs from the
+ * system goes through shell/shell_io.h (shell_io_sun.c).
  */
+
+/* What a module paints into: one of the desktop's windows, as its surface. */
+struct desktop_surface
+{
+    struct savanxp_fb_info info;
+    uint32_t *pixels;
+};
+
+/* desktop_sys.c: the little the modules ask of the system themselves. */
+/* Milliseconds since boot. */
+unsigned long desktop_uptime_ms(void);
+/* A line on the desktop's standard error, which reaches the serial log. */
+void desktop_log(const char *format, ...) __attribute__((format(printf, 1, 2)));
+/* The date and time, UTC, from the system clock; 0 with `valid` set, or -1
+ * when the machine never gave a date. */
+int desktop_realtime(struct savanxp_realtime *out);
+/* The window list windowd keeps for the shell (wm/wm_shell_protocol.h), or 0
+ * before the desktop connected. */
+const struct savanxp_wm_window_list *desktop_window_list(void);
 
 /* Window ids of the desktop process (savanxp_wm_window_request.window_id).
  * 0 is the main window, which windowd gives the background role. The Start
@@ -78,10 +105,10 @@ struct desktop_popup_ops
      * (for instance the volume popup without an audio device). */
     int (*open)(void);
     void (*close)(void);
-    uint32_t (*pointer)(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer);
+    uint32_t (*pointer)(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer);
     /* Called every loop; may be 0. */
     uint32_t (*tick)(void);
-    void (*paint)(struct savanxp_gfx_context *gfx);
+    void (*paint)(struct desktop_surface *gfx);
     /* 1: centred on the screen and not dismissed by a press elsewhere (a
      * dialog); 0: anchored to the taskbar, closed by a press elsewhere. */
     int centered;
@@ -192,10 +219,10 @@ void desktop_repaint_background(void);
 /* The wallpaper changed: it is drawn again, not only the icons over it. */
 void desktop_wallpaper_changed(void);
 /* The desktop's main window, for launching programs from it. */
-const struct savanxp_gfx_context *desktop_main_window(void);
+const struct desktop_surface *desktop_main_window(void);
 /* Starts a program; it connects to windowd for its own window. */
 long desktop_launch(const char *path, uint32_t launch_flags);
-/* Sends a request on the shell's request pipe (savanxp/wm_shell_protocol.h). */
+/* Sends a request on the shell's request pipe (wm/wm_shell_protocol.h). */
 void desktop_shell_request(const struct savanxp_wm_shell_request *request);
 
 /* The Win95 bevel every desktop surface draws with. */
@@ -204,11 +231,11 @@ void desktop_bevel(struct sx_painter *painter, struct sx_rect rect, int sunken);
 /* desktop_taskbar.c */
 int desktop_taskbar_init(void);
 void desktop_taskbar_shutdown(void);
-uint32_t desktop_taskbar_pointer(const struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer);
+uint32_t desktop_taskbar_pointer(const struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer);
 uint32_t desktop_taskbar_tick(void);
 /* Re-reads volume, mute and keyboard layout now. Non-zero if any changed. */
 int desktop_taskbar_refresh_indicators(void);
-void desktop_taskbar_paint(struct savanxp_gfx_context *gfx);
+void desktop_taskbar_paint(struct desktop_surface *gfx);
 /* The first window windowd marks as not responding: 1 with its id and title,
  * 0 if none. From the last snapshot of the window list. */
 int desktop_taskbar_not_responding(uint32_t *window_id, char *title, size_t capacity);

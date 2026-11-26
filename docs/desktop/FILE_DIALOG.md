@@ -86,8 +86,9 @@ in Windows.
 - **Icons by type** are the same `mime_icon` Files and the desktop use,
   moved to `system/gfx/` so a SUN program links it too. It makes no system
   call itself: each subsystem installs a file reader (`mime_icon_set_reader`).
-  The dialog reads the system's `/system/mimeicon.ini`; POSIX programs read
-  the profile's copy through `mime_icon_load`, and the system's without one.
+  The dialog reads the system's `/system/mimeicon.ini`; the desktop and the
+  POSIX programs read the profile's copy through `mime_icon_load` (SUN's in
+  `system/runtime/sxn_mime_icon.c`), and the system's without one.
 - **One dialog at a time.** The toolkit has one modal dialog per window, so
   the Confirm Save As question and the new folder's name are a second
   dialog that replaces the first, and No, Cancel or OK begin the first again

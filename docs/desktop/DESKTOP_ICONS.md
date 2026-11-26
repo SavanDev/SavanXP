@@ -64,7 +64,7 @@ icon=/bin/notepad.sxe
 |---|---|
 | `target` | What it opens: a program, a document or a folder. Required. |
 | `args` | One argument, the program's `argv[1]` (the launch API passes one). |
-| `workdir` | The directory the program starts in; it inherits the working directory at spawn, so the opener changes into it around the launch. |
+| `workdir` | The directory the program starts in: a POSIX opener changes into it around the launch, the SUN desktop passes it to the spawn (`sxn_spawn_ex_in`). Only a POSIX program keeps it ([The shell's data](./DESKTOP_ARCHITECTURE.md#the-shells-data-and-its-io)). |
 | `icon` | A binary whose `.sxicon` to show, or an icon name from `/icons`. Without it, the target's icon. |
 
 `#` and `;` start a comment and unknown keys are ignored, so the format can

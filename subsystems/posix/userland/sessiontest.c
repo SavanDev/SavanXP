@@ -9,7 +9,7 @@
  * (it is an ordinary application, started from the Start menu); the desktop
  * runs as the user and windowd and compositord as the system; the desktop
  * stays up, which it only does if windowd granted it the shell role
- * (gfx_open_shell fails otherwise and it exits); killed, the desktop comes
+ * (sxnwm_connect_shell fails otherwise and it exits); killed, the desktop comes
  * back; killed, windowd takes the session with it and the whole session comes
  * back; and so does compositord.
  */
@@ -132,7 +132,7 @@ int main(void)
 
     compositord = wait_child(sessiond, "compositord.sxe", 0);
     windowd = wait_child(sessiond, "windowd.sxe", 0);
-    desktop = wait_child(sessiond, "desktop", 0);
+    desktop = wait_child(sessiond, "desktop.sxe", 0);
     if (compositord <= 0 || windowd <= 0 || desktop <= 0)
     {
         fail("the session did not come up");
@@ -160,7 +160,7 @@ int main(void)
 
     /* The desktop dies: sessiond starts another, which becomes the shell. */
     (void)savanxp_kill((int)desktop, SAVANXP_SIGKILL);
-    next = wait_child(sessiond, "desktop", desktop);
+    next = wait_child(sessiond, "desktop.sxe", desktop);
     if (next <= 0 || !stays_up(next))
     {
         fail("the desktop did not come back");
@@ -180,7 +180,7 @@ int main(void)
         fail("windowd did not come back");
     }
     windowd = next;
-    next = wait_child(sessiond, "desktop", desktop);
+    next = wait_child(sessiond, "desktop.sxe", desktop);
     if (next <= 0 || !stays_up(next))
     {
         fail("the desktop did not come back with the session");
@@ -212,7 +212,7 @@ int main(void)
         fail("the old windowd outlived its compositord");
     }
     windowd = next;
-    next = wait_child(sessiond, "desktop", desktop);
+    next = wait_child(sessiond, "desktop.sxe", desktop);
     if (next <= 0 || !stays_up(next))
     {
         fail("the desktop did not come back after compositord");

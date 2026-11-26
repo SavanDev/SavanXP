@@ -63,7 +63,7 @@ static void contextmenu_close(void)
     }
 }
 
-static struct sx_rect contextmenu_rect(const struct savanxp_gfx_context *gfx)
+static struct sx_rect contextmenu_rect(const struct desktop_surface *gfx)
 {
     return sx_rect_make(0, 0, (int)gfx->info.width, (int)gfx->info.height);
 }
@@ -75,7 +75,7 @@ static uint32_t contextmenu_choose(int item)
 }
 
 /* As on Windows, an item fires when either button is released over it. */
-static uint32_t contextmenu_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+static uint32_t contextmenu_pointer(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     const uint32_t buttons = SAVANXP_MOUSE_BUTTON_LEFT | SAVANXP_MOUSE_BUTTON_RIGHT;
     uint32_t up = g_last_buttons & ~pointer->buttons & buttons;
@@ -131,7 +131,7 @@ static uint32_t contextmenu_pointer_left(void)
     return DESKTOP_ACTION_REPAINT;
 }
 
-static void contextmenu_paint(struct savanxp_gfx_context *gfx)
+static void contextmenu_paint(struct desktop_surface *gfx)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;

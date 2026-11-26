@@ -58,6 +58,13 @@ long shell_io_make_directory(const char *path);
 /* Deletes a file, not a directory. 0, or -errno. */
 long shell_io_delete_file(const char *path);
 
+/* Deletes an empty directory. 0, or -errno (-ENOTEMPTY included). */
+long shell_io_delete_directory(const char *path);
+
+/* Renames within a volume; `new_path` must not exist (the caller checks). 0,
+ * or -errno. */
+long shell_io_rename(const char *old_path, const char *new_path);
+
 /* The person's profile ("/users/user"), and the path of the setting `name`
  * in it, as savanxp_settings_path and sxn_settings_path find it: `for_write`
  * 0 to read (falling back to a loose or root copy), 1 to write. */
@@ -66,8 +73,9 @@ long shell_io_settings_path(const char *name, int for_write, char *out, size_t c
 
 /* Starts `program` with `argument` as argv[1] when it is not 0 or empty, in
  * `workdir` when it is not 0 or empty (a shortcut's working directory) and in
- * the caller's otherwise. The new process gets only standard input, output
- * and error, and the shell reaps it. Its pid, or -errno. */
+ * the caller's otherwise -- for a SUN caller, which has none, the person's
+ * profile, where the POSIX desktop stood. The new process gets only standard
+ * input, output and error, and the shell reaps it. Its pid, or -errno. */
 long shell_io_launch(const char *program, const char *argument, const char *workdir);
 
 #ifdef __cplusplus

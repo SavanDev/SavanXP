@@ -1,5 +1,7 @@
 #include "desktop.h"
 
+#include "sxn/sxn.h"
+
 #include "shared/version.h"
 #include "start_logo.h"
 
@@ -161,11 +163,11 @@ static void shutdown_close(void)
     g_confirmed = 0;
     if (g_option == DESKTOP_SHUTDOWN_RESTART)
     {
-        (void)power_reboot();
+        (void)sxn_request_shutdown(SAVANXP_SHUTDOWN_REBOOT);
     }
     else
     {
-        (void)power_shutdown();
+        (void)sxn_request_shutdown(SAVANXP_SHUTDOWN_POWER_OFF);
     }
 }
 
@@ -175,7 +177,7 @@ static uint32_t shutdown_answer(int yes)
     return DESKTOP_ACTION_CLOSE;
 }
 
-static uint32_t shutdown_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+static uint32_t shutdown_pointer(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
     uint32_t up = g_last_buttons & ~pointer->buttons;
@@ -335,7 +337,7 @@ static void paint_button(struct sx_painter *painter, int button, const char *lab
     }
 }
 
-static void shutdown_paint(struct savanxp_gfx_context *gfx)
+static void shutdown_paint(struct desktop_surface *gfx)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;

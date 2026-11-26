@@ -8,7 +8,7 @@ mixes; the popup shows up to three (see below).
 ## Volume popup
 
 The speaker in the taskbar tray opens a 232-by-284 popup
-(`subsystems/posix/userland/desktop/desktop_volume.c`) drawn in the desktop's
+(`system/desktop/desktop_volume.c`) drawn in the desktop's
 classic palette:
 
 - **Volume** title, then **Output device** with the selected playback connector

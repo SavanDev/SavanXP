@@ -156,8 +156,14 @@ Which windows the desktop has, and what each is:
 | 2 | Start menu, the background's context menu ([DESKTOP_ICONS.md](./DESKTOP_ICONS.md)), or a dialog of the shell (the icon confirmation, Shut Down) | `popup`; the menus dismissable, the dialogs centred and not; never two open, so one id |
 | 3 | Volume, clock or keyboard-layout popup, or the Start menu's cascade ([START_MENU.md](./START_MENU.md)) | `popup`, dismissable; the three share the tray corner, so one id, and the cascade borrows it while the Start menu is open |
 
-The modules are `subsystems/posix/userland/desktop/desktop_*.c`, one per
-window kind, behind a single loop in `desktop.c`.
+The modules are `system/desktop/desktop_*.c`, one per window kind, behind a
+single loop in `desktop.c`. The desktop is a SUN program,
+`/system/desktop.sxe`: it connects with `sxnwm_connect_shell`, opens its role
+windows with `sxnwm_window_open_ex`, reads the background's input from its
+ring and the other windows' from the connection's event pipe
+(`sxnwm_poll_owned_input`), and asks the system for the rest itself
+(`desktop_sys.c`, `desktop_background.c`, `shell_io_sun.c`). The modules
+paint into a `struct desktop_surface`, a window's size and pixels.
 
 ### progman
 
@@ -177,7 +183,8 @@ in `system/shell/`, with its headers in `include/shell/`.
 These modules make no system call. Whatever they read, write, list, create,
 delete or start goes through `include/shell/shell_io.h`, and each subsystem
 links its own implementation: `subsystems/posix/userland/shell_io_posix.c` for
-the POSIX programs, and a SUN one for the desktop once it moves to SUN. The
+the POSIX programs (Program Manager, Files), `system/desktop/shell_io_sun.c`
+for the desktop. The
 I/O is split out instead of copying the modules per subsystem because a copy
 drifts: the two would answer "what does opening this file do" differently.
 
@@ -195,7 +202,13 @@ What the interface promises holds on both sides:
   the shortcut has one. POSIX swaps the caller's directory around the spawn.
   SUN starts the child with `sxn_spawn_ex_in`
   ([slice 32](../kernel/KERNEL_NATIVE_API.md#slice-32-spawning-in-a-directory)),
-  which only a POSIX child keeps.
+  which only a POSIX child keeps. A SUN caller has no directory of its own to
+  pass on, so without a working directory, or when it cannot be entered, the
+  program starts in the person's profile, where the POSIX desktop stood
+  (it changed into the profile at start), and at the root if even that
+  fails.
+- Both reap the programs they started on the next launch, so none stays a
+  zombie under the shell.
 
 The fallback icon the modules hand out (`include/shell/desktop_icons.h`) is
 plain data in `system/shell/` too, shared with windowd.
@@ -378,10 +391,11 @@ What is detected is a program that does not close when asked, not one that
 stopped processing input while nobody asked it anything (Windows' ghost
 windows); the event pipe gives `windowd` no clean signal for the second.
 
-Ending the process is the desktop's act, through POSIX `kill`. When the
-desktop itself runs native it will need a right to end a process it did not
-start (process handles, or asking the session manager); that is left for
-then.
+Ending the process is the desktop's act, through `sxn_terminate` with the
+status POSIX's `kill` reports for SIGKILL. The desktop did not start every
+program it may have to end, and `sxn_terminate` ends a process by owner as
+`kill` does ([slice 27](../kernel/KERNEL_NATIVE_API.md#slice-27-what-a-task-list-reads-and-ending-by-owner)):
+the person's programs are the person's to end.
 
 ## Window roles
 
@@ -521,7 +535,7 @@ subsystem on top. The platform services move onto it:
   processes** (`EI_OSABI=0x53`). In NT, CSRSS and SMSS are native
   applications.
 - **`desktop`, `progman` and applications are clients**, and may be POSIX or
-  native. In NT, Explorer is a Win32 application, not a native one. Being a
+  native; the desktop is native, Program Manager still POSIX. In NT, Explorer is a Win32 application, not a native one. Being a
   client of the window system is independent of the subsystem a program
   runs in.
 
@@ -563,12 +577,12 @@ services need:
 | Process termination and query | `sessiond` (ending the session), `windowd` (whether a client lives, its parent, its name) | done: ending a child (slice 16), querying any process (slice 18) |
 | POSIX access to the native object calls | POSIX clients | done (slice 15) |
 | A native C runtime: `crt0` that ends in `sxn_exit`, a heap over sections, string functions | everyone | done: the runtime's heap pages and `exit` are replaced by native ones ([NATIVE_HEAP.md](../userland/NATIVE_HEAP.md)) |
-| Files | `desktop`, `progman` | missing, and not needed by the services |
+| Files | `desktop`, `progman` | done (`sxn_open_file`, `sxn_open_directory` and the rest); the desktop uses them, Program Manager is still POSIX |
 
 The graphics libraries are cheap to bring along. SXGFX (`gfx2d.c`) needs only
 `malloc`, `free` and `realloc`, which native programs have. SXCHROME needs nothing. The fonts are compiled
-in. SXGUI-C opens one file and reads the uptime. Files are the one need
-that keeps `desktop` and `progman` on POSIX for now. For the services
+in. SXGUI-C opens one file and reads the uptime. Files were the one need
+that kept `desktop` and `progman` on POSIX; the desktop has moved. For the services
 that is the point of the design: once launching and `.sxe` reading leave
 `windowd`, neither service opens a file.
 

@@ -32,7 +32,7 @@ they moved under `/system` once nothing needed them there.
 | path | what |
 | --- | --- |
 | `/system/*.sxe` | the SUN programs, with `programs.txt` listing them |
-| `/system/assoc.ini`, `/system/mimeicon.ini` | the default file associations and icons by type; a copy in the profile's `Settings` overrides each (icons only in POSIX programs, [FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) |
+| `/system/assoc.ini`, `/system/mimeicon.ini` | the default file associations and icons by type; a copy in the profile's `Settings` overrides each (icons: in the desktop and the POSIX programs, not the file dialog, [FILE_DIALOG.md](../desktop/FILE_DIALOG.md)) |
 | `/system/wallpapers` | the wallpapers Display Properties lists |
 | `/system/samples` | files to try the system with: `welcome.html` and `about.html` for Web Viewer, `system.mp3`, an MP3 to play |
 | `/system/selftests` | fixtures a program's `--selftest` reads, such as Paint's `paint-test.png` |

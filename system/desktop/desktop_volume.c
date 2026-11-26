@@ -1,6 +1,8 @@
 #include "desktop.h"
 #include "shell/desktop_icons.h"
+#include "sxn/sxn.h"
 #include "sxn/sxnaudio.h"
+#include "sxn/sxnprofile.h"
 
 #include <stdio.h>
 
@@ -67,7 +69,7 @@
 #define VP_LINK_TEXT "Sound settings..."
 #define VP_LINK_COLOUR SXGUI_RGB(0, 0, 255)
 
-/* The user's, in the profile (savanxp_settings_path), as `volume` keeps it. */
+/* The user's, in the profile (sxn_settings_path), as `volume` keeps it. */
 #define VP_CONFIG_NAME "audio.cfg"
 
 enum
@@ -125,7 +127,7 @@ static int vp_app_slider_y(int row)
 
 /* ---- state ------------------------------------------------------------------ */
 
-static long g_audio_fd = -1;
+static long g_audio_device = -1;
 static int g_volume = 100;
 static int g_muted = 0;
 static char g_device[96];
@@ -277,7 +279,7 @@ static void vp_fit(char *out, size_t capacity, const char *text, int max_width)
     }
 }
 
-static void volume_paint(struct savanxp_gfx_context *gfx)
+static void volume_paint(struct desktop_surface *gfx)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;
@@ -357,21 +359,14 @@ static void vp_persist(void)
 {
     char text[16];
     char path[256];
-    long config_fd;
 
     (void)snprintf(text, sizeof(text), "%d %d\n", g_volume, g_muted);
-    if (savanxp_settings_path(VP_CONFIG_NAME, 1, path, sizeof(path)) < 0)
+    if (sxn_settings_path(VP_CONFIG_NAME, 1, path, sizeof(path)) < 0)
     {
         return;
     }
-    config_fd = savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
-    if (config_fd < 0)
-    {
-        return;
-    }
-    (void)savanxp_write((int)config_fd, text, strlen(text));
-    savanxp_close((int)config_fd);
-    (void)savanxp_sync();
+    /* A small whole file, durable when it returns. */
+    (void)sxn_write_file(path, text, strlen(text));
 }
 
 static uint32_t vp_set_master(int volume)
@@ -382,7 +377,7 @@ static uint32_t vp_set_master(int volume)
         return DESKTOP_ACTION_NONE;
     }
     g_volume = volume;
-    (void)audio_set_volume((int)g_audio_fd, g_volume);
+    (void)sxnaudio_master_volume(g_audio_device, (uint32_t)g_volume);
     return DESKTOP_ACTION_TASKBAR_CHANGED | DESKTOP_ACTION_REPAINT;
 }
 
@@ -395,17 +390,14 @@ static void vp_read_device(void)
     (void)snprintf(g_device, sizeof(g_device), "Default device");
     for (index = 0; index < SAVANXP_AUDIO_MAX_ENDPOINTS; ++index)
     {
-        struct savanxp_audio_endpoint_query query;
-        const struct savanxp_audio_endpoint *endpoint = &query.endpoint;
+        struct savanxp_audio_endpoint found;
+        const struct savanxp_audio_endpoint *endpoint = &found;
 
-        memset(&query, 0, sizeof(query));
-        query.index = index;
-        if (savanxp_ioctl((int)g_audio_fd, AUDIO_IOC_GET_ENDPOINT, (unsigned long)(uintptr_t)&query) < 0)
+        memset(&found, 0, sizeof(found));
+        if (sxnaudio_endpoint_get(g_audio_device, index, &found) < 0)
         {
             break;
         }
-        query.endpoint.name[sizeof(query.endpoint.name) - 1] = '\0';
-        query.endpoint.device_name[sizeof(query.endpoint.device_name) - 1] = '\0';
         if ((endpoint->flags & SAVANXP_AUDIO_PLAYBACK) && (endpoint->flags & SAVANXP_AUDIO_SELECTED))
         {
             (void)snprintf(g_device, sizeof(g_device), "%s (%s)", endpoint->name, endpoint->device_name);
@@ -459,28 +451,29 @@ static int volume_open(void)
     g_next_query_ms = 0;
     memset(&g_snapshot, 0, sizeof(g_snapshot));
 
-    /* Only for the ioctls: nothing is ever read or written through this fd. */
-    g_audio_fd = (long)audio_open();
-    if (g_audio_fd < 0)
+    /* Only for the control requests: nothing is ever read or written through
+     * this handle. Read and write, as the POSIX audio_open asks. */
+    g_audio_device = sxn_open_device("audio0", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+    if (g_audio_device < 0)
     {
-        puts_fd(2, "desktop: /dev/audio0 unavailable\n");
+        desktop_log("desktop: /dev/audio0 unavailable\n");
         return -1;
     }
-    status = audio_get_volume((int)g_audio_fd);
+    status = sxn_device_control(g_audio_device, AUDIO_IOC_GET_VOLUME, 0);
     if (status < 0 || status > 100)
     {
-        puts_fd(2, "desktop: AUDIO_IOC_GET_VOLUME failed\n");
-        savanxp_close((int)g_audio_fd);
-        g_audio_fd = -1;
+        desktop_log("desktop: AUDIO_IOC_GET_VOLUME failed\n");
+        (void)sxn_close(g_audio_device);
+        g_audio_device = -1;
         return -1;
     }
     g_volume = (int)status;
-    status = audio_get_muted((int)g_audio_fd);
+    status = sxn_device_control(g_audio_device, AUDIO_IOC_GET_MUTED, 0);
     if (status != 0 && status != 1)
     {
-        puts_fd(2, "desktop: AUDIO_IOC_GET_MUTED failed\n");
-        savanxp_close((int)g_audio_fd);
-        g_audio_fd = -1;
+        desktop_log("desktop: AUDIO_IOC_GET_MUTED failed\n");
+        (void)sxn_close(g_audio_device);
+        g_audio_device = -1;
         return -1;
     }
     g_muted = (int)status;
@@ -491,7 +484,7 @@ static int volume_open(void)
     if (sxnaudio_control_open(&g_control) < 0)
     {
         g_control.request = g_control.reply = -1;
-        g_next_query_ms = (uint64_t)uptime_ms() + VP_RETRY_MS;
+        g_next_query_ms = (uint64_t)desktop_uptime_ms() + VP_RETRY_MS;
     }
     return 0;
 }
@@ -499,16 +492,16 @@ static int volume_open(void)
 static void volume_close(void)
 {
     sxnaudio_control_close(&g_control);
-    if (g_audio_fd >= 0)
+    if (g_audio_device >= 0)
     {
-        savanxp_close((int)g_audio_fd);
-        g_audio_fd = -1;
+        (void)sxn_close(g_audio_device);
+        g_audio_device = -1;
     }
 }
 
 static uint32_t volume_tick(void)
 {
-    uint64_t now_ms = (uint64_t)uptime_ms();
+    uint64_t now_ms = (uint64_t)desktop_uptime_ms();
     uint32_t actions = DESKTOP_ACTION_NONE;
     struct savanxp_audiod_snapshot snapshot;
     long result;
@@ -577,7 +570,7 @@ static uint32_t volume_tick(void)
 
 /* ---- pointer ---------------------------------------------------------------------- */
 
-static uint32_t volume_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+static uint32_t volume_pointer(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
     uint32_t up = g_last_buttons & ~pointer->buttons;
@@ -679,7 +672,7 @@ static uint32_t volume_pointer(struct savanxp_gfx_context *gfx, const struct sav
             if (hot == 1)
             {
                 g_muted = !g_muted;
-                (void)audio_set_muted((int)g_audio_fd, g_muted);
+                (void)sxnaudio_master_muted(g_audio_device, (uint32_t)g_muted);
                 vp_persist();
                 actions |= DESKTOP_ACTION_TASKBAR_CHANGED;
             }

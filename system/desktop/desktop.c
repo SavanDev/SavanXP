@@ -1,13 +1,18 @@
 #include "desktop.h"
-#include "savanxp/wm_shell_protocol.h"
 
-#include "desktop_wallpaper.h"
-#include "display_settings.h"
+#include "desktop_background.h"
+#include "shell/shell_io.h"
+#include "sxgfx/wallpaper.h"
+#include "sxn/sxn.h"
+#include "sxn/sxngui.h"
+#include "sxn/sxnwm.h"
+#include "wm/wm_shell_protocol.h"
+
 #include <stdlib.h>
-#include <unistd.h>
+#include <string.h>
 
 /* The wallpaper keeps its version stamp above the taskbar with a copy of its
- * height (desktop_wallpaper.h): if the bar changes, the stamp follows it. */
+ * height (sxgfx/wallpaper.h): if the bar changes, the stamp follows it. */
 _Static_assert(
     DESKTOP_WALLPAPER_TASKBAR_HEIGHT == DESKTOP_TASKBAR_HEIGHT,
     "the taskbar height the wallpaper uses must match the desktop's");
@@ -30,6 +35,10 @@ _Static_assert(
  * One loop serves all of them. Popups open and close as windows of this
  * process -- no process per click -- and the taskbar knows what is open
  * without asking anyone.
+ *
+ * The background's input comes on its ring, the other windows' on the
+ * connection's event pipe, each record naming its window
+ * (sxnwm_poll_owned_input).
  */
 
 /* Task Manager, which Ctrl+Shift+Esc opens. */
@@ -51,7 +60,8 @@ struct desktop_popup_slot
     int open;
     enum desktop_popup kind;
     const struct desktop_popup_ops *ops;
-    struct savanxp_gfx_context gfx;
+    struct sxnwm_client wm;
+    struct desktop_surface surface;
     int needs_repaint;
 };
 
@@ -67,7 +77,10 @@ static const struct desktop_popup_ops *const k_popup_ops[DESKTOP_POPUP_COUNT] = 
     &desktop_submenu_ops,
 };
 
-static struct savanxp_gfx_context g_background;
+/* The connection: the background is its main window. */
+static struct sxnwm_client g_main;
+static struct sxnwm_shell g_shell;
+static struct desktop_surface g_background;
 static int g_background_repaint = 1;
 static uint32_t g_background_buttons = 0;
 /* The wallpaper drawn once, for repainting the icons without drawing it
@@ -76,15 +89,16 @@ static uint32_t *g_wallpaper_cache = 0;
 static size_t g_wallpaper_cache_bytes = 0;
 static int g_wallpaper_dirty = 1;
 
-static struct savanxp_gfx_context g_taskbar;
+static struct sxnwm_client g_taskbar_wm;
+static struct desktop_surface g_taskbar;
 static int g_taskbar_open = 0;
 static int g_taskbar_available = 0;
 static int g_taskbar_repaint = 0;
 static unsigned long g_taskbar_retry_ms = 0;
 
-static struct desktop_popup_slot g_start_menu = {DESKTOP_WINDOW_START_MENU, 0, DESKTOP_POPUP_START_MENU, 0, {0}, 0};
-static struct desktop_popup_slot g_tray = {DESKTOP_WINDOW_TRAY_POPUP, 0, DESKTOP_POPUP_VOLUME, 0, {0}, 0};
-static struct desktop_popup_slot g_hung = {DESKTOP_WINDOW_HUNG_DIALOG, 0, DESKTOP_POPUP_HUNG, 0, {0}, 0};
+static struct desktop_popup_slot g_start_menu = {DESKTOP_WINDOW_START_MENU, 0, DESKTOP_POPUP_START_MENU, 0, {0}, {{0}, 0}, 0};
+static struct desktop_popup_slot g_tray = {DESKTOP_WINDOW_TRAY_POPUP, 0, DESKTOP_POPUP_VOLUME, 0, {0}, {{0}, 0}, 0};
+static struct desktop_popup_slot g_hung = {DESKTOP_WINDOW_HUNG_DIALOG, 0, DESKTOP_POPUP_HUNG, 0, {0}, {{0}, 0}, 0};
 /* Every popup slot, for what is done to all of them. */
 static struct desktop_popup_slot *const k_slots[] = {&g_start_menu, &g_tray, &g_hung};
 #define DESKTOP_SLOT_COUNT ((int)(sizeof(k_slots) / sizeof(k_slots[0])))
@@ -102,20 +116,46 @@ void desktop_bevel(struct sx_painter *painter, struct sx_rect rect, int sunken)
     sx_painter_fill_rect(painter, sx_rect_make(rect.x + rect.width - 1, rect.y, 1, rect.height), bottom_right);
 }
 
+/* A window's surface, as the modules paint it. */
+static void fill_surface(struct desktop_surface *surface, const struct sxnwm_client *window)
+{
+    surface->info = window->header->info;
+    surface->info.width = window->width;
+    surface->info.height = window->height;
+    surface->pixels = window->pixels;
+}
+
+/* Publishes a window painted whole: after the compositor is done with the
+ * previous frame, as sxngui presents. 0, or the negative status. */
+static long present(struct sxnwm_client *window)
+{
+    long result = sxnwm_submit_full(window);
+
+    if (result == -SAVANXP_EAGAIN)
+    {
+        (void)sxnwm_wait_idle(window, 100);
+        result = sxnwm_submit_full(window);
+    }
+    return result < 0 ? result : 0;
+}
+
 long desktop_launch(const char *path, uint32_t launch_flags)
 {
-    return gfx_desktop_launch_ex(&g_background, path, launch_flags);
+    /* The flags are the POSIX desktop's too, and neither acts on them: a
+     * program asks windowd for fullscreen itself. */
+    (void)launch_flags;
+    return shell_io_launch(path, 0, 0);
 }
 
 void desktop_shell_request(const struct savanxp_wm_shell_request *request)
 {
-    int fd = gfx_shell_request_fd();
-
     /* Without the shell role there is nobody to ask. */
-    if (fd >= 0)
-    {
-        (void)savanxp_write(fd, request, sizeof(*request));
-    }
+    (void)sxnwm_shell_request(&g_shell, request);
+}
+
+const struct savanxp_wm_window_list *desktop_window_list(void)
+{
+    return g_shell.windows;
 }
 
 static struct desktop_popup_slot *slot_for(enum desktop_popup popup)
@@ -159,7 +199,7 @@ static void close_slot(struct desktop_popup_slot *slot)
     }
     const struct desktop_popup_ops *ops = slot->ops;
 
-    (void)gfx_window_close(&g_background, &slot->gfx);
+    (void)sxnwm_window_close(&g_main, &slot->wm, slot->window_id);
     slot->open = 0;
     slot->ops = 0;
     /* The Start button shows whether the menu is open. */
@@ -232,21 +272,23 @@ static void open_slot_at(struct desktop_popup_slot *slot, enum desktop_popup pop
     {
         return;
     }
-    if (gfx_window_open_role(
-            &g_background,
-            &slot->gfx,
+    if (sxnwm_window_open_ex(
+            &g_main,
+            &slot->wm,
             slot->window_id,
+            (uint32_t)width,
+            (uint32_t)height,
+            0,
             SAVANXP_WM_WINDOW_ROLE_POPUP,
             ops->centered ? 0u : SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE,
             x,
-            y,
-            (uint32_t)width,
-            (uint32_t)height) < 0)
+            y) < 0)
     {
-        puts_fd(2, "desktop: windowd refused a popup\n");
+        desktop_log("desktop: windowd refused a popup\n");
         ops->close();
         return;
     }
+    fill_surface(&slot->surface, &slot->wm);
     slot->open = 1;
     slot->kind = popup;
     slot->ops = ops;
@@ -361,7 +403,7 @@ void desktop_wallpaper_changed(void)
     g_background_repaint = 1;
 }
 
-const struct savanxp_gfx_context *desktop_main_window(void)
+const struct desktop_surface *desktop_main_window(void)
 {
     return &g_background;
 }
@@ -508,6 +550,8 @@ static void paint_background(void)
     struct sx_painter painter;
     size_t bytes = (size_t)g_background.info.pitch * g_background.info.height;
 
+    (void)sxnwm_wait_idle(&g_main, 100);
+
     sx_bitmap_wrap(&bitmap, g_background.pixels, &g_background.info, SX_PIXEL_FORMAT_BGRX8888);
     sx_painter_init(&painter, &bitmap);
     if (g_wallpaper_cache_bytes != bytes)
@@ -519,7 +563,7 @@ static void paint_background(void)
     }
     if (g_wallpaper_dirty || g_wallpaper_cache == 0)
     {
-        desktop_wallpaper_draw(&painter, &g_background.info);
+        desktop_background_draw(&painter, &g_background.info);
         if (g_wallpaper_cache != 0)
         {
             memcpy(g_wallpaper_cache, g_background.pixels, bytes);
@@ -538,30 +582,34 @@ static void try_open_taskbar(void)
     static int reported = 0;
     long result;
 
-    if (g_taskbar_open || !g_taskbar_available || uptime_ms() < g_taskbar_retry_ms)
+    if (g_taskbar_open || !g_taskbar_available || desktop_uptime_ms() < g_taskbar_retry_ms)
     {
         return;
     }
-    result = gfx_window_open_role(
-        &g_background,
-        &g_taskbar,
+    /* A panel's width is the edge's: windowd lays it along the whole bottom
+     * of the screen, whatever is asked. */
+    result = sxnwm_window_open_ex(
+        &g_main,
+        &g_taskbar_wm,
         DESKTOP_WINDOW_TASKBAR,
+        g_background.info.width,
+        DESKTOP_TASKBAR_HEIGHT,
+        0,
         SAVANXP_WM_WINDOW_ROLE_PANEL,
         SAVANXP_WM_PANEL_EDGE_BOTTOM,
         0,
-        0,
-        0,
-        DESKTOP_TASKBAR_HEIGHT);
+        0);
     if (result < 0)
     {
         if (!reported)
         {
-            eprintf("desktop: no taskbar yet (%s), retrying\n", result_error_string(result));
+            desktop_log("desktop: no taskbar yet (%ld), retrying\n", result);
             reported = 1;
         }
-        g_taskbar_retry_ms = uptime_ms() + DESKTOP_TASKBAR_RETRY_MS;
+        g_taskbar_retry_ms = desktop_uptime_ms() + DESKTOP_TASKBAR_RETRY_MS;
         return;
     }
+    fill_surface(&g_taskbar, &g_taskbar_wm);
     g_taskbar_open = 1;
     g_taskbar_repaint = 1;
 }
@@ -583,78 +631,156 @@ static void notify_pointer_left_popups(void)
     }
 }
 
-/* Background: resize, its keys (the hotkeys, and the desktop's own once it
- * has the focus), and its pointer: a press closes the popups (windowd only
- * asks a popup to close for a press on another process; the background is
- * ours), and the icons get the rest. */
+/* A key that reached the background: windowd resizes it with a record of its
+ * own (sxnwm_check_resize follows the header), so RESIZED is skipped; the
+ * rest are the hotkeys, and the desktop's own once it has the focus. */
+static void background_key(const struct savanxp_input_event *event)
+{
+    if (event->type == SAVANXP_INPUT_EVENT_RESIZED)
+    {
+        return;
+    }
+    if (!handle_hotkey(event))
+    {
+        handle_desktop_key(event);
+    }
+}
+
+/* The background's pointer: a press closes the popups (windowd only asks a
+ * popup to close for a press on another process; the background is ours),
+ * and the icons get the rest. */
+static void background_pointer(const struct savanxp_gui_pointer_event *pointer)
+{
+    uint32_t down = pointer->buttons & ~g_background_buttons;
+
+    if ((down & (SAVANXP_MOUSE_BUTTON_LEFT | SAVANXP_MOUSE_BUTTON_RIGHT)) != 0)
+    {
+        desktop_close_popups();
+    }
+    else
+    {
+        notify_pointer_left_popups();
+    }
+    g_background_buttons = pointer->buttons;
+    if ((desktop_view_pointer(pointer) & DESKTOP_ACTION_REPAINT) != 0)
+    {
+        g_background_repaint = 1;
+    }
+}
+
+/* The person picked other interface faces (Display Properties' Appearance
+ * tab): the icons' labels and the taskbar are drawn again with them, and an
+ * open menu, measured with the old ones, closes. */
+static void settings_changed(uint32_t changed)
+{
+    if ((changed & SAVANXP_WM_SETTINGS_FONTS) != 0u)
+    {
+        (void)sxngui_reload_interface_faces();
+        desktop_close_popups();
+        g_background_repaint = 1;
+        g_taskbar_repaint = 1;
+    }
+}
+
+/* The background: a new size (windowd resizes it when the video mode
+ * changes), then its ring. */
 static void service_background(void)
 {
-    struct savanxp_input_event event;
-    struct savanxp_gui_pointer_event pointer;
+    struct savanxp_wm_event record;
 
-    while (gfx_poll_event(&g_background, &event) > 0)
+    if (sxnwm_check_resize(&g_main) > 0)
     {
-        /* windowd resizes the background surface when the video mode changes. */
-        if (event.type == SAVANXP_INPUT_EVENT_RESIZED)
+        fill_surface(&g_background, &g_main);
+        desktop_view_resize(&g_background.info);
+        desktop_wallpaper_changed();
+    }
+    while (sxnwm_poll_input(&g_main, &record) == 0)
+    {
+        if (record.kind == SAVANXP_WM_EVENT_KEY)
         {
-            (void)gfx_apply_resize_event(&g_background, &event);
-            desktop_view_resize(&g_background.info);
-            desktop_wallpaper_changed();
+            background_key(&record.payload.key);
         }
-        else if (!handle_hotkey(&event))
+        else if (record.kind == SAVANXP_WM_EVENT_POINTER)
         {
-            handle_desktop_key(&event);
+            background_pointer(&record.payload.pointer);
+        }
+        else if (record.kind == SAVANXP_WM_EVENT_SETTINGS)
+        {
+            settings_changed(record.payload.settings.changed);
         }
     }
-    while (gfx_poll_window_pointer(&g_background, &pointer) > 0)
-    {
-        uint32_t down = pointer.buttons & ~g_background_buttons;
+}
 
-        if ((down & (SAVANXP_MOUSE_BUTTON_LEFT | SAVANXP_MOUSE_BUTTON_RIGHT)) != 0)
+static void taskbar_pointer(const struct savanxp_gui_pointer_event *pointer)
+{
+    notify_pointer_left_popups();
+    /* A press on the taskbar is a press outside the context menu. */
+    if (pointer->buttons != 0)
+    {
+        close_context_menu();
+    }
+    if ((desktop_taskbar_pointer(&g_taskbar, pointer) & DESKTOP_ACTION_REPAINT) != 0)
+    {
+        g_taskbar_repaint = 1;
+    }
+}
+
+static struct desktop_popup_slot *open_slot_by_window(uint32_t window_id)
+{
+    int index;
+
+    for (index = 0; index < DESKTOP_SLOT_COUNT; ++index)
+    {
+        if (k_slots[index]->open && k_slots[index]->window_id == window_id)
         {
-            desktop_close_popups();
+            return k_slots[index];
         }
-        else
+    }
+    return 0;
+}
+
+/* The other windows' input, from the connection's event pipe. Their keys
+ * are not theirs: a popup never takes the focus, so its keys come through
+ * the background (handle_desktop_key). A record for a window already closed
+ * is dropped. */
+static void service_owned(void)
+{
+    struct savanxp_wm_event record;
+
+    while (sxnwm_poll_owned_input(&g_main, &record) == 0)
+    {
+        struct desktop_popup_slot *slot;
+
+        if (record.kind != SAVANXP_WM_EVENT_POINTER)
         {
-            notify_pointer_left_popups();
+            continue;
         }
-        g_background_buttons = pointer.buttons;
-        if ((desktop_view_pointer(&pointer) & DESKTOP_ACTION_REPAINT) != 0)
+        if (record.window_id == DESKTOP_WINDOW_TASKBAR)
         {
-            g_background_repaint = 1;
+            if (g_taskbar_open)
+            {
+                taskbar_pointer(&record.payload.pointer);
+            }
+            continue;
+        }
+        slot = open_slot_by_window(record.window_id);
+        if (slot != 0)
+        {
+            apply_actions(slot->ops->pointer(&slot->surface, &record.payload.pointer), slot);
         }
     }
 }
 
 static void service_taskbar(void)
 {
-    struct savanxp_input_event event;
-    struct savanxp_gui_pointer_event pointer;
-
     if (!g_taskbar_open)
     {
         return;
     }
-    while (gfx_poll_event(&g_taskbar, &event) > 0)
+    if (sxnwm_check_resize(&g_taskbar_wm) > 0)
     {
-        if (event.type == SAVANXP_INPUT_EVENT_RESIZED)
-        {
-            (void)gfx_apply_resize_event(&g_taskbar, &event);
-            g_taskbar_repaint = 1;
-        }
-    }
-    while (gfx_poll_window_pointer(&g_taskbar, &pointer) > 0)
-    {
-        notify_pointer_left_popups();
-        /* A press on the taskbar is a press outside the context menu. */
-        if (pointer.buttons != 0)
-        {
-            close_context_menu();
-        }
-        if ((desktop_taskbar_pointer(&g_taskbar, &pointer) & DESKTOP_ACTION_REPAINT) != 0)
-        {
-            g_taskbar_repaint = 1;
-        }
+        fill_surface(&g_taskbar, &g_taskbar_wm);
+        g_taskbar_repaint = 1;
     }
     if ((desktop_taskbar_tick() & DESKTOP_ACTION_REPAINT) != 0)
     {
@@ -664,30 +790,29 @@ static void service_taskbar(void)
 
 static void service_popup(struct desktop_popup_slot *slot)
 {
-    struct savanxp_input_event event;
-    struct savanxp_gui_pointer_event pointer;
-
     if (!slot->open)
     {
         return;
     }
     /* windowd asked it to close: a press landed outside the desktop. */
-    if (gfx_should_close(&slot->gfx))
+    if (sxnwm_close_requested(&slot->wm))
     {
         close_slot(slot);
         return;
     }
-    while (gfx_poll_event(&slot->gfx, &event) > 0)
-    {
-    }
-    while (slot->open && gfx_poll_window_pointer(&slot->gfx, &pointer) > 0)
-    {
-        apply_actions(slot->ops->pointer(&slot->gfx, &pointer), slot);
-    }
-    if (slot->open && slot->ops->tick != 0)
+    if (slot->ops->tick != 0)
     {
         apply_actions(slot->ops->tick(), slot);
     }
+}
+
+/* Paints and publishes one owned window; 1 if it was presented. */
+static int present_owned(struct sxnwm_client *window, struct desktop_surface *surface,
+                         void (*paint)(struct desktop_surface *surface))
+{
+    (void)sxnwm_wait_idle(window, 100);
+    paint(surface);
+    return present(window) == 0;
 }
 
 /* Returns non-zero if something was presented. A failed present on the main
@@ -700,7 +825,7 @@ static int present_windows(int *lost_session)
     if (g_background_repaint)
     {
         paint_background();
-        if (gfx_present(&g_background, g_background.pixels) < 0)
+        if (present(&g_main) < 0)
         {
             *lost_session = 1;
             return presented;
@@ -710,11 +835,7 @@ static int present_windows(int *lost_session)
     }
     if (g_taskbar_open && g_taskbar_repaint)
     {
-        desktop_taskbar_paint(&g_taskbar);
-        if (gfx_present(&g_taskbar, g_taskbar.pixels) == 0)
-        {
-            presented = 1;
-        }
+        presented |= present_owned(&g_taskbar_wm, &g_taskbar, desktop_taskbar_paint);
         g_taskbar_repaint = 0;
     }
     for (index = 0; index < DESKTOP_SLOT_COUNT; ++index)
@@ -723,65 +844,69 @@ static int present_windows(int *lost_session)
 
         if (slot->open && slot->needs_repaint)
         {
-            slot->ops->paint(&slot->gfx);
-            if (gfx_present(&slot->gfx, slot->gfx.pixels) == 0)
-            {
-                presented = 1;
-            }
+            presented |= present_owned(&slot->wm, &slot->surface, slot->ops->paint);
             slot->needs_repaint = 0;
         }
     }
     return presented;
 }
 
+/* Sleeps until windowd has something for the desktop (input, a frame
+ * composed, a close) or a frame's worth of time passed: the clock, the
+ * indicators and the Desktop folder are polled on that beat. */
+static void wait_for_work(void)
+{
+    int32_t handles[2];
+
+    handles[0] = (int32_t)g_main.wake_fd;
+    handles[1] = (int32_t)g_main.events_fd;
+    (void)sxn_wait_many(handles, 2, 16);
+}
+
 int main(void)
 {
     unsigned long next_wallpaper_check_ms = 0;
+    long result;
 
     /* The taskbar, the Start menu and the popups are drawn in the interface
      * faces from /system/fonts, like every program's (docs/desktop/UI_FONTS.md). */
-    (void)sxgui_load_interface_faces();
-    /* It closes its popups and taskbar itself when windowd goes away. */
-    gfx_handle_close(1);
-    if (gfx_open_shell(&g_background) < 0)
+    (void)sxngui_load_interface_faces();
+    result = sxnwm_connect_shell(&g_main, &g_shell);
+    if (result < 0)
     {
-        puts_fd(2, "desktop: gfx_open failed\n");
+        desktop_log("desktop: the shell connection failed (%ld)\n", result);
         return 1;
     }
-    if (gfx_acquire(&g_background) < 0)
-    {
-        puts_fd(2, "desktop: gfx_acquire failed\n");
-        gfx_close(&g_background);
-        return 1;
-    }
-
-    /* Programs started from here inherit the working directory: a file
-     * saved under a bare name lands in the user's profile, not at the root,
-     * which the user may not write. */
-    (void)chdir(savanxp_profile_dir());
+    /* The other windows' input is read without blocking, and before the
+     * first one opens a read must not wait either. */
+    (void)sxn_set_nonblocking(g_main.events_fd, 1);
+    fill_surface(&g_background, &g_main);
 
     /* The resolution the user chose in Display Properties, if it is not the
-     * one the session booted with. windowd resizes the background and its
-     * RESIZED arrives with the first events. */
+     * one the session booted with. windowd resizes the background, which
+     * the loop follows. */
     {
         uint32_t width = 0;
         uint32_t height = 0;
 
-        if (display_settings_read_mode(&width, &height) == 0 &&
+        if (desktop_read_display_mode(&width, &height) == 0 &&
             (width != g_background.info.width || height != g_background.info.height))
         {
-            long result = gfx_set_display_mode(&g_background, width, height);
-
+            result = sxnwm_set_display_mode(&g_main, width, height);
             if (result < 0)
             {
-                eprintf("desktop: the saved resolution %ux%u was refused (%s)\n",
-                    (unsigned)width, (unsigned)height, result_error_string(result));
+                desktop_log("desktop: the saved resolution %ux%u was refused (%ld)\n",
+                    (unsigned)width, (unsigned)height, result);
+            }
+            else if (sxnwm_check_resize(&g_main) > 0)
+            {
+                fill_surface(&g_background, &g_main);
             }
         }
     }
 
     /* Loads the persisted choice and decodes its image. */
-    desktop_wallpaper_init();
+    desktop_background_init();
     /* The Desktop folder, created with its first shortcuts if it is not there. */
     desktop_view_init(&g_background.info);
     /* Without the window list there is nothing for a taskbar to show: the
@@ -800,14 +925,18 @@ int main(void)
     for (;;)
     {
         int lost_session = 0;
-        unsigned long now = uptime_ms();
+        unsigned long now = desktop_uptime_ms();
 
-        if (gfx_should_close(&g_background))
+        /* Reset first, then look: whatever arrives after the reset sets it
+         * again and the wait returns at once. */
+        (void)sxn_event_reset(g_main.wake_fd);
+        if (sxnwm_close_requested(&g_main))
         {
             break;
         }
         try_open_taskbar();
         service_background();
+        service_owned();
         service_taskbar();
         service_popup(&g_start_menu);
         service_popup(&g_tray);
@@ -817,22 +946,11 @@ int main(void)
         {
             g_background_repaint = 1;
         }
-        /* The person picked other interface faces (Display Properties'
-         * Appearance tab): the icons' labels and the taskbar are drawn
-         * again with them, and an open menu, measured with the old ones,
-         * closes. */
-        if ((gfx_take_settings_changed() & SAVANXP_WM_SETTINGS_FONTS) != 0u)
-        {
-            (void)sxgui_reload_interface_faces();
-            desktop_close_popups();
-            g_background_repaint = 1;
-            g_taskbar_repaint = 1;
-        }
 
         if (now >= next_wallpaper_check_ms)
         {
             next_wallpaper_check_ms = now + DESKTOP_WALLPAPER_CHECK_MS;
-            if (desktop_wallpaper_reload())
+            if (desktop_background_reload())
             {
                 desktop_wallpaper_changed();
             }
@@ -844,7 +962,7 @@ int main(void)
             {
                 break;
             }
-            sleep_ms(16);
+            wait_for_work();
         }
     }
 
@@ -852,9 +970,8 @@ int main(void)
     close_slot(&g_hung);
     if (g_taskbar_open)
     {
-        (void)gfx_window_close(&g_background, &g_taskbar);
+        (void)sxnwm_window_close(&g_main, &g_taskbar_wm, DESKTOP_WINDOW_TASKBAR);
     }
     desktop_taskbar_shutdown();
-    gfx_close(&g_background);
     return 0;
 }

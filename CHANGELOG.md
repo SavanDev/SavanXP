@@ -317,6 +317,10 @@ changes not released yet; each released version has its own file in
 
 ### Changed
 
+- **The desktop is a SUN program**, `/system/desktop.sxe` from `system/desktop`; `/bin/desktop` is retired. Background,
+  taskbar, Start menu and popups behave as before; programs it starts still begin in the profile or a shortcut's
+  `workdir`. The calendar and the layout popup now read in English. SUN gains `mime_icon_load` (SDK 2.0), POSIX's
+  icons-by-type loader ([Desktop architecture](docs/desktop/DESKTOP_ARCHITECTURE.md#desktop-the-desktop-only)).
 - **The shell's shared data modules move to `system/shell/` and make no system call.** Program Manager's registry,
   shortcuts, Start menu pins and shortcuts and file associations go through `include/shell/shell_io.h`, which each
   subsystem implements; the fallback icon (`desktop_icons`) joins them. Behaviour is unchanged ([The shell's data](docs/desktop/DESKTOP_ARCHITECTURE.md#the-shells-data-and-its-io)).

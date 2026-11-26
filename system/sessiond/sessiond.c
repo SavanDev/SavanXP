@@ -25,7 +25,7 @@
 
 static const char* const k_compositord_path = "/system/compositord.sxe";
 static const char* const k_windowd_path = "/system/windowd.sxe";
-static const char* const k_desktop_path = "/bin/desktop";
+static const char* const k_desktop_path = "/system/desktop.sxe";
 
 /* A child that ends within this long after starting counts as a crash at
  * startup; after SESSIOND_MAX_QUICK_EXITS in a row it is not restarted, so a

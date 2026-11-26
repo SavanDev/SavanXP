@@ -2,16 +2,14 @@
 
 #include "shell/desktop_icons.h"
 #include "sxgfx/mime_icon.h"
+#include "shell/shell_io.h"
 #include "shell/shortcut.h"
 #include "savanxp/sxe.h"
 
-#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 /*
  * The icons on the background (docs/desktop/DESKTOP_ICONS.md, phases 2 and 3).
@@ -43,7 +41,7 @@
 #define VIEW_DRAG_THRESHOLD 4
 #define VIEW_DOUBLE_CLICK_MS 450ul
 #define VIEW_RESCAN_MS 2000ul
-#define VIEW_POSITIONS_NAME "desktopicons.ini" /* in the profile: savanxp_settings_path */
+#define VIEW_POSITIONS_NAME "desktopicons.ini" /* in the profile: shell_io_settings_path */
 #define VIEW_POSITIONS_MAX_BYTES 4096
 
 struct view_item
@@ -100,14 +98,14 @@ static int g_position_count = 0;
 
 static int path_is_directory(const char *path)
 {
-    struct stat info;
-    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+    struct shell_io_info info;
+    return shell_io_query(path, &info) == 0 && info.type == SHELL_IO_DIRECTORY;
 }
 
 static int path_exists(const char *path)
 {
-    struct stat info;
-    return stat(path, &info) == 0;
+    struct shell_io_info info;
+    return shell_io_query(path, &info) == 0;
 }
 
 static int join(char *out, size_t capacity, const char *name)
@@ -137,12 +135,14 @@ static void create_default_shortcuts(void)
 
 static void ensure_folder(void)
 {
-    snprintf(g_folder, sizeof(g_folder), "%s/Desktop", savanxp_profile_dir());
+    snprintf(g_folder, sizeof(g_folder), "%s/Desktop", shell_io_profile_directory());
     if (!path_is_directory(g_folder))
     {
-        if (savanxp_mkdir(g_folder) < 0)
+        long made = shell_io_make_directory(g_folder);
+
+        if (made < 0)
         {
-            eprintf("desktop: cannot create %s\n", g_folder);
+            desktop_log("desktop: cannot create %s (%ld)\n", g_folder, made);
             g_folder_ready = 0;
             return;
         }
@@ -157,30 +157,19 @@ static void load_positions(void)
 {
     static char text[VIEW_POSITIONS_MAX_BYTES];
     char path[256];
-    long fd;
-    long length = 0;
+    long length;
     char *line;
 
     g_position_count = 0;
-    if (savanxp_settings_path(VIEW_POSITIONS_NAME, 0, path, sizeof(path)) != 0)
+    if (shell_io_settings_path(VIEW_POSITIONS_NAME, 0, path, sizeof(path)) != 0)
     {
         return;
     }
-    fd = savanxp_open_mode(path, SAVANXP_OPEN_READ);
-    if (fd < 0)
+    length = shell_io_read_file(path, text, sizeof(text) - 1u);
+    if (length < 0)
     {
         return;
     }
-    while (length < (long)sizeof(text) - 1)
-    {
-        long count = savanxp_read((int)fd, text + length, sizeof(text) - 1u - (size_t)length);
-        if (count <= 0)
-        {
-            break;
-        }
-        length += count;
-    }
-    savanxp_close((int)fd);
     text[length] = '\0';
 
     line = text;
@@ -219,7 +208,6 @@ static void save_positions(void)
     static char text[VIEW_POSITIONS_MAX_BYTES];
     char path[256];
     size_t used = 0;
-    long fd;
     int index;
 
     for (index = 0; index < VIEW_MAX_ITEMS; ++index)
@@ -238,17 +226,11 @@ static void save_positions(void)
         }
         used += (size_t)written;
     }
-    if (savanxp_settings_path(VIEW_POSITIONS_NAME, 1, path, sizeof(path)) != 0)
+    if (shell_io_settings_path(VIEW_POSITIONS_NAME, 1, path, sizeof(path)) != 0 ||
+        shell_io_write_file(path, text, used) != 0)
     {
         return;
     }
-    fd = savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
-    if (fd < 0)
-    {
-        return;
-    }
-    (void)savanxp_write((int)fd, text, used);
-    savanxp_close((int)fd);
 
     /* What is on disk is now the table. */
     g_position_count = 0;
@@ -502,37 +484,40 @@ static void fill_item(struct view_item *item, const char *name)
     load_icon(item);
 }
 
+static char g_scan_names[VIEW_MAX_ITEMS][VIEW_NAME_CAPACITY];
+static int g_scan_count = 0;
+
+static void collect_name(const char *name, void *context)
+{
+    (void)context;
+    if (name[0] == '.' || g_scan_count >= VIEW_MAX_ITEMS)
+    {
+        return;
+    }
+    snprintf(g_scan_names[g_scan_count], VIEW_NAME_CAPACITY, "%s", name);
+    g_scan_count += 1;
+}
+
 /* Re-reads the folder. Items that are still there keep their icon and cell;
  * new ones take their saved cell, or the first free one. Returns 1 if
  * anything changed. */
 static int rescan(void)
 {
-    static char names[VIEW_MAX_ITEMS][VIEW_NAME_CAPACITY];
-    int name_count = 0;
+    char (*names)[VIEW_NAME_CAPACITY] = g_scan_names;
+    int name_count;
     int changed = 0;
     int index;
-    DIR *directory;
-    struct dirent *entry;
 
     if (!g_folder_ready)
     {
         return 0;
     }
-    directory = opendir(g_folder);
-    if (directory == 0)
+    g_scan_count = 0;
+    if (shell_io_list(g_folder, collect_name, 0) != 0)
     {
         return 0;
     }
-    while ((entry = readdir(directory)) != 0 && name_count < VIEW_MAX_ITEMS)
-    {
-        if (entry->d_name[0] == '.')
-        {
-            continue;
-        }
-        snprintf(names[name_count], VIEW_NAME_CAPACITY, "%s", entry->d_name);
-        name_count += 1;
-    }
-    closedir(directory);
+    name_count = g_scan_count;
 
     /* Gone from the folder: gone from the screen. */
     for (index = 0; index < VIEW_MAX_ITEMS; ++index)
@@ -979,7 +964,7 @@ static void end_rename(int commit)
         return;
     }
     snprintf(name, sizeof(name), "%s%s", g_edit, item->is_shortcut ? SHORTCUT_EXTENSION : "");
-    if (!join(path, sizeof(path), name) || path_exists(path) || rename(item->path, path) != 0)
+    if (!join(path, sizeof(path), name) || path_exists(path) || shell_io_rename(item->path, path) != 0)
     {
         char text[VIEW_NAME_CAPACITY + 48];
 
@@ -1005,7 +990,7 @@ static void delete_answer(int yes)
         return;
     }
     item = &g_items[g_subject];
-    result = item->is_dir ? rmdir(item->path) : unlink(item->path);
+    result = item->is_dir ? (int)shell_io_delete_directory(item->path) : (int)shell_io_delete_file(item->path);
     if (result != 0)
     {
         snprintf(text, sizeof(text), item->is_dir ? "Cannot delete '%s'. Is the folder empty?" : "Cannot delete '%s'.",
@@ -1115,16 +1100,11 @@ static void create_new(int folder)
     }
     if (folder)
     {
-        created = savanxp_mkdir(path) >= 0;
+        created = shell_io_make_directory(path) >= 0;
     }
     else
     {
-        long fd = savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE);
-        if (fd >= 0)
-        {
-            savanxp_close((int)fd);
-            created = 1;
-        }
+        created = shell_io_write_file(path, "", 0) == 0;
     }
     if (!created)
     {
@@ -1228,7 +1208,7 @@ uint32_t desktop_view_pointer(const struct savanxp_gui_pointer_event *pointer)
 
     if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
     {
-        unsigned long now = uptime_ms();
+        unsigned long now = desktop_uptime_ms();
 
         if (hit >= 0 && hit == g_last_click_item && now - g_last_click_ms <= VIEW_DOUBLE_CLICK_MS)
         {
@@ -1508,7 +1488,7 @@ void desktop_view_init(const struct savanxp_fb_info *info)
     ensure_folder();
     load_positions();
     (void)rescan();
-    g_next_scan_ms = uptime_ms() + VIEW_RESCAN_MS;
+    g_next_scan_ms = desktop_uptime_ms() + VIEW_RESCAN_MS;
 }
 
 void desktop_view_resize(const struct savanxp_fb_info *info)
@@ -1520,7 +1500,7 @@ void desktop_view_resize(const struct savanxp_fb_info *info)
 
 int desktop_view_tick(void)
 {
-    unsigned long now = uptime_ms();
+    unsigned long now = desktop_uptime_ms();
 
     if (now < g_next_scan_ms || g_dragging || g_editing >= 0)
     {

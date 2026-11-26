@@ -15,7 +15,8 @@
 #   gui     the SXGUI application frame for SUN (include/sxn/sxngui.h), whose
 #           strong toolkit host replaces the POSIX frame's weak one, and the
 #           file dialog (include/sxn/sxnfiledlg.h) with the icons by type it
-#           shows; it needs the POSIX runtime's gui group
+#           shows and their loader from the profile (mime_icon_load); it needs
+#           the POSIX runtime's gui group
 core    system/runtime/sxn_runtime.c
 core    system/runtime/sxnprofile.c
 core    system/runtime/sxn_sxe.c
@@ -26,3 +27,4 @@ core    system/runtime/sxnhttp.c
 gui     system/runtime/sxngui.c
 gui     system/runtime/sxnfiledlg.c
 gui     system/gfx/mime_icon.c
+gui     system/runtime/sxn_mime_icon.c

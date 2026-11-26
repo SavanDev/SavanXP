@@ -1,5 +1,8 @@
 #include "desktop.h"
 
+#include "sxn/sxn.h"
+#include "sxn/sxnprofile.h"
+
 /*
  * The keyboard layout selector (ES/EN): a popup of the desktop, anchored in
  * the tray corner above the layout button. Mouse only; it closes as soon as a
@@ -12,7 +15,7 @@
 #define KBDLAYOUTPOPUP_ROW_COUNT 2
 #define KBDLAYOUTPOPUP_ROW_HEIGHT 20
 
-static const char *k_row_labels[KBDLAYOUTPOPUP_ROW_COUNT] = {"Español", "English"};
+static const char *k_row_labels[KBDLAYOUTPOPUP_ROW_COUNT] = {"Spanish", "English"};
 
 static struct sx_rect popup_row_rect(const struct savanxp_fb_info *info, int row)
 {
@@ -39,7 +42,7 @@ static int popup_hit(const struct savanxp_fb_info *info, int x, int y)
     return -1;
 }
 
-static void popup_paint(struct savanxp_gfx_context *gfx, int current_layout, int hot_row)
+static void popup_paint(struct desktop_surface *gfx, int current_layout, int hot_row)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;
@@ -63,9 +66,9 @@ static void popup_paint(struct savanxp_gfx_context *gfx, int current_layout, int
         int text_y = rect.y + (rect.height - gfx_text_height()) / 2;
 
         sx_painter_fill_rect(&painter, rect, background);
-        /* La fila del layout activo lleva una marca a la izquierda -- no hay
-         * negrita en esta fuente, asi que un prefijo es la forma simple de
-         * distinguirla sin depender de otra pasada de dibujo. */
+        /* The active layout's row carries a mark on its left -- this face has
+         * no bold, so a prefix is the simple way to set it apart without
+         * another drawing pass. */
         sx_painter_draw_text(
             &painter,
             text_x,
@@ -81,7 +84,7 @@ static void popup_paint(struct savanxp_gfx_context *gfx, int current_layout, int
     }
 }
 
-static long g_input_fd = -1;
+static long g_keyboard_device = -1;
 static int g_current_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
 static int g_pressed_row = -1;
 static int g_hot_row = -1;
@@ -95,11 +98,11 @@ static int keyboard_open(void)
     g_current_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
     /* The layout without the keys: /dev/input0 is windowd's, and the desktop
      * runs as the user. Setting the layout is a mutating operation, so the
-     * descriptor needs write access. */
-    g_input_fd = savanxp_open_mode("/dev/keyboard", SAVANXP_OPEN_READ | SAVANXP_OPEN_WRITE);
-    if (g_input_fd >= 0)
+     * handle needs write access. */
+    g_keyboard_device = sxn_open_device("keyboard", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
+    if (g_keyboard_device >= 0)
     {
-        long layout = input_get_layout((int)g_input_fd);
+        long layout = sxn_device_control(g_keyboard_device, INPUT_IOC_GET_LAYOUT, 0);
         if (layout == SAVANXP_KEYBOARD_LAYOUT_ES || layout == SAVANXP_KEYBOARD_LAYOUT_EN)
         {
             g_current_layout = (int)layout;
@@ -110,14 +113,14 @@ static int keyboard_open(void)
 
 static void keyboard_close(void)
 {
-    if (g_input_fd >= 0)
+    if (g_keyboard_device >= 0)
     {
-        savanxp_close((int)g_input_fd);
-        g_input_fd = -1;
+        (void)sxn_close(g_keyboard_device);
+        g_keyboard_device = -1;
     }
 }
 
-static uint32_t keyboard_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+static uint32_t keyboard_pointer(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
     uint32_t up = g_last_buttons & ~pointer->buttons;
@@ -138,22 +141,19 @@ static uint32_t keyboard_pointer(struct savanxp_gfx_context *gfx, const struct s
     {
         if (row >= 0 && row == g_pressed_row)
         {
-            if (g_input_fd < 0 || input_set_layout((int)g_input_fd, row) < 0)
+            if (g_keyboard_device < 0 ||
+                sxn_device_control(g_keyboard_device, INPUT_IOC_SET_LAYOUT, (unsigned long)row) < 0)
             {
-                puts_fd(2, "desktop: input_set_layout failed\n");
+                desktop_log("desktop: INPUT_IOC_SET_LAYOUT failed\n");
             }
             else
             {
                 char digit = (char)('0' + row);
                 char path[256];
                 /* The user's, in the profile; init applies it at boot. */
-                int config_fd = savanxp_settings_path("keyboard.cfg", 1, path, sizeof(path)) == 0
-                    ? (int)savanxp_open_mode(path, SAVANXP_OPEN_WRITE | SAVANXP_OPEN_CREATE | SAVANXP_OPEN_TRUNCATE)
-                    : -1;
-                if (config_fd >= 0)
+                if (sxn_settings_path("keyboard.cfg", 1, path, sizeof(path)) == 0)
                 {
-                    (void)savanxp_write(config_fd, &digit, 1);
-                    savanxp_close(config_fd);
+                    (void)sxn_write_file(path, &digit, 1);
                 }
                 actions |= DESKTOP_ACTION_CLOSE | DESKTOP_ACTION_TASKBAR_CHANGED;
             }
@@ -163,7 +163,7 @@ static uint32_t keyboard_pointer(struct savanxp_gfx_context *gfx, const struct s
     return actions;
 }
 
-static void keyboard_paint(struct savanxp_gfx_context *gfx)
+static void keyboard_paint(struct desktop_surface *gfx)
 {
     popup_paint(gfx, g_current_layout, g_hot_row);
 }

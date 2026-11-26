@@ -1,6 +1,7 @@
 #include "desktop.h"
 
 #include "shell/progman_registry.h"
+#include "shell/shell_io.h"
 #include "shell/desktop_icons.h"
 
 /*
@@ -84,19 +85,13 @@ static uint32_t g_catalog_signature = 0;
 
 static int path_is_launchable(const char *path)
 {
-    long fd;
+    struct shell_io_info info;
 
     if (path == 0 || path[0] == '\0')
     {
         return 0;
     }
-    fd = savanxp_open(path);
-    if (fd < 0)
-    {
-        return 0;
-    }
-    (void)savanxp_close((int)fd);
-    return 1;
+    return shell_io_query(path, &info) == 0;
 }
 
 /* The same stages, in the same order, as progman.c:build_catalog (see
@@ -251,7 +246,7 @@ static int max_scroll(void)
  * as tall as its rows, but never taller than the work area. */
 static void submenu_measure(int *width, int *height)
 {
-    const struct savanxp_gfx_context *main_window = desktop_main_window();
+    const struct desktop_surface *main_window = desktop_main_window();
     int work_height = (int)main_window->info.height - DESKTOP_TASKBAR_HEIGHT;
     int widest = 0;
     int index;
@@ -371,7 +366,7 @@ static void clamp_scroll(void)
     }
 }
 
-static uint32_t submenu_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+static uint32_t submenu_pointer(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
     uint32_t up = g_last_buttons & ~pointer->buttons;
@@ -434,7 +429,7 @@ static uint32_t submenu_tick(void)
     {
         return DESKTOP_ACTION_NONE;
     }
-    now = uptime_ms();
+    now = desktop_uptime_ms();
     if (now < g_next_scroll_ms)
     {
         return DESKTOP_ACTION_NONE;
@@ -568,7 +563,7 @@ static void paint_row(struct sx_painter *painter, int index, struct sx_rect rect
     }
 }
 
-static void submenu_paint(struct savanxp_gfx_context *gfx)
+static void submenu_paint(struct desktop_surface *gfx)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;

@@ -1,8 +1,12 @@
 #include "desktop.h"
-#include "savanxp/wm_shell_protocol.h"
+#include "wm/wm_shell_protocol.h"
 
 #include "shell/desktop_icons.h"
 #include "start_logo.h"
+#include "sxn/sxn.h"
+#include "sxn/sxnaudio.h"
+
+#include <string.h>
 
 /*
  * The taskbar: the desktop's panel window, not windowd chrome.
@@ -16,7 +20,7 @@
  *
  * What it cannot know on its own -- which windows exist, which is active, which
  * is minimized -- windowd tells it through the window list section
- * (savanxp/wm_shell_protocol.h), and clicks go back as requests on the shell's
+ * (wm/wm_shell_protocol.h), and clicks go back as requests on the shell's
  * request pipe. The taskbar NEVER activates a window by itself: it asks, and
  * windowd decides.
  */
@@ -44,23 +48,23 @@
 #define TASKBAR_HIT_VOLUME (-4)
 #define TASKBAR_HIT_CLOCK (-5)
 
-/* The indicators (layout, speaker) are read through ioctls on fds opened once
- * and never read or written. The desktop's own popups ask for a refresh as
+/* The indicators (layout, speaker) are read through control requests on
+ * device handles opened once and never read or written. The desktop's own popups ask for a refresh as
  * soon as they change something (DESKTOP_ACTION_TASKBAR_CHANGED); the polling
  * every TASKBAR_LAYOUT_POLL_FRAMES passes catches changes made elsewhere, such
  * as the `volume` command. */
 #define TASKBAR_LAYOUT_POLL_FRAMES 30
 static const char *k_layout_labels[2] = {"ES", "EN"};
 
-/* /dev/audio0, for the read ioctls only. */
-static long g_audio_fd = -1;
+/* /dev/audio0, for the read control requests only. */
+static long g_audio_device = -1;
 static int g_audio_muted = 0;
 static int g_audio_volume = 100;
 
-/* El boton del altavoz usa el mismo arte que el reproductor (nombres de la
- * Icon Naming Specification): el generador lo empaqueta en start_logo.h y
- * asi no hay dos dibujos que diverjan. Los tercios son los del reproductor
- * (mediaplayer.c): 0..33 bajo, 34..66 medio, 67..100 alto. */
+/* The speaker button uses the same art as the media player (Icon Naming
+ * Specification names): the generator packs it into start_logo.h, so there
+ * are not two drawings to drift apart. The thirds are the player's
+ * (mediaplayer.c): 0..33 low, 34..66 medium, 67..100 high. */
 static const struct savanxp_embedded_bitmap_asset *taskbar_volume_glyph(void)
 {
     if (g_audio_muted || g_audio_volume <= 0)
@@ -78,14 +82,14 @@ static const struct savanxp_embedded_bitmap_asset *taskbar_volume_glyph(void)
     return &k_volume_high;
 }
 
-static struct savanxp_wm_window_list *g_list;
-/* Copia estable para pintar: la seccion la escribe el WM en cualquier momento,
- * asi que se saca una foto consistente y se dibuja de ahi. */
+static const struct savanxp_wm_window_list *g_list;
+/* A stable copy to paint from: the WM writes the section at any moment, so a
+ * consistent snapshot is taken and drawn from. */
 static struct savanxp_wm_window_list g_snapshot;
 static int g_pressed_index = -1;
 static int g_context_pressed = 0;
 static int g_active_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
-static long g_input_fd = -1;
+static long g_keyboard_device = -1;
 
 /* W2K-style clock: HH:MM from the RTC (UTC, which is what the RTC gives, see
  * time.h), falling back to uptime when there is no valid RTC. g_clock_stamp
@@ -105,7 +109,7 @@ static void taskbar_clock_format(char *buffer, unsigned int hours, unsigned int 
     buffer[5] = '\0';
 }
 
-/* Relee el reloj y devuelve distinto de cero si el texto cambio. */
+/* Reads the clock again; non-zero when the text changed. */
 static int taskbar_clock_refresh(void)
 {
     struct savanxp_realtime now;
@@ -113,14 +117,14 @@ static int taskbar_clock_refresh(void)
     char text[6];
 
     memset(&now, 0, sizeof(now));
-    if (realtime(&now) == 0 && now.valid != 0)
+    if (desktop_realtime(&now) == 0 && now.valid != 0)
     {
         stamp = ((unsigned long)now.hour * 60UL) + (unsigned long)now.minute;
         taskbar_clock_format(text, (unsigned int)now.hour, (unsigned int)now.minute);
     }
     else
     {
-        unsigned long total_minutes = uptime_ms() / 60000UL;
+        unsigned long total_minutes = desktop_uptime_ms() / 60000UL;
         unsigned int hours = (unsigned int)((total_minutes / 60UL) % 24UL);
         unsigned int minutes = (unsigned int)(total_minutes % 60UL);
 
@@ -145,10 +149,10 @@ static int taskbar_clock_refresh(void)
 }
 
 /*
- * Lectura con seqlock: si la secuencia es impar el WM esta escribiendo, y si
- * cambio entre el antes y el despues la copia salio mezclada. En los dos casos
- * se reintenta. Sin esto, un repintado podria mostrar media lista vieja y media
- * nueva -- por ejemplo un titulo de una ventana con el flag de otra.
+ * A seqlock read: an odd sequence means the WM is writing, and one that
+ * changed between before and after means the copy came out mixed. Either way
+ * it is tried again. Without this a repaint could show half an old list and
+ * half a new one -- for instance one window's title with another's flag.
  */
 static int taskbar_snapshot(void)
 {
@@ -178,23 +182,23 @@ static int taskbar_snapshot(void)
 }
 
 /*
- * Icono del boton: el propio de la ventana si el WM lo mando, y el generico si
- * no. `storage` lo aporta el llamador para describir los pixeles que viven en
- * la entrada del snapshot sin copiarlos de nuevo -- es el mismo reparto que
- * windowd_presentation_icon() del lado del WM.
+ * The button's icon: the window's own when the WM sent it, the generic one
+ * otherwise. The caller provides `storage` to describe the pixels that live
+ * in the snapshot's entry without copying them again -- the same split as
+ * windowd_presentation_icon() on the WM's side.
  *
- * El generico deja de ser lo unico que se ve: hasta que la entrada transporto
- * los pixeles, TODA ventana caia aca porque icon_id ya no distingue apps (el
- * set horneado se redujo al generico cuando cada binario consiguio su .sxicon,
- * ver docs/userland/SXE_FORMAT.md).
+ * The generic icon is no longer all there is to see: until the entry carried
+ * the pixels, EVERY window landed here, because icon_id no longer tells apps
+ * apart (the baked-in set came down to the generic icon once each binary got
+ * its .sxicon, see docs/userland/SXE_FORMAT.md).
  */
 static const struct desktop_embedded_bitmap *taskbar_entry_icon(
     const struct savanxp_wm_window_entry *entry,
     struct desktop_embedded_bitmap *storage)
 {
-    /* El lado se valida contra el tope y no solo contra 0: los pixeles son un
-     * arreglo fijo, y un extent mayor haria que el blit leyera fuera de la
-     * entrada. */
+    /* The side is checked against the cap and not only against 0: the pixels
+     * are a fixed array, and a larger extent would make the blit read past
+     * the entry. */
     if (entry != 0 && storage != 0 &&
         entry->icon_extent != 0u && entry->icon_extent <= SAVANXP_WM_WINDOW_ICON_EXTENT)
     {
@@ -347,7 +351,7 @@ static void taskbar_paint_glyph(
     sx_painter_blit_bitmap(painter, &bitmap, x, y);
 }
 
-static void taskbar_paint(struct savanxp_gfx_context *gfx)
+static void taskbar_paint(struct desktop_surface *gfx)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;
@@ -566,21 +570,21 @@ static uint64_t g_last_sequence = 0;
 
 int desktop_taskbar_init(void)
 {
-    int list_fd = gfx_shell_window_list_fd();
-
-    g_list = list_fd >= 0 ? (struct savanxp_wm_window_list *)map_view(list_fd, SAVANXP_SECTION_READ) : 0;
-    if (g_list == 0 || result_is_error((long)g_list))
+    /* windowd mapped it for the shell when it connected (sxnwm_shell). */
+    g_list = desktop_window_list();
+    if (g_list == 0)
     {
-        g_list = 0;
-        puts_fd(2, "desktop: could not map the window list\n");
+        desktop_log("desktop: could not map the window list\n");
         return -1;
     }
 
-    /* Only for the layout ioctl: /dev/keyboard has no events to read. */
-    g_input_fd = savanxp_open_mode("/dev/keyboard", SAVANXP_OPEN_READ);
-    /* Only for the volume read ioctls -- nothing is ever written through it.
-     * Without audio there is no speaker to show: the button stays as is. */
-    g_audio_fd = (long)audio_open();
+    /* Only for the layout control request: /dev/keyboard has no events to
+     * read. */
+    g_keyboard_device = sxn_open_device("keyboard", SXN_DEVICE_READ);
+    /* Only for the volume read requests -- nothing is ever written through
+     * it. Without audio there is no speaker to show: the button stays as is.
+     * Read and write, as the POSIX audio_open asks. */
+    g_audio_device = sxn_open_device("audio0", SXN_DEVICE_READ | SXN_DEVICE_WRITE);
     (void)desktop_taskbar_refresh_indicators();
     (void)taskbar_clock_refresh();
     return 0;
@@ -588,30 +592,27 @@ int desktop_taskbar_init(void)
 
 void desktop_taskbar_shutdown(void)
 {
-    if (g_input_fd >= 0)
+    if (g_keyboard_device >= 0)
     {
-        savanxp_close((int)g_input_fd);
-        g_input_fd = -1;
+        (void)sxn_close(g_keyboard_device);
+        g_keyboard_device = -1;
     }
-    if (g_audio_fd >= 0)
+    if (g_audio_device >= 0)
     {
-        savanxp_close((int)g_audio_fd);
-        g_audio_fd = -1;
+        (void)sxn_close(g_audio_device);
+        g_audio_device = -1;
     }
-    if (g_list != 0)
-    {
-        (void)unmap_view(g_list);
-        g_list = 0;
-    }
+    /* The list is the connection's: it goes with it. */
+    g_list = 0;
 }
 
 int desktop_taskbar_refresh_indicators(void)
 {
     int changed = 0;
 
-    if (g_input_fd >= 0)
+    if (g_keyboard_device >= 0)
     {
-        long layout = input_get_layout((int)g_input_fd);
+        long layout = sxn_device_control(g_keyboard_device, INPUT_IOC_GET_LAYOUT, 0);
         if ((layout == SAVANXP_KEYBOARD_LAYOUT_ES || layout == SAVANXP_KEYBOARD_LAYOUT_EN) &&
             (int)layout != g_active_layout)
         {
@@ -619,10 +620,10 @@ int desktop_taskbar_refresh_indicators(void)
             changed = 1;
         }
     }
-    if (g_audio_fd >= 0)
+    if (g_audio_device >= 0)
     {
-        long muted = audio_get_muted((int)g_audio_fd);
-        long volume = audio_get_volume((int)g_audio_fd);
+        long muted = sxn_device_control(g_audio_device, AUDIO_IOC_GET_MUTED, 0);
+        long volume = sxn_device_control(g_audio_device, AUDIO_IOC_GET_VOLUME, 0);
         if ((muted == 0 || muted == 1) && (int)muted != g_audio_muted)
         {
             g_audio_muted = (int)muted;
@@ -655,7 +656,7 @@ static void taskbar_menu_command(int id)
     }
 }
 
-uint32_t desktop_taskbar_pointer(const struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+uint32_t desktop_taskbar_pointer(const struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
     uint32_t up = g_last_buttons & ~pointer->buttons;
@@ -754,7 +755,7 @@ uint32_t desktop_taskbar_tick(void)
     return actions;
 }
 
-void desktop_taskbar_paint(struct savanxp_gfx_context *gfx)
+void desktop_taskbar_paint(struct desktop_surface *gfx)
 {
     taskbar_paint(gfx);
 }

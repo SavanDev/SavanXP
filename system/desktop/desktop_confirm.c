@@ -103,7 +103,7 @@ static uint32_t confirm_answer(int button)
     return DESKTOP_ACTION_CLOSE;
 }
 
-static uint32_t confirm_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+static uint32_t confirm_pointer(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
     uint32_t up = g_last_buttons & ~pointer->buttons;
@@ -171,7 +171,7 @@ uint32_t desktop_confirm_key(const struct savanxp_input_event *event)
     }
 }
 
-static void confirm_paint(struct savanxp_gfx_context *gfx)
+static void confirm_paint(struct desktop_surface *gfx)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;

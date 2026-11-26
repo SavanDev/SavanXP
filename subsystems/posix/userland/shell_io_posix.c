@@ -111,6 +111,16 @@ long shell_io_delete_file(const char *path)
     return savanxp_unlink(path);
 }
 
+long shell_io_delete_directory(const char *path)
+{
+    return savanxp_rmdir(path);
+}
+
+long shell_io_rename(const char *old_path, const char *new_path)
+{
+    return savanxp_rename(old_path, new_path);
+}
+
 const char *shell_io_profile_directory(void)
 {
     return savanxp_profile_dir();

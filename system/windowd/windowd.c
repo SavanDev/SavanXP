@@ -21,7 +21,7 @@
 
 /* The session (the desktop, Program Manager, restarting them) belongs to
  * sessiond; windowd starts a desktop only for its own selftest. */
-static const char *k_desktop_path = "/bin/desktop";
+static const char *k_desktop_path = "/system/desktop.sxe";
 
 static int launch_overlay_client(struct windowd_session *session, const char *path, const char *argument);
 /* Defined with the rest of the Alt+Tab switcher, further down; the selftest

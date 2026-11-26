@@ -19,14 +19,14 @@ Manager's **Options** menu, or by name.
 
 ## Who does what
 
-Two processes, one on each subsystem, share `system/gfx/wallpaper.c`
+Two SUN processes share `system/gfx/wallpaper.c`
 (`sxgfx/wallpaper.h`): the format of the configuration, the image decoding
 with its limits, and the painting. It makes no system call; each process reads
 and writes its own files and keeps the pixels in memory of its own.
 
 | Process | Subsystem | Uses | Job |
 |---|---|---|---|
-| `desktop` | POSIX | `desktop_wallpaper_init`, `_reload`, `_draw` (`subsystems/posix/userland/desktop_wallpaper.c`) | Keeps one configuration and one decoded image, and draws the background |
+| `desktop` | SUN | `desktop_background_init`, `_reload`, `_draw` (`system/desktop/desktop_background.c`) | Keeps one configuration and one decoded image, and draws the background |
 | `display` | SUN | `desktop_wallpaper_parse_config`, `_format_config`, `_image_plan`, `_image_decode`, `_paint` | Edits the configuration and paints previews from images of its own |
 
 They never talk to each other. The configuration file is the contract: the
@@ -160,8 +160,8 @@ or the developer's preferences.
 | Kernel | `GPU_IOC_GET_CONNECTOR_PROPERTIES` says whether the adapter can change mode (`SAVANXP_GPU_CONNECTOR_FLAG_MUTABLE_MODE_SETTING`) and its limits: `max_width`, `max_height`, `max_bytes`. The `dispi` registers report their maximum (GETCAPS) and the mapped VRAM bounds the frame; virtio-gpu backs the scanout with an imported section, so its limit (2560x1600) only keeps the list finite. A plain firmware framebuffer cannot change mode. |
 | `compositord` | Sizes the display section, at start, for the largest mode the session may use, and reports it in the INIT reply (`max_width`, `max_height`, protocol v7). |
 | `windowd` | Serves `SAVANXP_WM_WINDOW_ACTION_SET_DISPLAY_MODE` from any main window: sets the mode through `compositord`, makes it the native mode, and lays everything out again. |
-| `desktop` | Its background and taskbar follow the `RESIZED` they get; at start it sets the mode the user kept. |
-| `display` | Lists the modes, asks for one with `sxnwm_set_display_mode` (the desktop, a POSIX program, uses `gfx_set_display_mode`), and saves it only once the user keeps it. |
+| `desktop` | Its background and taskbar follow their new size (`sxnwm_check_resize`); at start it sets the mode the user kept with `sxnwm_set_display_mode`. |
+| `display` | Lists the modes, asks for one with `sxnwm_set_display_mode`, and saves it only once the user keeps it. |
 
 ### The session's largest mode
 
@@ -209,8 +209,11 @@ No, Esc or the end of the countdown sets the previous mode again. Only a kept
 mode is written: `display.cfg` in the user's profile, one line,
 `mode=<width>x<height>`. Display Properties writes it (`sxn_settings_path`);
 the desktop reads it
-(`display_settings.c`) when it starts and asks for the mode if the session
-booted in another.
+(`desktop_read_display_mode`) when it starts and asks for the mode if the
+session booted in another. A POSIX program has the same read and save in
+`subsystems/posix/userland/display_settings.c`, and the background's in
+`desktop_wallpaper.c`: the desktop used them while it was POSIX, and they
+stay for any POSIX program that needs them.
 
 It is the user's setting and not the machine's because the desktop, which
 applies it, runs as the user, and a system file would need elevation for

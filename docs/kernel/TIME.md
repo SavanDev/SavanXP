@@ -213,7 +213,7 @@ matters only for a certificate issued within those hours.
 
 ## Showing it: the taskbar clock and calendar
 
-The taskbar (`subsystems/posix/userland/desktop/desktop_taskbar.c`) shows a
+The taskbar (`system/desktop/desktop_taskbar.c`) shows a
 sunken `HH:MM` readout taken from the RTC in UTC, with an `uptime_ms` fallback
 when no valid RTC exists. Clicking it toggles the clock popup
 (`desktop_clock.c`, 178x180, display-only), a popup window of the `desktop`

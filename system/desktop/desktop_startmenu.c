@@ -478,7 +478,7 @@ static void paint_row(
     }
 }
 
-static void startmenu_paint(struct savanxp_gfx_context *gfx)
+static void startmenu_paint(struct desktop_surface *gfx)
 {
     struct sx_bitmap bitmap;
     struct sx_painter painter;
@@ -547,7 +547,7 @@ static void startmenu_paint(struct savanxp_gfx_context *gfx)
  * taskbar. */
 static void menu_origin(int *x, int *y)
 {
-    const struct savanxp_gfx_context *main_window = desktop_main_window();
+    const struct desktop_surface *main_window = desktop_main_window();
 
     *x = 2;
     *y = (int)main_window->info.height - DESKTOP_TASKBAR_HEIGHT - g_height;
@@ -586,7 +586,7 @@ static void startmenu_want_cascade(int entry)
         return;
     }
     g_pending_cascade = entry;
-    g_cascade_due_ms = uptime_ms() + STARTMENU_CASCADE_DELAY_MS;
+    g_cascade_due_ms = desktop_uptime_ms() + STARTMENU_CASCADE_DELAY_MS;
 }
 
 void desktop_startmenu_submenu_entered(void)
@@ -682,7 +682,7 @@ static void startmenu_close(void)
     }
 }
 
-static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+static uint32_t startmenu_pointer(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
     uint32_t up = g_last_buttons & ~pointer->buttons;
@@ -784,7 +784,7 @@ static uint32_t startmenu_pointer(struct savanxp_gfx_context *gfx, const struct 
  * has rested long enough, so it is driven from the desktop loop. */
 static uint32_t startmenu_tick(void)
 {
-    if (shortcut_menu_open() || g_pending_cascade == g_open_cascade || uptime_ms() < g_cascade_due_ms)
+    if (shortcut_menu_open() || g_pending_cascade == g_open_cascade || desktop_uptime_ms() < g_cascade_due_ms)
     {
         return DESKTOP_ACTION_NONE;
     }

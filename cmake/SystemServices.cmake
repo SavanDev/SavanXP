@@ -89,6 +89,39 @@ savanxp_system_service(NAME windowd LINK_PROFILE PIE DEPENDS libgfx2d libsxfont 
     windowd_consent.c
     SHARED_SOURCES system/shell/desktop_icons.c)
 
+# The desktop: background, taskbar, Start menu and the taskbar's popups, as
+# windows of one process (docs/desktop/DESKTOP_ARCHITECTURE.md). windowd starts
+# it as the shell. No .sxres, so it stays out of the launcher. It shares the
+# shell's data (system/shell/) with Program Manager and Files through
+# shell_io_sun.c, and the background's format with Display Properties.
+savanxp_system_service(NAME desktop LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libsximg SOURCES
+    desktop.c
+    desktop_sys.c
+    desktop_background.c
+    desktop_taskbar.c
+    desktop_startmenu.c
+    desktop_volume.c
+    desktop_clock.c
+    desktop_keyboard.c
+    desktop_hung.c
+    desktop_contextmenu.c
+    desktop_confirm.c
+    desktop_shutdown.c
+    desktop_submenu.c
+    desktop_view.c
+    shell_io_sun.c
+    SHARED_SOURCES
+    system/gfx/wallpaper.c
+    system/shell/desktop_icons.c
+    system/shell/progman_registry.c
+    system/shell/shortcut.c
+    system/shell/start_shortcuts.c
+    system/shell/start_pins.c
+    system/shell/file_assoc.c
+    system/gfx/pe_version.c
+    system/gfx/pe_resource.c
+    system/gfx/pe_icon.c)
+
 # The Command Prompt (docs/desktop/CONSOLE.md): the console host, the first
 # SUN application. Not a service, but a piece of the system written against
 # the native API like them, so it lives here and links the same way.

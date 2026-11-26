@@ -242,9 +242,10 @@ own: the POSIX window client and application frame stay in the POSIX SDK. See
 
 And the apps, all of them, against the POSIX SDK:
 
-- **Shell** — the `desktop` process (`subsystems/posix/userland/desktop/`:
-  wallpaper, taskbar, Start menu and the taskbar's popups) and `progman.c`, the
-  launcher. Clients of `windowd` since the WM extraction, **and in C**. See
+- **Shell** — `progman.c`, the launcher, a client of `windowd` since the WM
+  extraction, **and in C**. The `desktop` process (wallpaper, taskbar, Start
+  menu and the taskbar's popups) was here too and is a SUN program now
+  (`system/desktop/`). See
   [DESKTOP_ARCHITECTURE.md](../desktop/DESKTOP_ARCHITECTURE.md).
 - **File manager** — `subsystems/posix/userland/filesapp.c`.
 - **Notepad**, **Calculator**, **Task Manager**, **Minesweeper** — and whatever

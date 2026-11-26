@@ -503,37 +503,7 @@ savanxp_program(NAME audiod SOURCES subsystems/posix/userland/audiod.c)
 target_compile_options(audiod PRIVATE -O2)
 savanxp_program(NAME audiotest TEST SOURCES subsystems/posix/userland/audiotest.c)
 # compositord, sessiond and windowd: cmake/SystemServices.cmake.
-# The desktop: background, taskbar, Start menu and the taskbar's popups, as
-# windows of one process (docs/desktop/DESKTOP_ARCHITECTURE.md). windowd starts
-# it as the shell. No .sxres, so it stays out of the launcher.
-savanxp_program(NAME desktop DEPENDS libgfx2d libsxfont libsxgui libsxgfx libsximg LINK_PROFILE PIE SOURCES
-    subsystems/posix/userland/desktop/desktop.c
-    subsystems/posix/userland/desktop/desktop_taskbar.c
-    subsystems/posix/userland/desktop/desktop_startmenu.c
-    subsystems/posix/userland/desktop/desktop_volume.c
-    subsystems/posix/userland/desktop/desktop_clock.c
-    subsystems/posix/userland/desktop/desktop_keyboard.c
-    subsystems/posix/userland/desktop/desktop_hung.c
-    subsystems/posix/userland/desktop/desktop_contextmenu.c
-    subsystems/posix/userland/desktop/desktop_confirm.c
-    subsystems/posix/userland/desktop/desktop_shutdown.c
-    subsystems/posix/userland/desktop/desktop_submenu.c
-    subsystems/posix/userland/desktop/desktop_view.c
-    subsystems/posix/userland/desktop_wallpaper.c
-    system/gfx/wallpaper.c
-    subsystems/posix/userland/display_settings.c
-    system/shell/desktop_icons.c
-    system/shell/progman_registry.c
-    system/shell/shortcut.c
-    system/shell/start_shortcuts.c
-    system/shell/start_pins.c
-    system/shell/file_assoc.c
-    subsystems/posix/userland/shell_io_posix.c
-    system/gfx/pe_version.c
-    system/gfx/mime_icon.c
-    system/gfx/pe_resource.c
-    system/gfx/pe_icon.c
-    subsystems/posix/userland/mime_icon_posix.c)
+# The desktop: cmake/SystemServices.cmake (a SUN program since it left /bin).
 savanxp_program(NAME progman DEPENDS libgfx2d libsxfont libsxgui libsxgfx LINK_PROFILE PIE SOURCES
     subsystems/posix/userland/progman.c
     system/shell/progman_registry.c

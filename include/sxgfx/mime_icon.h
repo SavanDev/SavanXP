@@ -108,8 +108,9 @@ void mime_icon_set_reader(mime_icon_reader reader);
  * "this file shows no icon". Returns how many extensions ended up mapped. */
 int mime_icon_load_file(const char *path);
 
-/* POSIX only (mime_icon_posix.c): installs the POSIX reader and loads the
- * profile's mimeicon.ini, or the system's. */
+/* Installs the subsystem's reader and loads the profile's mimeicon.ini, or
+ * the system's: mime_icon_posix.c for POSIX, system/runtime/sxn_mime_icon.c
+ * for SUN. */
 int mime_icon_load(void);
 
 /* Pure parsing of the text, the selftest's entry point. */

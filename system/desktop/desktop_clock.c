@@ -1,5 +1,6 @@
 #include "desktop.h"
 
+#include <string.h>
 #include <time.h>
 
 /*
@@ -21,10 +22,10 @@
 #define CLOCKPOPUP_POLL_FRAMES 30
 
 static const char *k_month_names[12] = {
-    "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
 };
-static const char *k_dow_labels[7] = {"lu", "ma", "mi", "ju", "vi", "sa", "do"};
+static const char *k_dow_labels[7] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
 
 static int is_leap_year(int year)
 {
@@ -55,7 +56,7 @@ static int days_in_month(int year, int month)
     }
 }
 
-/* Columna del dia 1 (0 = lunes, ES): gmtime ya calcula el dia de semana. */
+/* The column of day 1 (0 = Monday): gmtime works out the weekday already. */
 static int first_weekday_column(int year, int month)
 {
     struct tm fields;
@@ -88,7 +89,7 @@ static void popup_draw_text_centered(struct sx_painter *painter, struct sx_rect 
     sx_painter_draw_text(painter, text_x, text_y, text, colour);
 }
 
-static void popup_paint(struct savanxp_gfx_context *gfx, int year, int month, int day,
+static void popup_paint(struct desktop_surface *gfx, int year, int month, int day,
                         const char *time_text, int have_date)
 {
     struct sx_bitmap bitmap;
@@ -125,11 +126,8 @@ static void popup_paint(struct savanxp_gfx_context *gfx, int year, int month, in
             header_text[header_length++] = name[index++];
         }
         header_text[header_length++] = ' ';
-        header_text[header_length++] = 'd';
-        header_text[header_length++] = 'e';
-        header_text[header_length++] = ' ';
         {
-            /* Anio en decimal sin snprintf: cuatro digitos. */
+            /* The year in decimal without snprintf: four digits. */
             int rest = year;
             int divisor = 1000;
 
@@ -144,7 +142,7 @@ static void popup_paint(struct savanxp_gfx_context *gfx, int year, int month, in
     }
     else
     {
-        const char *fallback = "(sin fecha)";
+        const char *fallback = "(no date)";
         int index = 0;
 
         while (fallback[index] != '\0')
@@ -234,7 +232,7 @@ static void clock_close(void)
 }
 
 /* Display only: the pointer does nothing. */
-static uint32_t clock_pointer(struct savanxp_gfx_context *gfx, const struct savanxp_gui_pointer_event *pointer)
+static uint32_t clock_pointer(struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     (void)gfx;
     (void)pointer;
@@ -251,7 +249,7 @@ static uint32_t clock_tick(void)
         long current;
 
         memset(&now, 0, sizeof(now));
-        if (realtime(&now) == 0 && now.valid != 0)
+        if (desktop_realtime(&now) == 0 && now.valid != 0)
         {
             current = ((long)now.hour * 3600L) + ((long)now.minute * 60L) + (long)now.second;
             g_time_text[0] = (char)('0' + now.hour / 10);
@@ -263,8 +261,9 @@ static uint32_t clock_tick(void)
             g_time_text[6] = (char)('0' + now.second / 10);
             g_time_text[7] = (char)('0' + now.second % 10);
             g_time_text[8] = '\0';
-            /* El mes tambien puede cambiar con el popup abierto (medianoche
-             * del 31): si el dia no es el mismo, la grilla se recalcula. */
+            /* The month can change too with the popup open (midnight on the
+             * 31st): when the day is not the same, the grid is worked out
+             * again. */
             if (!g_have_date || g_year != (int)now.year || g_month != (int)now.month ||
                 g_day != (int)now.day)
             {
@@ -276,7 +275,7 @@ static uint32_t clock_tick(void)
         }
         else
         {
-            unsigned long total_seconds = uptime_ms() / 1000UL;
+            unsigned long total_seconds = desktop_uptime_ms() / 1000UL;
             unsigned int hours = (unsigned int)((total_seconds / 3600UL) % 24UL);
             unsigned int minutes = (unsigned int)((total_seconds / 60UL) % 60UL);
             unsigned int seconds = (unsigned int)(total_seconds % 60UL);
@@ -307,7 +306,7 @@ static uint32_t clock_tick(void)
     return actions;
 }
 
-static void clock_paint(struct savanxp_gfx_context *gfx)
+static void clock_paint(struct desktop_surface *gfx)
 {
     popup_paint(gfx, g_year, g_month, g_day, g_time_text, g_have_date);
 }
