@@ -648,9 +648,247 @@ paints them; a style change waits for the next `WM_PAINT`. The focus
 rectangle is `DrawFocusRect`'s: the outline's pixels at odd x + y XORed with
 the background colour, the others with the text colour.
 
-What is left out: dialog templates in the extended format, other control
-classes (edit, list box, combo box, scroll bar: Solitaire creates none),
-the system menu, submenus, owner-drawn menu items and menu bars that wrap.
+**At run time (WP5).** Menus are also built and changed by program:
+`CreateMenu`, `CreatePopupMenu`, `AppendMenuW`, `InsertMenuW`,
+`ModifyMenuW`, `DeleteMenu`, `RemoveMenu`, `CheckMenuItem`,
+`GetMenuState` (a popup's item count in the high byte), `GetMenuStringW`,
+`GetSubMenu`, `SetMenu` and `DrawMenuBar`; a menu keeps its own copy of
+each item's text. Owner-drawn items are measured and drawn through the
+owner (`WM_MEASUREITEM`, `WM_DRAWITEM` with `ODT_MENU`), a checked item
+shows Windows XP's 7-pixel tick in its 13-pixel check column, and
+`TrackPopupMenu` runs the same loop for a popup on its own
+(`TPM_RETURNCMD` answers the command instead of posting it).
+`CreateDialogParamW`, `CreateDialogIndirectParamW` and
+`DialogBoxIndirectParamW` take templates in both formats, the classic and
+the extended (`DLGTEMPLATEEX`); a modeless dialog is a host window of kind
+`SXW_WINDOW_MODELESS` (the owner stays enabled) and is shown with
+`UpdateWindow` at once, as Windows XP paints it. `IsDialogMessageW` asks
+the message filter hook first (`MSGF_DIALOGBOX`). The dialog class keeps
+the 30 bytes of `DWL_MSGRESULT`, `DWL_DLGPROC` and `DWL_USER`, and
+`DefDlgProc` answers what the procedure left in `DWL_MSGRESULT`.
+`GetDialogBaseUnits` is 8 by 16, the system font's.
+
+What is left out: the system menu's own items, submenus of a popup menu
+and menu bars that wrap.
+
+## Hooks and subclassing
+
+`dlls/user32/hook.c` and `winpos.c`, checked by `hooks.exe` against
+Windows XP (see [Fixtures](#fixtures)). MFC attaches its objects to windows
+from a `WH_CBT` hook and subclasses every window it makes, so the order of
+what these calls send is what matters.
+
+- **Hooks.** `SetWindowsHookExW` installs `WH_CBT`, `WH_CALLWNDPROC`,
+  `WH_CALLWNDPROCRET`, `WH_GETMESSAGE` and `WH_MSGFILTER` for one thread, or
+  for every thread of the process when it names none and gives a module;
+  others fail with error 1426, and a thread hook without a thread 1428. The
+  newest hook of a kind runs first and `CallNextHookEx` passes on to the
+  next older one; `UnhookWindowsHookEx` of a hook that is gone fails with
+  1404.
+- **Where they are called.** The CBT hook sees `HCBT_CREATEWND` before the
+  window gets any message (with `hwndInsertAfter` `HWND_TOP`; a nonzero
+  answer makes `CreateWindowEx` fail), `HCBT_ACTIVATE`, `HCBT_SETFOCUS`
+  before the activation that a focus change brings, `HCBT_SYSCOMMAND`, and
+  `HCBT_DESTROYWND` for a window given to `DestroyWindow` and the windows
+  it owns, never for its children. The window procedure hooks see sent
+  messages only, with wParam 0 from the same thread. The message hook may
+  change the message it is given. The filter hook sees the dialog manager's
+  messages (`MSGF_DIALOGBOX`), the menu loop's (`MSGF_MENU`) and a scroll
+  bar's tracking (`MSGF_SCROLLBAR`).
+- **Window longs.** `GetWindowLongW` and `SetWindowLongW` read and write
+  `GWL_WNDPROC` (subclassing), `GWL_STYLE` and `GWL_EXSTYLE` (with
+  `WM_STYLECHANGING` and `WM_STYLECHANGED`), `GWL_ID`, `GWL_USERDATA`,
+  `GWL_HINSTANCE`, a dialog's `DWL_` values and the class's extra bytes;
+  `CallWindowProcW` calls the procedure a subclass saved. The system classes
+  keep Windows XP's class styles and extra bytes (Button 4, Static 4, Edit
+  6, ListBox 4, ComboBox 4, ScrollBar 72, the dialog class 30).
+- **Properties.** `SetPropW`, `GetPropW` and `RemovePropW`, by name or atom,
+  over global atoms; a window's are freed with it.
+
+## Positions
+
+`SetWindowPos` sends what Windows XP sent `hooks.exe`: `WM_WINDOWPOSCHANGING`
+always; `WM_NCCALCSIZE` when the size or the frame changes; then, when
+anything changed at all, `WM_WINDOWPOSCHANGED` with `SWP_NOMOVE`,
+`SWP_NOSIZE` and `SWP_NOZORDER` added for what did not change,
+`SWP_NOCLIENTSIZE` (`0x800`) and `SWP_NOCLIENTMOVE` (`0x1000`) for the client
+area, and `SWP_NOREDRAW` when the parent is hidden. `DefWindowProc` turns
+`WM_WINDOWPOSCHANGED` into `WM_MOVE` and then `WM_SIZE`. `MoveWindow` and
+`ShowWindow` go through it. A deferred set (`BeginDeferWindowPos`,
+`DeferWindowPos`, `EndDeferWindowPos`) sends every `CHANGING` first and then
+every `CHANGED`. A child shown or moved without `SWP_NOACTIVATE` gets
+`WM_CHILDACTIVATE`; hiding a visible child erases its parent at once.
+
+Activating or showing a top-level window brings up its whole owner group,
+the top first: the window itself with its own flags, the others with
+`0x13`. `SetParent` moves a child under another, hidden and shown again.
+`CreateWindowEx` follows Windows XP's rules too: a visible child of a hidden
+parent only gets `WM_SHOWWINDOW`, a popup gets `WM_SIZE` and `WM_MOVE` when
+it is made, `WM_GETMINMAXINFO` goes only to overlapped and sizable windows,
+a framed window gains `WS_EX_WINDOWEDGE`, a top-level one keeps
+`WS_CLIPSIBLINGS`, and `WM_PARENTNOTIFY` goes to the immediate parent only.
+
+The window tree (`GetWindow`, `GetTopWindow`, `IsChild`, `EnumChildWindows`,
+`EnumWindows`), screen coordinates (`GetWindowRect`, `ScreenToClient`,
+`MapWindowPoints`, `WindowFromPoint`, `ChildWindowFromPoint`) and
+`GetWindowPlacement` and `SetWindowPlacement` are there for MFC's frames. A
+popup with no caption, owned by another window, is drawn whole on its own
+surface (a host popup), and the pointer is given to it across top-level
+windows in screen coordinates while it has the capture: that is how a
+combo box's list and a menu work.
+
+## Carets
+
+`dlls/user32/caret.c`: one caret for the process, owned by a window, with a
+hide count. It is drawn by inverting its rectangle, so drawing it twice
+takes it away; `BeginPaint` takes it off, and `EndPaint` puts it back at
+once and starts its blink again, as Windows XP does, so the caret is on the
+window after every paint. It blinks every `GetCaretBlinkTime` milliseconds,
+530 unless the program sets another. The calls fail as Windows XP's did: no
+caret is `ERROR_ACCESS_DENIED`, a window that does not own it fails without
+an error, and a new caret keeps the old one's position. `controls.exe` sets
+a blink of ten seconds while it runs, so the caret is on the screen at
+every dump wherever its blink had come to on each system.
+
+## Scroll bars
+
+`dlls/user32/scroll.c`. A window with `WS_HSCROLL` or `WS_VSCROLL` has its
+bars in its non-client area (`WM_NCCALCSIZE` makes room, `WM_NCHITTEST`
+answers `HTVSCROLL` and `HTHSCROLL`), and the `ScrollBar` class is one as a
+control. Both keep a range, a page and a position as Windows XP does: the
+page is cut to the range, the position to what the page leaves, and a
+window's bar is hidden when its page covers its range and shown again when
+a range is set (`SetScrollInfo`, `SetScrollRange`, `SetScrollPos`,
+`ShowScrollBar`, `EnableScrollBar`, the `SBM_` messages).
+
+They look as Windows XP's classic bars do, read back pixel by pixel from
+`controls.exe`: raised arrow buttons with a triangle 4 rows deep and 7
+pixels wide in a 16-pixel button (the one pointing left a pixel further
+left), a track of the highlight and face colours on alternate pixels with
+the face colour where x + y is even, and a raised thumb as long as the page
+takes of the track, placed and followed by rounding to the nearest, as
+`MulDiv` does. A press on an arrow or the track repeats after 400 ms and
+then every 50 ms; a press on the thumb sends `SB_THUMBTRACK` with the
+position at once and on every move, then `SB_THUMBPOSITION` and
+`SB_ENDSCROLL`. A scroll bar control takes the focus on a click only with
+`WS_TABSTOP`. `ScrollWindowEx` moves the pixels on the surface and
+invalidates what had no source.
+
+## Edit, list box and combo box
+
+`dlls/user32/edit.c`, `listbox.c` and `combo.c`, with the messages, the
+notifications, their order and the pixels `controls.exe` got from Windows
+XP, driven by its input script.
+
+- **Edit** is single-line: typing and deleting, a selection by keyboard
+  and pointer, a caret, horizontal scrolling, Cut, Copy and Paste, one
+  level of undo, a limit (30,000 by default; 0 means `0x7FFFFFFE`) and the
+  `EM_` messages. A control made with text tells its parent `EN_UPDATE` and
+  `EN_CHANGE` from `WM_CREATE`. A replacement the limit cuts sends
+  `EN_MAXTEXT` before `EN_UPDATE` and `EN_CHANGE`. Windows XP takes
+  `WS_BORDER` out of the style and draws the line itself inside the client
+  area, so the style a program reads back lacks it. Inside a combo box the
+  control carries `ES_COMBO` (`0x200`), draws its text from its corner and
+  hides its selection without the focus even with `ES_NOHIDESEL`.
+- **ListBox** holds items with text and a value, sorted with
+  `CompareStringW` ignoring case (a new item goes ahead of one that
+  compares equal) or in the order given, one selection, a caret item, a top
+  item, integral height and owner-drawn items, fixed or variable.
+  `LB_INSERTSTRING` past the end and `LB_SETCURSEL` past the end fail and
+  change nothing. Deleting an item sends `WM_DELETEITEM` whatever it holds;
+  emptying or destroying the list sends it, from the last item, only for an
+  owner-drawn one. `LBN_SELCHANGE` goes out only when the selection moved.
+  Multiple selection is not written.
+- **ComboBox**, simple, drop-down, drop-down list and owner-drawn, is an
+  Edit control (id 1001) and a list box (id 1000, class `ComboLBox`): a
+  child of a simple one, an owned popup with `WS_BORDER` for the others.
+  Windows XP moves `WS_VSCROLL` from the combo box to its list and adds
+  `CBS_HASSTRINGS` when it is not owner-drawn. The field is as high as the
+  font and two pixels, or what `WM_MEASUREITEM` answers for item -1 (it is
+  offered the system font's height and two, since the measure comes before
+  `WM_SETFONT`); the box is the field and six. A simple one's list is a
+  whole number of items high under the box. The dropped list is as high as
+  the height given at creation less the box at creation, and that is what
+  `CB_GETDROPPEDCONTROLRECT` adds to the box. The button is 16 pixels wide
+  inside a sunken edge, with the arrow of the scroll bars.
+- **The combo box's order** is Windows XP's: a choice made in the list
+  sends `CBN_SELENDOK`, then `CBN_CLOSEUP` when the list was down, then
+  `CBN_SELCHANGE`; a move in the dropped list by keyboard sends only
+  `CBN_SELCHANGE`; Enter sends `CBN_SELENDOK` and `CBN_CLOSEUP`; Escape and
+  losing the focus send `CBN_SELENDCANCEL` (a simple one sends nothing
+  there) and `CBN_CLOSEUP` when it was down. The field is drawn before the
+  parent hears `CBN_SETFOCUS`, and again when the button comes up. An
+  owner-drawn list draws `ODA_FOCUS` off and on around its items while it
+  is down, for item -1 when nothing is chosen. What is typed in the edit
+  control finds its item: chosen in a dropped list, only scrolled to in a
+  closed one, whose selection goes. `WM_SETTEXT` reaches the edit control
+  without a `CBN_EDIT` notification, and a drop-down list ignores it.
+  `CB_SETCURSEL` scrolls the list to the item and leaves everything as it
+  was for an index past the end. A simple combo box's list is always down
+  (`CB_GETDROPPEDSTATE` is TRUE).
+
+## The clipboard
+
+`dlls/user32/clipboard.c` puts Win32's clipboard over SavanXP's
+([CLIPBOARD.md](../desktop/CLIPBOARD.md)), through the `CLIPBOARD_SET`,
+`INFO`, `FORMAT` and `GET` services (`loader/clipboard.c`): in `winhost`
+over `/dev/clipboard` with SUN's typed calls (`sxn/sxnclip.h`), in the
+harness over a set in memory that `--clipboard FILE` keeps between runs.
+
+- **While a program is the owner**, its own handles are what
+  `GetClipboardData` gives back. When it closes the clipboard after
+  changing it, every format that is memory goes to the system's set:
+  `CF_UNICODETEXT` (or the text made from `CF_TEXT` or `CF_OEMTEXT`) as
+  UTF-8 with LF line ends, `Rich Text Format` as `text/rtf` without its
+  NUL, `CF_HDROP` as `text/uri-list`, another registered format as
+  `application/x-win32-NAME` and a numbered one as `application/x-win32-cfN`,
+  in the program's order with RTF and file lists first after the text.
+  GDI formats stay with the program.
+- **Delayed rendering** (`SetClipboardData` with no handle) is rendered
+  when the clipboard closes, and `WM_RENDERALLFORMATS` when its owner goes:
+  the system's set is a value with no owner.
+- **Made formats.** From any text format Windows XP makes `CF_LOCALE` and
+  the other two text formats when the clipboard closes, listed after what
+  was set: `CF_LOCALE`, then the others by number. `CF_OEMTEXT` is code page
+  437, as an English Windows XP's (kernel32 converts `CP_OEMCP` with it).
+- **Another program's set** is read when the clipboard is opened or asked
+  about, each format only when it is asked for.
+- **Sequence.** `GetClipboardSequenceNumber` is the system's sequence plus
+  what this program counted: `EmptyClipboard`, every `SetClipboardData` and
+  every format made at `CloseClipboard`, as Windows XP counts them, the
+  system's own step at the close counting once. Programs compare
+  differences, never values.
+- `OpenClipboard` while another window has it open fails without an error
+  code, as on Windows XP.
+
+`clip.exe` checks all of it in one program and, with `put` and `get`, across
+two: on SavanXP `win32test` reads what `put` left with SUN's calls, writes
+the same set itself, and `get` must print what Windows XP printed.
+
+## Drag and drop
+
+`dlls/shell32/drop.c` reads a file list: the `DROPFILES` block a
+`WM_DROPFILES` or the clipboard's `CF_HDROP` carries, wide or ANSI, with
+`DragQueryFileW` (a name cut to the buffer still answers its whole length,
+as Windows XP does), `DragQueryPoint` and `DragFinish`.
+`DragAcceptFiles` sets or clears `WS_EX_ACCEPTFILES`. User32 makes such a
+block from a `text/uri-list` (`make_drop`).
+
+A drag over a window of the program is SavanXP's
+([DRAG_AND_DROP.md](../desktop/DRAG_AND_DROP.md)): `winhost` turns
+`windowd`'s drag records into `SXW_EVENT_DRAG` (phase, effects and effect in
+`c`) and reads `/dev/dragdata` for `SXW_SVC_DRAG_FORMAT` and `_GET`.
+User32 finds the window under the point, then the nearest one with
+`WS_EX_ACCEPTFILES` from it up through its parents, as Windows looks; for an
+enter or a move it answers copy through `SXW_SVC_DRAG_REPLY` when there is
+one and the drag offers `text/uri-list`, and 0 otherwise. On the drop it
+reads the list and posts that window `WM_DROPFILES` with the block, the
+point in its client coordinates (outside the client area, the top-level
+window with the non-client flag). The harness plays the drag with the input
+script's `dragover X Y URI...` and `drop X Y`; `clip.exe drop` is the
+fixture, in `win32-harness-test` and in the `win32-drop` scenario. A Win32
+program as a drag source (`DoDragDrop`) and OLE's `RegisterDragDrop` targets
+are not there yet.
 
 ## The registry
 
@@ -725,6 +963,9 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `threads.exe` | WP3, with `tlog.dll` and `tquiet.dll`: a thread started suspended, suspend counts, TLS slots and static TLS with its callbacks, thread notifications in order and `DisableThreadLibraryCalls`, events, mutexes, semaphores and waits, a contended critical section, `_beginthreadex` with a priority, a message-only window on the second thread taking sent, posted and thread messages, and a thread left waiting as the process ends | `expected/threads.out`, status 5 |
 | `resource.exe` | Its own resources (`resource.rc`): strings, bitmaps in both header formats at 1, 4 and 24 bits, an icon, a cursor and an accelerator table. It loads them as `sol.exe` does, then copies, converts and stretches the bitmaps (grown by 2, grown to odd sizes, shrunk), and drives the accelerators with posted keys | `expected/resource.out`, status 0 |
 | `dialog.exe` | A menu of two popups with separators and an accelerator shown after a tab, an accelerator table, and two dialogs built from the same resource types and styles as `sol.exe`'s (`dialog.rc`): one of owner-drawn buttons with a default and a cancel button, like Deck, and one of group boxes, radio buttons the program checks itself, automatic check boxes and static text left and right, like Options; then `MessageBoxW`, `ShellAboutW` and `InitCommonControlsEx`. Its input script uses the menus by pointer and by keyboard alone, a grayed item, both dialogs by pointer and by keyboard (Tab, arrows, Space, mnemonics, Enter, Escape), an accelerator for a menu command and one for a command no menu has. It writes the messages its procedures get (the list is in `logged()`), where each control is, the buttons' states, and pixels of the controls outside their text | `expected/dialog.out`, status 5 |
+| `hooks.exe` | WP5, what MFC does to every window: the CBT, window procedure, message and filter hooks with their codes and order, `CallNextHookEx` and unhooking; subclassing with `SetWindowLongW` and `CallWindowProcW`, window longs, the system classes and properties; the window tree; positions, deferred positions, `SetParent`, non-client edges and scroll bars, show and focus; carets; `ScrollWindowEx`; menus built and changed at run time; a modeless and a modal dialog built in memory, driven through `IsDialogMessageW`. It needs no input, writes the messages its procedures and hooks get (the list is in `logged()`) and prints no handle or screen position | `expected/hooks.out`, status 0 |
+| `controls.exe` | WP5: Edit, ListBox, ComboBox (simple, drop-down, drop-down list, owner-drawn) and ScrollBar controls asked every message the profile uses, then driven by its input script (typing, selections, clicks, double clicks, keys, the lists dropped and chosen from, the scroll bars' arrows, track and thumb, a context menu); it writes their notifications, owner-drawn measures and drawings, styles, sizes and final state, and on F2 the controls' pixels outside their text. It dumps the window with a drop-down list open and with the context menu open | `expected/controls.out`, status 0 |
+| `clip.exe` | WP5: the clipboard calls refused while it is closed; text, Rich Text Format and a format of its own set and read back; the formats Windows makes and their order, the owner, the sequence, a format rendered when asked for, `WM_DESTROYCLIPBOARD`; a file list read with `DragQueryFileW` and `DragQueryPoint`, wide and ANSI, and `DragAcceptFiles`. With `put` it leaves text, RTF and its own format; with `get` it writes what another program left. With `drop` it shows a window that takes files, with a child that does not, and writes the first `WM_DROPFILES` it gets: the names with `DragQueryFileW` and the point with `DragQueryPoint` | `expected/clip.out`; run as `clip.exe put` then `clip.exe get`: `clip-put.out` and `clip-get.out`; status 0. `clip-drop.out` is the harness's: an input script cannot drag from another program on Windows XP |
 
 The bytes Windows XP wrote are kept in `subsystems/win32/fixtures/expected/`
 (`-text` in `.gitattributes`: CRLF and Windows-1252 as they came). Both hosts'
@@ -776,6 +1017,9 @@ these files built with Clang and lld 23.1.4:
 | `threads.exe` | `4d55ea8c3684da784e93499a1fc51e5a60f525969f9f46bea7178f2988e9235a` (2026-11-25) |
 | `tlog.dll` | `e3dba5a8e2d46e32b345029bb6fe844a0169ea279e113414588892a6188d541b` (2026-11-25) |
 | `tquiet.dll` | `bacb05d74ff972ee18001a7925c70cfeb76d11a5cc91c84cd8598a0fc89e8697` (2026-11-25) |
+| `hooks.exe` | `44c41cea36ae717d97af9e482120ae967274c8bd0f129d23d0a44f9518ef724f` (2026-11-25) |
+| `controls.exe` | `d3479f319704dcfdfa1e2b8fe8e7f509705eebe46f21dbb02284423cfd2212ca` (2026-11-25) |
+| `clip.exe` | `a38ab7dcfa1c567eaedadd5fbf4698fc7f45c31b30cd48c8ee466d4b28506e9a` (2026-11-25) |
 
 A different compiler version may change the bytes, not the behaviour; when
 a fixture changes, it is run on Windows XP again and this table follows. The
@@ -823,6 +1067,18 @@ labels are Windows XP's, pixel for pixel, outside the text.
 `expected/dialog-settings.ppm.gz` (the Settings dialog) are the harness's
 images; SavanXP's screen must equal them.
 
+`hooks.exe`, `controls.exe` and `clip.exe` ran on the same machine, one
+after the other from one batch file (`clip.exe`, `clip.exe put`, `clip.exe
+get`, `hooks.exe`, `controls.exe`), the last driven by its input script.
+`controls.exe` writes, besides the messages, the pixels of each control
+outside its text; what Windows XP showed decided the controls' look, from
+the scroll bars' arrows to the combo box's button. Its measure of a fixed
+list's height prints no item: Windows XP leaves `itemID` as it finds it.
+`expected/controls-dropdown.ppm.gz` (the drop-down list open) and
+`expected/controls-menu.ppm.gz` (the context menu open) are the harness's
+images; outside the text, the caret's blink and the menu's drop shadow they
+are Windows XP's screen.
+
 ## Input scripts
 
 A fixture with a window comes with an input script, played the same way in
@@ -865,7 +1121,8 @@ sees no input.
 ## The host harness — `subsystems/win32/harness/`
 
 `savanxp-win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS]
-[--input SCRIPT] program.exe [arguments...]` runs a fixture on the
+[--input SCRIPT] [--clipboard FILE] program.exe [arguments...]` runs a
+fixture on the
 Linux x86-64 build host through the same loader and DLLs as `winhost`. The
 guest's standard output is the harness's; the guest's 32-bit exit status, or
 the load failure's NT status, is printed as `win32: exit status 0x...` and
@@ -922,11 +1179,14 @@ It is the same loader as the harness over a different platform:
   native ring for the main window and from the event pipe for the others:
   pointer records as they are, keys as Windows virtual keys with the
   character the keyboard layout typed (none with Ctrl held), the window
-  manager's own shortcuts (Alt+F4, Alt+Tab) never reaching the guest. A key
+  manager's own shortcuts (Alt+F4, Alt+Tab) never reaching the guest. A
+  modeless dialog is an owned window with `SAVANXP_WM_WINDOW_MODELESS`. A key
   arrives as the character it typed, so Shift and a digit are mapped back to
   the digit's key by the layout the kernel applies (`INPUT_IOC_GET_LAYOUT`):
   Alt+Shift+2 is the accelerator Solitaire knows in Spanish and in English.
   The guest's millisecond clock is the native one.
+- **The clipboard** is `/dev/clipboard`, opened for each call with SUN's
+  typed calls (`sxn/sxnclip.h`), whose first consumer `winhost` is.
 
 `winhost` itself is linked at `0x400000` and ends near `0x48A000`, well
 below `0x01000000`, where `sol.exe` must load. A fixture that prefers
@@ -1104,10 +1364,10 @@ reaches MFC's delay-load lookup for `ole32!CoFreeUnusedLibraries` (WP9). The
 missing export raises a software exception, and the guest exits with
 `0xc06d007f`.
 
-What the run reaches and is only declared is on the debug output; at this
-point `SetWindowsHookExW` (MFC's message-filter hook, WP5). WordPad's look
-for its Word converters next to it (`GetFileAttributesW`) now finds none,
-and it goes on without them.
+What the run reaches and is only declared is on the debug output; since WP5
+the start-up up to that first window reaches none (MFC's message-filter
+hook is installed). WordPad's look for its Word converters next to it
+(`GetFileAttributesW`) finds none, and it goes on without them.
 
 ## Solitaire
 
@@ -1188,9 +1448,11 @@ and compaction when values are replaced again and again.
 `win32-harness-test` runs the fixtures through the harness and
 compares the output bytes and the full 32-bit status with what Windows XP
 produced for the same files. A failed load must also name its cause and
-release every mapping and file. `window.exe` and `dialog.exe` play their
-input scripts, and what they dump must equal the golden images
-(`expected/window.ppm.gz`, `dialog-menu.ppm.gz`, `dialog-settings.ppm.gz`);
+release every mapping and file. `window.exe`, `dialog.exe` and
+`controls.exe` play their input scripts, and what they dump must equal the
+golden images (`expected/window.ppm.gz`, `dialog-menu.ppm.gz`,
+`dialog-settings.ppm.gz`, `controls-dropdown.ppm.gz`, `controls-menu.ppm.gz`);
+`clip.exe put` and `clip.exe get` share one `--clipboard` file;
 a different one is kept in the build directory as `win32-NAME-actual.ppm`.
 
 `win32-window-test` checks the pure parts of `user32` and `gdi32` with the
@@ -1209,12 +1471,26 @@ the input script over QMP and compares the client area of its `dump` with
 the golden image, while the guest compares the messages and the status
 with Windows XP's. Run it under `--accel kvm` as well.
 
+After the console fixtures `win32test.sxe` starts `windowd` and runs the
+windowed ones, `hooks.exe` and `clip.exe`, then the clipboard across
+subsystems: `clip.exe put` leaves its formats, `win32test` checks the set on
+`/dev/clipboard` with SUN's calls and writes the same set itself, and
+`clip.exe get` must print what Windows XP printed after `put`.
+
 `win32-dialog` (`./build.sh smoke win32-dialog`) does the same with
 `dialog.exe` (`win32test.sxe --dialog`, `tools/win32_dialog_smoke.py`): its
 menus and dialogs as `windowd` owned windows, its messages against Windows
 XP's, and the menu and the Settings dialog on the screen against their
 golden images. When an output differs, `win32test` logs the first line that
-does, both ways.
+does, both ways. `win32-controls` does it with `controls.exe`
+(`win32test.sxe --controls`, `tools/win32_controls_smoke.py`): its edit,
+list and combo boxes and scroll bars driven by its script, a drop-down list
+and a context menu open against their golden images. `win32-drop`
+(`win32test.sxe --drop`, `tools/win32_drop_smoke.py`) runs `clip.exe drop`
+and, once its window is up, a small SUN window the host presses on to start
+a drag of two files, then drags onto `clip.exe`'s window and releases:
+`clip.exe` must write `clip-drop.out` and the source hear that the drop
+took a copy ([DRAG_AND_DROP.md](../desktop/DRAG_AND_DROP.md)).
 
 `win32-wordpad-test` starts the user's `wordpad.exe` through the harness,
 with `mfc42u.dll` and `mfc42loc.dll` from `SAVANXP_WIN32_WORDPAD/system32`

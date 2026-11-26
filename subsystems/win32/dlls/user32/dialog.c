@@ -26,6 +26,9 @@ struct dialog_info {
     UINT default_id;    /* DM_SETDEFID's, 0 for none */
     HFONT font;
     int made_font;
+    int modal;
+    int base_x;         /* the dialog base units of its font */
+    int base_y;
 };
 
 static dialog_info g_infos[16];
@@ -46,6 +49,10 @@ static void free_info(dialog_info *d) {
         DeleteObject(d->font);
     }
     zero(d, sizeof(*d));
+}
+
+DLGPROC *dialog_proc_of(window *w) {
+    return w->dialog != 0 ? &w->dialog->proc : 0;
 }
 
 void dialog_free(window *w) {
@@ -257,9 +264,14 @@ LRESULT WINAPI DefDlgProcW(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
             case WM_CTLCOLORSCROLLBAR:
             case WM_CTLCOLORSTATIC:
             case WM_INITDIALOG:
+            case WM_COMPAREITEM:
+            case WM_VKEYTOITEM:
+            case WM_CHARTOITEM:
+            case 0x0037: /* WM_QUERYDRAGICON */
                 return result;
             default:
-                return 0;
+                /* What the procedure left in DWL_MSGRESULT. */
+                return GetWindowLongW(hwnd, DWL_MSGRESULT);
             }
         }
         if (window_of(hwnd) == 0) {
@@ -284,8 +296,29 @@ LRESULT WINAPI DefDlgProcW(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
     case WM_GETFONT:
         return d != 0 ? (LRESULT)d->font : 0;
     case WM_ACTIVATE:
+        /* The focus comes back to the dialog, unless it is being set
+         * into the dialog already: SetFocus on one of its controls
+         * activates it on the way (fixtures/hooks, fixtures/dialog). */
         if (LOWORD(wParam) != WA_INACTIVE) {
-            restore_focus(w);
+            if (g_focus_target == 0 || !within(g_focus_target, w)) {
+                restore_focus(w);
+            } else if (g_focus_target != w) {
+                /* Settling the default button for the control the focus
+                 * goes to: a push button takes it without the dialog being
+                 * asked, anything else asks DM_GETDEFID, as Windows XP did
+                 * for fixtures/hooks and fixtures/dialog. */
+                window *target = g_focus_target;
+                const UINT code = dlg_code(target, 0, 0);
+                if ((code & (DLGC_DEFPUSHBUTTON | DLGC_UNDEFPUSHBUTTON)) == 0) {
+                    dialog_check_default(w, 0, target, 0);
+                } else if ((code & DLGC_UNDEFPUSHBUTTON) != 0) {
+                    window *current = default_button(w);
+                    if (current != 0 && current != target) {
+                        send(current, BM_SETSTYLE, BS_PUSHBUTTON, TRUE);
+                    }
+                    send(target, BM_SETSTYLE, BS_DEFPUSHBUTTON, TRUE);
+                }
+            }
         } else if (d != 0 && g_focus != 0 && g_focus != w && within(g_focus, w)) {
             d->focus = g_focus;
         }
@@ -389,7 +422,13 @@ static int accelerator(window *dlg, WCHAR c) {
             next = next->next;
         }
         if (next != 0) {
-            send(dlg, WM_NEXTDLGCTL, (WPARAM)handle_of(next), 1);
+            set_dialog_focus(dlg, next);
+        }
+    } else if ((code & (DLGC_DEFPUSHBUTTON | DLGC_UNDEFPUSHBUTTON)) != 0) {
+        /* A push button's mnemonic is its command; the focus stays where it
+         * is, as on Windows XP (fixtures/hooks). */
+        if ((control->style & WS_DISABLED) == 0) {
+            send(dlg, WM_COMMAND, MAKELPARAM(control->id, BN_CLICKED), (LPARAM)handle_of(control));
         }
     } else if ((code & DLGC_BUTTON) != 0) {
         window *old = g_focus;
@@ -398,13 +437,17 @@ static int accelerator(window *dlg, WCHAR c) {
             dialog_check_default(dlg, old, control, 0);
         }
     } else {
-        send(dlg, WM_NEXTDLGCTL, (WPARAM)handle_of(control), 1);
+        set_dialog_focus(dlg, control);
     }
     return 1;
 }
 
-/* IsDialogMessage: the dialog's keys. 0 when msg is not for it. */
+/* IsDialogMessage: the dialog's keys. 0 when msg is not for it. The
+ * message filter hook sees every message first, as Windows XP's did. */
 static int dialog_message(window *dlg, MSG *msg) {
+    if (CallMsgFilterW(msg, MSGF_DIALOGBOX)) {
+        return 1;
+    }
     window *target = window_of(msg->hwnd);
     if (target == 0 || !within(target, dlg)) {
         return 0;
@@ -419,7 +462,7 @@ static int dialog_message(window *dlg, MSG *msg) {
                 change_ui_state(dlg, UIS_CLEAR, UISF_HIDEFOCUS);
                 window *next = next_tab_item(dlg, focus, GetKeyState(VK_SHIFT) < 0);
                 if (next != 0) {
-                    send(dlg, WM_NEXTDLGCTL, (WPARAM)handle_of(next), 1);
+                    set_dialog_focus(dlg, next);
                 }
                 return 1;
             }
@@ -433,7 +476,13 @@ static int dialog_message(window *dlg, MSG *msg) {
                 window *next =
                     focus != 0 ? next_group_item(dlg, focus, msg->wParam == VK_LEFT || msg->wParam == VK_UP) : 0;
                 if (next != 0 && next != focus) {
-                    send(dlg, WM_NEXTDLGCTL, (WPARAM)handle_of(next), 1);
+                    const HWND h = handle_of(next);
+                    set_dialog_focus(dlg, next);
+                    /* An automatic radio button the arrows reach is clicked. */
+                    if (window_of(h) != 0 && (next->style & BS_TYPEMASK) == BS_AUTORADIOBUTTON &&
+                        next->cls->atom == 0x0080 && send(next, BM_GETCHECK, 0, 0) != BST_CHECKED) {
+                        send(next, BM_CLICK, 0, 0);
+                    }
                 }
                 return 1;
             }
@@ -546,6 +595,12 @@ static int mul_div(int a, int b, int c) {
 /* The dialog base units of a font: the average width of the alphabet,
  * rounded as Windows does, and the height. */
 static void base_units(HFONT font, int *x, int *y) {
+    if (font == (HFONT)GetStockObject(SYSTEM_FONT)) {
+        /* Windows XP's System font: 8 by 16 (fixtures/hooks). */
+        *x = 8;
+        *y = 16;
+        return;
+    }
     HDC dc = GetDC(NULL);
     if (font != NULL) {
         SelectObject(dc, font);
@@ -563,49 +618,150 @@ static void base_units(HFONT font, int *x, int *y) {
     *y = tm.tmHeight;
 }
 
-/* Creates a dialog from a template, its controls and its focus, as
- * DialogBox does before its loop. NULL when it cannot. */
-static HWND create_dialog(HINSTANCE instance, const unsigned char *data, u32 size, window *owner, DLGPROC proc,
-                          LPARAM param, dialog_info **out) {
-    const unsigned char *end = data + size;
-    if (size < 18 || get16(data + 2) == 0xffffu) {
-        set_last_error(ERROR_INVALID_PARAMETER);
-        return NULL;
-    }
-    const DWORD style = get32(data);
-    DWORD ex_style = get32(data + 4);
-    const int count = (int)get16(data + 8);
-    const int tx = (short)get16(data + 10);
-    const int ty = (short)get16(data + 12);
-    const int tcx = (short)get16(data + 14);
-    const int tcy = (short)get16(data + 16);
-    const unsigned char *p = data + 18;
-    u32 menu_id;
+/* What a dialog template says, in either format: the classic DLGTEMPLATE
+ * or DLGTEMPLATEEX (the version 1 signature 0xFFFF). */
+typedef struct template_header {
+    DWORD style;
+    DWORD ex_style;
+    int count;
+    int x;
+    int y;
+    int cx;
+    int cy;
+    const WCHAR *class_name;
     u32 class_id;
+    const WCHAR *title;
+    int points; /* 0: no font */
+    int weight;
+    int italic;
+    const WCHAR *face;
+    int extended;
+} template_header;
+
+typedef struct template_item {
+    DWORD style;
+    DWORD ex_style;
+    int x;
+    int y;
+    int cx;
+    int cy;
+    UINT id;
+    const WCHAR *class_name;
+    u32 class_id;
+    const WCHAR *text;
+    u32 text_id;
+} template_item;
+
+static const unsigned char *read_header(const unsigned char *data, u32 size, template_header *h) {
+    const unsigned char *end = data + size;
+    zero(h, sizeof(*h));
+    const unsigned char *p;
+    if (size >= 26 && get16(data) == 1 && get16(data + 2) == 0xffffu) {
+        h->extended = 1;
+        h->ex_style = get32(data + 8);
+        h->style = get32(data + 12);
+        h->count = (int)get16(data + 16);
+        h->x = (short)get16(data + 18);
+        h->y = (short)get16(data + 20);
+        h->cx = (short)get16(data + 22);
+        h->cy = (short)get16(data + 24);
+        p = data + 26;
+    } else if (size >= 18) {
+        h->style = get32(data);
+        h->ex_style = get32(data + 4);
+        h->count = (int)get16(data + 8);
+        h->x = (short)get16(data + 10);
+        h->y = (short)get16(data + 12);
+        h->cx = (short)get16(data + 14);
+        h->cy = (short)get16(data + 16);
+        p = data + 18;
+    } else {
+        return 0;
+    }
+    u32 menu_id;
     u32 none;
     const WCHAR *menu_name;
-    const WCHAR *class_name;
-    const WCHAR *title;
     p = string_or_ordinal(p, end, &menu_id, &menu_name);
-    p = p != 0 ? string_or_ordinal(p, end, &class_id, &class_name) : 0;
-    p = p != 0 ? string_or_ordinal(p, end, &none, &title) : 0;
+    p = p != 0 ? string_or_ordinal(p, end, &h->class_id, &h->class_name) : 0;
+    p = p != 0 ? string_or_ordinal(p, end, &none, &h->title) : 0;
+    if (p == 0) {
+        return 0;
+    }
+    if ((h->style & DS_SETFONT) != 0) {
+        if (p + 2 > end) {
+            return 0;
+        }
+        h->points = (int)get16(p);
+        p += 2;
+        if (h->extended) {
+            if (p + 4 > end) {
+                return 0;
+            }
+            h->weight = (int)get16(p);
+            h->italic = p[2];
+            p += 4;
+        }
+        p = string_or_ordinal(p, end, &none, &h->face);
+    }
+    return p;
+}
+
+static const unsigned char *read_item(const unsigned char *p, const unsigned char *end, int extended,
+                                      template_item *item) {
+    zero(item, sizeof(*item));
+    p = (const unsigned char *)(((u32)p + 3u) & ~3u);
+    if (extended) {
+        if (p + 24 > end) {
+            return 0;
+        }
+        item->ex_style = get32(p + 4);
+        item->style = get32(p + 8);
+        item->x = (short)get16(p + 12);
+        item->y = (short)get16(p + 14);
+        item->cx = (short)get16(p + 16);
+        item->cy = (short)get16(p + 18);
+        item->id = get32(p + 20);
+        p += 24;
+    } else {
+        if (p + 18 > end) {
+            return 0;
+        }
+        item->style = get32(p);
+        item->ex_style = get32(p + 4);
+        item->x = (short)get16(p + 8);
+        item->y = (short)get16(p + 10);
+        item->cx = (short)get16(p + 12);
+        item->cy = (short)get16(p + 14);
+        item->id = get16(p + 16);
+        p += 18;
+    }
+    p = string_or_ordinal(p, end, &item->class_id, &item->class_name);
+    p = p != 0 ? string_or_ordinal(p, end, &item->text_id, &item->text) : 0;
+    if (p == 0 || p + 2 > end) {
+        return 0;
+    }
+    return p + 2 + get16(p);
+}
+
+/* Creates a dialog from a template, its controls and its focus, as
+ * DialogBox and CreateDialog do. A modal one disables its owner; a
+ * modeless one leaves it enabled and is shown as a modeless window. NULL
+ * when it cannot. */
+static HWND create_dialog(HINSTANCE instance, const unsigned char *data, u32 size, window *owner, DLGPROC proc,
+                          LPARAM param, int modal, dialog_info **out) {
+    const unsigned char *end = data + size;
+    template_header h;
+    const unsigned char *p = data != 0 ? read_header(data, size, &h) : 0;
     if (p == 0) {
         set_last_error(ERROR_INVALID_PARAMETER);
         return NULL;
     }
+    const DWORD style = h.style;
+    DWORD ex_style = h.ex_style;
     HFONT font = NULL;
-    if ((style & DS_SETFONT) != 0) {
-        if (p + 2 > end) {
-            return NULL;
-        }
-        const int points = (int)get16(p);
-        const WCHAR *face;
-        p = string_or_ordinal(p + 2, end, &none, &face);
-        if (p == 0) {
-            return NULL;
-        }
-        font = CreateFontW(-mul_div(points, 96, 72), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, 0, 0,
-                           face != 0 ? face : k_empty);
+    if (h.points != 0) {
+        font = CreateFontW(-mul_div(h.points, 96, 72), 0, 0, 0, h.weight != 0 ? h.weight : FW_NORMAL, h.italic, 0,
+                           0, DEFAULT_CHARSET, 0, 0, 0, 0, h.face != 0 ? h.face : k_empty);
     }
     int bx;
     int by;
@@ -621,10 +777,13 @@ static HWND create_dialog(HINSTANCE instance, const unsigned char *data, u32 siz
     }
     d->font = font;
     d->made_font = font != NULL;
+    d->modal = modal;
+    d->base_x = bx;
+    d->base_y = by;
     if (owner != 0) {
         owner = top_of(owner);
         d->owner = owner;
-        if ((owner->style & WS_DISABLED) == 0) {
+        if (modal && (owner->style & WS_DISABLED) == 0) {
             EnableWindow(handle_of(owner), FALSE);
             d->owner_disabled = 1;
         }
@@ -636,18 +795,20 @@ static HWND create_dialog(HINSTANCE instance, const unsigned char *data, u32 siz
     if ((style & DS_CONTEXTHELP) != 0) {
         ex_style |= WS_EX_CONTEXTHELP;
     }
-    RECT r = {0, 0, mul_div(tcx, bx, 4), mul_div(tcy, by, 8)};
+    RECT r = {0, 0, mul_div(h.cx, bx, 4), mul_div(h.cy, by, 8)};
     AdjustWindowRect(&r, style & ~(DWORD)WS_VISIBLE, FALSE);
-    int x = mul_div(tx, bx, 4);
-    int y = mul_div(ty, by, 8);
-    if (owner != 0) {
+    int x = mul_div(h.x, bx, 4);
+    int y = mul_div(h.y, by, 8);
+    if (owner != 0 && (style & WS_CHILD) == 0) {
         x += owner->client.left;
         y += owner->client.top;
     }
-    static const WCHAR k_dialog_class[] = {'#', '3', '2', '7', '7', '0', 0};
-    LPCWSTR cls = class_name != 0 && class_name[0] != 0 ? class_name : class_id != 0 ? (LPCWSTR)(u32)class_id
-                                                                                         : k_dialog_class;
-    HWND hwnd = CreateWindowExW(ex_style, cls, title != 0 ? title : k_empty, style & ~(DWORD)WS_VISIBLE, x, y,
+    /* The dialog class and the controls' are named by their atoms, as
+     * Windows XP names them (the CBT hook sees no string). */
+    LPCWSTR cls = h.class_name != 0 && h.class_name[0] != 0 ? h.class_name
+                  : h.class_id != 0                        ? (LPCWSTR)(u32)h.class_id
+                                                           : (LPCWSTR)(u32)0x8002;
+    HWND hwnd = CreateWindowExW(ex_style, cls, h.title != 0 ? h.title : k_empty, style & ~(DWORD)WS_VISIBLE, x, y,
                                 r.right - r.left, r.bottom - r.top, handle_of(owner), NULL, instance, NULL);
     window *w = window_of(hwnd);
     if (w == 0) {
@@ -658,44 +819,31 @@ static HWND create_dialog(HINSTANCE instance, const unsigned char *data, u32 siz
         return NULL;
     }
     w->dialog = d;
+    w->modeless = !modal && (style & WS_CHILD) == 0;
     d->proc = proc;
     if (font != NULL) {
         send(w, WM_SETFONT, (WPARAM)font, 0);
     }
 
-    for (int i = 0; i < count && window_of(hwnd) != 0; ++i) {
-        p = (const unsigned char *)(((u32)p + 3u) & ~3u);
-        if (p + 18 > end) {
+    for (int i = 0; i < h.count && window_of(hwnd) != 0; ++i) {
+        template_item item;
+        p = read_item(p, end, h.extended, &item);
+        if (p == 0) {
             break;
         }
-        const DWORD item_style = get32(p);
-        const DWORD item_ex = get32(p + 4);
-        const int ix = (short)get16(p + 8);
-        const int iy = (short)get16(p + 10);
-        const int icx = (short)get16(p + 12);
-        const int icy = (short)get16(p + 14);
-        const UINT id = get16(p + 16);
-        u32 item_class_id;
-        const WCHAR *item_class;
-        u32 text_id;
-        const WCHAR *text;
-        p = string_or_ordinal(p + 18, end, &item_class_id, &item_class);
-        p = p != 0 ? string_or_ordinal(p, end, &text_id, &text) : 0;
-        if (p == 0 || p + 2 > end) {
-            break;
-        }
-        p += 2 + get16(p);
-        LPCWSTR name = item_class != 0 ? item_class : class_of(item_class_id);
+        LPCWSTR name = item.class_name != 0 ? item.class_name
+                       : class_of(item.class_id) != 0 ? (LPCWSTR)(u32)item.class_id
+                                                      : 0;
         if (name == 0) {
             continue;
         }
-        if (d->default_id == 0 && item_class_id == 0x80 && (item_style & BS_TYPEMASK) == BS_DEFPUSHBUTTON) {
-            d->default_id = id;
+        if (d->default_id == 0 && item.class_id == 0x80 && (item.style & BS_TYPEMASK) == BS_DEFPUSHBUTTON) {
+            d->default_id = item.id;
         }
-        HWND control = CreateWindowExW(item_ex | WS_EX_NOPARENTNOTIFY, name, text != 0 ? text : k_empty,
-                                       item_style | WS_CHILD, mul_div(ix, bx, 4), mul_div(iy, by, 8),
-                                       mul_div(icx, bx, 4), mul_div(icy, by, 8), hwnd, (HMENU)(u32)id, instance,
-                                       NULL);
+        HWND control = CreateWindowExW(item.ex_style | WS_EX_NOPARENTNOTIFY, name,
+                                       item.text != 0 ? item.text : k_empty, item.style | WS_CHILD,
+                                       mul_div(item.x, bx, 4), mul_div(item.y, by, 8), mul_div(item.cx, bx, 4),
+                                       mul_div(item.cy, by, 8), hwnd, (HMENU)(u32)item.id, instance, NULL);
         if (control != NULL && font != NULL) {
             send_handle(control, WM_SETFONT, (WPARAM)font, 0);
         }
@@ -716,6 +864,7 @@ static HWND create_dialog(HINSTANCE instance, const unsigned char *data, u32 siz
     send(w, WM_CHANGEUISTATE, MAKELPARAM(UIS_INITIALIZE, 0), 0);
     if ((style & WS_VISIBLE) != 0) {
         ShowWindow(hwnd, SW_SHOWNORMAL);
+        UpdateWindow(hwnd);
     }
     *out = d;
     return hwnd;
@@ -767,7 +916,7 @@ static INT_PTR dialog_box(HINSTANCE instance, const unsigned char *data, u32 siz
                           LPARAM param) {
     window *o = owner != NULL ? window_of(owner) : 0;
     dialog_info *d = 0;
-    HWND hwnd = create_dialog(instance, data, size, o, proc, param, &d);
+    HWND hwnd = create_dialog(instance, data, size, o, proc, param, 1, &d);
     if (hwnd == NULL) {
         return -1;
     }
@@ -785,11 +934,184 @@ INT_PTR WINAPI DialogBoxParamW(HINSTANCE hInstance, LPCWSTR lpTemplateName, HWND
     return dialog_box(hInstance, data, size, hWndParent, lpDialogFunc, dwInitParam);
 }
 
+/* A template in memory carries no size: it is read as far as it says. */
+#define TEMPLATE_IN_MEMORY 0x10000u
+
+INT_PTR WINAPI DialogBoxIndirectParamW(HINSTANCE hInstance, const DLGTEMPLATE *hDialogTemplate, HWND hWndParent,
+                                       DLGPROC lpDialogFunc, LPARAM dwInitParam) {
+    return dialog_box(hInstance, (const unsigned char *)hDialogTemplate, TEMPLATE_IN_MEMORY, hWndParent,
+                      lpDialogFunc, dwInitParam);
+}
+
 /* For shell32's About box: a template built in memory. */
 __declspec(dllexport) INT_PTR WINAPI SxwDialogBoxIndirectParamW(HINSTANCE hInstance, const void *lpTemplate,
                                                                 u32 size, HWND hWndParent, DLGPROC lpDialogFunc,
                                                                 LPARAM dwInitParam) {
     return dialog_box(hInstance, lpTemplate, size, hWndParent, lpDialogFunc, dwInitParam);
+}
+
+HWND WINAPI CreateDialogIndirectParamW(HINSTANCE hInstance, const DLGTEMPLATE *lpTemplate, HWND hWndParent,
+                                       DLGPROC lpDialogFunc, LPARAM dwInitParam) {
+    window *o = hWndParent != NULL ? window_of(hWndParent) : 0;
+    dialog_info *d = 0;
+    return create_dialog(hInstance, (const unsigned char *)lpTemplate, TEMPLATE_IN_MEMORY, o, lpDialogFunc,
+                         dwInitParam, 0, &d);
+}
+
+HWND WINAPI CreateDialogParamW(HINSTANCE hInstance, LPCWSTR lpTemplateName, HWND hWndParent, DLGPROC lpDialogFunc,
+                               LPARAM dwInitParam) {
+    u32 size = 0;
+    const unsigned char *data = find_resource(module_of(hInstance), RT_DIALOG, lpTemplateName, &size);
+    if (data == 0) {
+        set_last_error(ERROR_RESOURCE_NAME_NOT_FOUND);
+        return NULL;
+    }
+    window *o = hWndParent != NULL ? window_of(hWndParent) : 0;
+    dialog_info *d = 0;
+    return create_dialog(hInstance, data, size, o, lpDialogFunc, dwInitParam, 0, &d);
+}
+
+BOOL WINAPI IsDialogMessageW(HWND hDlg, LPMSG lpMsg) {
+    window *dlg = window_of(hDlg);
+    if (dlg == 0 || lpMsg == NULL) {
+        return FALSE;
+    }
+    return dialog_message(dlg, lpMsg);
+}
+
+/* ---- Items and units ------------------------------------------------------------------------ */
+
+HWND WINAPI GetNextDlgTabItem(HWND hDlg, HWND hCtl, BOOL bPrevious) {
+    window *dlg = checked(hDlg);
+    if (dlg == 0) {
+        return NULL;
+    }
+    return handle_of(next_tab_item(dlg, hCtl != NULL ? window_of(hCtl) : 0, bPrevious));
+}
+
+HWND WINAPI GetNextDlgGroupItem(HWND hDlg, HWND hCtl, BOOL bPrevious) {
+    window *dlg = checked(hDlg);
+    window *c = hCtl != NULL ? window_of(hCtl) : 0;
+    if (dlg == 0) {
+        return NULL;
+    }
+    if (c == 0) {
+        return handle_of(next_tab_item(dlg, 0, 0));
+    }
+    return handle_of(next_group_item(dlg, c, bPrevious));
+}
+
+/* The System font's average width and height, which Windows XP answers:
+ * 8 by 16 (fixtures/hooks). */
+LONG WINAPI GetDialogBaseUnits(void) {
+    int x;
+    int y;
+    base_units((HFONT)GetStockObject(SYSTEM_FONT), &x, &y);
+    return (LONG)MAKELPARAM(x, y);
+}
+
+BOOL WINAPI MapDialogRect(HWND hDlg, LPRECT lpRect) {
+    window *dlg = checked(hDlg);
+    if (dlg == 0 || lpRect == NULL) {
+        return FALSE;
+    }
+    int bx = 0;
+    int by = 0;
+    if (dlg->dialog != 0) {
+        bx = dlg->dialog->base_x;
+        by = dlg->dialog->base_y;
+    } else {
+        const LONG units = GetDialogBaseUnits();
+        bx = LOWORD(units);
+        by = HIWORD(units);
+    }
+    lpRect->left = mul_div(lpRect->left, bx, 4);
+    lpRect->right = mul_div(lpRect->right, bx, 4);
+    lpRect->top = mul_div(lpRect->top, by, 8);
+    lpRect->bottom = mul_div(lpRect->bottom, by, 8);
+    return TRUE;
+}
+
+LRESULT WINAPI SendDlgItemMessageW(HWND hDlg, int nIDDlgItem, UINT Msg, WPARAM wParam, LPARAM lParam) {
+    HWND item = GetDlgItem(hDlg, nIDDlgItem);
+    return item != NULL ? SendMessageW(item, Msg, wParam, lParam) : 0;
+}
+
+BOOL WINAPI SetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPCWSTR lpString) {
+    HWND item = GetDlgItem(hDlg, nIDDlgItem);
+    return item != NULL && SetWindowTextW(item, lpString);
+}
+
+UINT WINAPI GetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPWSTR lpString, int cchMax) {
+    HWND item = GetDlgItem(hDlg, nIDDlgItem);
+    if (item == NULL) {
+        if (lpString != NULL && cchMax > 0) {
+            lpString[0] = 0;
+        }
+        return 0;
+    }
+    return (UINT)GetWindowTextW(item, lpString, cchMax);
+}
+
+BOOL WINAPI SetDlgItemInt(HWND hDlg, int nIDDlgItem, UINT uValue, BOOL bSigned) {
+    WCHAR text[16];
+    int n = 15;
+    text[n] = 0;
+    const int negative = bSigned && (int)uValue < 0;
+    u32 magnitude = negative ? 0u - uValue : uValue;
+    do {
+        text[--n] = (WCHAR)('0' + magnitude % 10u);
+        magnitude /= 10u;
+    } while (magnitude != 0u);
+    if (negative) {
+        text[--n] = '-';
+    }
+    return SetDlgItemTextW(hDlg, nIDDlgItem, text + n);
+}
+
+/* Leading blanks are skipped and the number ends at the first character
+ * that is not a digit; anything after it makes the translation fail, as
+ * on Windows XP (fixtures/hooks: "12a" is 12, untranslated). */
+UINT WINAPI GetDlgItemInt(HWND hDlg, int nIDDlgItem, BOOL *lpTranslated, BOOL bSigned) {
+    WCHAR text[64];
+    if (lpTranslated != NULL) {
+        *lpTranslated = FALSE;
+    }
+    if (GetDlgItemTextW(hDlg, nIDDlgItem, text, 64) == 0 && GetDlgItem(hDlg, nIDDlgItem) == NULL) {
+        return 0;
+    }
+    int i = 0;
+    while (text[i] == ' ' || text[i] == '\t') {
+        ++i;
+    }
+    int negative = 0;
+    if (text[i] == '-') {
+        if (!bSigned) {
+            return 0;
+        }
+        negative = 1;
+        ++i;
+    } else if (text[i] == '+') {
+        ++i;
+    }
+    if (text[i] < '0' || text[i] > '9') {
+        return 0;
+    }
+    unsigned long long value = 0;
+    while (text[i] >= '0' && text[i] <= '9') {
+        value = value * 10u + (unsigned)(text[i] - '0');
+        if (value > 0xffffffffull) {
+            return 0;
+        }
+        ++i;
+    }
+    if (bSigned && value > (negative ? 0x80000000ull : 0x7fffffffull)) {
+        return 0;
+    }
+    if (lpTranslated != NULL) {
+        *lpTranslated = text[i] == 0;
+    }
+    return negative ? 0u - (UINT)value : (UINT)value;
 }
 
 /* The owner is enabled again, the focus goes to the dialog itself and the

@@ -58,6 +58,92 @@ void draw_edge(HDC dc, RECT *r, COLORREF top_left_outer, COLORREF bottom_right_o
     }
 }
 
+/* The classic DrawEdge: each border a light and a dark colour, the outer
+ * one first, left and top drawn before right and bottom, which run the
+ * whole length. */
+BOOL WINAPI DrawEdge(HDC hdc, LPRECT qrc, UINT edge, UINT grfFlags) {
+    if (qrc == NULL) {
+        return FALSE;
+    }
+    RECT r = *qrc;
+    static const struct {
+        UINT bit;
+        int top_left;
+        int bottom_right;
+    } k_borders[4] = {
+        {BDR_RAISEDOUTER, COLOR_3DLIGHT, COLOR_3DDKSHADOW},
+        {BDR_SUNKENOUTER, COLOR_BTNSHADOW, COLOR_BTNHIGHLIGHT},
+        {BDR_RAISEDINNER, COLOR_BTNHIGHLIGHT, COLOR_BTNSHADOW},
+        {BDR_SUNKENINNER, COLOR_3DDKSHADOW, COLOR_3DLIGHT},
+    };
+    for (int pass = 0; pass < 2; ++pass) {
+        int tl = -1;
+        int br = -1;
+        for (int i = pass * 2; i < pass * 2 + 2; ++i) {
+            if ((edge & k_borders[i].bit) != 0) {
+                tl = k_borders[i].top_left;
+                br = k_borders[i].bottom_right;
+            }
+        }
+        if (tl < 0) {
+            continue;
+        }
+        if ((grfFlags & BF_MONO) != 0) {
+            tl = br = COLOR_WINDOWFRAME;
+        } else if ((grfFlags & BF_FLAT) != 0) {
+            tl = br = COLOR_BTNSHADOW;
+        }
+        const int width = r.right - r.left;
+        const int height = r.bottom - r.top;
+        if (width <= 0 || height <= 0) {
+            break;
+        }
+        if ((grfFlags & BF_LEFT) != 0) {
+            line(hdc, r.left, r.top, 1, height, GetSysColor(tl));
+        }
+        if ((grfFlags & BF_TOP) != 0) {
+            line(hdc, r.left, r.top, width, 1, GetSysColor(tl));
+        }
+        if ((grfFlags & BF_BOTTOM) != 0) {
+            line(hdc, r.left, r.bottom - 1, width, 1, GetSysColor(br));
+        }
+        if ((grfFlags & BF_RIGHT) != 0) {
+            line(hdc, r.right - 1, r.top, 1, height, GetSysColor(br));
+        }
+        r.left += (grfFlags & BF_LEFT) != 0;
+        r.top += (grfFlags & BF_TOP) != 0;
+        r.right -= (grfFlags & BF_RIGHT) != 0;
+        r.bottom -= (grfFlags & BF_BOTTOM) != 0;
+    }
+    if ((grfFlags & BF_MIDDLE) != 0) {
+        fill_rect(hdc, &r, GetSysColor(COLOR_BTNFACE));
+    }
+    if ((grfFlags & BF_ADJUST) != 0) {
+        *qrc = r;
+    }
+    return TRUE;
+}
+
+/* A brush handle, or a system colour plus one. */
+int WINAPI FillRect(HDC hDC, const RECT *lprc, HBRUSH hbr) {
+    if (lprc == NULL) {
+        return 0;
+    }
+    if ((u32)hbr >= 1u && (u32)hbr <= 31u) {
+        hbr = system_brush((int)(u32)hbr - 1);
+    }
+    fill_brush(hDC, lprc, hbr);
+    return 1;
+}
+
+BOOL WINAPI DrawFocusRect(HDC hDC, const RECT *lprc) {
+    if (lprc == NULL) {
+        return FALSE;
+    }
+    draw_focus_rect(hDC, lprc);
+    return TRUE;
+}
+
 /* DrawFocusRect: PATINVERT with Windows' checkered monochrome brush, which
  * on a colour device is the background colour where its bits are set (the
  * outline's pixels at odd x + y) and the text colour elsewhere. */
@@ -641,7 +727,13 @@ void register_controls(void) {
     static const WCHAR k_button[] = {'B', 'u', 't', 't', 'o', 'n', 0};
     static const WCHAR k_static[] = {'S', 't', 'a', 't', 'i', 'c', 0};
     static const WCHAR k_dialog[] = {'#', '3', '2', '7', '7', '0', 0};
-    register_system_class(CS_DBLCLKS | CS_PARENTDC, button_proc, k_button, ATOM_BUTTON, NULL);
-    register_system_class(CS_PARENTDC, static_proc, k_static, ATOM_STATIC, NULL);
-    register_system_class(CS_DBLCLKS | CS_SAVEBITS, (WNDPROC)DefDlgProcW, k_dialog, 0x8002, NULL);
+    /* Windows XP's styles and window bytes for each (fixtures/hooks). */
+    register_system_class(CS_VREDRAW | CS_HREDRAW | CS_DBLCLKS | CS_PARENTDC, button_proc, k_button, ATOM_BUTTON,
+                          NULL, 4);
+    register_system_class(CS_DBLCLKS | CS_PARENTDC, static_proc, k_static, ATOM_STATIC, NULL, 4);
+    register_system_class(CS_DBLCLKS | CS_SAVEBITS, (WNDPROC)DefDlgProcW, k_dialog, 0x8002, NULL, DLGWINDOWEXTRA);
+    register_scroll_bar();
+    register_edit();
+    register_list_box();
+    register_combo_box();
 }

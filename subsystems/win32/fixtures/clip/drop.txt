@@ -1,0 +1,11 @@
+# The input script of "clip.exe drop" (docs/desktop/DRAG_AND_DROP.md): two
+# files dragged over the child, which does not take files, and dropped
+# there, so its parent gets WM_DROPFILES. In the main window's client
+# coordinates.
+wait 500
+dragover 130 70 file:///docs/notas.txt file:///docs/mi%20carta.rtf
+wait 100
+dragover 180 100 file:///docs/notas.txt file:///docs/mi%20carta.rtf
+wait 100
+drop 180 100
+wait 500

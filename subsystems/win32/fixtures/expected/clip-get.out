@@ -1,0 +1,10 @@
+clip.exe
+available:  1+ 7+ 13+ 16+ 15- 2- 8- rtf+ private+
+open: ok
+formats:  13 [Rich Text Format] [SavanXP Test] 16 1 7 count 6
+unicode :  72 111 108 97 13 10 109 117 110 100 111 32 241 233
+text :  72 111 108 97 13 10 109 117 110 100 111 32 241 233
+rtf : {\rtf1\ansi Hola {\b mundo}}
+private : size 4: 1 2 3 254
+owner : no
+close: ok

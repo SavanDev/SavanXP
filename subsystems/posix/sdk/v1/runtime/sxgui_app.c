@@ -378,10 +378,86 @@ static void sxgui_app_shutdown(struct sxgui_app *app)
     gfx_close(&app->gfx);
 }
 
+int sxgui_app_drag_start(struct sxgui_app *app, const struct sxgui_clipboard_format *formats, int count,
+                         uint32_t effects)
+{
+    struct clipboard_format stored[SAVANXP_CLIPBOARD_MAX_FORMATS];
+    int index;
+    int result;
+
+    if (app == 0 || formats == 0 || count <= 0 || count > (int)SAVANXP_CLIPBOARD_MAX_FORMATS)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    for (index = 0; index < count; ++index)
+    {
+        stored[index].name = formats[index].name;
+        stored[index].data = formats[index].data;
+        stored[index].length = formats[index].length;
+    }
+    result = dragdata_set_formats(stored, count);
+    if (result < 0)
+    {
+        return result;
+    }
+    return (int)gfx_drag_start(&app->gfx, effects);
+}
+
+/* A drag record for the main window (docs/desktop/DRAG_AND_DROP.md). */
+static void sxgui_app_drag_event(struct sxgui_app *app, const struct savanxp_wm_drag_event *drag)
+{
+    switch (drag->phase)
+    {
+    case SAVANXP_WM_DRAG_ENTER:
+    case SAVANXP_WM_DRAG_OVER: {
+        uint32_t effect = app->on_drag_over != 0 ? app->on_drag_over(app, drag->x, drag->y, drag->effects) : 0u;
+        (void)gfx_drag_reply(&app->gfx, drag->drag, effect & drag->effects);
+        app->needs_repaint = 1;
+        break;
+    }
+    case SAVANXP_WM_DRAG_LEAVE:
+        if (app->on_drag_leave != 0)
+        {
+            app->on_drag_leave(app);
+        }
+        app->needs_repaint = 1;
+        break;
+    case SAVANXP_WM_DRAG_DROP:
+        if (app->on_drop != 0)
+        {
+            app->on_drop(app, drag->x, drag->y, drag->effect);
+        }
+        app->needs_repaint = 1;
+        break;
+    case SAVANXP_WM_DRAG_END: {
+        /* The window manager kept the button's release: the toolkit and the
+         * app's hook hear it now, off the window, so nothing takes it for a
+         * click. */
+        struct savanxp_gui_pointer_event release;
+        memset(&release, 0, sizeof(release));
+        release.x = -1;
+        release.y = -1;
+        if (app->on_pointer == 0 || !app->on_pointer(app, &release))
+        {
+            (void)sxgui_handle_pointer(&app->ui, &release);
+        }
+        if (app->on_drag_end != 0)
+        {
+            app->on_drag_end(app, drag->effect);
+        }
+        app->needs_repaint = 1;
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 int sxgui_app_run(struct sxgui_app *app)
 {
     struct savanxp_input_event event;
     struct savanxp_gui_pointer_event pointer_event;
+    struct savanxp_wm_drag_event drag_event;
     unsigned long next_tick_ms = 0;
 
     if (app == 0)
@@ -560,6 +636,11 @@ int sxgui_app_run(struct sxgui_app *app)
                     app->last_sent_cursor_shape = shape;
                 }
             }
+        }
+
+        while (gfx_poll_window_drag(&app->gfx, &drag_event) > 0)
+        {
+            sxgui_app_drag_event(app, &drag_event);
         }
 
         if (!app->running)

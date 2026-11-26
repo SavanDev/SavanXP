@@ -28,6 +28,7 @@ sxgfx/virgl_protocol.h
 sxn/sxn.h
 sxn/sxnaudio.h
 sxn/sxncapture.h
+sxn/sxnclip.h
 sxn/sxncursor.h
 sxn/sxndns.h
 sxn/sxnhttp.h

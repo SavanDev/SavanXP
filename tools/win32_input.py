@@ -44,6 +44,7 @@ BTNFACE = (212, 208, 200)
 VK_QCODES = {
     0x08: "backspace", 0x09: "tab", 0x0D: "ret", 0x10: "shift", 0x11: "ctrl", 0x12: "alt",
     0x1B: "esc", 0x20: "spc", 0x25: "left", 0x26: "up", 0x27: "right", 0x28: "down",
+    0x21: "pgup", 0x22: "pgdn", 0x23: "end", 0x24: "home", 0x2D: "insert", 0x2E: "delete",
     **{0x30 + d: str(d) for d in range(10)},
     **{0x41 + i: chr(ord("a") + i) for i in range(26)},
     **{0x70 + i: f"f{i + 1}" for i in range(12)},

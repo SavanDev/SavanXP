@@ -48,6 +48,9 @@ typedef struct sxw_window_platform {
     /* Waits up to timeout milliseconds (SXW_INFINITE, or 0 to poll) for an
      * event. 1 with *event filled, 0 on timeout. */
     int (*wait_event)(void *context, uint32_t timeout, sxw_event *event);
+    /* The window's answer to the drag over it (SXW_SVC_DRAG_REPLY). 0 on
+     * success; NULL for a host without drag and drop. */
+    int (*drag_reply)(void *context, uint32_t window, uint32_t effect);
 } sxw_window_platform;
 
 /* ---- Files (WP4) --------------------------------------------------------- */
@@ -111,6 +114,31 @@ typedef struct sxw_file_platform {
     int (*list_next)(void *context, long list, char *name, sxw_host_info *info);
     void (*list_close)(void *context, long list);
 } sxw_file_platform;
+
+/* ---- The clipboard (WP5) -------------------------------------------------- */
+
+/* One format of a set, in host memory. */
+typedef struct sxw_clip_format {
+    const char *name;
+    const void *data;
+    uint32_t length;
+} sxw_clip_format;
+
+/* The host's clipboard: a set of named formats replaced whole
+ * (docs/desktop/CLIPBOARD.md). NULL in sxw_services: the clipboard is
+ * empty and refuses what is set on it. */
+typedef struct sxw_clipboard_platform {
+    /* Replaces the set; count 0 empties it. 0 on success. */
+    int (*set)(void *context, const sxw_clip_format *formats, uint32_t count);
+    /* The set's sequence and its number of formats. 0 on success. */
+    int (*info)(void *context, uint64_t *sequence, uint32_t *count);
+    /* The name (NUL-terminated, at most SXW_CLIPBOARD_NAME bytes) and
+     * length of the format at index. 0, or -1 past the last. */
+    int (*format)(void *context, uint32_t index, char *name, uint32_t *length);
+    /* Up to capacity bytes of a format into buffer, its whole length in
+     * *length. The bytes copied, or -1 when the set has no such format. */
+    long (*get)(void *context, const char *name, void *buffer, uint32_t capacity, uint32_t *length);
+} sxw_clipboard_platform;
 
 #define SXW_HOST_PATH 1024u
 #define SXW_MAX_HANDLES 256u
@@ -233,6 +261,11 @@ typedef struct sxw_services {
     const sxw_window_platform *windows;
     /* Files, or NULL. */
     const sxw_file_platform *files;
+    /* The clipboard, or NULL. */
+    const sxw_clipboard_platform *clipboard;
+    /* The formats a drag carries, read as the clipboard's (set and info
+     * unused), or NULL. */
+    const sxw_clipboard_platform *dragdata;
     /* The host folder that is C:, or NULL; Z: is the host's root. */
     const char *drive_c;
     /* Handle slot -> object index + 1, or 0. */
@@ -304,6 +337,10 @@ int sxw_guest_range(const sxw_process *process, uint32_t address, uint32_t lengt
 
 /* The handle and file services (files.c), SXW_SVC_CLOSE to FIND_NEXT. */
 uint32_t sxw_file_service(sxw_services *services, uint32_t service, const uint32_t *arguments);
+
+/* The clipboard services (clipboard.c), SXW_SVC_CLIPBOARD_SET to _GET, and
+ * the drag's, SXW_SVC_DRAG_REPLY to _GET. */
+uint32_t sxw_clipboard_service(sxw_services *services, uint32_t service, const uint32_t *arguments);
 
 /* Closes a handle of any kind: a Win32 error. */
 uint32_t sxw_close_handle(sxw_services *services, uint32_t handle);

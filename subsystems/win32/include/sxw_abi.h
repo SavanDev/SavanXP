@@ -10,7 +10,7 @@
 #ifndef SAVANXP_WIN32_SXW_ABI_H
 #define SAVANXP_WIN32_SXW_ABI_H
 
-#define SXW_ABI_VERSION 8u
+#define SXW_ABI_VERSION 10u
 
 /* ---- Thread environment block (32-bit layout, the fields we fill) ------- */
 
@@ -115,6 +115,9 @@
  * program closes it with SXW_EVENT_CLOSE; one on another of its windows
  * goes to that window. */
 #define SXW_WINDOW_POPUP 2u
+/* Framed, above its owner, placed by the host, with its owner still usable:
+ * a modeless dialog (CreateDialog's). */
+#define SXW_WINDOW_MODELESS 3u
 /* (window) -> 0 */
 #define SXW_SVC_WINDOW_DESTROY 17u
 /* (window, pixels, stride, size[2], rects, count) -> 0, or SXW_FAILED.
@@ -231,7 +234,49 @@
 /* (): every other thread stops for good where it is; ExitProcess calls it
  * before the DLLs detach, as Windows XP ends them first. */
 #define SXW_SVC_END_OTHER_THREADS 48u
-#define SXW_SVC_COUNT 49u
+
+/* The clipboard (WP5, docs/desktop/CLIPBOARD.md): the host's set of named
+ * formats, which user32 maps Win32's formats onto. */
+/* (entries, count) -> 0, or SXW_FAILED: replaces the whole set with count
+ * (at most SXW_CLIPBOARD_FORMATS) sxw_clip_entry; count 0 empties it. */
+#define SXW_SVC_CLIPBOARD_SET 49u
+/* (out info[3]) -> 0, or SXW_FAILED: the sequence's low and high words,
+ * which rise with every change, and how many formats the set has. */
+#define SXW_SVC_CLIPBOARD_INFO 50u
+/* (index, out name[SXW_CLIPBOARD_NAME], out length) -> 0, or SXW_FAILED
+ * past the last: the format at index, in the order it was given. */
+#define SXW_SVC_CLIPBOARD_FORMAT 51u
+/* (name, buffer, capacity, out length) -> bytes copied, or SXW_FAILED when
+ * the set has no such format; *length is its whole length. */
+#define SXW_SVC_CLIPBOARD_GET 52u
+/* (windows path, out buffer, capacity) -> a Win32 error: the host path, UTF-8
+ * and NUL-terminated, of a full Windows path whose last part may not exist
+ * (a file list on the clipboard, a drop). */
+#define SXW_SVC_PATH_TO_HOST 53u
+/* (host path, out buffer, capacity in units) -> units written, or 0: the
+ * Windows path of a host path, C: for what is under drive_c, Z: for the
+ * rest; UTF-16, NUL-terminated. */
+#define SXW_SVC_PATH_FROM_HOST 54u
+/* Drag and drop (docs/desktop/DRAG_AND_DROP.md). (window, effect) -> 0, or
+ * SXW_FAILED: the answer to the last SXW_EVENT_DRAG enter or move the window
+ * had, the SXW_DRAG_EFFECT_* it would take there or 0. */
+#define SXW_SVC_DRAG_REPLY 55u
+/* The drag's set of formats, as SXW_SVC_CLIPBOARD_FORMAT and _GET read the
+ * clipboard's: (index, out name, out length) and (name, buffer, capacity,
+ * out length). */
+#define SXW_SVC_DRAG_FORMAT 56u
+#define SXW_SVC_DRAG_GET 57u
+#define SXW_SVC_COUNT 58u
+
+#define SXW_CLIPBOARD_FORMATS 8u
+#define SXW_CLIPBOARD_NAME 64u /* NUL included */
+#define SXW_CLIPBOARD_CAPACITY (1024u * 1024u)
+
+typedef struct sxw_clip_entry {
+    unsigned int name;   /* guest address of an ASCII name */
+    unsigned int data;   /* guest address of its bytes */
+    unsigned int length;
+} sxw_clip_entry;
 
 #define SXW_WAIT_OBJECT_0 0u
 #define SXW_WAIT_ABANDONED_0 0x80u
@@ -261,6 +306,18 @@ typedef struct sxw_file_entry {
 #define SXW_EVENT_KEY 2u     /* a = virtual key, b = 1 down / 0 up, c = UTF-16 character or 0 */
 #define SXW_EVENT_RESIZE 3u  /* a = client width, b = client height */
 #define SXW_EVENT_CLOSE 4u   /* the frame's close button, or its shortcut */
+/* A drag over the window: a = x, b = y, c = SXW_DRAG_* phase in the low byte,
+ * the effects the source allows in the next and, for a drop, the effect in
+ * the third. */
+#define SXW_EVENT_DRAG 5u
+
+#define SXW_DRAG_ENTER 1u
+#define SXW_DRAG_OVER 2u
+#define SXW_DRAG_LEAVE 3u
+#define SXW_DRAG_DROP 4u
+#define SXW_DRAG_EFFECT_COPY 1u
+#define SXW_DRAG_EFFECT_MOVE 2u
+#define SXW_DRAG_EFFECT_LINK 4u
 
 #define SXW_BUTTON_LEFT 1u
 #define SXW_BUTTON_RIGHT 2u

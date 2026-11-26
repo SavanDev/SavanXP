@@ -2749,12 +2749,94 @@ static void filesapp_show_menu(int item, int x, int y)
 
 /* A right click on the list: on the release, as Windows sends
  * WM_CONTEXTMENU. Everything else goes on to the toolkit. */
+/* ---- dragging -------------------------------------------------------------------
+ *
+ * (docs/desktop/DRAG_AND_DROP.md.) A press on an entry and a move of more
+ * than FILESAPP_DRAG_DISTANCE pixels with the button held drag the selected
+ * entry to another program: its file:// URI (text/uri-list) and its path in
+ * plain text, as Copy puts them on the clipboard, allowing a copy. The
+ * window manager has the pointer until it is dropped or given up.
+ */
+
+#define FILESAPP_DRAG_DISTANCE 4
+
+static int g_drag_armed;
+static int g_drag_x;
+static int g_drag_y;
+
+static void filesapp_drag_selected(void)
+{
+    char path[FILESAPP_PATH_CAPACITY];
+    char uri[FILESAPP_URI_CAPACITY];
+    char list[FILESAPP_URI_CAPACITY + 2];
+    struct sxgui_clipboard_format formats[2];
+
+    if (!filesapp_take_subject() || !filesapp_subject_path(path, sizeof(path)) ||
+        filesapp_uri_from_path(path, uri, sizeof(uri)) != 0)
+    {
+        return;
+    }
+    snprintf(list, sizeof(list), "%s\r\n", uri);
+    formats[0].name = SAVANXP_CLIPBOARD_URI_LIST;
+    formats[0].data = list;
+    formats[0].length = (unsigned int)strlen(list);
+    formats[1].name = SAVANXP_CLIPBOARD_TEXT;
+    formats[1].data = path;
+    formats[1].length = (unsigned int)strlen(path);
+    if (sxgui_app_drag_start(&g_app, formats, 2, SAVANXP_DRAG_EFFECT_COPY) < 0)
+    {
+        filesapp_set_status("Cannot drag it.");
+    }
+}
+
+static void on_drag_end(struct sxgui_app *app, uint32_t effect)
+{
+    (void)app;
+    filesapp_set_status(effect != 0u ? "Dropped." : "");
+}
+
+/* A press on an entry arms a drag; moving far enough with the button held
+ * starts it. 1 when the event was the drag's. */
+static int filesapp_drag_pointer(const struct savanxp_gui_pointer_event *event, uint32_t pressed)
+{
+    if ((pressed & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
+    {
+        g_drag_armed = !sxgui_dialog_active(&g_app.ui) && sx_rect_contains_point(FILESAPP_LIST->rect, event->x, event->y) &&
+                       sxgui_listbox_row_at(FILESAPP_LIST, event->x, event->y) >= 0;
+        g_drag_x = event->x;
+        g_drag_y = event->y;
+        return 0;
+    }
+    if ((event->buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0)
+    {
+        g_drag_armed = 0;
+        return 0;
+    }
+    if (!g_drag_armed)
+    {
+        return 0;
+    }
+    if (event->x - g_drag_x > FILESAPP_DRAG_DISTANCE || g_drag_x - event->x > FILESAPP_DRAG_DISTANCE ||
+        event->y - g_drag_y > FILESAPP_DRAG_DISTANCE || g_drag_y - event->y > FILESAPP_DRAG_DISTANCE)
+    {
+        g_drag_armed = 0;
+        filesapp_drag_selected();
+        return 1;
+    }
+    return 0;
+}
+
 static int on_pointer(struct sxgui_app *app, const struct savanxp_gui_pointer_event *event)
 {
     uint32_t released = g_pointer_buttons & ~event->buttons;
+    uint32_t pressed = event->buttons & ~g_pointer_buttons;
 
     (void)app;
     g_pointer_buttons = event->buttons;
+    if (filesapp_drag_pointer(event, pressed))
+    {
+        return 1;
+    }
     if ((released & SAVANXP_MOUSE_BUTTON_RIGHT) == 0 || sxgui_dialog_active(&g_app.ui) ||
         !sx_rect_contains_point(FILESAPP_LIST->rect, event->x, event->y))
     {
@@ -3621,6 +3703,7 @@ int main(int argc, char **argv)
     }
     g_app.on_key = on_key;
     g_app.on_pointer = on_pointer;
+    g_app.on_drag_end = on_drag_end;
     g_app.on_resize = on_resize;
     g_app.on_tick = on_tick;
     g_app.tick_interval_ms = FILESAPP_IDLE_TICK_MS;

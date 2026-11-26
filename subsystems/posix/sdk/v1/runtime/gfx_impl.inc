@@ -929,6 +929,16 @@ struct gfx_motion_stash {
     uint32_t count;
 };
 
+/* Drag records (docs/desktop/DRAG_AND_DROP.md), per window. Full, an OVER
+ * replaces the last OVER; the other phases are never dropped for one. */
+#define GFX_DRAG_STASH_CAPACITY 16u
+struct gfx_drag_stash {
+    struct savanxp_wm_drag_event items[GFX_DRAG_STASH_CAPACITY];
+    uint32_t head;
+    uint32_t count;
+};
+
+static struct gfx_drag_stash g_gfx_drag_stash[GFX_EVENT_WINDOW_SLOTS];
 static struct gfx_key_stash g_gfx_key_stash[GFX_EVENT_WINDOW_SLOTS];
 static struct gfx_pointer_stash g_gfx_pointer_stash[GFX_EVENT_WINDOW_SLOTS];
 static struct gfx_motion_stash g_gfx_motion_stash;
@@ -970,6 +980,31 @@ static void gfx_stash_pointer(uint32_t window_id, const struct savanxp_gui_point
     stash->count += 1u;
 }
 
+static void gfx_stash_drag(uint32_t window_id, const struct savanxp_wm_drag_event* event) {
+    struct gfx_drag_stash* stash = 0;
+
+    if (window_id >= GFX_EVENT_WINDOW_SLOTS) {
+        return;
+    }
+    stash = &g_gfx_drag_stash[window_id];
+    if (stash->count != 0) {
+        struct savanxp_wm_drag_event* last =
+            &stash->items[(stash->head + stash->count - 1u) % GFX_DRAG_STASH_CAPACITY];
+        if (event->phase == SAVANXP_WM_DRAG_OVER && last->phase == SAVANXP_WM_DRAG_OVER &&
+            last->drag == event->drag) {
+            *last = *event;
+            return;
+        }
+    }
+    if (stash->count == GFX_DRAG_STASH_CAPACITY) {
+        /* Full of other phases: the oldest goes, as a full pipe would lose it. */
+        stash->head = (stash->head + 1u) % GFX_DRAG_STASH_CAPACITY;
+        stash->count -= 1u;
+    }
+    stash->items[(stash->head + stash->count) % GFX_DRAG_STASH_CAPACITY] = *event;
+    stash->count += 1u;
+}
+
 static int32_t gfx_add_motion(int32_t first, int32_t second) {
     int64_t sum = (int64_t)first + second;
     if (sum > INT32_MAX) {
@@ -1007,6 +1042,8 @@ static void gfx_discard_stashes(uint32_t window_id) {
     g_gfx_key_stash[window_id].count = 0;
     g_gfx_pointer_stash[window_id].head = 0;
     g_gfx_pointer_stash[window_id].count = 0;
+    g_gfx_drag_stash[window_id].head = 0;
+    g_gfx_drag_stash[window_id].count = 0;
 }
 
 /* Lee un registro entero sin bloquear: 1 leido, 0 nada, negativo error. */
@@ -1054,6 +1091,8 @@ static int gfx_drain_for(int fd, uint32_t window_id, uint32_t kind, struct savan
             gfx_stash_pointer(record->window_id, &record->payload.pointer);
         } else if (record->kind == SAVANXP_WM_EVENT_POINTER_MOTION && record->window_id == 0) {
             gfx_stash_motion(&record->payload.motion);
+        } else if (record->kind == SAVANXP_WM_EVENT_DRAG) {
+            gfx_stash_drag(record->window_id, &record->payload.drag);
         }
     }
     return 0;
@@ -1160,6 +1199,57 @@ int gfx_poll_window_motion(const struct savanxp_gfx_context* context, struct sav
         *event = record.payload.motion;
     }
     return result;
+}
+
+int gfx_poll_window_drag(const struct savanxp_gfx_context* context, struct savanxp_wm_drag_event* event) {
+    struct savanxp_wm_event record;
+    struct gfx_drag_stash* stash = 0;
+    int result;
+
+    if (context == 0 || context->input_fd < 0 || event == 0 || context->window_id >= GFX_EVENT_WINDOW_SLOTS) {
+        return -SAVANXP_EINVAL;
+    }
+    stash = &g_gfx_drag_stash[context->window_id];
+    if (stash->count == 0) {
+        /* Drain into the stashes, so an OVER that follows coalesces. */
+        result = gfx_drain_for(context->input_fd, context->window_id, SAVANXP_WM_EVENT_DRAG, &record);
+        if (result < 0) {
+            return result;
+        }
+        if (result > 0) {
+            gfx_stash_drag(context->window_id, &record.payload.drag);
+        }
+    }
+    if (stash->count == 0) {
+        return 0;
+    }
+    *event = stash->items[stash->head];
+    stash->head = (stash->head + 1u) % GFX_DRAG_STASH_CAPACITY;
+    stash->count -= 1u;
+    return 1;
+}
+
+long gfx_drag_start(const struct savanxp_gfx_context* context, uint32_t effects) {
+    if (context == 0 || context->header == 0 || context->window_id != 0 || effects == 0u ||
+        (effects & ~SAVANXP_DRAG_EFFECTS) != 0u) {
+        return -SAVANXP_EINVAL;
+    }
+    context->header->drag.effects = effects;
+    __asm__ volatile("" ::: "memory");
+    context->header->drag.start_sequence += 1u;
+    __asm__ volatile("" ::: "memory");
+    return gfx_notify_wm(context);
+}
+
+long gfx_drag_reply(const struct savanxp_gfx_context* context, uint32_t drag, uint32_t effect) {
+    if (context == 0 || context->header == 0 || drag == 0u || (effect & ~SAVANXP_DRAG_EFFECTS) != 0u) {
+        return -SAVANXP_EINVAL;
+    }
+    context->header->drag.reply_effect = effect;
+    __asm__ volatile("" ::: "memory");
+    context->header->drag.reply_drag = drag;
+    __asm__ volatile("" ::: "memory");
+    return gfx_notify_wm(context);
 }
 
 int gfx_should_close(const struct savanxp_gfx_context* context) {

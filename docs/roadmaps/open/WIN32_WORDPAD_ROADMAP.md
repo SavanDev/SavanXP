@@ -1,8 +1,9 @@
 # Windows XP WordPad on SSW — the second Win32 profile
 
-> **Status: WP1 to WP4 complete (2026-11-25). WordPad starts up to its
+> **Status: WP1 to WP5 complete (2026-11-25). WordPad starts up to its
 > first window; SSW handles x86 software exceptions, runs a second thread,
-> and has WordPad's files, heaps, atoms and locale.** This is the plan of
+> has WordPad's files, heaps, atoms and locale, and the hooks, positions,
+> standard controls and clipboard MFC needs.** This is the plan of
 > [W7](WIN32_SUBSYSTEM_ROADMAP.md#w7--later-profiles)'s first named profile.
 > Its inventory, the W0 record taken before any code, is
 > [WIN32_WORDPAD_PROFILE.md](../../userland/WIN32_WORDPAD_PROFILE.md); every
@@ -174,11 +175,11 @@ other subsystems lack is added to them too, not only to Win32.
   What is missing is Win32's layer over it (WP5), which the clipboard's
   document already lists. `winhost` is a SUN program, so it is the first
   consumer of the typed `sxn_` clipboard calls SUN has been waiting to add.
-- **Drag and drop.** SavanXP has none between programs. It is designed in
-  a document of its own before WP5 needs it: the first consumer is a file
-  dragged from Files onto WordPad (`DragAcceptFiles`, `WM_DROPFILES`,
-  `DragQueryFileW`), the second the toolkit's programs, and OLE's
-  `DoDragDrop` a later bridge onto it.
+- **Drag and drop** — done with WP5
+  ([DRAG_AND_DROP.md](../../desktop/DRAG_AND_DROP.md)): a file dragged from
+  Files onto a Win32 window (`DragAcceptFiles`, `WM_DROPFILES`,
+  `DragQueryFileW`) and onto Notepad. OLE's `DoDragDrop` is a later bridge
+  onto it.
 - **Scalable fonts** for every subsystem and the toolkit, per D1.
 - **A list of file types** in SavanXP's own file dialog (D2), for its own
   programs.
@@ -387,12 +388,39 @@ Size L.
   `text/uri-list`, other registered formats under `application/x-win32-`.
   Delayed rendering is rendered eagerly, as the device requires.
 - `DragAcceptFiles` and `WM_DROPFILES`, once the desktop's drag and drop
-  exists; until then `DragAcceptFiles` succeeds and nothing is dropped.
+  exists.
 
 **Done when:** fixtures for hooks and subclassing, for the controls driven
 by an input script, and for the clipboard (text and RTF set by a fixture and
 read by a SUN program, and the other way round) match Windows XP, and
 `windowd-smoke` still passes.
+
+**Done (2026-11-25).** `hooks.exe`, `controls.exe` (driven by
+`fixtures/controls/input.txt`) and `clip.exe` write the same bytes on Windows
+XP, in `win32-harness-test` and on SavanXP (`win32-hello`,
+`win32-controls`); `controls.exe`'s two dumps equal the harness's golden
+images on SavanXP, and Windows XP's outside the text. `clip.exe put` leaves
+text, RTF and a format of its own, which `win32test`, a SUN program, reads
+from `/dev/clipboard` and writes back itself, and `clip.exe get` then prints
+what it printed on Windows XP. See [WIN32.md](../../userland/WIN32.md#hooks-and-subclassing)
+and the sections after it.
+
+What changed from the plan above, and why:
+
+- **SUN's typed clipboard calls** (`sxn/sxnclip.h`) arrived with `winhost`,
+  their first consumer, as the clipboard's document expected.
+- **`CF_OEMTEXT` is code page 437**, which `kernel32` now converts, since
+  Windows XP makes it from the text with that page.
+- **Pixels outside the text, not glyphs.** The dumps differ from Windows
+  XP's only in the text (the font is the platform's) and in what Windows XP
+  adds itself: the menu's drop shadow, as for `dialog.exe`.
+- **Drag and drop came with WP5** ([DRAG_AND_DROP.md](../../desktop/DRAG_AND_DROP.md)):
+  `/dev/dragdata`, `windowd`'s drag events, Files as a source and Notepad
+  as a target. A window with `WS_EX_ACCEPTFILES` gets `WM_DROPFILES`;
+  `clip.exe drop` prints what it got in `win32-harness-test` and in
+  `win32-drop`, where a SUN window drags two files onto it. Windows XP
+  cannot record that output (an input script cannot drag from another
+  program there), so `clip-drop.out` is the harness's.
 
 ### WP6 — text and pictures in `gdi32`
 

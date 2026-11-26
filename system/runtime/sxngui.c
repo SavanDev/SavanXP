@@ -1,6 +1,7 @@
 /* The SXGUI application frame for SUN programs: see include/sxn/sxngui.h. */
 
 #include "sxn/sxngui.h"
+#include "sxn/sxnclip.h"
 
 #include <string.h>
 
@@ -657,6 +658,96 @@ static void sxngui_key(struct sxngui_app *app, const struct savanxp_input_event 
     }
 }
 
+int sxngui_app_drag_start(struct sxngui_app *app, const struct sxgui_clipboard_format *formats, int count,
+                          uint32_t effects)
+{
+    struct savanxp_clipboard_entry entries[SAVANXP_CLIPBOARD_MAX_FORMATS];
+    long handle;
+    long result;
+
+    if (app == 0 || formats == 0 || count <= 0 || count > (int)SAVANXP_CLIPBOARD_MAX_FORMATS)
+    {
+        return -SAVANXP_EINVAL;
+    }
+    for (int index = 0; index < count; ++index)
+    {
+        uint32_t k = 0;
+        if (formats[index].name == 0)
+        {
+            return -SAVANXP_EINVAL;
+        }
+        for (; formats[index].name[k] != 0 && k + 1u < SAVANXP_CLIPBOARD_NAME_CAPACITY; ++k)
+        {
+            entries[index].name[k] = formats[index].name[k];
+        }
+        for (; k < SAVANXP_CLIPBOARD_NAME_CAPACITY; ++k)
+        {
+            entries[index].name[k] = 0;
+        }
+        entries[index].data = (uint64_t)(uintptr_t)formats[index].data;
+        entries[index].length = formats[index].length;
+    }
+    handle = sxn_dragdata_open(1);
+    if (handle < 0)
+    {
+        return (int)handle;
+    }
+    result = sxn_clipboard_set(handle, entries, (uint32_t)count);
+    (void)sxn_close(handle);
+    if (result < 0)
+    {
+        return (int)result;
+    }
+    return (int)sxnwm_drag_start(&app->wm, effects);
+}
+
+/* A drag record for the main window (docs/desktop/DRAG_AND_DROP.md). */
+static void sxngui_drag_event(struct sxngui_app *app, const struct savanxp_wm_drag_event *drag)
+{
+    switch (drag->phase)
+    {
+    case SAVANXP_WM_DRAG_ENTER:
+    case SAVANXP_WM_DRAG_OVER: {
+        uint32_t effect = app->on_drag_over != 0 ? app->on_drag_over(app, drag->x, drag->y, drag->effects) : 0u;
+        (void)sxnwm_drag_reply(&app->wm, drag->drag, effect & drag->effects);
+        app->needs_repaint = 1;
+        break;
+    }
+    case SAVANXP_WM_DRAG_LEAVE:
+        if (app->on_drag_leave != 0)
+        {
+            app->on_drag_leave(app);
+        }
+        app->needs_repaint = 1;
+        break;
+    case SAVANXP_WM_DRAG_DROP:
+        if (app->on_drop != 0)
+        {
+            app->on_drop(app, drag->x, drag->y, drag->effect);
+        }
+        app->needs_repaint = 1;
+        break;
+    case SAVANXP_WM_DRAG_END: {
+        /* The window manager kept the button's release: the toolkit and the
+         * app's hook hear it now, off the window, so nothing takes it for a
+         * click. */
+        struct savanxp_gui_pointer_event release = {-1, -1, 0, 0};
+        if (app->on_pointer == 0 || !app->on_pointer(app, &release))
+        {
+            (void)sxgui_handle_pointer(&app->ui, &release);
+        }
+        if (app->on_drag_end != 0)
+        {
+            app->on_drag_end(app, drag->effect);
+        }
+        app->needs_repaint = 1;
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 /* The main window's input, from the ring. */
 static void sxngui_drain_main(struct sxngui_app *app)
 {
@@ -664,6 +755,11 @@ static void sxngui_drain_main(struct sxngui_app *app)
 
     while (sxnwm_poll_input(&app->wm, &record) == 0)
     {
+        if (record.kind == SAVANXP_WM_EVENT_DRAG)
+        {
+            sxngui_drag_event(app, &record.payload.drag);
+            continue;
+        }
         if (record.kind == SAVANXP_WM_EVENT_KEY)
         {
             sxngui_key(app, &record.payload.key, 1);

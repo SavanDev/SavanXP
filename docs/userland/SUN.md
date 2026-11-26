@@ -54,7 +54,8 @@ the name of the layer, not a rename of its symbols.
 | Piece | Header / source | Role | Windows analogue |
 |---|---|---|---|
 | Base | `include/sxn/sxn.h` | processes, handles, events, waits, sections and views, pipes, devices, ports, the clock | `kernel32` |
-| Windowing | `include/sxn/sxnwm.h` | connect to `windowd`, present the whole surface or rectangles, read input from the ring, ask for a size, follow resizes and closing, publish the title and icon, capture the pointer | `user32` (window + message loop) |
+| Windowing | `include/sxn/sxnwm.h` | connect to `windowd`, present the whole surface or rectangles, read input from the ring, ask for a size, follow resizes and closing, publish the title and icon, capture the pointer, start and answer a drag ([DRAG_AND_DROP.md](../desktop/DRAG_AND_DROP.md)) | `user32` (window + message loop) |
+| Clipboard | `include/sxn/sxnclip.h` | the clipboard's set of formats: its sequence, setting the whole set, one format by name, the formats in order ([CLIPBOARD.md](../desktop/CLIPBOARD.md)); the same calls on a drag's formats, `sxn_dragdata_open` | `OpenClipboard` to `GetClipboardData` |
 | Pointer speed | `include/sxn/sxnpointer.h` | read and set the speed the kernel applies to relative mice ([INPUT.md](../kernel/INPUT.md#pointer-speed)) | `SPI_GETMOUSESPEED` / `SPI_SETMOUSESPEED` |
 | Sound | `include/sxn/sxnaudio.h` | PCM streams, master gain/mute, and native `audiod` control snapshots with per-stream gain, mute and levels | `waveOut`, XAudio2's source voice |
 | Widget seed | `include/sxn/sxnwidgets.h` | Label, Button, Field with a 5x7 font; a proof, not a toolkit | — |
@@ -210,6 +211,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `.rsrc` resources | `<program>.sunres.h` (above) | done |
 | Console API (`GenerateConsoleCtrlEvent`, `FillConsoleOutputCharacter`) | the console control channel ([CONSOLE.md](../desktop/CONSOLE.md#the-control-channel)) | done |
 | Clipboard | `/dev/clipboard` through `sxn_open_device`, wrapped by the toolkit's SUN host: text, and formats through `sxgui_clipboard_*` ([CLIPBOARD.md](../desktop/CLIPBOARD.md)) | text done (Task Manager's Run box); formats done in the toolkit, used by Files (POSIX), no SUN program yet |
+| `DoDragDrop`, `RegisterDragDrop`, `WM_DROPFILES` | `sxnwm_drag_start`, `sxnwm_drag_reply`, `SAVANXP_WM_EVENT_DRAG`, `sxn_dragdata_open`; `on_drag_over`, `on_drop`, `on_drag_end` and `sxngui_app_drag_start` in the frame ([DRAG_AND_DROP.md](../desktop/DRAG_AND_DROP.md)) | done (consumers: `winhost` as a target, `win32test --source`; `nativetest`) |
 | `CreateFile` and the file API | `sxn_open_file`, `sxn_read`, `sxn_close`, `sxn_write_file`; `sxn_create_file`, `sxn_write`, `sxn_flush_file` | Existing regular files read or written in place, durable whole-file saves up to 4 KiB, and streaming writes of any size |
 | `SetFilePointerEx`, `SetEndOfFile`, `GetFileInformationByHandle` | `sxn_seek_file`, `sxn_set_file_size`, `sxn_query_file` | done (consumer: `winhost`, WP4 of the WordPad roadmap) |
 | `GetFileAttributesEx`, `FindFirstFile`/`FindNextFile` | `sxn_query_path`, `sxn_open_directory`, `sxn_read_directory` | done (the file dialog) |

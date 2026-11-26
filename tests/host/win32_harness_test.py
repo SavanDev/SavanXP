@@ -11,7 +11,14 @@ the second run reads back what the first wrote. window.exe plays its input
 script (fixtures/window/input.txt); the client area it dumps must match the
 golden image, which equals Windows XP's outside the text box
 (docs/userland/WIN32.md, "Fixtures"). dialog.exe plays its own, and dumps
-its window with a menu open and its Settings dialog.
+its window with a menu open and its Settings dialog. controls.exe plays
+fixtures/controls/input.txt and dumps its window with a drop-down list and
+a context menu open. "clip.exe put" and "clip.exe get" share one
+--clipboard file: get reads what put left, as two programs do on Windows XP.
+"clip.exe drop" plays fixtures/clip/drop.txt, two files dragged onto its
+window; an input script cannot drag from another program on Windows XP, so
+clip-drop.out is the harness's, checked by hand against what Windows
+documents for WM_DROPFILES, not recorded there.
 
 With --cards FOLDER it runs only cards.exe, with the user's own cards.dll
 from FOLDER copied next to it in a temporary folder; without the file it
@@ -78,12 +85,23 @@ CASES = [
     ("memory.exe", [], "memory.out", 0x0, None, False, None),
     ("locale.exe", [], "locale.out", 0x0, None, False, None),
     ("threads.exe", [], "threads.out", 0x5, None, False, None),
+    ("hooks.exe", [], "hooks.out", 0x0, None, False, None),
+    ("controls.exe", [], "controls.out", 0x0, None, False, "controls/input.txt"),
+    ("clip.exe", [], "clip.out", 0x0, None, False, None),
+    ("clip.exe", ["put"], "clip-put.out", 0x0, None, False, None),
+    ("clip.exe", ["get"], "clip-get.out", 0x0, None, False, None),
+    ("clip.exe", ["drop"], "clip-drop.out", 0x0, None, False, "clip/drop.txt"),
 ]
+
+# The fixtures that leave the clipboard to the next run: they share one
+# --clipboard file, as two programs share it on Windows XP.
+CLIPBOARD_RUNS = {("clip.exe", "put"), ("clip.exe", "get")}
 
 # The images a scripted fixture dumps, each with a golden NAME.ppm.gz.
 DUMPS = {
     "window.exe": ["window"],
     "dialog.exe": ["dialog-menu", "dialog-settings"],
+    "controls.exe": ["controls-dropdown", "controls-menu"],
 }
 
 
@@ -207,10 +225,13 @@ def main():
     failures = 0
     with tempfile.TemporaryDirectory() as scratch:
         registry = str(pathlib.Path(scratch) / "hkcu.reg")
+        clipboard = str(pathlib.Path(scratch) / "clipboard")
         for name, arguments, expected_file, status, stderr_line, uses_registry, script in CASES:
             command = [args.harness, "--dlls", args.system32]
             if uses_registry:
                 command += ["--registry", registry]
+            if (name, arguments[0] if arguments else "") in CLIPBOARD_RUNS:
+                command += ["--clipboard", clipboard]
             if script:
                 command += ["--input", str(expected_dir.parent / script)]
             command += [f"{args.fixtures}/{name}"] + arguments

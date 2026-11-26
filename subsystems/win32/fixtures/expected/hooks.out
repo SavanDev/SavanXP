@@ -1,0 +1,522 @@
+hooks.exe
+hooks: yes
+a hook of no kind: no error 1426
+a global hook without a module: no error 1428
+unhook a handle that is none: failed error 1404
+register main: yes
+register child: yes
+cbt createwnd: [HookMain] [Hooks] style 0x02cf0000 exstyle 0x00000100 after none class now yes
+main: other WM_NCCREATE
+main: other WM_CREATE
+main made: yes
+cbt createwnd: [HookChild] [one] style 0x50800000 exstyle 0x00000000 at 10,10 size 100x60 after none class now yes
+child: other WM_NCCREATE
+child: other WM_NCCALCSIZE calc 0
+child: other WM_CREATE
+child: other WM_SIZE 98,58 kind 0
+child: other WM_MOVE 11,11
+main: main WM_PARENTNOTIFY event 0x00000001 id 101 other
+child: other WM_SHOWWINDOW 1 0
+cbt createwnd: [HookChild] [two] style 0x50000000 exstyle 0x00000200 at 120,10 size 100x60 after none class now yes
+child: other WM_NCCREATE
+child: other WM_NCCALCSIZE calc 0
+child: other WM_CREATE
+child: other WM_SIZE 96,56 kind 0
+child: other WM_MOVE 122,12
+main: main WM_PARENTNOTIFY event 0x00000001 id 102 other
+child: other WM_SHOWWINDOW 1 0
+cbt createwnd: [HookChild] [three] style 0x50000000 exstyle 0x00020000 at 230,10 size 100x60 after none class now yes
+child: other WM_NCCREATE
+child: other WM_NCCALCSIZE calc 0
+child: other WM_CREATE
+child: other WM_SIZE 98,58 kind 0
+child: other WM_MOVE 231,11
+main: main WM_PARENTNOTIFY event 0x00000001 id 103 other
+child: other WM_SHOWWINDOW 1 0
+cbt createwnd: [HookChild] [four] style 0x50300000 exstyle 0x00000200 at 10,80 size 150x100 after none class now yes
+child: other WM_NCCREATE
+child: other WM_NCCALCSIZE calc 0
+child: other WM_CREATE
+child: other WM_SIZE 130,80 kind 0
+child: other WM_MOVE 12,82
+main: main WM_PARENTNOTIFY event 0x00000001 id 104 other
+child: other WM_SHOWWINDOW 1 0
+cbt createwnd: [Button] [&Check] style 0x50000003 exstyle 0x00000000 at 170,80 size 100x20 after none class now yes
+main: main WM_PARENTNOTIFY event 0x00000001 id 105 other
+cbt createwnd: [HookChild] [sub] style 0x50000000 exstyle 0x00000000 at 280,80 size 60x40 after none class now yes, subclassed: old is child_proc yes
+subclass: other WM_NCCREATE
+child: other WM_NCCREATE
+subclass: other WM_NCCALCSIZE calc 0
+child: other WM_NCCALCSIZE calc 0
+subclass: other WM_CREATE
+child: other WM_CREATE
+subclass: other WM_SIZE 60,40 kind 0
+child: other WM_SIZE 60,40 kind 0
+subclass: other WM_MOVE 280,80
+child: other WM_MOVE 280,80
+main: main WM_PARENTNOTIFY event 0x00000001 id 106 other
+subclass: other WM_SHOWWINDOW 1 0
+child: other WM_SHOWWINDOW 1 0
+cbt createwnd: [HookChild] [grand] style 0x50000000 exstyle 0x00000000 at 5,5 size 30x20 after none class now yes
+child: other WM_NCCREATE
+child: other WM_NCCALCSIZE calc 0
+child: other WM_CREATE
+child: other WM_SIZE 30,20 kind 0
+child: other WM_MOVE 5,5
+child: c1 WM_PARENTNOTIFY event 0x00000001 id 107 other
+child: other WM_SHOWWINDOW 1 0
+veto made: 
+cbt createwnd: [HookChild] [veto] style 0x50000000 exstyle 0x00000000 at 0,0 size 10x10 after none class now yes, vetoed
+child: other WM_NCDESTROYno error 0
+cbt createwnd: [HookChild] [owned] style 0x80000000 exstyle 0x00000000 after none class now yes
+child: other WM_NCCREATE
+child: other WM_NCCALCSIZE calc 0
+child: other WM_CREATE
+child: other WM_SIZE 50,50 kind 0
+child: other WM_MOVE 0,0
+c1 style: 0x50800000 exstyle 0x00000000 id 101 parent main instance ours yes userdata 0 proc ours yes
+main style: 0x06cf0000 exstyle 0x00000100 parent none
+owned style: 0x84000000 owner main parent main GW_OWNER main
+extra 0 set: 0 get 0x12345678 error 0
+extra 1: 0 error 1413
+extra 4: 0 error 1413
+main extra 4 set: 0 get 77 error 0
+index -100: 0 error 1413
+no window: 0 error 1400
+userdata set: 0 again 55 get 66
+id set: 101 get 151
+style set: 
+child: c1 WM_STYLECHANGING style 0x50800000 to 0x50810000
+child: c1 WM_STYLECHANGED style 0x50800000 to 0x508100000x50800000
+exstyle set: 
+child: c1 WM_STYLECHANGING exstyle 0x00000000 to 0x00020000
+child: c1 WM_STYLECHANGED exstyle 0x00000000 to 0x000200000x00000000 client after 98x58
+child: c1 WM_STYLECHANGING exstyle 0x00020000 to 0x00000000
+child: c1 WM_STYLECHANGED exstyle 0x00020000 to 0x00000000
+child: c1 WM_STYLECHANGING style 0x50810000 to 0x50800000
+child: c1 WM_STYLECHANGED style 0x50810000 to 0x50800000
+main style set: 
+main: main WM_STYLECHANGING style 0x06cf0000 to 0x06ce0000
+main: main WM_STYLECHANGED style 0x06cf0000 to 0x06ce00000x06cf0000
+subclass the button: yes now yes
+button subclass: BM_SETCHECK 1
+checked: 
+button subclass: BM_GETCHECK 01
+call the old procedure straight: 1
+restore: yes
+sub's procedure is the subclass: yes
+class : [Button] style 0x0000008b class extra 0 window extra 4 background 0 cursor yes menu no
+class : [Static] style 0x00000088 class extra 0 window extra 4 background 0 cursor yes menu no
+class : [Edit] style 0x00000088 class extra 0 window extra 6 background 0 cursor yes menu no
+class : [ListBox] style 0x00000088 class extra 0 window extra 4 background 0 cursor yes menu no
+class : [ComboBox] style 0x0000008b class extra 0 window extra 4 background 0 cursor yes menu no
+class : [ScrollBar] style 0x0000008b class extra 0 window extra 72 background 0 cursor yes menu no
+class : [#32770] style 0x00000808 class extra 0 window extra 30 background 0 cursor yes menu no
+class : [HookChild] style 0x00000000 class extra 0 window extra 4 background 6 cursor yes menu no
+class : [NoSuchClass] none error 1411
+class name of : main 8 [HookMain]
+class name of : c1 9 [HookChild]
+class name of : button 6 [Button]
+class name cut: 3 [Hoo]
+unregister a class in use: failed error 1412
+unregister a class that is none: failed error 1411
+set alpha: ok
+set beta by atom: ok
+get alpha: 1 as ALPHA 1 beta by name 2 beta by atom 2
+replace alpha: ok get 3
+remove alpha: 3 again 0 get 0
+on another window: 0
+on no window: failed error 1400
+order:  c1 c2 c3 c4 button sub
+order:  grand
+parent of c1: main of main none of grand c1
+first: c1 last sub prev of c2 c1 next of c2 c3 top c1 child of c2 none
+is child: yes grand yes reverse no owned no
+enumerate:  c1 grand c2 c3 c4 button sub
+enumerate until c3:  c1 grand c2 c3
+ids: 101 107 main 0
+text of c2: 3 [two] length 3
+text cut: 2 [tw]
+set text: 
+child: c2 WM_SETTEXT [deux]ok [deux]
+visible: no main no enabled yes zoomed no iconic no
+is window: yes no no
+c1: (10,10)-(110,70) client 98x58 at 11,11
+c2: (120,10)-(220,70) client 96x56 at 122,12
+c3: (230,10)-(330,70) client 98x58 at 231,11
+c4: (10,80)-(160,180) client 130x80 at 12,82
+grand: (16,16)-(46,36) client 30x20 at 16,16
+c2's 3,4 in main: 125,16
+map c1 to c3: 65316 -219,1
+move c1: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000015 at 20,30
+child: c1 WM_WINDOWPOSCHANGED flags 0x0000081d at 20,30
+child: c1 WM_MOVE 21,31ok
+c1: (20,30)-(120,90) client 98x58 at 21,31
+size c1: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000016 size 120x70
+child: c1 WM_NCCALCSIZE calc 1 new (20,30)-(140,100) old (20,30)-(120,90) client (21,31)-(119,89)
+child: c1 WM_WINDOWPOSCHANGED flags 0x0000101e size 120x70
+child: c1 WM_SIZE 118,68 kind 0ok
+c1: (20,30)-(140,100) client 118x68 at 21,31
+c1 to the bottom: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000013 after bottom
+child: c1 WM_WINDOWPOSCHANGED flags 0x0000181b after bottomok
+order:  c2 c3 c4 button sub c1
+c1 after c2: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000013 after c2
+child: c1 WM_WINDOWPOSCHANGED flags 0x0000181b after c2ok
+order:  c2 c1 c3 c4 button sub
+c1 to the top: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000013 after none
+child: c1 WM_WINDOWPOSCHANGED flags 0x0000181b after noneok
+order:  c1 c2 c3 c4 button sub
+c1 frame changed: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000037
+child: c1 WM_NCCALCSIZE calc 1 new (20,30)-(140,100) old (20,30)-(140,100) client (21,31)-(139,99)
+child: c1 WM_WINDOWPOSCHANGED flags 0x0000183fok
+c1 hidden: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000097
+child: c1 WM_WINDOWPOSCHANGED flags 0x0000189fok visible no
+c1 shown: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000057
+child: c1 WM_WINDOWPOSCHANGED flags 0x0000185fok
+c1 nothing: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000014 at 20,30 size 120x70ok
+move window c1: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x00000014 at 10,10 size 100x60
+child: c1 WM_NCCALCSIZE calc 1 new (10,10)-(110,70) old (20,30)-(140,100) client (21,31)-(139,99)
+child: c1 WM_WINDOWPOSCHANGED flags 0x0000001c at 10,10 size 100x60
+child: c1 WM_MOVE 11,11
+child: c1 WM_SIZE 98,58 kind 0ok
+move window c1 to where it is: 
+child: c1 WM_WINDOWPOSCHANGING flags 0x0000001c at 10,10 size 100x60ok
+defer: yes yes
+end defer: 
+child: c2 WM_WINDOWPOSCHANGING flags 0x00000015 at 125,15
+child: c3 WM_WINDOWPOSCHANGING flags 0x00000016 size 90x50
+child: c3 WM_NCCALCSIZE calc 1 new (230,10)-(320,60) old (230,10)-(330,70) client (231,11)-(329,69)
+child: c2 WM_WINDOWPOSCHANGED flags 0x0000081d at 125,15
+child: c2 WM_MOVE 127,17
+child: c3 WM_WINDOWPOSCHANGED flags 0x0000101e size 90x50
+child: c3 WM_SIZE 88,48 kind 0ok
+c2: (125,15)-(225,75) client 96x56 at 127,17
+c3: (230,10)-(320,60) client 88x48 at 231,11
+c2 into c4: 
+child: c2 WM_SHOWWINDOW 0 0
+child: c2 WM_WINDOWPOSCHANGING flags 0x00000005 at 125,15
+child: c2 WM_CHILDACTIVATE 0x00000000 0x00000000
+child: c2 WM_WINDOWPOSCHANGED flags 0x0000080d at 125,15
+child: c2 WM_MOVE 127,17
+child: c2 WM_SHOWWINDOW 1 0main parent c4
+c2: (137,97)-(237,157) client 96x56 at 139,99
+order:  c2
+c2 back: 
+child: c2 WM_SHOWWINDOW 0 0
+child: c2 WM_WINDOWPOSCHANGING flags 0x00000005 at 125,15
+child: c2 WM_CHILDACTIVATE 0x00000000 0x00000000
+child: c2 WM_WINDOWPOSCHANGED flags 0x0000080d at 125,15
+child: c2 WM_MOVE 127,17
+child: c2 WM_SHOWWINDOW 1 0c4
+c2: (125,15)-(225,75) client 96x56 at 127,17
+order:  c2 c1 c3 c4 button sub
+child: c2 WM_WINDOWPOSCHANGING flags 0x00000010 at 120,10 size 100x60 after c1
+child: c2 WM_WINDOWPOSCHANGED flags 0x00000819 at 120,10 after c1
+child: c2 WM_MOVE 122,12
+child: c3 WM_WINDOWPOSCHANGING flags 0x00000010 at 230,10 size 100x60 after c2
+child: c3 WM_NCCALCSIZE calc 1 new (230,10)-(330,70) old (230,10)-(320,60) client (231,11)-(319,59)
+child: c3 WM_WINDOWPOSCHANGED flags 0x0000101e size 100x60
+child: c3 WM_SIZE 98,58 kind 0
+order:  c1 c2 c3 c4 button sub
+c4 vertical at first: ok 0..100 page 0 pos 0
+set range, page and 45: 41 now 0..50 page 10 pos 41
+set pos 5: 41 get 5
+set pos -3: 5 get 0
+page 100: 0 page 51
+range 10..20: ok 10..20 pos 10
+c1 has no bar: failed error 1447
+c1 SB_CTL: ok
+c1 set pos: 0 error 1447 style now 0x50800000
+hide c4's horizontal bar: 
+child: c4 WM_WINDOWPOSCHANGING flags 0x00000037
+child: c4 WM_NCCALCSIZE calc 1 new (10,80)-(160,180) old (10,80)-(160,180) client (12,82)-(158,162)
+child: c4 WM_WINDOWPOSCHANGED flags 0x0000103f
+child: c4 WM_SIZE 146,96 kind 0ok
+c4: (10,80)-(160,180) client 146x96 at 12,82 style 0x50000000
+show it: 
+child: c4 WM_WINDOWPOSCHANGING flags 0x00000037
+child: c4 WM_NCCALCSIZE calc 1 new (10,80)-(160,180) old (10,80)-(160,180) client (12,82)-(158,178)
+child: c4 WM_WINDOWPOSCHANGED flags 0x0000103f
+child: c4 WM_SIZE 146,80 kind 0ok
+c4: (10,80)-(160,180) client 146x80 at 12,82
+disable both arrows: ok
+again: failed error 0
+enable: ok
+c1 now: 
+c1: (10,10)-(110,70) client 98x58 at 11,11
+show main: 
+child: owned WM_WINDOWPOSCHANGING flags 0x00000013
+cbt : activate main mouse 0
+child: owned WM_WINDOWPOSCHANGING flags 0x00000013
+cbt : setfocus main from none
+child: c1 WM_NCPAINT
+child: c1 WM_ERASEBKGND
+child: c2 WM_NCPAINT
+child: c2 WM_ERASEBKGND
+child: c3 WM_NCPAINT
+child: c3 WM_ERASEBKGND
+child: c4 WM_NCPAINT
+child: c4 WM_ERASEBKGND
+subclass: sub WM_NCPAINT
+child: sub WM_NCPAINT
+subclass: sub WM_ERASEBKGND
+child: sub WM_ERASEBKGND
+child: c1 WM_PAINT
+child: grand WM_PAINT
+child: grand WM_NCPAINT
+child: grand WM_ERASEBKGND
+child: c2 WM_PAINT
+child: c3 WM_PAINT
+child: c4 WM_PAINT
+subclass: sub WM_PAINT
+child: sub WM_PAINT
+focus: main active main foreground yes
+focus c1: 
+cbt : setfocus c1 from main
+child: c1 WM_SETFOCUS other mainmain
+focus c2: 
+cbt : setfocus c2 from c1
+child: c1 WM_KILLFOCUS other c2
+child: c2 WM_SETFOCUS other c1c1
+focus c3, vetoed: 
+cbt : setfocus c3 from c2, vetoednone focus c2
+focus none: 
+child: c2 WM_KILLFOCUS other nonec2 focus none
+focus c1 again: 
+cbt : setfocus c1 from none
+child: c1 WM_SETFOCUS other nonenone
+caret pos with none: failed error 5
+create: ok
+pos: okok 5,6
+show: ok
+show on another window: failed error 0
+hide: ok
+hide NULL: ok
+show NULL: okok
+a new caret on c2: okok 5,6
+hide on c1: failed error 0
+destroy: ok
+destroy again: failed error 5
+blink: 530
+before:  red red white green blue white white white
+scroll 5,7: 3 (0,0)-(98,58) update (0,0)-(98,58) white red red white white black red white
+validate: ok update none
+scroll part -10,0: 2 (50,0)-(60,30) update (50,0)-(60,30) white white green white blue white white white
+scroll 0,4 clipped: 2 (0,0)-(40,4) update none white red white white blue white white white
+scroll nothing: 1 (0,0)-(0,0)
+scroll children: 3
+grand: (19,18)-(49,38) client 30x20 at 19,18 update (0,0)-(98,58)
+scroll window back: ok
+grand: (16,16)-(46,36) client 30x20 at 16,16
+redraw: 
+child: c1 WM_PAINT
+child: c1 WM_NCPAINT
+child: c1 WM_ERASEBKGND
+child: grand WM_PAINT
+child: grand WM_NCPAINT
+child: grand WM_ERASEBKGNDok
+redraw without children: 
+child: c1 WM_PAINT
+child: c1 WM_ERASEBKGNDok
+invalidate, then validate a part:  update (50,0)-(98,58)
+update:  update none
+made: yes is menu yes no
+append: okokokokokokok
+file:  count 4 | 200 0x00000000 [&Open	Ctrl+O] | 0 0x00000803 [] | 201 0x00000001 [&Save] | 202 0x00000008 [&Wrap]
+bar:  count 2 | -1 0x00000410 [&File] | -1 0x00000110 [&Edit]
+insert: okokokok
+file:  count 8 | 200 0x00000000 [&Open	Ctrl+O] | 203 0x00000000 [&New] | 0 0x00000803 [] | 201 0x00000001 [&Save] | 204 0x00000000 [Before wrap] | 206 0x00000000 [Through the bar] | 202 0x00000008 [&Wrap] | 205 0x00000000 [At the end]
+check wrap: 0x00000008 0x00000000 0x00000000 missing 0xffffffff
+enable save: 1 0 -1
+modify: okok
+file:  count 8 | 200 0x00000001 [&Open...] | 207 0x00000000 [&Blank] | 0 0x00000803 [] | 201 0x00000002 [&Save] | 204 0x00000000 [Before wrap] | 206 0x00000000 [Through the bar] | 202 0x00000000 [&Wrap] | 205 0x00000000 [At the end]
+state of the separator: 0x00000803 missing 0xffffffff
+string cut: 3 [&Bl] length 6
+sub menu: yes yes yes id of a popup -1 out of range -1
+set the menu: ok smaller yes menu yes
+draw the bar: ok
+remove edit: ok still a menu yes
+bar:  count 1 | -1 0x00000810 [&File]
+delete file: ok still a menu no
+delete missing: failed error 0
+no menu: ok as before yes
+destroy: ok again failed error 1401 edit ok
+count of none: -1 error 1401
+check marks: 0x000d000d
+system menu: yes
+modeless: 
+dialog: other WM_SETFONT
+dialog: other WM_INITDIALOG focus other param 77
+cbt : setfocus other from c1
+cbt : activate other mouse 0
+dialog: other WM_WINDOWPOSCHANGING flags 0x00000003
+child: owned WM_WINDOWPOSCHANGING flags 0x00000013
+dialog: other WM_ACTIVATE 1
+child: c1 WM_KILLFOCUS other other
+dialog: other WM_CHANGEUISTATE 0x00000003 0x00000000
+dialog: other WM_SHOWWINDOW 1 0
+dialog: other WM_WINDOWPOSCHANGING flags 0x00000057
+dialog: other WM_NCPAINT
+dialog: other WM_ERASEBKGND
+dialog: other WM_WINDOWPOSCHANGED flags 0x00001857
+dialog: other WM_PAINTyes owner enabled yes visible yes focus item 301
+dialog procedure ours: yes user 0 9
+result through DWL_MSGRESULT: 
+dialog: dialog WM_USER+5 0x00000000 0x000000001234
+base units: 0x00100008 map (0,0)-(6,13)
+next tab item: item 302 previous item 2 from none item 301
+next group item: item 304 previous item 304 of first item 302
+set int -5: ok text 2 [-5] signed -5 yes unsigned 0 no
+12a: 12 no
+ 34: 34 yes
+send to an item: 0
+missing item: 0 error 1421
+feed : WM_KEYDOWN 0x00000009 to item 301
+msgfilter code : 0 WM_KEYDOWN for item 301
+cbt : setfocus item 302 from item 301
+dialog: dialog DM_GETDEFID 0x00000000 0x00000000
+taken : yes, focus item 302
+feed : WM_KEYDOWN 0x00000009 to item 302
+msgfilter code : 0 WM_KEYDOWN for item 302
+cbt : setfocus item 303 from item 302
+dialog: dialog WM_COMMAND id 303 code 0 from item 303
+dialog: dialog DM_GETDEFID 0x00000000 0x00000000
+taken : yes, focus item 303
+feed : WM_KEYDOWN 0x00000028 to item 303
+msgfilter code : 0 WM_KEYDOWN for item 303
+cbt : setfocus item 304 from item 303
+dialog: dialog WM_COMMAND id 304 code 0 from item 304
+dialog: dialog DM_GETDEFID 0x00000000 0x00000000
+dialog: dialog WM_COMMAND id 304 code 0 from item 304
+taken : yes, focus item 304
+feed : WM_KEYDOWN 0x00000028 to item 304
+msgfilter code : 0 WM_KEYDOWN for item 304
+cbt : setfocus item 303 from item 304
+dialog: dialog WM_COMMAND id 303 code 0 from item 303
+dialog: dialog DM_GETDEFID 0x00000000 0x00000000
+dialog: dialog WM_COMMAND id 303 code 0 from item 303
+taken : yes, focus item 303
+feed : WM_CHAR 0x00000073 to item 303
+msgfilter code : 0 WM_CHAR for item 303
+cbt : setfocus item 302 from item 303
+dialog: dialog WM_COMMAND id 302 code 0 from item 302
+dialog: dialog DM_GETDEFID 0x00000000 0x00000000
+taken : yes, focus item 302
+second checked: 1
+feed : WM_CHAR 0x00000066 to item 302
+msgfilter code : 0 WM_CHAR for item 302
+dialog: dialog WM_COMMAND id 301 code 0 from item 301
+taken : yes, focus item 302
+feed : WM_KEYDOWN 0x0000000d to item 302
+msgfilter code : 0 WM_KEYDOWN for item 302
+dialog: dialog DM_GETDEFID 0x00000000 0x00000000
+dialog: dialog WM_COMMAND id 1 code 0 from item 1
+taken : yes, focus item 302
+feed : WM_KEYDOWN 0x0000001b to item 302
+msgfilter code : 0 WM_KEYDOWN for item 302
+dialog: dialog WM_COMMAND id 2 code 0 from item 2
+taken : yes, focus item 302
+feed : WM_KEYDOWN 0x00000058 to item 302
+msgfilter code : 0 WM_KEYDOWN for item 302
+taken : yes, focus item 302
+for the main window: 
+msgfilter code : 0 WM_KEYDOWN for mainno
+destroy the modeless dialog: 
+cbt : destroywnd dialog
+dialog: dialog WM_WINDOWPOSCHANGING flags 0x00000097
+dialog: dialog WM_WINDOWPOSCHANGED flags 0x00001897
+cbt : activate main mouse 0
+dialog: dialog WM_ACTIVATE 0
+dialog: dialog WM_WINDOWPOSCHANGING flags 0x00000013
+child: owned WM_WINDOWPOSCHANGING flags 0x00000013
+cbt : setfocus main from item 302
+dialog: dialog WM_DESTROY
+dialog: dialog WM_NCDESTROYok
+modal: 
+dialog: other WM_SETFONT
+dialog: other WM_INITDIALOG focus other param 88
+cbt : setfocus other from none
+cbt : activate other mouse 0
+dialog: other WM_WINDOWPOSCHANGING flags 0x00000003
+child: owned WM_WINDOWPOSCHANGING flags 0x00000013
+dialog: other WM_ACTIVATE 1
+dialog: other WM_CHANGEUISTATE 0x00000003 0x00000000
+msgfilter code : 0 WM_USER+2 for other, eaten
+msgfilter code : 0 DM_SETDEFID for other
+dialog: other DM_SETDEFID 0x00000000 0x00000000
+cbt : setfocus other from other
+dialog: other WM_SETFOCUS other other
+dialog: other WM_WINDOWPOSCHANGING flags 0x00000097
+cbt : activate main mouse 0
+dialog: other WM_ACTIVATE 0
+dialog: other WM_WINDOWPOSCHANGING flags 0x00000013
+child: owned WM_WINDOWPOSCHANGING flags 0x00000013
+cbt : setfocus main from other
+dialog: other WM_KILLFOCUS other main
+cbt : destroywnd other
+dialog: other WM_DESTROY
+dialog: other WM_NCDESTROY
+modal result: 42 focus main
+send: 
+callwndproc: c1 WM_USER+7 current thread no
+child: c1 WM_USER+7 0x00000003 0x00000004
+callwndprocret: c1 WM_USER+7 result 77
+post and dispatch: 
+child: c1 WM_USER+8 0x00000000 0x00000000
+send with a time-out: 
+callwndproc: c1 WM_USER+7 current thread no
+child: c1 WM_USER+7 0x00000005 0x00000006
+callwndprocret: c1 WM_USER+7 result 111 11
+in send: no
+show c1's grandchild: 
+child: grand WM_SHOWWINDOW 0 0
+child: grand WM_WINDOWPOSCHANGING flags 0x00000097
+callwndproc: c1 WM_ERASEBKGND current thread no
+child: c1 WM_ERASEBKGND
+callwndprocret: c1 WM_ERASEBKGND result 1
+child: grand WM_WINDOWPOSCHANGED flags 0x00001897
+get message: 
+getmessage : WM_USER+31 for main keep wparam 1yes
+peeked wparam: 99
+getmessage : WM_USER+31 for main remove wparam 1
+got wparam: 99
+getmessage : WM_USER+32 for main remove wparam 2
+time and position: yes yes
+close through the system command: 
+main: main WM_SYSCOMMAND 0x0000f060
+cbt : syscommand 0x0000f060
+main: main WM_CLOSE
+cbt : destroywnd main
+cbt : destroywnd owned
+child: owned WM_DESTROY
+child: owned WM_NCDESTROY
+main: main WM_DESTROY
+child: c1 WM_DESTROY
+child: grand WM_DESTROY
+child: c2 WM_DESTROY
+child: c3 WM_DESTROY
+child: c4 WM_DESTROY
+subclass: sub WM_DESTROY
+child: sub WM_DESTROY
+child: grand WM_NCDESTROY
+child: c1 WM_NCDESTROY
+child: c2 WM_NCDESTROY
+child: c3 WM_NCDESTROY
+child: c4 WM_NCDESTROY
+subclass: sub WM_NCDESTROY
+child: sub WM_NCDESTROY
+main: main WM_NCDESTROY
+main is gone: yes owned too yes
+unhook: okokokokok
+unhook again: failed error 1404
+unregister: okok

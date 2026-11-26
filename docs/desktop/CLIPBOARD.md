@@ -6,6 +6,11 @@ written against. This document pins its model, its formats and the rules each
 subsystem follows to talk to it, and lists what is still missing for programs
 of different subsystems to copy and paste between each other.
 
+Drag and drop keeps its data in a second instance of the same store,
+`/dev/dragdata`, with every rule below: the same ioctls, limits and format
+names, apart so that a drag never touches what was copied
+([DRAG_AND_DROP.md](DRAG_AND_DROP.md#devdragdata)).
+
 ## Why a kernel device
 
 Every channel of the window manager costs a descriptor per client against the
@@ -137,9 +142,9 @@ before the formats working unchanged:
 | Subsystem | How | Status |
 |---|---|---|
 | POSIX | `savanxp/libc.h`: `clipboard_set_text`, `clipboard_get_text`, `clipboard_get_info`, `clipboard_clear`; `clipboard_set_formats`, `clipboard_get_format`, `clipboard_enum_format` | done; `cliptest` in `smoke` |
-| SUN | `sxn_open_device("clipboard")` and `sxn_device_control` with the ioctls above; the toolkit's SUN host (`system/runtime/sxngui.c`) for text | done at the device level; typed `sxn_` calls wait for their first consumer ([`SUN.md`](../userland/SUN.md), rule 1); `nativetest` |
+| SUN | `sxn/sxnclip.h`: `sxn_clipboard_open`, `_info`, `_set`, `_get`, `_format`, typed calls over the ioctls above, which `winhost` brought; the toolkit's SUN host (`system/runtime/sxngui.c`) for text | done; `nativetest` |
 | SXGUI-C toolkit | text through `struct sxgui_host`; formats through `struct sxgui_host_clipboard` and `sxgui_clipboard_set_formats`, `_get_format`, `_enum_format`, `_has_format`, for platform code and programs of either subsystem ([`PLATFORM_GRAPHICS.md`](PLATFORM_GRAPHICS.md#the-clipboards-formats)) | done; `seltest` (POSIX) and `guicliptest` (SUN) in `smoke`; Files' Cut, Copy and Paste is the first program on it |
-| Win32 | `user32` has no clipboard calls yet | missing |
+| Win32 | `user32` over the formats: `CF_UNICODETEXT` as the text, `Rich Text Format` as `text/rtf`, `CF_HDROP` as `text/uri-list`, other formats under `application/x-win32-` ([WIN32.md](../userland/WIN32.md#the-clipboard)) | done; `clip.exe` in `win32-hello`, against Windows XP |
 | Linux | guest paths are rooted at `/system/linux`, so `/dev/clipboard` does not exist for a guest | missing |
 | Console | no mark, copy or paste | missing |
 
@@ -161,14 +166,9 @@ In the order they depend on each other:
    `spawn` and `fork` and given by `sessiond`. Not one per uid, which would
    give the system's services and the smokes a clipboard apart from the
    user's while an elevated program (uid 1000, euid 0) shared the user's.
-4. **The subsystems' layers.** Toolkit formats — done
-   ([above](#how-each-subsystem-reaches-it)). Left: Win32's `OpenClipboard`, `EmptyClipboard`,
-   `SetClipboardData`, `GetClipboardData`, `CloseClipboard`,
-   `IsClipboardFormatAvailable`, `EnumClipboardFormats`,
-   `RegisterClipboardFormat` and `GetClipboardSequenceNumber` (which is
-   `sequence`), which WordPad's copy and paste go through
-   ([`WIN32_WORDPAD_ROADMAP.md`](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#wp5--user32-for-mfc));
-   OLE's clipboard is not planned; the
+4. **The subsystems' layers.** Toolkit formats and Win32's clipboard
+   calls — done ([above](#how-each-subsystem-reaches-it)). Left: OLE's
+   clipboard, which is not planned; the
    device visible to Linux guests; and copy and paste in the console. Files'
    Cut, Copy and Paste of files stand on the toolkit's formats
    ([`FILES.md`](FILES.md#cut-copy-and-paste)).

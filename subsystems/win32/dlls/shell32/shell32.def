@@ -1,3 +1,7 @@
 LIBRARY shell32.dll
 EXPORTS
+    DragAcceptFiles
+    DragFinish
+    DragQueryFileW
+    DragQueryPoint
     ShellAboutW

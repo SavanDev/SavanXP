@@ -260,6 +260,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   a set of named formats replaced whole, the media-type names and the UTF-8
   text format every subsystem converts to, the capacity, how each subsystem
   reaches it, and what is missing for copy and paste between subsystems.
+- [`DRAG_AND_DROP.md`](desktop/DRAG_AND_DROP.md) — drag and drop between
+  programs: `/dev/dragdata`, `windowd`'s drag request and events, what
+  each subsystem builds on them (Files as a source, Notepad and Win32's
+  `WM_DROPFILES` as targets), and what it does not do.
 - [`FILE_DIALOG.md`](desktop/FILE_DIALOG.md) — the common Open and Save As
   dialogs for SUN programs (`sxnfiledlg.h`): the window, what its buttons do,
   the non-blocking API, and what it leaves out.

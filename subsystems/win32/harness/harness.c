@@ -2,11 +2,12 @@
  * harness.c -- win32-harness: run a PE32 executable on the Linux x86-64
  * build host through the same loader and DLLs as winhost.
  *
- *     win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS] [--input SCRIPT]
- *                   program.exe [arguments...]
+ *     win32-harness [--dlls DIR] [--registry FILE] [--clipboard FILE] [--time SECONDS]
+ *                   [--input SCRIPT] program.exe [arguments...]
  *
  * The arguments follow the program in its command line. HKEY_CURRENT_USER
- * lives in FILE (in memory only without it); --time fixes the guest's clock
+ * lives in FILE (in memory only without it), and so does the clipboard, so
+ * that one run can read what another left; --time fixes the guest's clock
  * at that second, so a run that seeds from the time repeats.
  *
  * Windows are offscreen surfaces of a 1024x768 display. Their input comes from
@@ -456,6 +457,191 @@ static const sxw_file_platform g_file_platform = {
     .list_close = fs_list_close,
 };
 
+/* ---- The clipboard --------------------------------------------------------- */
+/*
+ * The device's model in memory (docs/desktop/CLIPBOARD.md): a set of named
+ * formats replaced whole and a sequence that rises with each change. With
+ * --clipboard it is read from FILE at the start and written back at every
+ * change: a count, then each format as a name length, the name, a data
+ * length and the data, little-endian 32-bit lengths.
+ */
+
+typedef struct clip_format {
+    char name[SXW_CLIPBOARD_NAME];
+    uint8_t *data;
+    uint32_t length;
+} clip_format;
+
+static clip_format g_clip[SXW_CLIPBOARD_FORMATS];
+static uint32_t g_clip_count;
+static uint64_t g_clip_sequence;
+static const char *g_clip_path;
+
+static void clip_free(void) {
+    for (uint32_t i = 0; i < g_clip_count; ++i) {
+        free(g_clip[i].data);
+    }
+    g_clip_count = 0;
+}
+
+static void clip_save(void) {
+    if (g_clip_path == NULL) {
+        return;
+    }
+    FILE *f = fopen(g_clip_path, "wb");
+    if (f == NULL) {
+        return;
+    }
+    fwrite(&g_clip_count, 4, 1, f);
+    for (uint32_t i = 0; i < g_clip_count; ++i) {
+        const uint32_t n = (uint32_t)strlen(g_clip[i].name);
+        fwrite(&n, 4, 1, f);
+        fwrite(g_clip[i].name, 1, n, f);
+        fwrite(&g_clip[i].length, 4, 1, f);
+        fwrite(g_clip[i].data, 1, g_clip[i].length, f);
+    }
+    fclose(f);
+}
+
+static void clip_load(void) {
+    FILE *f = g_clip_path != NULL ? fopen(g_clip_path, "rb") : NULL;
+    if (f == NULL) {
+        return;
+    }
+    uint32_t count = 0;
+    if (fread(&count, 4, 1, f) == 1 && count <= SXW_CLIPBOARD_FORMATS) {
+        for (uint32_t i = 0; i < count; ++i) {
+            uint32_t n = 0;
+            uint32_t length = 0;
+            if (fread(&n, 4, 1, f) != 1 || n >= SXW_CLIPBOARD_NAME || fread(g_clip[i].name, 1, n, f) != n ||
+                fread(&length, 4, 1, f) != 1 || length > SXW_CLIPBOARD_CAPACITY) {
+                break;
+            }
+            g_clip[i].name[n] = 0;
+            g_clip[i].data = malloc(length != 0 ? length : 1);
+            if (g_clip[i].data == NULL || fread(g_clip[i].data, 1, length, f) != length) {
+                free(g_clip[i].data);
+                break;
+            }
+            g_clip[i].length = length;
+            g_clip_count = i + 1;
+        }
+        /* What another run left counts as one change. */
+        g_clip_sequence = g_clip_count != 0 ? 1 : 0;
+    }
+    fclose(f);
+}
+
+static int clip_set(void *context, const sxw_clip_format *formats, uint32_t count) {
+    (void)context;
+    clip_free();
+    for (uint32_t i = 0; i < count; ++i) {
+        snprintf(g_clip[i].name, sizeof(g_clip[i].name), "%s", formats[i].name);
+        g_clip[i].data = malloc(formats[i].length != 0 ? formats[i].length : 1);
+        if (g_clip[i].data == NULL) {
+            clip_free();
+            return -1;
+        }
+        if (formats[i].length != 0) {
+            memcpy(g_clip[i].data, formats[i].data, formats[i].length);
+        }
+        g_clip[i].length = formats[i].length;
+        g_clip_count = i + 1;
+    }
+    ++g_clip_sequence;
+    clip_save();
+    return 0;
+}
+
+static int clip_info(void *context, uint64_t *sequence, uint32_t *count) {
+    (void)context;
+    *sequence = g_clip_sequence;
+    *count = g_clip_count;
+    return 0;
+}
+
+static int clip_format_at(void *context, uint32_t index, char *name, uint32_t *length) {
+    (void)context;
+    if (index >= g_clip_count) {
+        return -1;
+    }
+    memcpy(name, g_clip[index].name, SXW_CLIPBOARD_NAME);
+    *length = g_clip[index].length;
+    return 0;
+}
+
+static long clip_get(void *context, const char *name, void *buffer, uint32_t capacity, uint32_t *length) {
+    (void)context;
+    for (uint32_t i = 0; i < g_clip_count; ++i) {
+        if (strcmp(g_clip[i].name, name) == 0) {
+            const uint32_t n = capacity < g_clip[i].length ? capacity : g_clip[i].length;
+            if (n != 0) {
+                memcpy(buffer, g_clip[i].data, n);
+            }
+            *length = g_clip[i].length;
+            return (long)n;
+        }
+    }
+    return -1;
+}
+
+static const sxw_clipboard_platform g_clipboard_platform = {
+    .set = clip_set,
+    .info = clip_info,
+    .format = clip_format_at,
+    .get = clip_get,
+};
+
+/* ---- The drag's formats ---------------------------------------------------- */
+/*
+ * What the input script's "dragover" offers (docs/desktop/DRAG_AND_DROP.md):
+ * a text/uri-list, read by the guest as winhost reads /dev/dragdata.
+ */
+
+static char g_drag_uris[1024];
+static uint32_t g_drag_length;
+static uint32_t g_drag_reply; /* the guest's last answer, an effect or 0 */
+static int g_drag_over;       /* a drag is over a window */
+
+static int drag_format_at(void *context, uint32_t index, char *name, uint32_t *length) {
+    (void)context;
+    if (index != 0 || g_drag_length == 0) {
+        return -1;
+    }
+    memset(name, 0, SXW_CLIPBOARD_NAME);
+    snprintf(name, SXW_CLIPBOARD_NAME, "%s", "text/uri-list");
+    *length = g_drag_length;
+    return 0;
+}
+
+static long drag_get(void *context, const char *name, void *buffer, uint32_t capacity, uint32_t *length) {
+    (void)context;
+    if (g_drag_length == 0 || strcmp(name, "text/uri-list") != 0) {
+        return -1;
+    }
+    const uint32_t n = capacity < g_drag_length ? capacity : g_drag_length;
+    if (n != 0) {
+        memcpy(buffer, g_drag_uris, n);
+    }
+    *length = g_drag_length;
+    return (long)n;
+}
+
+static const sxw_clipboard_platform g_dragdata_platform = {
+    .format = drag_format_at,
+    .get = drag_get,
+};
+
+static int drag_reply(void *context, uint32_t window, uint32_t effect) {
+    (void)context;
+    (void)window;
+    if (!g_drag_over) {
+        return -1;
+    }
+    g_drag_reply = effect;
+    return 0;
+}
+
 /* ---- Windows and input --------------------------------------------------- */
 
 #define DISPLAY_WIDTH 1024u
@@ -527,7 +713,8 @@ static uint32_t window_create(void *context, const char *title, uint32_t *width,
             g_windows[i].width = *width = w;
             g_windows[i].height = *height = h;
             g_windows[i].owner = owner;
-            g_windows[i].kind = kind;
+            /* A modeless dialog is a dialog to the input script. */
+            g_windows[i].kind = kind == SXW_WINDOW_MODELESS ? SXW_WINDOW_OWNED : kind;
             g_windows[i].x = x;
             g_windows[i].y = y;
             g_windows[i].order = ++g_created;
@@ -773,6 +960,36 @@ static int next_action(sxw_event *event) {
             event->a = (uint32_t)vk;
             event->b = verb[3] == 'd' ? 1u : 0u;
             event->c = event->b ? (uint32_t)ch : 0u;
+        } else if (strcmp(verb, "dragover") == 0 && sscanf(line, "%*s %ld %ld", &x, &y) == 2) {
+            /* A drag of the URIs that follow comes over the window, or moves
+             * over it; the guest answers through SXW_SVC_DRAG_REPLY. */
+            char copy[512];
+            int at = 0;
+            int token = 0;
+            snprintf(copy, sizeof(copy), "%s", line);
+            for (char *part = strtok(copy, " \t\r\n"); part != NULL; part = strtok(NULL, " \t\r\n")) {
+                const int n = (int)strlen(part);
+                if (++token > 3 && at + n + 2 <= (int)sizeof(g_drag_uris)) {
+                    memcpy(g_drag_uris + at, part, (size_t)n);
+                    at += n;
+                    g_drag_uris[at++] = '\r';
+                    g_drag_uris[at++] = '\n';
+                }
+            }
+            g_drag_length = (uint32_t)at;
+            event->kind = SXW_EVENT_DRAG;
+            event->c = (g_drag_over ? SXW_DRAG_OVER : SXW_DRAG_ENTER) | (SXW_DRAG_EFFECT_COPY << 8);
+            g_drag_over = 1;
+        } else if (strcmp(verb, "drop") == 0 && sscanf(line, "%*s %ld %ld", &x, &y) == 2) {
+            /* The button comes up: a drop when the guest took the drag. */
+            if (!g_drag_over) {
+                script_error("drop needs a dragover before it");
+            }
+            event->kind = SXW_EVENT_DRAG;
+            event->c = g_drag_reply != 0 ? SXW_DRAG_DROP | (SXW_DRAG_EFFECT_COPY << 8) | (g_drag_reply << 16)
+                                         : SXW_DRAG_LEAVE | (SXW_DRAG_EFFECT_COPY << 8);
+            g_drag_over = 0;
+            g_drag_reply = 0;
         } else if (strcmp(verb, "close") == 0) {
             event->kind = SXW_EVENT_CLOSE;
         } else if (strcmp(verb, "wait") == 0 && sscanf(line, "%*s %ld", &x) == 1 && x > 0) {
@@ -787,13 +1004,15 @@ static int next_action(sxw_event *event) {
         } else {
             script_error("not an action");
         }
-        if (event->kind == SXW_EVENT_POINTER) {
+        if (event->kind == SXW_EVENT_POINTER || event->kind == SXW_EVENT_DRAG) {
             int32_t px;
             int32_t py;
             event->window = route_pointer((int32_t)x, (int32_t)y, &px, &py);
             event->a = (uint32_t)px;
             event->b = (uint32_t)py;
-            event->c = g_buttons;
+            if (event->kind == SXW_EVENT_POINTER) {
+                event->c = g_buttons;
+            }
         }
         event->time = g_clock;
         return 1;
@@ -848,6 +1067,7 @@ static const sxw_window_platform g_window_platform = {
     .set_icon = window_icon,
     .present = window_present,
     .wait_event = wait_event,
+    .drag_reply = drag_reply,
 };
 
 static sxw_services g_services = {
@@ -857,6 +1077,8 @@ static sxw_services g_services = {
     .registry = &g_registry,
     .windows = &g_window_platform,
     .files = &g_file_platform,
+    .clipboard = &g_clipboard_platform,
+    .dragdata = &g_dragdata_platform,
 };
 
 uint32_t sxw_host_service(gate_state *gate) {
@@ -1030,8 +1252,8 @@ static const sxw_thread_platform g_thread_platform = {
 };
 
 static void usage(void) {
-    fprintf(stderr, "usage: win32-harness [--dlls DIR] [--registry FILE] [--time SECONDS] [--input SCRIPT] "
-                    "program.exe [arguments...]\n");
+    fprintf(stderr, "usage: win32-harness [--dlls DIR] [--registry FILE] [--clipboard FILE] [--time SECONDS] "
+                    "[--input SCRIPT] program.exe [arguments...]\n");
     exit(2);
 }
 
@@ -1074,6 +1296,8 @@ int main(int argc, char **argv) {
             g_dll_dir = argv[++i];
         } else if (strcmp(argv[i], "--registry") == 0 && i + 1 < argc) {
             g_registry_path = argv[++i];
+        } else if (strcmp(argv[i], "--clipboard") == 0 && i + 1 < argc) {
+            g_clip_path = argv[++i];
         } else if (strcmp(argv[i], "--time") == 0 && i + 1 < argc) {
             g_services.fixed_time = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--input") == 0 && i + 1 < argc) {
@@ -1086,6 +1310,7 @@ int main(int argc, char **argv) {
             usage();
         }
     }
+    clip_load();
     if (exe == NULL) {
         usage();
     }

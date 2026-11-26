@@ -30,6 +30,7 @@
 
 #include "abi/savanxp_native_abi.h"
 #include "sxn/sxn.h"
+#include "sxn/sxnclip.h"
 #include "sxn/sxnwm.h"
 
 #include "loader.h"
@@ -633,6 +634,9 @@ typedef struct host_window {
     struct sxnwm_client client;
     int open;
     int close_sent;
+    /* The drag the window was last told about, which its answer is for
+     * (docs/desktop/DRAG_AND_DROP.md); 0 for none. */
+    uint32_t drag;
 } host_window;
 
 /* The main window is index 0 (guest id 1); owned window i, 1 to
@@ -730,9 +734,12 @@ static uint32_t window_create(void *context, const char *title, uint32_t *width,
             continue;
         }
         const int popup = kind == SXW_WINDOW_POPUP;
+        const uint32_t flags = popup                         ? SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE
+                               : kind == SXW_WINDOW_MODELESS ? SAVANXP_WM_WINDOW_MODELESS
+                                                             : 0u;
         if (sxnwm_window_open_ex(&g_hosts[0].client, &g_hosts[i].client, i, *width, *height, popup ? 0 : title,
-                                 popup ? SAVANXP_WM_WINDOW_ROLE_POPUP : SAVANXP_WM_WINDOW_ROLE_NORMAL,
-                                 popup ? SAVANXP_WM_POPUP_DISMISS_ON_OUTSIDE : 0u, x, y) != 0) {
+                                 popup ? SAVANXP_WM_WINDOW_ROLE_POPUP : SAVANXP_WM_WINDOW_ROLE_NORMAL, flags, x,
+                                 y) != 0) {
             return 0;
         }
         g_hosts[i].open = 1;
@@ -919,10 +926,23 @@ static uint32_t virtual_key(uint32_t key, int shift) {
 }
 
 /* One input record of window id as an event; 0 when it is not one the guest
- * sees. */
+ * sees. A drag's end is the source's, and a Win32 program is never one. */
 static int translate(const struct savanxp_wm_event *record, uint32_t id, sxw_event *event) {
     event->window = id;
     event->time = ticks(0);
+    if (record->kind == SAVANXP_WM_EVENT_DRAG) {
+        const struct savanxp_wm_drag_event *d = &record->payload.drag;
+        host_window *host = id >= 1u && id <= HOST_WINDOWS ? &g_hosts[id - 1u] : NULL;
+        if (d->phase < SAVANXP_WM_DRAG_ENTER || d->phase > SAVANXP_WM_DRAG_DROP || host == NULL) {
+            return 0;
+        }
+        host->drag = d->phase == SAVANXP_WM_DRAG_LEAVE || d->phase == SAVANXP_WM_DRAG_DROP ? 0u : d->drag;
+        event->kind = SXW_EVENT_DRAG;
+        event->a = (uint32_t)d->x;
+        event->b = (uint32_t)d->y;
+        event->c = d->phase | ((d->effects & 0xffu) << 8) | ((d->effect & 0xffu) << 16);
+        return 1;
+    }
     if (record->kind == SAVANXP_WM_EVENT_POINTER) {
         event->kind = SXW_EVENT_POINTER;
         event->a = (uint32_t)record->payload.pointer.x;
@@ -1035,6 +1055,16 @@ static int wait_event(void *context, uint32_t timeout, sxw_event *event) {
     }
 }
 
+/* The guest's answer to the drag over one of its windows. */
+static int drag_reply(void *context, uint32_t window, uint32_t effect) {
+    (void)context;
+    host_window *host = host_of(window);
+    if (host == NULL || host->drag == 0u) {
+        return -1;
+    }
+    return sxnwm_drag_reply(&host->client, host->drag, effect) == 0 ? 0 : -1;
+}
+
 static const sxw_window_platform g_window_platform = {
     .ticks = ticks,
     .display = display,
@@ -1044,6 +1074,113 @@ static const sxw_window_platform g_window_platform = {
     .set_icon = window_icon,
     .present = window_present,
     .wait_event = wait_event,
+    .drag_reply = drag_reply,
+};
+
+/* ---- The clipboard ------------------------------------------------------------ */
+/*
+ * The system's clipboard through SUN's typed calls (sxn/sxnclip.h): each
+ * call opens /dev/clipboard, does its one thing and closes it, as a copy
+ * or a paste does, so winhost keeps no descriptor for it.
+ */
+
+static int clip_set(void *context, const sxw_clip_format *formats, uint32_t count) {
+    (void)context;
+    struct savanxp_clipboard_entry entries[SXW_CLIPBOARD_FORMATS];
+    for (uint32_t i = 0; i < count; ++i) {
+        unsigned k = 0;
+        for (; formats[i].name[k] != 0 && k + 1 < SAVANXP_CLIPBOARD_NAME_CAPACITY; ++k) {
+            entries[i].name[k] = formats[i].name[k];
+        }
+        for (; k < SAVANXP_CLIPBOARD_NAME_CAPACITY; ++k) {
+            entries[i].name[k] = 0;
+        }
+        entries[i].data = (uint64_t)(uintptr_t)formats[i].data;
+        entries[i].length = formats[i].length;
+        entries[i].reserved0 = 0;
+    }
+    const long handle = sxn_clipboard_open(1);
+    if (handle < 0) {
+        return -1;
+    }
+    const long status = sxn_clipboard_set(handle, entries, count);
+    (void)sxn_close(handle);
+    return status == 0 ? 0 : -1;
+}
+
+static int clip_info(void *context, uint64_t *sequence, uint32_t *count) {
+    (void)context;
+    struct savanxp_clipboard_info info;
+    const long handle = sxn_clipboard_open(0);
+    if (handle < 0) {
+        return -1;
+    }
+    const long status = sxn_clipboard_info(handle, &info);
+    (void)sxn_close(handle);
+    if (status != 0) {
+        return -1;
+    }
+    *sequence = info.sequence;
+    *count = info.format_count;
+    return 0;
+}
+
+static int clip_format(void *context, uint32_t index, char *name, uint32_t *length) {
+    (void)context;
+    const long handle = sxn_clipboard_open(0);
+    if (handle < 0) {
+        return -1;
+    }
+    const long status = sxn_clipboard_format(handle, index, name, length);
+    (void)sxn_close(handle);
+    return status == 0 ? 0 : -1;
+}
+
+static long clip_get(void *context, const char *name, void *buffer, uint32_t capacity, uint32_t *length) {
+    (void)context;
+    const long handle = sxn_clipboard_open(0);
+    if (handle < 0) {
+        return -1;
+    }
+    const long copied = sxn_clipboard_get(handle, name, buffer, capacity, length);
+    (void)sxn_close(handle);
+    return copied >= 0 ? copied : -1;
+}
+
+static const sxw_clipboard_platform g_clipboard_platform = {
+    .set = clip_set,
+    .info = clip_info,
+    .format = clip_format,
+    .get = clip_get,
+};
+
+/* The drag's formats, /dev/dragdata (docs/desktop/DRAG_AND_DROP.md), read
+ * the same way: a target reads, it never sets. */
+static int drag_format(void *context, uint32_t index, char *name, uint32_t *length) {
+    (void)context;
+    const long handle = sxn_dragdata_open(0);
+    if (handle < 0) {
+        return -1;
+    }
+    const long status = sxn_clipboard_format(handle, index, name, length);
+    (void)sxn_close(handle);
+    return status == 0 ? 0 : -1;
+}
+
+static long drag_get(void *context, const char *name, void *buffer, uint32_t capacity, uint32_t *length) {
+    (void)context;
+    const long handle = sxn_dragdata_open(0);
+    if (handle < 0) {
+        return -1;
+    }
+    const long copied = sxn_clipboard_get(handle, name, buffer, capacity, length);
+    (void)sxn_close(handle);
+    return copied >= 0 ? copied : -1;
+}
+
+static const sxw_clipboard_platform g_dragdata_platform = {
+    .format = drag_format,
+    .get = drag_get,
 };
 
 static sxw_services g_services = {
@@ -1054,6 +1191,8 @@ static sxw_services g_services = {
     .registry = &g_registry,
     .windows = &g_window_platform,
     .files = &g_file_platform,
+    .clipboard = &g_clipboard_platform,
+    .dragdata = &g_dragdata_platform,
     .drive_c = DRIVE_C,
 };
 

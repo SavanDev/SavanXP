@@ -1,0 +1,158 @@
+# The input script of controls.exe (docs/userland/WIN32.md, "Input scripts"):
+# the same actions on Windows XP, in the host harness and on SavanXP, in the
+# main window's client coordinates. Each drop-down list is given time to
+# open, since Windows XP slides it open, and the pointer leaves the client
+# area before each dump, so no cursor is in the picture.
+wait 500
+
+# edit1: a click after the text, "ab", Backspace, Home, Shift+End, "x".
+move 100 20
+down left 100 20
+up left 100 20
+wait 600
+keydown 0x41 0x61
+keyup 0x41
+keydown 0x42 0x62
+keyup 0x42
+keydown 0x08 0x08
+keyup 0x08
+keydown 0x24
+keyup 0x24
+keydown 0x10
+keydown 0x23
+keyup 0x23
+keyup 0x10
+keydown 0x58 0x78
+keyup 0x58
+
+# edit2 takes digits.
+move 60 50
+down left 60 50
+up left 60 50
+wait 600
+keydown 0x34 0x34
+keyup 0x34
+keydown 0x32 0x32
+keyup 0x32
+
+# list1: a click on the third item, Down, a double click on the sixth,
+# then its scroll bar's lower arrow twice.
+move 170 43
+down left 170 43
+up left 170 43
+wait 600
+keydown 0x28
+keyup 0x28
+move 170 80
+down left 170 80
+up left 170 80
+down left 170 80
+up left 170 80
+wait 600
+move 231 82
+down left 231 82
+up left 231 82
+wait 600
+down left 231 82
+up left 231 82
+wait 600
+
+# list2: the first item, then C.
+move 170 110
+down left 170 110
+up left 170 110
+wait 600
+keydown 0x43 0x63
+keyup 0x43
+
+# The simple combo box: an item of its list, then "z" in its edit.
+move 300 50
+down left 300 50
+up left 300 50
+wait 600
+move 300 18
+down left 300 18
+up left 300 18
+wait 600
+keydown 0x5a 0x7a
+keyup 0x5a
+
+# The drop-down combo box: its button, then the second item.
+move 370 110
+down left 370 110
+up left 370 110
+wait 800
+move 430 320
+dump controls-dropdown.ppm
+move 300 142
+down left 300 142
+up left 300 142
+wait 600
+
+# The drop-down list: open, Down, Enter.
+move 300 140
+down left 300 140
+up left 300 140
+wait 800
+keydown 0x28
+keyup 0x28
+keydown 0x0d 0x0d
+keyup 0x0d
+wait 600
+
+# The owner-drawn one: open, then Escape.
+move 300 170
+down left 300 170
+up left 300 170
+wait 800
+keydown 0x1b 0x1b
+keyup 0x1b
+wait 600
+
+# The vertical scroll bar: its lower arrow, the track below the thumb, and
+# the thumb dragged down.
+move 18 172
+down left 18 172
+up left 18 172
+wait 600
+move 18 150
+down left 18 150
+up left 18 150
+wait 600
+move 18 123
+down left 18 123
+move 18 128
+move 18 133
+move 18 138
+up left 18 138
+wait 600
+
+# The horizontal one: its right arrow.
+move 122 188
+down left 122 188
+up left 122 188
+wait 600
+
+# The pane's own vertical bar: its lower arrow.
+move 120 254
+down left 120 254
+up left 120 254
+wait 600
+
+# A popup menu on the pane, then its first item.
+move 50 230
+down right 50 230
+up right 50 230
+wait 800
+move 430 320
+dump controls-menu.ppm
+move 70 240
+down left 70 240
+up left 70 240
+wait 600
+
+move 430 320
+keydown 0x71
+keyup 0x71
+wait 300
+close

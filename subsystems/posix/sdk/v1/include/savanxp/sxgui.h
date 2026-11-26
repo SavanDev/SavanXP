@@ -68,6 +68,20 @@ struct sxgui_app {
 
     /* Owned by the frame: on_close was called for the request now standing. */
     int close_pending;
+
+    /* Drag and drop (docs/desktop/DRAG_AND_DROP.md); leave NULL to skip.
+     * As a target: on_drag_over is called for every enter and move of a drag
+     * over the main window, at x, y in its client area, with the effects the
+     * source allows; it answers the SAVANXP_DRAG_EFFECT_* the app would take
+     * there, or 0. Without it nothing is dropped here. on_drag_leave: the
+     * drag left, or ended elsewhere. on_drop: dropped at x, y with `effect`;
+     * read the formats with dragdata_get_format now. As a source
+     * (sxgui_app_drag_start): on_drag_end hears what the drop took, 0 for
+     * nothing; the toolkit has already been told the button came up. */
+    uint32_t (*on_drag_over)(struct sxgui_app *app, int x, int y, uint32_t effects);
+    void (*on_drag_leave)(struct sxgui_app *app);
+    void (*on_drop)(struct sxgui_app *app, int x, int y, uint32_t effect);
+    void (*on_drag_end)(struct sxgui_app *app, uint32_t effect);
 };
 
 /* Margin sxgui_app_autosize leaves to the right of and below the widgets'
@@ -113,6 +127,12 @@ void sxgui_app_request_repaint(struct sxgui_app *app);
 void sxgui_app_quit(struct sxgui_app *app, int exit_code);
 /* Turns down the close on_close was called for (gfx_decline_close). */
 long sxgui_app_decline_close(struct sxgui_app *app);
+/* Drags these formats from the main window, allowing `effects`
+ * (SAVANXP_DRAG_EFFECT_*): call it from a pointer handler while the left
+ * button is held. The window manager has the pointer until the drag ends;
+ * on_drag_end says how. 0, or < 0 when the formats could not be stored. */
+int sxgui_app_drag_start(struct sxgui_app *app, const struct sxgui_clipboard_format *formats, int count,
+                         uint32_t effects);
 /* Blocks until the app quits; releases the gfx session and returns exit_code. */
 int sxgui_app_run(struct sxgui_app *app);
 

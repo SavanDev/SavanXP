@@ -110,6 +110,9 @@ struct windowd_client
     /* The last savanxp_wm_client_requests.close_declined seen: a new value
      * is the program turning the close down. */
     uint32_t close_declined_seen;
+    /* The last savanxp_wm_drag.start_sequence seen: a new value asks for a
+     * drag (docs/desktop/DRAG_AND_DROP.md). */
+    uint32_t drag_start_seen;
     /* Size hint (savanxp/wm_protocol.h): se atiende UNA sola vez y solo
      * mientras la ventana siga en la geometria con la que se lanzo. Guardamos
      * el indice de cascada del launch para poder recolocarla despues de
@@ -166,6 +169,23 @@ struct windowd_pending_connection
     unsigned long deadline_ms;
 };
 
+/* A drag in progress (docs/desktop/DRAG_AND_DROP.md). The clients are
+ * slots of the session, checked against their pid before every use: a
+ * process that ended may have left its slot to another. */
+struct windowd_drag
+{
+    int active;
+    uint32_t id;      /* the drag's number, never 0 */
+    uint32_t next_id;
+    uint32_t effects; /* what the source allows */
+    struct windowd_client *source; /* the source's main window */
+    long source_pid;
+    struct windowd_client *target; /* the window under the pointer, or 0 */
+    long target_pid;
+    int last_x;
+    int last_y;
+};
+
 struct windowd_session
 {
     struct savanxp_gfx_context gfx;
@@ -201,6 +221,10 @@ struct windowd_session
     int capture_last_y;
     int current_cursor_shape;
     int previous_cursor_shape;
+    /* The process the left button was last pressed on: only it may start a
+     * drag while the button is held. */
+    long press_pid;
+    struct windowd_drag drag;
     /* Redimensionado por bordes en curso. Se guarda el marco al agarrar y el
      * punto de agarre: el marco nuevo se calcula siempre desde ese origen, no
      * de forma incremental, asi que el error no se acumula al arrastrar. */

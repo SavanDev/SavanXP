@@ -27,6 +27,11 @@
  * negotiation in the X11 style -- whoever copies leaves every format it offers
  * and forgets about it --, which is the desktop model and the one that fits a
  * system where the program that copied may have ended before anyone pastes.
+ *
+ * `/dev/dragdata` is a second store with the same model and calls: what a
+ * drag carries between programs (docs/desktop/DRAG_AND_DROP.md). The source
+ * leaves its formats there before the drag starts, the target reads them
+ * when it drops, and a drag never touches what the clipboard holds.
  */
 
 namespace {
@@ -37,16 +42,21 @@ int negative_error(sx_status code) {
 
 struct Entry {
     char name[SAVANXP_CLIPBOARD_NAME_CAPACITY];
-    uint32_t offset; // into g_data
+    uint32_t offset; // into Store::data
     uint32_t length;
 };
 
-// Every format's bytes in one heap block, in the order of g_entries. Null
-// while the set is empty or every entry is empty.
-uint8_t* g_data = nullptr;
-Entry g_entries[SAVANXP_CLIPBOARD_MAX_FORMATS];
-uint32_t g_count = 0;
-uint64_t g_sequence = 0;
+// One set of formats: every format's bytes in one heap block, in the order
+// of `entries`; `data` is null while the set is empty or every entry is.
+struct Store {
+    uint8_t* data;
+    Entry entries[SAVANXP_CLIPBOARD_MAX_FORMATS];
+    uint32_t count;
+    uint64_t sequence;
+};
+
+Store g_clipboard = {};
+Store g_drag = {};
 
 size_t name_length(const char* name) {
     size_t length = 0;
@@ -85,37 +95,37 @@ bool valid_name(const char* name) {
     return true;
 }
 
-const Entry* find(const char* name) {
-    for (uint32_t index = 0; index < g_count; ++index) {
-        if (same_name(g_entries[index].name, name)) {
-            return &g_entries[index];
+const Entry* find(const Store& store, const char* name) {
+    for (uint32_t index = 0; index < store.count; ++index) {
+        if (same_name(store.entries[index].name, name)) {
+            return &store.entries[index];
         }
     }
     return nullptr;
 }
 
-const Entry* text_entry() {
-    return find(SAVANXP_CLIPBOARD_TEXT);
+const Entry* text_entry(const Store& store) {
+    return find(store, SAVANXP_CLIPBOARD_TEXT);
 }
 
 // Replaces the set with one already copied in full: only here does the
 // visible content change, so a failure anywhere before leaves the previous
 // set intact.
-void install(const Entry* entries, uint32_t count, uint8_t* data) {
-    if (g_data != nullptr) {
-        heap::free(g_data);
+void install(Store& store, const Entry* entries, uint32_t count, uint8_t* data) {
+    if (store.data != nullptr) {
+        heap::free(store.data);
     }
-    g_data = data;
+    store.data = data;
     for (uint32_t index = 0; index < count; ++index) {
-        g_entries[index] = entries[index];
+        store.entries[index] = entries[index];
     }
-    g_count = count;
-    g_sequence += 1;
+    store.count = count;
+    store.sequence += 1;
     // Every descriptor that has not asked since is readable now.
     process::notify_device_readable();
 }
 
-int clipboard_read(uint64_t user_buffer, size_t count) {
+int store_read(const Store& store, uint64_t user_buffer, size_t count) {
     if (count == 0) {
         return 0;
     }
@@ -126,18 +136,18 @@ int clipboard_read(uint64_t user_buffer, size_t count) {
     // No cursor: always from the start. A buffer smaller than the text gets
     // the prefix and the rest is lost, which is why CLIP_IOC_GET_INFO exists --
     // to size the buffer before reading.
-    const Entry* text = text_entry();
+    const Entry* text = text_entry(store);
     if (text == nullptr) {
         return 0;
     }
     const size_t copied = count < text->length ? count : text->length;
-    if (copied != 0 && !process::copy_to_user(user_buffer, g_data + text->offset, copied)) {
+    if (copied != 0 && !process::copy_to_user(user_buffer, store.data + text->offset, copied)) {
         return negative_error(SX_EINVAL);
     }
     return static_cast<int>(copied);
 }
 
-int clipboard_write(uint64_t user_buffer, size_t count) {
+int store_write(Store& store, uint64_t user_buffer, size_t count) {
     if (count > SAVANXP_CLIPBOARD_CAPACITY) {
         // Truncating silently would leave whoever pastes with half a text and
         // no way to find out; failing the copy is the useful error.
@@ -168,11 +178,11 @@ int clipboard_write(uint64_t user_buffer, size_t count) {
     memcpy(text.name, SAVANXP_CLIPBOARD_TEXT, sizeof(SAVANXP_CLIPBOARD_TEXT));
     text.offset = 0;
     text.length = static_cast<uint32_t>(count);
-    install(&text, 1, data);
+    install(store, &text, 1, data);
     return static_cast<int>(count);
 }
 
-int set_formats(uint64_t argument) {
+int set_formats(Store& store, uint64_t argument) {
     savanxp_clipboard_set request = {};
     if (!process::validate_user_range(argument, sizeof(request), false) ||
         !process::copy_from_user(&request, argument, sizeof(request))) {
@@ -230,11 +240,11 @@ int set_formats(uint64_t argument) {
         installed[index].length = length;
         offset += length;
     }
-    install(installed, request.count, data);
+    install(store, installed, request.count, data);
     return 0;
 }
 
-int get_format(uint64_t argument) {
+int get_format(const Store& store, uint64_t argument) {
     savanxp_clipboard_get request = {};
     if (!process::validate_user_range(argument, sizeof(request), true) ||
         !process::copy_from_user(&request, argument, sizeof(request))) {
@@ -243,7 +253,7 @@ int get_format(uint64_t argument) {
     if (name_length(request.name) >= SAVANXP_CLIPBOARD_NAME_CAPACITY) {
         return negative_error(SX_EINVAL);
     }
-    const Entry* entry = find(request.name);
+    const Entry* entry = find(store, request.name);
     if (entry == nullptr) {
         return negative_error(SX_ENOENT);
     }
@@ -251,7 +261,7 @@ int get_format(uint64_t argument) {
     const uint32_t copied = request.capacity < entry->length ? request.capacity : entry->length;
     if (copied != 0 &&
         (!process::validate_user_range(request.buffer, copied, true) ||
-         !process::copy_to_user(request.buffer, g_data + entry->offset, copied))) {
+         !process::copy_to_user(request.buffer, store.data + entry->offset, copied))) {
         return negative_error(SX_EINVAL);
     }
     request.length = entry->length;
@@ -261,16 +271,16 @@ int get_format(uint64_t argument) {
     return static_cast<int>(copied);
 }
 
-int enum_format(uint64_t argument) {
+int enum_format(const Store& store, uint64_t argument) {
     savanxp_clipboard_format_info request = {};
     if (!process::validate_user_range(argument, sizeof(request), true) ||
         !process::copy_from_user(&request, argument, sizeof(request))) {
         return negative_error(SX_EINVAL);
     }
-    if (request.index >= g_count) {
+    if (request.index >= store.count) {
         return negative_error(SX_ENOENT);
     }
-    const Entry& entry = g_entries[request.index];
+    const Entry& entry = store.entries[request.index];
     request.length = entry.length;
     memcpy(request.name, entry.name, SAVANXP_CLIPBOARD_NAME_CAPACITY);
     if (!process::copy_to_user(argument, &request, sizeof(request))) {
@@ -285,18 +295,18 @@ uint64_t seen_state(uint64_t sequence) {
     return sequence + 1;
 }
 
-int clipboard_ioctl(uint64_t& state, uint64_t request, uint64_t argument, uint32_t granted_access) {
+int store_ioctl(Store& store, uint64_t& state, uint64_t request, uint64_t argument, uint32_t granted_access) {
     switch (request) {
         case CLIP_IOC_GET_INFO: {
-            const Entry* text = text_entry();
+            const Entry* text = text_entry(store);
             savanxp_clipboard_info info = {};
             info.length = text != nullptr ? text->length : 0;
             info.capacity = SAVANXP_CLIPBOARD_CAPACITY;
-            info.format = g_count == 0 ? SAVANXP_CLIPBOARD_FORMAT_EMPTY
-                : text != nullptr      ? SAVANXP_CLIPBOARD_FORMAT_TEXT
-                                       : SAVANXP_CLIPBOARD_FORMAT_OTHER;
-            info.format_count = g_count;
-            info.sequence = g_sequence;
+            info.format = store.count == 0 ? SAVANXP_CLIPBOARD_FORMAT_EMPTY
+                : text != nullptr          ? SAVANXP_CLIPBOARD_FORMAT_TEXT
+                                           : SAVANXP_CLIPBOARD_FORMAT_OTHER;
+            info.format_count = store.count;
+            info.sequence = store.sequence;
             if (!process::validate_user_range(argument, sizeof(info), true) ||
                 !process::copy_to_user(argument, &info, sizeof(info))) {
                 return negative_error(SX_EINVAL);
@@ -308,17 +318,17 @@ int clipboard_ioctl(uint64_t& state, uint64_t request, uint64_t argument, uint32
             if ((granted_access & object::access_write) == 0) {
                 return negative_error(SX_EACCES);
             }
-            install(nullptr, 0, nullptr);
+            install(store, nullptr, 0, nullptr);
             return 0;
         case CLIP_IOC_SET_FORMATS:
             if ((granted_access & object::access_write) == 0) {
                 return negative_error(SX_EACCES);
             }
-            return set_formats(argument);
+            return set_formats(store, argument);
         case CLIP_IOC_GET_FORMAT:
-            return get_format(argument);
+            return get_format(store, argument);
         case CLIP_IOC_ENUM_FORMAT:
-            return enum_format(argument);
+            return enum_format(store, argument);
         default:
             return negative_error(SX_ENOSYS);
     }
@@ -327,9 +337,24 @@ int clipboard_ioctl(uint64_t& state, uint64_t request, uint64_t argument, uint32
 // Readable means "changed since this descriptor last asked": a poll or an
 // object wait on it sleeps until someone copies. A read never blocks either
 // way; it returns the text, or zero bytes.
-bool clipboard_can_read(uint64_t state) {
-    return state != seen_state(g_sequence);
+bool store_can_read(const Store& store, uint64_t state) {
+    return state != seen_state(store.sequence);
 }
+
+// The device table takes plain functions: one set per store.
+int clipboard_read(uint64_t buffer, size_t count) { return store_read(g_clipboard, buffer, count); }
+int clipboard_write(uint64_t buffer, size_t count) { return store_write(g_clipboard, buffer, count); }
+int clipboard_ioctl(uint64_t& state, uint64_t request, uint64_t argument, uint32_t granted_access) {
+    return store_ioctl(g_clipboard, state, request, argument, granted_access);
+}
+bool clipboard_can_read(uint64_t state) { return store_can_read(g_clipboard, state); }
+
+int drag_read(uint64_t buffer, size_t count) { return store_read(g_drag, buffer, count); }
+int drag_write(uint64_t buffer, size_t count) { return store_write(g_drag, buffer, count); }
+int drag_ioctl(uint64_t& state, uint64_t request, uint64_t argument, uint32_t granted_access) {
+    return store_ioctl(g_drag, state, request, argument, granted_access);
+}
+bool drag_can_read(uint64_t state) { return store_can_read(g_drag, state); }
 
 device::Device g_device = {
     .name = "clipboard",
@@ -343,6 +368,18 @@ device::Device g_device = {
     .can_read_state = clipboard_can_read,
 };
 
+device::Device g_drag_device = {
+    .name = "dragdata",
+    .read = drag_read,
+    .write = drag_write,
+    .ioctl = nullptr,
+    .close = nullptr,
+    .can_read = nullptr,
+    .close_access = nullptr,
+    .ioctl_state = drag_ioctl,
+    .can_read_state = drag_can_read,
+};
+
 bool g_ready = false;
 
 } // namespace
@@ -351,6 +388,7 @@ namespace clipboard {
 
 void initialize() {
     g_ready = device::register_node("/dev/clipboard", &g_device, true);
+    g_ready = device::register_node("/dev/dragdata", &g_drag_device, true) && g_ready;
 }
 
 bool ready() {

@@ -1,0 +1,720 @@
+controls.exe
+main WM_COMMAND : main's [Edit] EN_UPDATE
+main WM_COMMAND : main's [Edit] EN_CHANGE
+main WM_MEASUREITEM type : 3 id 208 item -1 height 18
+main WM_MEASUREITEM type : 3 id 208 item of the list height 16
+edit1 text : [Hello] length 5 sel 0,0 packed 0x00000000
+set sel 1,3:  1,3
+set sel 4,2:  2,4
+set sel 0,-1:  0,5
+modified : 0
+replace sel: 
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE [HXYlo] sel 3,3 modified 1 can undo 1
+undo : 
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE1 [Hello]
+undo again : 
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE1 [HXYlo] can undo 0
+limit : 30000 now 8
+replace past the limit: 
+main WM_COMMAND : edit1 EN_MAXTEXT
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE [HXYlo123]
+set text past the limit: 
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE [0123456789]
+limit 0 is : 2147483646
+lines : 1 length of line at 3 10 index of line 0 0 line of char 4 0 first visible 0
+get line : 10
+read only:  style 0x50010880
+password char : 0
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE
+edit2 dialog code : 0x00000089
+list1 add:  0 1 2 3 4 5 6 7 8 9 10 11
+insert at 1 : 1 at -1 13 at 99 -1
+count : 14 length of 1 8 of 99 -1
+delete 1 : 
+main WM_DELETEITEM type : 2 id 203 item 1 data 013 last 
+main WM_DELETEITEM type : 2 id 203 item 12 data 012 99 -1
+list1:  [[Item 1]|[Item 2]|[Item 3]|[Item 4]|[Item 5]|[Item 6]|[Item 7]|[Item 8]|[Item 9]|[Item 10]|[Item 11]|[Item 12]]
+find item 1 : 0 after 0 9 exact 0 none -1
+select item 7 : 6 cur 6
+set cur 2 : 2 -1 -1 cur -1 99 -1
+data : 0 77 of 99 -1
+item height : 13
+top : 1 after setting 3 3 after setting 50 3
+sel of 2 : 0 after 1
+list2 add:  0 0 1 0 3
+list2:  [[apple]|[Apple]|[banana]|[Cherry]|[pear]]
+list2 insert at 0 : 0 [[zebra]|[apple]|[Apple]|[banana]|[Cherry]|[pear]]
+list2 find b : 3
+add to : simple 0 1 2 3 4 5 6 7
+add to : dropdown 0 1 2 3 4 5 6 7
+add to : droplist 0 1 2 3 4 5 6 7
+add to : owner 0 1 2 3 4 5 6 7
+dropdown:  [[One]|[Two]|[Three]|[Four]|[Five]|[Six]|[Seven]|[Eight]]
+cur : -1 text []
+set cur 2 : 2 text [Three] droplist 3 [Four] simple 1 [Two]
+set cur 99 : -1 text [Three] cur 2
+find t : 1 after 1 2 exact 4
+select fi : 4 text [Five]
+text length of 2 : 5 of 99 -1
+data of 2 : 302 of 99 -1
+insert at 1 : 1 delete 1 
+main WM_DELETEITEM type : 3 id 207 item 1 data 08 cur 3
+dropped : 0 extended ui 0
+edit sel : 0x00000000 0,0 on a list -1
+set edit sel : 1 on a list -1
+limit : 1 on a list -1
+set text : [Typed] cur 4 list [Four] cur 3
+top : 2
+styles : edit1 0x50010080 0x00000000
+styles : edit2 0x50012080 0x00000200
+styles : list1 0x50a10101 0x00000000
+styles : list2 0x50010103 0x00000200
+styles : simple 0x50010201 0x00000000 | child [ComboLBox] id 1000 0x54008041 0x00000200 | child [Edit] id 1001 0x50000300 0x00000000
+styles : dropdown 0x50010242 0x00000000 | child [Edit] id 1001 0x50000380 0x00000000
+styles : droplist 0x50010203 0x00000000
+styles : owner 0x50000213 0x00000000
+styles : vscroll 0x50000001 0x00000000
+styles : hscroll 0x50000000 0x00000000
+styles : pane 0x50300000 0x00000200
+size : simple 130x82 field 15 item 13 dropped 130x79
+size : dropdown 130x21 field 15 item 13 dropped 130x97
+size : droplist 130x21 field 15 item 13 dropped 130x97
+size : owner 130x22 field 16 item 16 dropped 130x100
+vscroll at first : 0..0 page 0 pos 0
+pane after : 100x50
+vscroll range by message : 0..20 pos 0
+shown: 
+main WM_DRAWITEM type : 3 id 208 item -1 action 0x00000001 state 0x00001000 3,3 108x16 data -1
+main WM_COMMAND : edit1 EN_SETFOCUS
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE
+main WM_COMMAND : edit1 EN_UPDATE
+main WM_COMMAND : edit1 EN_CHANGE
+main WM_COMMAND : edit1 EN_KILLFOCUS
+main WM_COMMAND : edit2 EN_SETFOCUS
+main WM_COMMAND : edit2 EN_UPDATE
+main WM_COMMAND : edit2 EN_CHANGE
+main WM_COMMAND : edit2 EN_UPDATE
+main WM_COMMAND : edit2 EN_CHANGE
+main WM_COMMAND : edit2 EN_KILLFOCUS
+main WM_COMMAND : list1 LBN_SETFOCUS
+main WM_COMMAND : list1 LBN_SELCHANGE
+main WM_COMMAND : list1 LBN_SELCHANGE
+main WM_COMMAND : list1 LBN_SELCHANGE
+main WM_COMMAND : list1 LBN_DBLCLK
+main WM_COMMAND : list1 LBN_KILLFOCUS
+main WM_COMMAND : list2 LBN_SETFOCUS
+main WM_COMMAND : list2 LBN_SELCHANGE
+main WM_COMMAND : list2 LBN_SELCHANGE
+main WM_COMMAND : list2 LBN_KILLFOCUS
+main WM_COMMAND : simple CBN_SETFOCUS
+main WM_COMMAND : simple CBN_SELENDOK
+main WM_COMMAND : simple CBN_SELCHANGE
+main WM_COMMAND : simple CBN_EDITUPDATE
+main WM_COMMAND : simple CBN_EDITCHANGE
+main WM_COMMAND : simple CBN_KILLFOCUS
+main WM_COMMAND : dropdown CBN_SETFOCUS
+main WM_COMMAND : dropdown CBN_DROPDOWN
+main WM_COMMAND : dropdown CBN_SELENDOK
+main WM_COMMAND : dropdown CBN_CLOSEUP
+main WM_COMMAND : dropdown CBN_SELCHANGE
+main WM_COMMAND : dropdown CBN_SELENDCANCEL
+main WM_COMMAND : dropdown CBN_KILLFOCUS
+main WM_COMMAND : droplist CBN_SETFOCUS
+main WM_COMMAND : droplist CBN_DROPDOWN
+main WM_COMMAND : droplist CBN_SELCHANGE
+main WM_COMMAND : droplist CBN_SELENDOK
+main WM_COMMAND : droplist CBN_CLOSEUP
+main WM_COMMAND : droplist CBN_SELENDCANCEL
+main WM_COMMAND : droplist CBN_KILLFOCUS
+main WM_DRAWITEM type : 3 id 208 item -1 action 0x00000001 state 0x00001011 3,3 108x16 data -1
+main WM_COMMAND : owner CBN_SETFOCUS
+main WM_COMMAND : owner CBN_DROPDOWN
+main WM_DRAWITEM type : 3 id 208 item -1 action 0x00000001 state 0x00001000 3,3 108x16 data -1
+main WM_DRAWITEM type : 3 id 208 item -1 action 0x00000004 state 0x00000000 0,-16 112x16 data -1
+main WM_DRAWITEM type : 3 id 208 item 0 action 0x00000001 state 0x00000000 0,0 112x16 data 0
+main WM_DRAWITEM type : 3 id 208 item 1 action 0x00000001 state 0x00000000 0,16 112x16 data 0
+main WM_DRAWITEM type : 3 id 208 item 2 action 0x00000001 state 0x00000000 0,32 112x16 data 303
+main WM_DRAWITEM type : 3 id 208 item 3 action 0x00000001 state 0x00000000 0,48 112x16 data 0
+main WM_DRAWITEM type : 3 id 208 item -1 action 0x00000004 state 0x00000010 0,-16 112x16 data -1
+main WM_DRAWITEM type : 3 id 208 item -1 action 0x00000001 state 0x00001000 3,3 108x16 data -1
+main WM_COMMAND : owner CBN_SELENDCANCEL
+main WM_DRAWITEM type : 3 id 208 item -1 action 0x00000004 state 0x00000000 0,-16 112x16 data -1
+main WM_DRAWITEM type : 3 id 208 item -1 action 0x00000004 state 0x00000010 0,-16 112x16 data -1
+main WM_DRAWITEM type : 3 id 208 item -1 action 0x00000001 state 0x00001011 3,3 108x16 data -1
+main WM_COMMAND : owner CBN_CLOSEUP
+main : WM_VSCROLL SB_LINEDOWN from vscroll now 1
+main : WM_VSCROLL SB_ENDSCROLL from vscroll now 1
+main : WM_VSCROLL SB_PAGEDOWN from vscroll now 6
+main : WM_VSCROLL SB_ENDSCROLL from vscroll now 6
+main : WM_VSCROLL SB_THUMBTRACK 6 from vscroll now 6
+main : WM_VSCROLL SB_THUMBTRACK 8 from vscroll now 8
+main : WM_VSCROLL SB_THUMBTRACK 9 from vscroll now 9
+main : WM_VSCROLL SB_THUMBTRACK 11 from vscroll now 11
+main : WM_VSCROLL SB_THUMBPOSITION 11 from vscroll now 11
+main : WM_VSCROLL SB_ENDSCROLL from vscroll now 11
+main : WM_HSCROLL SB_LINEDOWN from hscroll now 4
+main : WM_HSCROLL SB_ENDSCROLL from hscroll now 4
+pane : WM_VSCROLL SB_LINEDOWN from none now 5
+pane : WM_VSCROLL SB_ENDSCROLL from none now 5
+pane WM_CONTEXTMENU from : pane
+pane WM_ENTERMENULOOP : 1
+pane WM_INITMENUPOPUP: 
+pane WM_MENUSELECT : 501 0x00008080
+pane WM_MENUSELECT : 0 0x0000ffff
+pane WM_EXITMENULOOP : 1
+pane chose : 501
+pixels : edit1 10,10 120x20
+  000000*120
+  000000*1 ffffff*118 000000*1
+  000000*1 ffffff*1 text*116 ffffff*1 000000*1
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+  000000*1 ffffff*118 000000*1
+  000000*120
+pixels : edit2 10,40 120x21
+  808080*119 ffffff*1
+  808080*1 404040*117 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*116 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*1 text*114 ffffff*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+  808080*1 404040*1 ffffff*116 d4d0c8*1 ffffff*1
+  808080*1 d4d0c8*118 ffffff*1
+  ffffff*120
+pixels : list1 140,10 100x80
+  000000*100
+  000000*1 text*82 d4d0c8*15 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*13 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 000000*1
+ =
+ =
+ =
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*5 000000*1 d4d0c8*6 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*3 000000*5 d4d0c8*4 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*2 000000*7 d4d0c8*3 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 000000*1
+ =
+ =
+ =
+  000000*1 text*82 d4d0c8*1 808080*14 404040*1 000000*1
+  000000*1 text*82 404040*16 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*15 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*13 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 000000*1
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+  000000*1 text*82 d4d0c8*1 808080*14 404040*1 000000*1
+  000000*1 text*82 404040*16 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 000000*1
+  000000*1 text*82 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 000000*1
+  000000*1 text*82 d4d0c8*15 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*13 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 000000*1
+ =
+ =
+ =
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*2 000000*7 d4d0c8*3 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*3 000000*5 d4d0c8*4 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*5 000000*1 d4d0c8*6 808080*1 404040*1 000000*1
+  000000*1 text*82 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 000000*1
+ =
+ =
+ =
+  000000*1 text*82 d4d0c8*1 808080*14 404040*1 000000*1
+  000000*1 text*82 404040*16 000000*1
+  000000*100
+pixels : list2 140,100 100x60
+  808080*99 ffffff*1
+  808080*1 404040*97 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*96 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+  808080*1 d4d0c8*98 ffffff*1
+  ffffff*100
+pixels : simple 250,10 130x82
+  808080*129 ffffff*1
+  808080*1 404040*127 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*126 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+  808080*1 d4d0c8*1 text*126 d4d0c8*1 ffffff*1
+  ffffff*2 text*126 ffffff*2
+  808080*2 text*126 808080*1 ffffff*1
+  808080*1 404040*1 text*126 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+  808080*1 d4d0c8*1 text*126 d4d0c8*1 ffffff*1
+  ffffff*2 text*126 ffffff*2
+  d4d0c8*2 text*126 d4d0c8*2
+ =
+ =
+  d4d0c8*130
+ =
+pixels : dropdown 250,100 130x21
+  808080*129 ffffff*1
+  808080*1 404040*127 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*15 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*13 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 000000*7 d4d0c8*3 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*3 000000*5 d4d0c8*4 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*5 000000*1 d4d0c8*6 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+ =
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 808080*14 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 404040*16 d4d0c8*1 ffffff*1
+  808080*1 d4d0c8*128 ffffff*1
+  ffffff*130
+pixels : droplist 250,130 130x21
+  808080*129 ffffff*1
+  808080*1 404040*127 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*15 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*13 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 000000*7 d4d0c8*3 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*3 000000*5 d4d0c8*4 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*5 000000*1 d4d0c8*6 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+ =
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 808080*14 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 404040*16 d4d0c8*1 ffffff*1
+  808080*1 d4d0c8*128 ffffff*1
+  ffffff*130
+pixels : owner 250,160 130x22
+  808080*129 ffffff*1
+  808080*1 404040*127 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*15 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*13 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+ =
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 000000*7 d4d0c8*3 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*3 000000*5 d4d0c8*4 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*5 000000*1 d4d0c8*6 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+ =
+  808080*1 404040*1 text*109 ffffff*1 d4d0c8*1 808080*14 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 text*109 ffffff*1 404040*16 d4d0c8*1 ffffff*1
+  808080*1 d4d0c8*128 ffffff*1
+  ffffff*130
+pixels : vscroll 10,80 16x100
+  d4d0c8*15 404040*1
+  d4d0c8*1 ffffff*13 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1
+ =
+ =
+ =
+  d4d0c8*1 ffffff*1 d4d0c8*5 000000*1 d4d0c8*6 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*3 000000*5 d4d0c8*4 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*2 000000*7 d4d0c8*3 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1
+ =
+ =
+ =
+  d4d0c8*1 808080*14 404040*1
+  404040*16
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*15 404040*1
+  d4d0c8*1 ffffff*13 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+ =
+  d4d0c8*1 808080*14 404040*1
+  404040*16
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1
+  d4d0c8*15 404040*1
+  d4d0c8*1 ffffff*13 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1
+ =
+ =
+ =
+  d4d0c8*1 ffffff*1 d4d0c8*2 000000*7 d4d0c8*3 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*3 000000*5 d4d0c8*4 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*5 000000*1 d4d0c8*6 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1
+ =
+ =
+ =
+  d4d0c8*1 808080*14 404040*1
+  404040*16
+pixels : hscroll 40,180 90x16
+  d4d0c8*15 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*16 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*15 404040*1
+  d4d0c8*1 ffffff*13 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*13 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*13 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*6 000000*1 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*1 d4d0c8*7 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*5 000000*2 d4d0c8*5 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*4 000000*2 d4d0c8*6 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*3 000000*4 d4d0c8*5 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*4 000000*4 d4d0c8*4 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*5 000000*2 d4d0c8*5 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*4 000000*2 d4d0c8*6 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*6 000000*1 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*1 d4d0c8*7 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1
+  d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1
+  d4d0c8*1 808080*14 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 808080*14 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 808080*14 404040*1
+  404040*16 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 404040*16 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 404040*16
+pixels : pane 10,210 120x70
+  808080*119 ffffff*1
+  808080*1 404040*117 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*15 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*13 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*5 000000*1 d4d0c8*6 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*3 000000*5 d4d0c8*4 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*2 000000*7 d4d0c8*3 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+  808080*1 404040*1 ffffff*100 d4d0c8*1 808080*14 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 404040*16 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*101 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*15 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*13 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+  808080*1 404040*1 ffffff*100 d4d0c8*1 808080*14 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 404040*16 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*101 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*101 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*101 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*101 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*15 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*13 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*2 000000*7 d4d0c8*3 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*3 000000*5 d4d0c8*4 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*5 000000*1 d4d0c8*6 808080*1 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1
+ =
+ =
+ =
+  808080*1 404040*1 ffffff*100 d4d0c8*1 808080*14 404040*1 d4d0c8*1 ffffff*1
+  808080*1 404040*1 ffffff*100 404040*16 d4d0c8*1 ffffff*1
+  808080*1 404040*1 d4d0c8*15 404040*1 d4d0c8*15 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*15 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*13 808080*1 404040*1 d4d0c8*1 ffffff*13 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*13 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*6 000000*1 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*1 d4d0c8*7 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*5 000000*2 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*4 000000*2 d4d0c8*6 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*3 000000*4 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*4 000000*4 d4d0c8*4 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*3 d4d0c8*5 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*5 000000*2 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*4 000000*2 d4d0c8*6 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*6 000000*1 d4d0c8*5 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*4 000000*1 d4d0c8*7 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*1 ffffff*1 d4d0c8*12 808080*1 404040*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*2 ffffff*1 d4d0c8*12 808080*1 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*1 d4d0c8*1 808080*14 404040*1 d4d0c8*1 808080*14 404040*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 808080*14 404040*1 d4d0c8*17 ffffff*1
+  808080*1 404040*33 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 ffffff*1 d4d0c8*1 404040*16 d4d0c8*17 ffffff*1
+  808080*1 d4d0c8*118 ffffff*1
+  ffffff*120
+end edit1 : [x] sel 1,1
+end edit2 : [42]
+end : list1 cur 5 top 2 caret 5
+end : list2 cur 4 top 1 caret 4
+end : simple [Threez] cur -1 dropped 1
+end : dropdown [Four] cur 3 dropped 0
+end : droplist [Five] cur 4 dropped 0
+end : owner [] cur -1 dropped 0
+end vscroll : 11 hscroll 4 pane 5,0
+end focus : owner
+main WM_COMMAND : owner CBN_SELENDCANCEL
+main WM_COMMAND : owner CBN_KILLFOCUS
+main WM_DELETEITEM type : 3 id 208 item 7 data 0
+main WM_DELETEITEM type : 3 id 208 item 6 data 0
+main WM_DELETEITEM type : 3 id 208 item 5 data 0
+main WM_DELETEITEM type : 3 id 208 item 4 data 0
+main WM_DELETEITEM type : 3 id 208 item 3 data 0
+main WM_DELETEITEM type : 3 id 208 item 2 data 303
+main WM_DELETEITEM type : 3 id 208 item 1 data 0
+main WM_DELETEITEM type : 3 id 208 item 0 data 0

@@ -178,6 +178,17 @@ disabled the same way. The fade is two pre-faded bitmaps handed to the
 widget through `item_icons`, not a toolkit feature: a per-item flag would
 have changed `struct sxgui_widget`.
 
+### Dragging
+
+A press on an entry and a move of more than four pixels with the button
+held (`FILESAPP_DRAG_DISTANCE`) drags the entry to another program
+([`DRAG_AND_DROP.md`](DRAG_AND_DROP.md)): its URI as `text/uri-list` and its
+path as plain text, the formats Copy writes, allowing a copy. Notepad opens
+a file dropped on it, and a Win32 window that takes files gets
+`WM_DROPFILES`. The status bar says when the drop was taken. Files is not a
+target yet: dropping onto a folder, which would copy or move there with the
+copy engine, is still to come.
+
 ### The copy engine and the progress dialog
 
 `file_copy.c` copies a piece at a time: `file_copy_step` does one directory

@@ -1582,6 +1582,27 @@ struct savanxp_wm_long_title {
     char text[SAVANXP_WM_LONG_TITLE_CAPACITY];
 };
 
+/*
+ * Drag and drop (docs/desktop/DRAG_AND_DROP.md). The source leaves its
+ * formats in /dev/dragdata, sets `effects`, then adds one to
+ * `start_sequence` while the left button is held; windowd then sends the
+ * windows under the pointer SAVANXP_WM_EVENT_DRAG records. A target answers
+ * each ENTER and OVER by writing the drag's number in `reply_drag` and the
+ * effect it would take there in `reply_effect` (0: none), in the header of
+ * the window the record went to. windowd only reads these fields.
+ */
+#define SAVANXP_DRAG_EFFECT_COPY 0x00000001u
+#define SAVANXP_DRAG_EFFECT_MOVE 0x00000002u
+#define SAVANXP_DRAG_EFFECT_LINK 0x00000004u
+#define SAVANXP_DRAG_EFFECTS (SAVANXP_DRAG_EFFECT_COPY | SAVANXP_DRAG_EFFECT_MOVE | SAVANXP_DRAG_EFFECT_LINK)
+
+struct savanxp_wm_drag {
+    uint32_t start_sequence; /* the source: one more starts a drag */
+    uint32_t effects;        /* the source: SAVANXP_DRAG_EFFECT_* it allows */
+    uint32_t reply_drag;     /* a target: the drag it answers */
+    uint32_t reply_effect;   /* a target: the effect it would take, 0 for none */
+};
+
 struct savanxp_gpu_client_surface_header {
     uint32_t magic;
     uint32_t pixels_offset;
@@ -1605,6 +1626,8 @@ struct savanxp_gpu_client_surface_header {
      * commands after it, and a client checks command_offset >= the header it
      * was built with, so one built before this simply never writes here. */
     struct savanxp_wm_long_title long_title;
+    /* Appended after the long title, the same way. */
+    struct savanxp_wm_drag drag;
 };
 
 enum savanxp_mouse_button {
@@ -1756,6 +1779,26 @@ enum savanxp_wm_event_kind {
     SAVANXP_WM_EVENT_WELCOME = 3,
     /* Relative motion while the pointer is captured. payload.motion. */
     SAVANXP_WM_EVENT_POINTER_MOTION = 4,
+    /* A drag over the window, dropped on it, or ended (the source).
+     * payload.drag. docs/desktop/DRAG_AND_DROP.md */
+    SAVANXP_WM_EVENT_DRAG = 5,
+};
+
+enum savanxp_wm_drag_phase {
+    SAVANXP_WM_DRAG_ENTER = 1, /* the drag came over the window */
+    SAVANXP_WM_DRAG_OVER = 2,  /* the pointer moved over it */
+    SAVANXP_WM_DRAG_LEAVE = 3, /* it left, was cancelled, or was let go without the window's acceptance */
+    SAVANXP_WM_DRAG_DROP = 4,  /* dropped here with `effect`: read /dev/dragdata now */
+    SAVANXP_WM_DRAG_END = 5,   /* to the source: over, `effect` is what the drop took, 0 for nothing */
+};
+
+struct savanxp_wm_drag_event {
+    uint32_t phase;   /* enum savanxp_wm_drag_phase */
+    int32_t x;        /* the window's client coordinates */
+    int32_t y;
+    uint32_t drag;    /* the drag's number, never 0 */
+    uint32_t effects; /* what the source allows */
+    uint32_t effect;  /* DROP and END: the effect taken */
 };
 
 /*
@@ -1828,6 +1871,7 @@ struct savanxp_wm_event {
         struct savanxp_gui_pointer_event pointer;
         struct savanxp_gui_pointer_motion motion;
         struct savanxp_wm_welcome welcome;
+        struct savanxp_wm_drag_event drag;
         uint8_t bytes[24];
     } payload;
 };

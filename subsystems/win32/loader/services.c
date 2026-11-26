@@ -262,7 +262,7 @@ static uint32_t window_service(sxw_services *s, uint32_t thread, uint32_t servic
         uint32_t width = a[1];
         uint32_t height = a[2];
         if (w == 0 || !read_utf16(p, a[0], title) || !sxw_guest_range(p, a[3], 8u) || width == 0u ||
-            height == 0u || width > 0x4000u || height > 0x4000u || a[5] > SXW_WINDOW_POPUP ||
+            height == 0u || width > 0x4000u || height > 0x4000u || a[5] > SXW_WINDOW_MODELESS ||
             (a[5] == SXW_WINDOW_MAIN) != (a[4] == 0u)) {
             return 0;
         }
@@ -354,7 +354,8 @@ uint32_t sxw_service(sxw_services *s, uint32_t thread, uint32_t guest_esp) {
     static const uint8_t argument_count[SXW_SVC_COUNT] = {0, 1, 1, 3, 2, 0, 1, 1, 4, 5, 5, 1, 5,
                                                            5, 0, 1, 8, 1, 6, 2, 2, 2, 3, 1, 1, 2,
                                                            5, 4, 4, 5, 1, 2, 1, 2, 3, 4, 2, 1, 5,
-                                                           1, 3, 2, 2, 5, 4, 5, 1, 1, 0};
+                                                           1, 3, 2, 2, 5, 4, 5, 1, 1, 0, 2, 1, 3,
+                                                           4, 3, 3, 2, 3, 4};
     if (service >= sizeof(argument_count)) {
         write_text(s, "win32: unknown service\n");
         end_process(s, SXW_STATUS_INVALID_SYSTEM_SERVICE);
@@ -503,6 +504,17 @@ uint32_t sxw_service(sxw_services *s, uint32_t thread, uint32_t guest_esp) {
     case SXW_SVC_WAKE_THREAD:
     case SXW_SVC_END_OTHER_THREADS:
         return sxw_thread_service(s, thread, service, a);
+    case SXW_SVC_CLIPBOARD_SET:
+    case SXW_SVC_CLIPBOARD_INFO:
+    case SXW_SVC_CLIPBOARD_FORMAT:
+    case SXW_SVC_CLIPBOARD_GET:
+    case SXW_SVC_DRAG_REPLY:
+    case SXW_SVC_DRAG_FORMAT:
+    case SXW_SVC_DRAG_GET:
+        return sxw_clipboard_service(s, service, a);
+    case SXW_SVC_PATH_TO_HOST:
+    case SXW_SVC_PATH_FROM_HOST:
+        return sxw_file_service(s, service, a);
     default:
         return window_service(s, thread, service, a);
     }

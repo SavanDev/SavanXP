@@ -88,6 +88,14 @@ changes not released yet; each released version has its own file in
 - **Win32 has files, private heaps, atoms and the Spanish (Argentina) locale** (WordPad WP4). `CreateFileW` and
   searches over `C:` and `Z:`, `HeapCreate`, local and global atoms, date and time formats, `CompareStringW` and
   win.ini's defaults. Fixtures `files.exe`, `memory.exe`, `locale.exe`. See [WIN32.md](docs/userland/WIN32.md#files).
+- **Win32 has hooks, window positions, carets, scroll bars, Edit, ListBox and ComboBox, and the clipboard**
+  (WordPad WP5). The clipboard is SavanXP's (`CF_UNICODETEXT`, RTF, `CF_HDROP`); `CF_OEMTEXT` is code page 437.
+  Fixtures `hooks.exe`, `controls.exe`, `clip.exe`; `smoke win32-controls`. See [WIN32.md](docs/userland/WIN32.md#hooks-and-subclassing).
+- **SUN has typed clipboard calls (SDK 2.0).** `sxn_clipboard_open`, `_info`, `_set`, `_get`, `_format` in `sxn/sxnclip.h`;
+  `winhost` is the consumer. [CLIPBOARD.md](docs/desktop/CLIPBOARD.md#how-each-subsystem-reaches-it).
+- **Drag and drop between programs (SDK 2.0).** Files drags an entry onto Notepad, which opens it, or onto a
+  Win32 window with `WS_EX_ACCEPTFILES` (`WM_DROPFILES`). `/dev/dragdata`, `sxnwm_drag_start`, `gfx_drag_start`,
+  toolkit `on_drop`; `smoke win32-drop`. [DRAG_AND_DROP.md](docs/desktop/DRAG_AND_DROP.md).
 - **SUN seeks, sizes and queries open files, and removes directories.** `sxn_seek_file`, `sxn_set_file_size`,
   `sxn_query_file`, `sxn_delete_directory`, `SXN_FILE_WRITE` and `SXN_CREATE_READ`; `winhost` is the consumer.
   [Slice 31](docs/kernel/KERNEL_NATIVE_API.md#slice-31-positions-sizes-and-directories).

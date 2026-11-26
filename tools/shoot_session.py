@@ -1133,6 +1133,44 @@ def scenario_filesclipboard(s):
                 "pasting a cut entry into its own folder does nothing")
 
 
+def scenario_filesdrag(s):
+    """An entry dragged from Files onto Notepad (docs/desktop/DRAG_AND_DROP.md).
+
+    Files opens on the Win32 fixtures' expected outputs, then Notepad on top
+    of it, which is moved right by its caption: the press on cards.out
+    raises Files, and Notepad's text must still show beside it. The entry is
+    dragged there and released, and Notepad opens it.
+    """
+    s.run("filesapp /system/win/drive_c/tests/expected")
+    s.run("notepad")
+    image = s.shot("drag-windows")
+    s.qmp.move_to(700, 211)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    time.sleep(0.3)
+    for _ in range(5):
+        s.qmp._rel_step(60, 20)
+        time.sleep(0.1)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+    time.sleep(1.0)
+    image = s.shot("drag-start")
+    entry = find_text(image, (0, 0, 1280, 770), "cards.out", TEXT, FIELD)[0]
+    if entry is None:
+        raise Failure("Files does not show cards.out where Notepad leaves it uncovered")
+    s.qmp.move_to(entry[0] + 20, entry[1] - 25)
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": True, "button": "left"}}])
+    time.sleep(0.5)
+    s.qmp._rel_step(12, 0)
+    time.sleep(0.8)
+    s.qmp.move_to(1150, 450)
+    time.sleep(0.8)
+    s.shot("drag-over")
+    s.qmp.cmd("input-send-event", events=[{"type": "btn", "data": {"down": False, "button": "left"}}])
+    time.sleep(2.0)
+    image = s.shot("drag-dropped")
+    expect_text(image, (0, 0, 1280, 770), "cards.out", TEXT, FACE,
+                "Notepad opens the file dropped on it")
+
+
 def scenario_taskmgrmenu(s):
     """A SUN program's context menu (docs/desktop/DESKTOP_ICONS.md#phase-4).
 
@@ -4802,6 +4840,7 @@ SCENARIOS = {
     "filesmenu": scenario_filesmenu,
     "filestoolbar": scenario_filestoolbar,
     "filesclipboard": scenario_filesclipboard,
+    "filesdrag": scenario_filesdrag,
     "filescomputer": scenario_filescomputer,
     "taskmgrmenu": scenario_taskmgrmenu,
     "diskmgmt": scenario_diskmgmt,

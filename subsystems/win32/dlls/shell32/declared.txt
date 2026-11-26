@@ -3,8 +3,6 @@
 # bytes popped (or cdecl, or data), and the value returned. A function moves
 # out of this table when it is written.
 
-DragFinish                   4  0
-DragQueryFileW              16  0
 ShellExecuteExW              4  0
 SHGetSettings                8  0
 SHGetSpecialFolderPathW     16  0

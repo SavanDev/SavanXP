@@ -288,6 +288,13 @@ int clipboard_get_format(const char *name, void *buffer, int capacity);
  * them) and its length; -ENOENT past the last one. */
 int clipboard_enum_format(int index, char *name, int name_capacity);
 
+/* The same three on `/dev/dragdata`, the store a drag carries its formats in
+ * (docs/desktop/DRAG_AND_DROP.md): a source sets them before gfx_drag_start,
+ * a target reads them on the drop. */
+int dragdata_set_formats(const struct clipboard_format *formats, int count);
+int dragdata_get_format(const char *name, void *buffer, int capacity);
+int dragdata_enum_format(int index, char *name, int name_capacity);
+
 /* argv[0] as the program was started (0 if unknown), kept by crt0. */
 const char* sx_program_path(void);
 long gfx_open(struct savanxp_gfx_context* context);
@@ -350,6 +357,17 @@ long gfx_set_fullscreen(const struct savanxp_gfx_context* context, int enabled);
  * suspends the capture when the window loses focus. */
 long gfx_set_pointer_capture(const struct savanxp_gfx_context* context, int enabled);
 long gfx_query_pointer(const struct savanxp_gfx_context* context, struct savanxp_wm_desktop_pointer* out);
+/* Drag and drop (docs/desktop/DRAG_AND_DROP.md), the POSIX side of
+ * sxnwm_drag_start and sxnwm_drag_reply. gfx_drag_start starts a drag from
+ * the main window, allowing SAVANXP_DRAG_EFFECT_* (set the formats with
+ * dragdata_set_formats first; the WM ignores it unless the left button is
+ * held on this process). gfx_poll_window_drag reads the next drag record of
+ * a window: ENTER, OVER, LEAVE and DROP as a target, END as the source; 1
+ * read, 0 none. gfx_drag_reply answers an ENTER or OVER with the effect the
+ * window would take there, 0 for none. */
+long gfx_drag_start(const struct savanxp_gfx_context* context, uint32_t effects);
+int gfx_poll_window_drag(const struct savanxp_gfx_context* context, struct savanxp_wm_drag_event* event);
+long gfx_drag_reply(const struct savanxp_gfx_context* context, uint32_t drag, uint32_t effect);
 long gfx_set_title(const struct savanxp_gfx_context* context, const char* title);
 /* Pide el tamano de area util que necesita el contenido de la ventana. Es una
  * sugerencia: el WM la recorta y solo la atiende mientras la ventana siga en

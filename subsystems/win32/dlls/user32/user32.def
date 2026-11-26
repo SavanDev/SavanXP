@@ -1,81 +1,210 @@
 LIBRARY user32.dll
 EXPORTS
     AdjustWindowRect
+    AppendMenuW
+    BeginDeferWindowPos
     BeginPaint
+    BringWindowToTop
+    CallMsgFilterW
+    CallNextHookEx
+    CallWindowProcW
     CheckDlgButton
+    CheckMenuItem
     CheckRadioButton
+    ChildWindowFromPoint
     ClientToScreen
+    CloseClipboard
     CopyRect
+    CountClipboardFormats
+    CreateCaret
+    CreateDialogIndirectParamW
+    CreateDialogParamW
+    CreateMenu
+    CreatePopupMenu
     CreateWindowExW
+    DefDlgProcW
     DefWindowProcW
+    DeferWindowPos
+    DeleteMenu
+    DestroyCaret
+    DestroyMenu
     DestroyWindow
+    DialogBoxIndirectParamW
     DialogBoxParamW
     DispatchMessageW
+    DrawEdge
+    DrawFocusRect
+    DrawMenuBar
     DrawTextW
+    EmptyClipboard
     EnableMenuItem
+    EnableScrollBar
     EnableWindow
+    EndDeferWindowPos
     EndDialog
     EndPaint
+    EnumChildWindows
+    EnumClipboardFormats
+    EnumWindows
     EqualRect
+    FillRect
     FindWindowW
     FrameRect
     GetActiveWindow
+    GetAsyncKeyState
     GetCapture
+    GetCaretBlinkTime
+    GetCaretPos
+    GetClassInfoW
+    GetClassNameW
     GetClientRect
+    GetClipboardData
+    GetClipboardFormatNameW
+    GetClipboardOwner
+    GetClipboardSequenceNumber
     GetCursorPos
     GetDC
+    GetDCEx
     GetDesktopWindow
+    GetDialogBaseUnits
+    GetDlgCtrlID
     GetDlgItem
+    GetDlgItemInt
+    GetDlgItemTextW
+    GetFocus
+    GetForegroundWindow
     GetKeyState
+    GetLastActivePopup
     GetMenu
+    GetMenuCheckMarkDimensions
+    GetMenuItemCount
+    GetMenuItemID
+    GetMenuState
+    GetMenuStringW
+    GetMessagePos
+    GetMessageTime
     GetMessageW
+    GetNextDlgGroupItem
+    GetNextDlgTabItem
+    GetOpenClipboardWindow
+    GetParent
+    GetPropW
+    GetScrollInfo
+    GetScrollPos
+    GetScrollRange
+    GetSubMenu
     GetSysColor
     GetSysColorBrush
+    GetSystemMenu
     GetSystemMetrics
+    GetTopWindow
+    GetUpdateRect
+    GetWindow
+    GetWindowDC
+    GetWindowLongW
+    GetWindowPlacement
+    GetWindowRect
+    GetWindowTextLengthW
+    GetWindowTextW
     GetWindowThreadProcessId
+    HideCaret
+    InSendMessage
     InflateRect
+    InsertMenuW
     IntersectRect
     InvalidateRect
+    InvalidateRgn
     InvertRect
+    IsChild
+    IsClipboardFormatAvailable
+    IsDialogMessageW
     IsDlgButtonChecked
     IsIconic
+    IsMenu
     IsRectEmpty
     IsWindow
+    IsWindowEnabled
+    IsWindowVisible
+    IsZoomed
     KillTimer
     LoadAcceleratorsW
     LoadBitmapA
     LoadCursorW
     LoadIconW
     LoadImageW
+    LoadMenuW
     LoadStringA
     LoadStringW
+    LockWindowUpdate
+    MapDialogRect
+    MapWindowPoints
+    MessageBeep
     MessageBoxW
+    ModifyMenuW
     MoveWindow
     MsgWaitForMultipleObjects
     OffsetRect
+    OpenClipboard
     PeekMessageW
     PostMessageW
     PostQuitMessage
     PostThreadMessageW
     PtInRect
+    RedrawWindow
     RegisterClassExW
     RegisterClassW
     RegisterClipboardFormatW
     RegisterWindowMessageW
     ReleaseCapture
     ReleaseDC
+    RemoveMenu
+    RemovePropW
+    ScreenToClient
+    ScrollWindow
+    ScrollWindowEx
+    SendDlgItemMessageW
+    SendMessageTimeoutW
     SendMessageW
+    SetActiveWindow
     SetCapture
+    SetCaretBlinkTime
+    SetCaretPos
+    SetClipboardData
     SetCursorPos
+    SetDlgItemInt
+    SetDlgItemTextW
     SetFocus
+    SetForegroundWindow
+    SetMenu
+    SetMenuItemBitmaps
+    SetParent
+    SetPropW
     SetRect
     SetRectEmpty
+    SetScrollInfo
+    SetScrollPos
+    SetScrollRange
     SetTimer
+    SetWindowLongW
+    SetWindowPlacement
+    SetWindowPos
+    SetWindowTextW
+    SetWindowsHookExW
+    ShowCaret
     ShowCursor
+    ShowOwnedPopups
+    ShowScrollBar
     ShowWindow
     SxwDialogBoxIndirectParamW
+    TrackPopupMenu
     TranslateAcceleratorW
     TranslateMessage
+    UnhookWindowsHookEx
     UnionRect
+    UnregisterClassW
     UpdateWindow
+    ValidateRect
+    WaitMessage
     WinHelpW
+    WindowFromDC
+    WindowFromPoint

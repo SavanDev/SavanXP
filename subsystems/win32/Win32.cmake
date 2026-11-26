@@ -233,11 +233,16 @@ sxw_image(NAME gdi32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f10000
     DEF "${SXW_gdi32_DEF}" LIBS ntdll)
 sxw_image(NAME user32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7e410000
     SOURCES "${SXW_DLLS}/user32/user32.c" "${SXW_DLLS}/user32/menu.c" "${SXW_DLLS}/user32/dialog.c"
-            "${SXW_DLLS}/user32/controls.c" "${SXW_DLLS}/user32/system.c" "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
+            "${SXW_DLLS}/user32/controls.c" "${SXW_DLLS}/user32/system.c" "${SXW_DLLS}/user32/hook.c"
+            "${SXW_DLLS}/user32/winpos.c" "${SXW_DLLS}/user32/caret.c" "${SXW_DLLS}/user32/scroll.c"
+            "${SXW_DLLS}/user32/edit.c" "${SXW_DLLS}/user32/listbox.c" "${SXW_DLLS}/user32/combo.c"
+            "${SXW_DLLS}/user32/clipboard.c"
+            "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
             "${SXW_DLLS}/common/codepage.c" "${SXW_DLLS}/common/resource.c" ${SXW_user32_DECLARED}
     DEF "${SXW_user32_DEF}" LIBS gdi32 kernel32 ntdll)
 sxw_image(NAME shell32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c9c0000
-    SOURCES "${SXW_DLLS}/shell32/shell32.c" ${SXW_shell32_DECLARED} DEF "${SXW_shell32_DEF}" LIBS user32 ntdll)
+    SOURCES "${SXW_DLLS}/shell32/shell32.c" "${SXW_DLLS}/shell32/drop.c" ${SXW_shell32_DECLARED}
+    DEF "${SXW_shell32_DEF}" LIBS user32 kernel32 ntdll)
 sxw_image(NAME comctl32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x5d090000
     SOURCES "${SXW_DLLS}/comctl32/comctl32.c" DEF "${SXW_DLLS}/comctl32/comctl32.def")
 # What WordPad's start-up needs from them, and the rest of its load-time
@@ -312,6 +317,13 @@ sxw_image(NAME tquiet.dll KIND dll DIR "${SXW_FIXTURES}" BASE 0x10100000 ENTRY D
     SOURCES "${SXW_FX}/threads/tquiet.c" DEF "${SXW_FX}/threads/tquiet.def" LIBS tlog kernel32)
 sxw_image(NAME threads.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/threads/threads.c" LIBS tlog tquiet user32 msvcrt kernel32)
+# WP5 (WIN32_WORDPAD_ROADMAP.md): what MFC does to every window.
+sxw_image(NAME hooks.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/hooks/hooks.c" LIBS user32 gdi32 kernel32)
+sxw_image(NAME controls.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/controls/controls.c" LIBS user32 gdi32 kernel32)
+sxw_image(NAME clip.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/clip/clip.c" LIBS user32 gdi32 shell32 kernel32)
 sxw_image(NAME nosuch.dll KIND dll DIR "${SXW_STUBS}"
     SOURCES "${SXW_FX}/missing/stub.c" DEF "${SXW_FX}/missing/nosuch.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_STUBS}"
@@ -356,6 +368,7 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SXW_FIXTURES}/resource.exe" "${SXW_FIXTURES}/dialog.exe" "${SXW_FIXTURES}/wstartup.exe"
                 "${SXW_FIXTURES}/files.exe" "${SXW_FIXTURES}/memory.exe" "${SXW_FIXTURES}/locale.exe"
                 "${SXW_FIXTURES}/threads.exe" "${SXW_FIXTURES}/tlog.dll" "${SXW_FIXTURES}/tquiet.dll"
+                "${SXW_FIXTURES}/hooks.exe" "${SXW_FIXTURES}/controls.exe" "${SXW_FIXTURES}/clip.exe"
                 "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${SXW_FX}/expected" "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/expected")
@@ -375,6 +388,7 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCH
         "${SAVANXP_WIN32_ROOT}/loader/services.c"
         "${SAVANXP_WIN32_ROOT}/loader/files.c"
         "${SAVANXP_WIN32_ROOT}/loader/threads.c"
+        "${SAVANXP_WIN32_ROOT}/loader/clipboard.c"
         "${SAVANXP_WIN32_ROOT}/loader/registry.c"
         "${SAVANXP_WIN32_ROOT}/pe/pe.c")
     target_include_directories(savanxp-win32-harness PRIVATE

@@ -564,6 +564,40 @@ static inline long sxnwm_set_cursor_shape(struct sxnwm_client* ctx, uint32_t sha
     return sxnwm_notify(ctx);
 }
 
+/* ---- drag and drop (docs/desktop/DRAG_AND_DROP.md) ------------------------
+ *
+ * A source writes its formats to /dev/dragdata (sxn_dragdata_open) and then
+ * starts the drag while the left button is held on its window; the WM takes
+ * the pointer and sends SAVANXP_WM_EVENT_DRAG records (payload.drag): ENTER,
+ * OVER, LEAVE and DROP to the windows under it, END to the source. */
+
+/* Starts a drag from this main window, allowing `effects`
+ * (SAVANXP_DRAG_EFFECT_*). Ignored by the WM unless the left button is held
+ * on this process. */
+static inline long sxnwm_drag_start(struct sxnwm_client* ctx, uint32_t effects) {
+    if (ctx == 0 || ctx->header == 0 || effects == 0u || (effects & ~SAVANXP_DRAG_EFFECTS) != 0u) {
+        return -SAVANXP_EINVAL;
+    }
+    ctx->header->drag.effects = effects;
+    __asm__ volatile("" ::: "memory");
+    ctx->header->drag.start_sequence += 1u;
+    __asm__ volatile("" ::: "memory");
+    return sxnwm_notify(ctx);
+}
+
+/* A target's answer to the ENTER or OVER of drag `drag`: the effect it
+ * would take there, or 0 for none. On the window the record went to. */
+static inline long sxnwm_drag_reply(struct sxnwm_client* ctx, uint32_t drag, uint32_t effect) {
+    if (ctx == 0 || ctx->header == 0 || drag == 0u || (effect & ~SAVANXP_DRAG_EFFECTS) != 0u) {
+        return -SAVANXP_EINVAL;
+    }
+    ctx->header->drag.reply_effect = effect;
+    __asm__ volatile("" ::: "memory");
+    ctx->header->drag.reply_drag = drag;
+    __asm__ volatile("" ::: "memory");
+    return sxnwm_notify(ctx);
+}
+
 /* ---- owned windows (docs/desktop/OWNED_WINDOWS.md) ------------------------
  *
  * A dialog of the program, in a window of its own that the WM keeps above

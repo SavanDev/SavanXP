@@ -98,6 +98,16 @@ struct sxngui_app {
 
     /* Owned by the frame: the modeless windows open now. */
     struct sxngui_window *windows[SXNGUI_MAX_WINDOWS];
+
+    /* Drag and drop, as in the POSIX frame (docs/desktop/DRAG_AND_DROP.md);
+     * leave NULL to skip. on_drag_over answers the SAVANXP_DRAG_EFFECT_*
+     * the app would take at x, y, or 0; on_drop reads the formats from
+     * /dev/dragdata (sxn_dragdata_open); on_drag_end, for a drag
+     * sxngui_app_drag_start began, hears what the drop took. */
+    uint32_t (*on_drag_over)(struct sxngui_app *app, int x, int y, uint32_t effects);
+    void (*on_drag_leave)(struct sxngui_app *app);
+    void (*on_drop)(struct sxngui_app *app, int x, int y, uint32_t effect);
+    void (*on_drag_end)(struct sxngui_app *app, uint32_t effect);
 };
 
 /* A modeless window (docs/desktop/OWNED_WINDOWS.md#modeless-windows):
@@ -177,6 +187,11 @@ void sxngui_window_close(struct sxngui_window *window);
 /* Repaint it on the loop's next pass. */
 void sxngui_window_request_repaint(struct sxngui_window *window);
 
+/* Drags these formats from the main window, allowing `effects`, from a
+ * pointer handler while the left button is held (sxgui_app_drag_start's SUN
+ * side). 0, or < 0 when the formats could not be stored. */
+int sxngui_app_drag_start(struct sxngui_app *app, const struct sxgui_clipboard_format *formats, int count,
+                          uint32_t effects);
 /* Run until sxngui_app_quit or the window is closed; returns the exit code.
  * Closes the window, and any modeless window still open, on the way out. */
 int sxngui_app_run(struct sxngui_app *app);

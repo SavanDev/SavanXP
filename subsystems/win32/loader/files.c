@@ -257,6 +257,52 @@ static uint32_t host_path(sxw_services *s, const char *windows, char *out, int *
     return SXW_ERROR_SUCCESS;
 }
 
+/* A host path as Windows names it: under C:'s folder as C:, anything else
+ * on Z:, the host's root (SXW_SVC_PATH_FROM_HOST). */
+static uint32_t path_from_host(sxw_services *s, const uint32_t *a) {
+    char host[SXW_HOST_PATH];
+    uint32_t n = 0;
+    for (;;) {
+        if (n == SXW_HOST_PATH || !sxw_guest_range(s->process, a[0] + n, 1u)) {
+            return 0;
+        }
+        host[n] = ((const char *)(uintptr_t)a[0])[n];
+        if (host[n] == 0) {
+            break;
+        }
+        ++n;
+    }
+    if (host[0] != '/') {
+        return 0;
+    }
+    char windows[SXW_HOST_PATH + 4];
+    uint32_t at = 0;
+    const char *rest = host;
+    const uint32_t c_length = s->drive_c != 0 ? text_length(s->drive_c) : 0u;
+    int on_c = 0;
+    if (c_length != 0u && n >= c_length) {
+        on_c = 1;
+        for (uint32_t i = 0; i < c_length; ++i) {
+            if (host[i] != s->drive_c[i]) {
+                on_c = 0;
+            }
+        }
+        on_c = on_c && (host[c_length] == 0 || host[c_length] == '/');
+    }
+    windows[at++] = on_c ? 'C' : 'Z';
+    windows[at++] = ':';
+    rest = on_c ? host + c_length : host;
+    if (*rest == 0) {
+        windows[at++] = '\\';
+    }
+    for (; *rest != 0 && at + 1u < sizeof(windows); ++rest) {
+        windows[at++] = *rest == '/' ? '\\' : *rest;
+    }
+    windows[at] = 0;
+    const int written = sxw_write_utf16(s->process, a[1], a[2], windows);
+    return written > 0 ? (uint32_t)written : 0u;
+}
+
 /* A guest path argument as a host path. */
 static uint32_t guest_path(sxw_services *s, uint32_t address, char *out, int *last_missing, int *root) {
     char windows[SXW_HOST_PATH];
@@ -717,7 +763,7 @@ static uint32_t path_action(sxw_services *s, const uint32_t *a) {
 
 uint32_t sxw_file_service(sxw_services *s, uint32_t service, const uint32_t *a) {
     if (s->files == 0 && service != SXW_SVC_CLOSE && service != SXW_SVC_DUPLICATE) {
-        return SXW_ERROR_PATH_NOT_FOUND;
+        return service == SXW_SVC_PATH_FROM_HOST ? 0u : SXW_ERROR_PATH_NOT_FOUND;
     }
     switch (service) {
     case SXW_SVC_CLOSE:
@@ -737,6 +783,25 @@ uint32_t sxw_file_service(sxw_services *s, uint32_t service, const uint32_t *a) 
         sxw_write_word(s->process, a[1], handle);
         return SXW_ERROR_SUCCESS;
     }
+    case SXW_SVC_PATH_TO_HOST: {
+        char path[SXW_HOST_PATH];
+        int missing;
+        int root;
+        const uint32_t error = guest_path(s, a[0], path, &missing, &root);
+        if (error != SXW_ERROR_SUCCESS) {
+            return error;
+        }
+        const uint32_t n = text_length(path) + 1u;
+        if (n > a[2] || !sxw_guest_range(s->process, a[1], n)) {
+            return SXW_ERROR_INVALID_PARAMETER;
+        }
+        for (uint32_t i = 0; i < n; ++i) {
+            ((char *)(uintptr_t)a[1])[i] = path[i];
+        }
+        return SXW_ERROR_SUCCESS;
+    }
+    case SXW_SVC_PATH_FROM_HOST:
+        return path_from_host(s, a);
     case SXW_SVC_FILE_OPEN:
         return file_open(s, a);
     case SXW_SVC_FILE_READ:

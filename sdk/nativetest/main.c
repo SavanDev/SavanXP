@@ -58,6 +58,7 @@
 #include "abi/savanxp_native_abi.h"
 #include "savanxp/syscall.h"
 #include "sxn/sxn.h"
+#include "sxn/sxnclip.h"
 #include "sxn/sxndns.h"
 #include "sxn/sxnhttp.h"
 #include "sxn/sxnwm.h"
@@ -2873,6 +2874,99 @@ static void test_clipboard(void) {
     check(sxn_log("nativetest: clipboard done") == 0);
 }
 
+/* The same set through sxnclip.h's typed calls (winhost's): set, info,
+ * the formats in order, a format by name with its length when the buffer is
+ * short, a missing one, and an empty set. */
+static void test_clipboard_calls(void) {
+    static const char rtf[] = "{\\rtf1 x}";
+    static const char text[] = "typed";
+    struct savanxp_clipboard_entry entries[2];
+    struct savanxp_clipboard_info info = {0};
+    char name[SAVANXP_CLIPBOARD_NAME_CAPACITY];
+    char buffer[4];
+    uint32_t length = 0;
+    unsigned index;
+    long handle = sxn_clipboard_open(1);
+
+    check(handle >= 0);
+    if (handle < 0) {
+        return;
+    }
+    for (index = 0; index < sizeof(entries); ++index) {
+        ((char*)entries)[index] = 0;
+    }
+    for (index = 0; index < sizeof("text/rtf"); ++index) {
+        entries[0].name[index] = "text/rtf"[index];
+    }
+    entries[0].data = (uint64_t)(uintptr_t)rtf;
+    entries[0].length = sizeof(rtf) - 1;
+    for (index = 0; index < sizeof(SAVANXP_CLIPBOARD_TEXT); ++index) {
+        entries[1].name[index] = SAVANXP_CLIPBOARD_TEXT[index];
+    }
+    entries[1].data = (uint64_t)(uintptr_t)text;
+    entries[1].length = sizeof(text) - 1;
+    check(sxn_clipboard_set(handle, entries, 2) == 0);
+    check(sxn_clipboard_info(handle, &info) == 0 && info.format_count == 2u && info.length == sizeof(text) - 1);
+    check(sxn_clipboard_format(handle, 0, name, &length) == 0 && name[5] == 'r' && length == sizeof(rtf) - 1);
+    check(sxn_clipboard_format(handle, 2, name, &length) == -SAVANXP_ENOENT);
+    length = 0;
+    check(sxn_clipboard_get(handle, "text/rtf", buffer, sizeof(buffer), &length) == (long)sizeof(buffer));
+    check(length == sizeof(rtf) - 1 && buffer[0] == '{');
+    check(sxn_clipboard_get(handle, "image/png", buffer, sizeof(buffer), &length) == -SAVANXP_ENOENT);
+    check(sxn_clipboard_set(handle, entries, 0) == 0);
+    check(sxn_clipboard_info(handle, &info) == 0 && info.format_count == 0u);
+    (void)sxn_close(handle);
+    check(sxn_log("nativetest: clipboard calls done") == 0);
+}
+
+/* The drag's store, /dev/dragdata (docs/desktop/DRAG_AND_DROP.md): the
+ * clipboard's calls on a set of its own, which a drag never shares with the
+ * clipboard; and the drag requests' refusals without a window. */
+static void test_drag_calls(void) {
+    static const char uris[] = "file:///users/user/a.txt\r\n";
+    struct savanxp_clipboard_entry entry;
+    struct savanxp_clipboard_info before = {0};
+    struct savanxp_clipboard_info info = {0};
+    struct sxnwm_client nothing;
+    char buffer[64];
+    uint32_t length = 0;
+    unsigned index;
+    long clipboard = sxn_clipboard_open(0);
+    long handle = sxn_dragdata_open(1);
+
+    check(clipboard >= 0 && handle >= 0);
+    if (clipboard < 0 || handle < 0) {
+        return;
+    }
+    check(sxn_clipboard_info(clipboard, &before) == 0);
+    for (index = 0; index < sizeof(entry); ++index) {
+        ((char*)&entry)[index] = 0;
+    }
+    for (index = 0; index < sizeof(SAVANXP_CLIPBOARD_URI_LIST); ++index) {
+        entry.name[index] = SAVANXP_CLIPBOARD_URI_LIST[index];
+    }
+    entry.data = (uint64_t)(uintptr_t)uris;
+    entry.length = sizeof(uris) - 1;
+    check(sxn_clipboard_set(handle, &entry, 1) == 0);
+    check(sxn_clipboard_info(handle, &info) == 0 && info.format_count == 1u && info.length == 0u);
+    check(sxn_clipboard_get(handle, SAVANXP_CLIPBOARD_URI_LIST, buffer, sizeof(buffer), &length) ==
+          (long)sizeof(uris) - 1);
+    check(length == sizeof(uris) - 1 && buffer[0] == 'f');
+    check(sxn_clipboard_info(clipboard, &info) == 0 && info.sequence == before.sequence);
+    check(sxn_clipboard_set(handle, &entry, 0) == 0);
+    (void)sxn_close(handle);
+    (void)sxn_close(clipboard);
+
+    for (index = 0; index < sizeof(nothing); ++index) {
+        ((char*)&nothing)[index] = 0;
+    }
+    check(sxnwm_drag_start(0, SAVANXP_DRAG_EFFECT_COPY) == -SAVANXP_EINVAL);
+    check(sxnwm_drag_start(&nothing, SAVANXP_DRAG_EFFECT_COPY) == -SAVANXP_EINVAL);
+    check(sxnwm_drag_reply(&nothing, 1, SAVANXP_DRAG_EFFECT_COPY) == -SAVANXP_EINVAL);
+    check(sizeof(struct savanxp_wm_drag_event) == 24u && sizeof(struct savanxp_wm_event) == 32u);
+    check(sxn_log("nativetest: drag calls done") == 0);
+}
+
 /* The child of test_clipboard_changes: copies after a pause, so the parent is
  * already asleep on its descriptor. */
 static void clipboard_copy_child(void) {
@@ -5386,6 +5480,8 @@ int main(int argc, char** argv) {
     test_clock_status();
     test_libc_platform();
     test_clipboard();
+    test_clipboard_calls();
+    test_drag_calls();
     test_clipboard_changes();
     test_view_at();
     test_file_sections();

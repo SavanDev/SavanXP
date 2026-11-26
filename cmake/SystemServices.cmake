@@ -144,6 +144,7 @@ savanxp_program(NAME winhost NATIVE SOURCES
     subsystems/win32/loader/services.c
     subsystems/win32/loader/files.c
     subsystems/win32/loader/threads.c
+    subsystems/win32/loader/clipboard.c
     subsystems/win32/loader/registry.c
     subsystems/win32/pe/pe.c)
 target_include_directories(winhost PRIVATE

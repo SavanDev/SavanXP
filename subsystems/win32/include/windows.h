@@ -951,6 +951,505 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 #define FSHIFT 0x04
 #define FCONTROL 0x08
 #define FALT 0x10
+/* ---- WP5: user32 for MFC (WIN32_WORDPAD_ROADMAP.md) ------------------------ */
+typedef struct HHOOK__ *HHOOK;
+typedef struct HDWP__ *HDWP;
+typedef struct HRGN__ *HRGN;
+typedef HANDLE HDROP;
+typedef LRESULT(CALLBACK *HOOKPROC)(int code, WPARAM wParam, LPARAM lParam);
+typedef BOOL(CALLBACK *WNDENUMPROC)(HWND, LPARAM);
+typedef struct tagCBT_CREATEWNDW {
+    CREATESTRUCTW *lpcs;
+    HWND hwndInsertAfter;
+} CBT_CREATEWNDW;
+typedef struct tagCBTACTIVATESTRUCT {
+    BOOL fMouse;
+    HWND hWndActive;
+} CBTACTIVATESTRUCT;
+typedef struct tagCWPSTRUCT {
+    LPARAM lParam;
+    WPARAM wParam;
+    UINT message;
+    HWND hwnd;
+} CWPSTRUCT;
+typedef struct tagCWPRETSTRUCT {
+    LRESULT lResult;
+    LPARAM lParam;
+    WPARAM wParam;
+    UINT message;
+    HWND hwnd;
+} CWPRETSTRUCT;
+typedef struct tagSTYLESTRUCT {
+    DWORD styleOld;
+    DWORD styleNew;
+} STYLESTRUCT;
+typedef struct tagNCCALCSIZE_PARAMS {
+    RECT rgrc[3];
+    WINDOWPOS *lppos;
+} NCCALCSIZE_PARAMS;
+typedef struct tagSCROLLINFO {
+    UINT cbSize;
+    UINT fMask;
+    int nMin;
+    int nMax;
+    UINT nPage;
+    int nPos;
+    int nTrackPos;
+} SCROLLINFO, *LPSCROLLINFO;
+typedef struct tagWINDOWPLACEMENT {
+    UINT length;
+    UINT flags;
+    UINT showCmd;
+    POINT ptMinPosition;
+    POINT ptMaxPosition;
+    RECT rcNormalPosition;
+} WINDOWPLACEMENT;
+typedef struct tagMEASUREITEMSTRUCT {
+    UINT CtlType;
+    UINT CtlID;
+    UINT itemID;
+    UINT itemWidth;
+    UINT itemHeight;
+    ULONG_PTR itemData;
+} MEASUREITEMSTRUCT;
+typedef struct tagDELETEITEMSTRUCT {
+    UINT CtlType;
+    UINT CtlID;
+    UINT itemID;
+    HWND hwndItem;
+    ULONG_PTR itemData;
+} DELETEITEMSTRUCT;
+typedef struct tagCOMPAREITEMSTRUCT {
+    UINT CtlType;
+    UINT CtlID;
+    HWND hwndItem;
+    UINT itemID1;
+    ULONG_PTR itemData1;
+    UINT itemID2;
+    ULONG_PTR itemData2;
+    DWORD dwLocaleId;
+} COMPAREITEMSTRUCT;
+typedef struct _DROPFILES {
+    DWORD pFiles;
+    POINT pt;
+    BOOL fNC;
+    BOOL fWide;
+} DROPFILES;
+#pragma pack(push, 2)
+typedef struct {
+    DWORD style;
+    DWORD dwExtendedStyle;
+    WORD cdit;
+    short x;
+    short y;
+    short cx;
+    short cy;
+} DLGTEMPLATE;
+#pragma pack(pop)
+#define WH_MSGFILTER (-1)
+#define WH_KEYBOARD 2
+#define WH_GETMESSAGE 3
+#define WH_CALLWNDPROC 4
+#define WH_CBT 5
+#define WH_MOUSE 7
+#define WH_CALLWNDPROCRET 12
+#define HC_ACTION 0
+#define HCBT_MOVESIZE 0
+#define HCBT_MINMAX 1
+#define HCBT_QS 2
+#define HCBT_CREATEWND 3
+#define HCBT_DESTROYWND 4
+#define HCBT_ACTIVATE 5
+#define HCBT_CLICKSKIPPED 6
+#define HCBT_KEYSKIPPED 7
+#define HCBT_SYSCOMMAND 8
+#define HCBT_SETFOCUS 9
+#define MSGF_DIALOGBOX 0
+#define MSGF_MESSAGEBOX 1
+#define MSGF_MENU 2
+#define MSGF_SCROLLBAR 5
+#define GWL_WNDPROC (-4)
+#define GWL_HINSTANCE (-6)
+#define GWL_HWNDPARENT (-8)
+#define GWL_ID (-12)
+#define GWL_STYLE (-16)
+#define GWL_EXSTYLE (-20)
+#define GWL_USERDATA (-21)
+#define DWL_MSGRESULT 0
+#define DWL_DLGPROC 4
+#define DWL_USER 8
+#define DLGWINDOWEXTRA 30
+#define ERROR_INVALID_INDEX 1413u
+#define ERROR_INVALID_WINDOW_HANDLE 1400u
+#define ERROR_INVALID_MENU_HANDLE 1401u
+#define ERROR_INVALID_HOOK_HANDLE 1404u
+#define ERROR_CLASS_DOES_NOT_EXIST 1411u
+#define ERROR_CLASS_HAS_WINDOWS 1412u
+#define ERROR_HOOK_NEEDS_HMOD 1428u
+#define ERROR_INVALID_HOOK_FILTER 1426u
+#define ERROR_CLIPBOARD_NOT_OPEN 1418u
+#define ERROR_HOTKEY_NOT_REGISTERED 1419u
+#define ERROR_NOT_FOUND 1168u
+#define GW_HWNDFIRST 0
+#define GW_HWNDLAST 1
+#define GW_HWNDNEXT 2
+#define GW_HWNDPREV 3
+#define GW_OWNER 4
+#define GW_CHILD 5
+#define GW_ENABLEDPOPUP 6
+#define SWP_NOSIZE 0x0001
+#define SWP_NOMOVE 0x0002
+#define SWP_NOZORDER 0x0004
+#define SWP_NOREDRAW 0x0008
+#define SWP_NOACTIVATE 0x0010
+#define SWP_FRAMECHANGED 0x0020
+#define SWP_SHOWWINDOW 0x0040
+#define SWP_HIDEWINDOW 0x0080
+#define SWP_NOCOPYBITS 0x0100
+#define SWP_NOOWNERZORDER 0x0200
+#define SWP_NOSENDCHANGING 0x0400
+#define SWP_DEFERERASE 0x2000
+#define SWP_ASYNCWINDOWPOS 0x4000
+#define HWND_TOP ((HWND)0)
+#define HWND_BOTTOM ((HWND)1)
+#define HWND_TOPMOST ((HWND)(long)-1)
+#define HWND_NOTOPMOST ((HWND)(long)-2)
+#define WM_SETREDRAW 0x000b
+#define WM_CHILDACTIVATE 0x0022
+#define WM_SETICON 0x0080
+#define WM_MEASUREITEM 0x002c
+#define WM_DELETEITEM 0x002d
+#define WM_VKEYTOITEM 0x002e
+#define WM_CHARTOITEM 0x002f
+#define WM_COMPAREITEM 0x0039
+#define WM_NOTIFY 0x004e
+#define WM_STYLECHANGING 0x007c
+#define WM_STYLECHANGED 0x007d
+#define WM_NCRBUTTONDOWN 0x00a4
+#define WM_NCRBUTTONUP 0x00a5
+#define WM_HSCROLL 0x0114
+#define WM_VSCROLL 0x0115
+#define WM_MOUSEWHEEL 0x020a
+#define WM_DROPFILES 0x0233
+#define WM_CUT 0x0300
+#define WM_COPY 0x0301
+#define WM_PASTE 0x0302
+#define WM_CLEAR 0x0303
+#define WM_UNDO 0x0304
+#define WM_RENDERFORMAT 0x0305
+#define WM_RENDERALLFORMATS 0x0306
+#define WM_DESTROYCLIPBOARD 0x0307
+#define WM_DRAWCLIPBOARD 0x0308
+#define WM_CHANGECBCHAIN 0x030d
+#define WM_CLIPBOARDUPDATE 0x031d
+#define WM_CTLCOLOR_FIRST WM_CTLCOLORMSGBOX
+#define WS_EX_TOPMOST 0x00000008L
+#define WS_EX_ACCEPTFILES 0x00000010L
+#define WS_EX_TRANSPARENT 0x00000020L
+#define WS_EX_TOOLWINDOW 0x00000080L
+#define WS_EX_WINDOWEDGE 0x00000100L
+#define WS_EX_CLIENTEDGE 0x00000200L
+#define WS_EX_STATICEDGE 0x00020000L
+#define WS_EX_APPWINDOW 0x00040000L
+#define SB_HORZ 0
+#define SB_VERT 1
+#define SB_CTL 2
+#define SB_BOTH 3
+#define SB_LINEUP 0
+#define SB_LINELEFT 0
+#define SB_LINEDOWN 1
+#define SB_LINERIGHT 1
+#define SB_PAGEUP 2
+#define SB_PAGELEFT 2
+#define SB_PAGEDOWN 3
+#define SB_PAGERIGHT 3
+#define SB_THUMBPOSITION 4
+#define SB_THUMBTRACK 5
+#define SB_TOP 6
+#define SB_LEFT 6
+#define SB_BOTTOM 7
+#define SB_RIGHT 7
+#define SB_ENDSCROLL 8
+#define SBS_HORZ 0x0000L
+#define SBS_VERT 0x0001L
+#define SIF_RANGE 0x0001
+#define SIF_PAGE 0x0002
+#define SIF_POS 0x0004
+#define SIF_DISABLENOSCROLL 0x0008
+#define SIF_TRACKPOS 0x0010
+#define SIF_ALL (SIF_RANGE | SIF_PAGE | SIF_POS | SIF_TRACKPOS)
+#define ESB_ENABLE_BOTH 0x0000
+#define ESB_DISABLE_LTUP 0x0001
+#define ESB_DISABLE_RTDN 0x0002
+#define ESB_DISABLE_BOTH 0x0003
+#define SW_SCROLLCHILDREN 0x0001
+#define SW_INVALIDATE 0x0002
+#define SW_ERASE 0x0004
+#define RDW_INVALIDATE 0x0001
+#define RDW_INTERNALPAINT 0x0002
+#define RDW_ERASE 0x0004
+#define RDW_VALIDATE 0x0008
+#define RDW_NOINTERNALPAINT 0x0010
+#define RDW_NOERASE 0x0020
+#define RDW_NOCHILDREN 0x0040
+#define RDW_ALLCHILDREN 0x0080
+#define RDW_UPDATENOW 0x0100
+#define RDW_ERASENOW 0x0200
+#define RDW_FRAME 0x0400
+#define RDW_NOFRAME 0x0800
+#define NULLREGION 1
+#define SIMPLEREGION 2
+#define COMPLEXREGION 3
+#define ERROR_REGION 0
+#define HTERROR (-2)
+#define HTTRANSPARENT (-1)
+#define HTNOWHERE 0
+#define HTCAPTION 2
+#define HTSYSMENU 3
+#define HTMENU 5
+#define HTHSCROLL 6
+#define HTVSCROLL 7
+#define HTBORDER 18
+#define MF_STRING 0x0000L
+#define MF_UNCHECKED 0x0000L
+#define MF_BITMAP 0x0004L
+#define MF_DEFAULT 0x1000L
+#define MF_RIGHTJUSTIFY 0x4000L
+#define TPM_LEFTBUTTON 0x0000
+#define TPM_RIGHTBUTTON 0x0002
+#define TPM_LEFTALIGN 0x0000
+#define TPM_CENTERALIGN 0x0004
+#define TPM_RIGHTALIGN 0x0008
+#define TPM_TOPALIGN 0x0000
+#define TPM_VCENTERALIGN 0x0010
+#define TPM_BOTTOMALIGN 0x0020
+#define TPM_NONOTIFY 0x0080
+#define TPM_RETURNCMD 0x0100
+#define ES_LEFT 0x0000L
+#define ES_CENTER 0x0001L
+#define ES_RIGHT 0x0002L
+#define ES_MULTILINE 0x0004L
+#define ES_UPPERCASE 0x0008L
+#define ES_LOWERCASE 0x0010L
+#define ES_PASSWORD 0x0020L
+#define ES_AUTOVSCROLL 0x0040L
+#define ES_AUTOHSCROLL 0x0080L
+#define ES_NOHIDESEL 0x0100L
+#define ES_READONLY 0x0800L
+#define ES_WANTRETURN 0x1000L
+#define ES_NUMBER 0x2000L
+#define EM_GETSEL 0x00b0
+#define EM_SETSEL 0x00b1
+#define EM_GETRECT 0x00b2
+#define EM_SCROLLCARET 0x00b7
+#define EM_GETMODIFY 0x00b8
+#define EM_SETMODIFY 0x00b9
+#define EM_GETLINECOUNT 0x00ba
+#define EM_LINEINDEX 0x00bb
+#define EM_LINELENGTH 0x00c1
+#define EM_REPLACESEL 0x00c2
+#define EM_GETLINE 0x00c4
+#define EM_LIMITTEXT 0x00c5
+#define EM_SETLIMITTEXT EM_LIMITTEXT
+#define EM_CANUNDO 0x00c6
+#define EM_UNDO 0x00c7
+#define EM_LINEFROMCHAR 0x00c9
+#define EM_SETPASSWORDCHAR 0x00cc
+#define EM_EMPTYUNDOBUFFER 0x00cd
+#define EM_GETFIRSTVISIBLELINE 0x00ce
+#define EM_SETREADONLY 0x00cf
+#define EM_GETPASSWORDCHAR 0x00d2
+#define EM_SETMARGINS 0x00d3
+#define EM_GETMARGINS 0x00d4
+#define EM_GETLIMITTEXT 0x00d5
+#define EM_POSFROMCHAR 0x00d6
+#define EM_CHARFROMPOS 0x00d7
+#define EC_LEFTMARGIN 0x0001
+#define EC_RIGHTMARGIN 0x0002
+#define EC_USEFONTINFO 0xffff
+#define EN_SETFOCUS 0x0100
+#define EN_KILLFOCUS 0x0200
+#define EN_CHANGE 0x0300
+#define EN_UPDATE 0x0400
+#define EN_ERRSPACE 0x0500
+#define EN_MAXTEXT 0x0501
+#define EN_HSCROLL 0x0601
+#define EN_VSCROLL 0x0602
+#define LBS_NOTIFY 0x0001L
+#define LBS_SORT 0x0002L
+#define LBS_NOREDRAW 0x0004L
+#define LBS_MULTIPLESEL 0x0008L
+#define LBS_OWNERDRAWFIXED 0x0010L
+#define LBS_OWNERDRAWVARIABLE 0x0020L
+#define LBS_HASSTRINGS 0x0040L
+#define LBS_USETABSTOPS 0x0080L
+#define LBS_NOINTEGRALHEIGHT 0x0100L
+#define LBS_MULTICOLUMN 0x0200L
+#define LBS_WANTKEYBOARDINPUT 0x0400L
+#define LBS_EXTENDEDSEL 0x0800L
+#define LBS_DISABLENOSCROLL 0x1000L
+#define LBS_NODATA 0x2000L
+#define LBS_COMBOBOX 0x8000L
+#define LB_OKAY 0
+#define LB_ERR (-1)
+#define LB_ERRSPACE (-2)
+#define LB_ADDSTRING 0x0180
+#define LB_INSERTSTRING 0x0181
+#define LB_DELETESTRING 0x0182
+#define LB_RESETCONTENT 0x0184
+#define LB_SETSEL 0x0185
+#define LB_SETCURSEL 0x0186
+#define LB_GETSEL 0x0187
+#define LB_GETCURSEL 0x0188
+#define LB_GETTEXT 0x0189
+#define LB_GETTEXTLEN 0x018a
+#define LB_GETCOUNT 0x018b
+#define LB_SELECTSTRING 0x018c
+#define LB_GETTOPINDEX 0x018e
+#define LB_FINDSTRING 0x018f
+#define LB_GETSELCOUNT 0x0190
+#define LB_GETSELITEMS 0x0191
+#define LB_SETTOPINDEX 0x0197
+#define LB_GETITEMRECT 0x0198
+#define LB_GETITEMDATA 0x0199
+#define LB_SETITEMDATA 0x019a
+#define LB_SETCARETINDEX 0x019e
+#define LB_GETCARETINDEX 0x019f
+#define LB_SETITEMHEIGHT 0x01a0
+#define LB_GETITEMHEIGHT 0x01a1
+#define LB_FINDSTRINGEXACT 0x01a2
+#define LB_INITSTORAGE 0x01a8
+#define LB_ITEMFROMPOINT 0x01a9
+#define LBN_ERRSPACE (-2)
+#define LBN_SELCHANGE 1
+#define LBN_DBLCLK 2
+#define LBN_SELCANCEL 3
+#define LBN_SETFOCUS 4
+#define LBN_KILLFOCUS 5
+#define CBS_SIMPLE 0x0001L
+#define CBS_DROPDOWN 0x0002L
+#define CBS_DROPDOWNLIST 0x0003L
+#define CBS_OWNERDRAWFIXED 0x0010L
+#define CBS_OWNERDRAWVARIABLE 0x0020L
+#define CBS_AUTOHSCROLL 0x0040L
+#define CBS_OEMCONVERT 0x0080L
+#define CBS_SORT 0x0100L
+#define CBS_HASSTRINGS 0x0200L
+#define CBS_NOINTEGRALHEIGHT 0x0400L
+#define CBS_DISABLENOSCROLL 0x0800L
+#define CBS_UPPERCASE 0x2000L
+#define CBS_LOWERCASE 0x4000L
+#define CB_OKAY 0
+#define CB_ERR (-1)
+#define CB_ERRSPACE (-2)
+#define CB_GETEDITSEL 0x0140
+#define CB_LIMITTEXT 0x0141
+#define CB_SETEDITSEL 0x0142
+#define CB_ADDSTRING 0x0143
+#define CB_DELETESTRING 0x0144
+#define CB_GETCOUNT 0x0146
+#define CB_GETCURSEL 0x0147
+#define CB_GETLBTEXT 0x0148
+#define CB_GETLBTEXTLEN 0x0149
+#define CB_INSERTSTRING 0x014a
+#define CB_RESETCONTENT 0x014b
+#define CB_FINDSTRING 0x014c
+#define CB_SELECTSTRING 0x014d
+#define CB_SETCURSEL 0x014e
+#define CB_SHOWDROPDOWN 0x014f
+#define CB_GETITEMDATA 0x0150
+#define CB_SETITEMDATA 0x0151
+#define CB_GETDROPPEDCONTROLRECT 0x0152
+#define CB_SETITEMHEIGHT 0x0153
+#define CB_GETITEMHEIGHT 0x0154
+#define CB_SETEXTENDEDUI 0x0155
+#define CB_GETEXTENDEDUI 0x0156
+#define CB_GETDROPPEDSTATE 0x0157
+#define CB_FINDSTRINGEXACT 0x0158
+#define CB_GETTOPINDEX 0x015b
+#define CB_SETTOPINDEX 0x015c
+#define CB_GETDROPPEDWIDTH 0x015f
+#define CB_SETDROPPEDWIDTH 0x0160
+#define CB_INITSTORAGE 0x0161
+#define CBN_ERRSPACE (-1)
+#define CBN_SELCHANGE 1
+#define CBN_DBLCLK 2
+#define CBN_SETFOCUS 3
+#define CBN_KILLFOCUS 4
+#define CBN_EDITCHANGE 5
+#define CBN_EDITUPDATE 6
+#define CBN_DROPDOWN 7
+#define CBN_CLOSEUP 8
+#define CBN_SELENDOK 9
+#define CBN_SELENDCANCEL 10
+#define ODT_LISTBOX 2
+#define ODT_COMBOBOX 3
+#define ODS_COMBOBOXEDIT 0x1000
+#define CF_TEXT 1
+#define CF_BITMAP 2
+#define CF_METAFILEPICT 3
+#define CF_OEMTEXT 7
+#define CF_DIB 8
+#define CF_UNICODETEXT 13
+#define CF_ENHMETAFILE 14
+#define CF_HDROP 15
+#define CF_LOCALE 16
+#define CF_DIBV5 17
+#define CF_PRIVATEFIRST 0x0200
+#define CF_GDIOBJFIRST 0x0300
+#define VK_PRIOR 0x21
+#define VK_NEXT 0x22
+#define VK_END 0x23
+#define VK_HOME 0x24
+#define VK_INSERT 0x2d
+#define VK_DELETE 0x2e
+#define VK_F3 0x72
+#define VK_F4_KEY VK_F4
+#define MB_ICONWARNING MB_ICONEXCLAMATION
+#define IDC_SIZEALL MAKEINTRESOURCEW(32646)
+#define COLOR_INFOTEXT 23
+#define COLOR_INFOBK 24
+#define SM_CXSCREEN 0
+#define SM_CYSCREEN 1
+#define SM_CXVSCROLL 2
+#define SM_CYHSCROLL 3
+#define SM_CYCAPTION 4
+#define SM_CXBORDER 5
+#define SM_CYBORDER 6
+#define SM_CXDLGFRAME 7
+#define SM_CYDLGFRAME 8
+#define SM_CYVTHUMB 9
+#define SM_CXHTHUMB 10
+#define SM_CXICON 11
+#define SM_CYICON 12
+#define SM_CYMENU 15
+#define SM_CYVSCROLL 20
+#define SM_CXHSCROLL 21
+#define SM_CXFRAME 32
+#define SM_CYFRAME 33
+#define SM_CXDOUBLECLK 36
+#define SM_CYDOUBLECLK 37
+#define SM_CXEDGE 45
+#define SM_CYEDGE 46
+#define SM_CYMENUCHECK 72
+#define BDR_RAISEDOUTER 0x0001
+#define BDR_SUNKENOUTER 0x0002
+#define BDR_RAISEDINNER 0x0004
+#define BDR_SUNKENINNER 0x0008
+#define EDGE_RAISED (BDR_RAISEDOUTER | BDR_RAISEDINNER)
+#define EDGE_SUNKEN (BDR_SUNKENOUTER | BDR_SUNKENINNER)
+#define EDGE_ETCHED (BDR_SUNKENOUTER | BDR_RAISEDINNER)
+#define EDGE_BUMP (BDR_RAISEDOUTER | BDR_SUNKENINNER)
+#define BF_LEFT 0x0001
+#define BF_TOP 0x0002
+#define BF_RIGHT 0x0004
+#define BF_BOTTOM 0x0008
+#define BF_RECT (BF_LEFT | BF_TOP | BF_RIGHT | BF_BOTTOM)
+#define BF_MIDDLE 0x0800
+#define BF_SOFT 0x1000
+#define BF_ADJUST 0x2000
+#define BF_FLAT 0x4000
+#define BF_MONO 0x8000
 
 #ifndef SXW_BUILDING_KERNEL32
 #define SXW_KERNEL32_API DECLSPEC_IMPORT
@@ -1025,6 +1524,9 @@ SXW_KERNEL32_API BOOL WINAPI GetVolumeInformationW(LPCWSTR lpRootPathName, LPWST
                                                    DWORD nVolumeNameSize, LPDWORD lpVolumeSerialNumber,
                                                    LPDWORD lpMaximumComponentLength, LPDWORD lpFileSystemFlags,
                                                    LPWSTR lpFileSystemNameBuffer, DWORD nFileSystemNameSize);
+#define NORM_IGNORECASE 0x1u
+SXW_KERNEL32_API int WINAPI CompareStringW(LCID Locale, DWORD dwCmpFlags, LPCWSTR lpString1, int cchCount1,
+                                          LPCWSTR lpString2, int cchCount2);
 SXW_KERNEL32_API int WINAPI WideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr,
                                                 int cchWideChar, LPSTR lpMultiByteStr, int cbMultiByte,
                                                 LPCSTR lpDefaultChar, BOOL *lpUsedDefaultChar);
@@ -1124,6 +1626,158 @@ SXW_USER32_API UINT WINAPI IsDlgButtonChecked(HWND hDlg, int nIDButton);
 SXW_USER32_API BOOL WINAPI CheckRadioButton(HWND hDlg, int nIDFirstButton, int nIDLastButton, int nIDCheckButton);
 SXW_USER32_API int WINAPI MessageBoxW(HWND hWnd, LPCWSTR lpText, LPCWSTR lpCaption, UINT uType);
 SXW_USER32_API BOOL WINAPI WinHelpW(HWND hWndMain, LPCWSTR lpszHelp, UINT uCommand, ULONG_PTR dwData);
+/* WP5: hooks, subclassing, the window tree, positions, carets, scrolling,
+ * menus made at run time, modeless dialogs, the standard controls' helpers
+ * and the clipboard. */
+SXW_USER32_API HHOOK WINAPI SetWindowsHookExW(int idHook, HOOKPROC lpfn, HINSTANCE hmod, DWORD dwThreadId);
+SXW_USER32_API BOOL WINAPI UnhookWindowsHookEx(HHOOK hhk);
+SXW_USER32_API LRESULT WINAPI CallNextHookEx(HHOOK hhk, int nCode, WPARAM wParam, LPARAM lParam);
+SXW_USER32_API BOOL WINAPI CallMsgFilterW(LPMSG lpMsg, int nCode);
+SXW_USER32_API LONG WINAPI GetWindowLongW(HWND hWnd, int nIndex);
+SXW_USER32_API LONG WINAPI SetWindowLongW(HWND hWnd, int nIndex, LONG dwNewLong);
+SXW_USER32_API LRESULT WINAPI CallWindowProcW(WNDPROC lpPrevWndFunc, HWND hWnd, UINT Msg, WPARAM wParam,
+                                              LPARAM lParam);
+SXW_USER32_API BOOL WINAPI SetPropW(HWND hWnd, LPCWSTR lpString, HANDLE hData);
+SXW_USER32_API HANDLE WINAPI GetPropW(HWND hWnd, LPCWSTR lpString);
+SXW_USER32_API HANDLE WINAPI RemovePropW(HWND hWnd, LPCWSTR lpString);
+SXW_USER32_API HWND WINAPI GetParent(HWND hWnd);
+SXW_USER32_API HWND WINAPI SetParent(HWND hWndChild, HWND hWndNewParent);
+SXW_USER32_API HWND WINAPI GetWindow(HWND hWnd, UINT uCmd);
+SXW_USER32_API HWND WINAPI GetTopWindow(HWND hWnd);
+SXW_USER32_API BOOL WINAPI IsChild(HWND hWndParent, HWND hWnd);
+SXW_USER32_API BOOL WINAPI IsWindow(HWND hWnd);
+SXW_USER32_API BOOL WINAPI IsWindowVisible(HWND hWnd);
+SXW_USER32_API BOOL WINAPI IsWindowEnabled(HWND hWnd);
+SXW_USER32_API BOOL WINAPI IsZoomed(HWND hWnd);
+SXW_USER32_API BOOL WINAPI EnumChildWindows(HWND hWndParent, WNDENUMPROC lpEnumFunc, LPARAM lParam);
+SXW_USER32_API BOOL WINAPI EnumWindows(WNDENUMPROC lpEnumFunc, LPARAM lParam);
+SXW_USER32_API int WINAPI GetClassNameW(HWND hWnd, LPWSTR lpClassName, int nMaxCount);
+SXW_USER32_API BOOL WINAPI GetClassInfoW(HINSTANCE hInstance, LPCWSTR lpClassName, WNDCLASSW *lpWndClass);
+SXW_USER32_API BOOL WINAPI UnregisterClassW(LPCWSTR lpClassName, HINSTANCE hInstance);
+SXW_USER32_API int WINAPI GetWindowTextW(HWND hWnd, LPWSTR lpString, int nMaxCount);
+SXW_USER32_API int WINAPI GetWindowTextLengthW(HWND hWnd);
+SXW_USER32_API BOOL WINAPI SetWindowTextW(HWND hWnd, LPCWSTR lpString);
+SXW_USER32_API int WINAPI GetDlgCtrlID(HWND hWnd);
+SXW_USER32_API BOOL WINAPI GetWindowRect(HWND hWnd, LPRECT lpRect);
+SXW_USER32_API BOOL WINAPI ScreenToClient(HWND hWnd, LPPOINT lpPoint);
+SXW_USER32_API int WINAPI MapWindowPoints(HWND hWndFrom, HWND hWndTo, LPPOINT lpPoints, UINT cPoints);
+SXW_USER32_API HWND WINAPI WindowFromPoint(POINT Point);
+SXW_USER32_API HWND WINAPI ChildWindowFromPoint(HWND hWndParent, POINT Point);
+SXW_USER32_API BOOL WINAPI SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy,
+                                        UINT uFlags);
+SXW_USER32_API HDWP WINAPI BeginDeferWindowPos(int nNumWindows);
+SXW_USER32_API HDWP WINAPI DeferWindowPos(HDWP hWinPosInfo, HWND hWnd, HWND hWndInsertAfter, int x, int y, int cx,
+                                          int cy, UINT uFlags);
+SXW_USER32_API BOOL WINAPI EndDeferWindowPos(HDWP hWinPosInfo);
+SXW_USER32_API BOOL WINAPI BringWindowToTop(HWND hWnd);
+SXW_USER32_API BOOL WINAPI GetWindowPlacement(HWND hWnd, WINDOWPLACEMENT *lpwndpl);
+SXW_USER32_API BOOL WINAPI SetWindowPlacement(HWND hWnd, const WINDOWPLACEMENT *lpwndpl);
+SXW_USER32_API HWND WINAPI GetFocus(void);
+SXW_USER32_API HWND WINAPI GetActiveWindow(void);
+SXW_USER32_API HWND WINAPI SetActiveWindow(HWND hWnd);
+SXW_USER32_API HWND WINAPI GetForegroundWindow(void);
+SXW_USER32_API BOOL WINAPI SetForegroundWindow(HWND hWnd);
+SXW_USER32_API HWND WINAPI GetLastActivePopup(HWND hWnd);
+SXW_USER32_API BOOL WINAPI ShowOwnedPopups(HWND hWnd, BOOL fShow);
+SXW_USER32_API BOOL WINAPI RedrawWindow(HWND hWnd, const RECT *lprcUpdate, HRGN hrgnUpdate, UINT flags);
+SXW_USER32_API BOOL WINAPI ValidateRect(HWND hWnd, const RECT *lpRect);
+SXW_USER32_API BOOL WINAPI InvalidateRgn(HWND hWnd, HRGN hRgn, BOOL bErase);
+SXW_USER32_API BOOL WINAPI GetUpdateRect(HWND hWnd, LPRECT lpRect, BOOL bErase);
+SXW_USER32_API HDC WINAPI GetWindowDC(HWND hWnd);
+SXW_USER32_API HDC WINAPI GetDCEx(HWND hWnd, HRGN hrgnClip, DWORD flags);
+SXW_USER32_API HWND WINAPI WindowFromDC(HDC hDC);
+SXW_USER32_API BOOL WINAPI LockWindowUpdate(HWND hWndLock);
+SXW_USER32_API LRESULT WINAPI SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+SXW_USER32_API LRESULT WINAPI SendMessageTimeoutW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam, UINT fuFlags,
+                                                  UINT uTimeout, ULONG_PTR *lpdwResult);
+SXW_USER32_API BOOL WINAPI InSendMessage(void);
+SXW_USER32_API BOOL WINAPI WaitMessage(void);
+SXW_USER32_API DWORD WINAPI GetMessagePos(void);
+SXW_USER32_API LONG WINAPI GetMessageTime(void);
+SXW_USER32_API short WINAPI GetAsyncKeyState(int vKey);
+SXW_USER32_API BOOL WINAPI MessageBeep(UINT uType);
+SXW_USER32_API int WINAPI GetSystemMetrics(int nIndex);
+SXW_USER32_API BOOL WINAPI CreateCaret(HWND hWnd, HBITMAP hBitmap, int nWidth, int nHeight);
+SXW_USER32_API BOOL WINAPI DestroyCaret(void);
+SXW_USER32_API BOOL WINAPI ShowCaret(HWND hWnd);
+SXW_USER32_API BOOL WINAPI HideCaret(HWND hWnd);
+SXW_USER32_API BOOL WINAPI SetCaretPos(int X, int Y);
+SXW_USER32_API BOOL WINAPI GetCaretPos(LPPOINT lpPoint);
+SXW_USER32_API UINT WINAPI GetCaretBlinkTime(void);
+SXW_USER32_API BOOL WINAPI SetCaretBlinkTime(UINT uMSeconds);
+SXW_USER32_API int WINAPI ScrollWindowEx(HWND hWnd, int dx, int dy, const RECT *prcScroll, const RECT *prcClip,
+                                         HRGN hrgnUpdate, LPRECT prcUpdate, UINT flags);
+SXW_USER32_API BOOL WINAPI ScrollWindow(HWND hWnd, int XAmount, int YAmount, const RECT *lpRect,
+                                        const RECT *lpClipRect);
+SXW_USER32_API int WINAPI SetScrollInfo(HWND hwnd, int nBar, const SCROLLINFO *lpsi, BOOL redraw);
+SXW_USER32_API BOOL WINAPI GetScrollInfo(HWND hwnd, int nBar, LPSCROLLINFO lpsi);
+SXW_USER32_API int WINAPI SetScrollPos(HWND hWnd, int nBar, int nPos, BOOL bRedraw);
+SXW_USER32_API int WINAPI GetScrollPos(HWND hWnd, int nBar);
+SXW_USER32_API BOOL WINAPI SetScrollRange(HWND hWnd, int nBar, int nMinPos, int nMaxPos, BOOL bRedraw);
+SXW_USER32_API BOOL WINAPI GetScrollRange(HWND hWnd, int nBar, int *lpMinPos, int *lpMaxPos);
+SXW_USER32_API BOOL WINAPI ShowScrollBar(HWND hWnd, int wBar, BOOL bShow);
+SXW_USER32_API BOOL WINAPI EnableScrollBar(HWND hWnd, UINT wSBflags, UINT wArrows);
+SXW_USER32_API HMENU WINAPI CreateMenu(void);
+SXW_USER32_API HMENU WINAPI CreatePopupMenu(void);
+SXW_USER32_API BOOL WINAPI DestroyMenu(HMENU hMenu);
+SXW_USER32_API BOOL WINAPI IsMenu(HMENU hMenu);
+SXW_USER32_API HMENU WINAPI LoadMenuW(HINSTANCE hInstance, LPCWSTR lpMenuName);
+SXW_USER32_API BOOL WINAPI AppendMenuW(HMENU hMenu, UINT uFlags, UINT_PTR uIDNewItem, LPCWSTR lpNewItem);
+SXW_USER32_API BOOL WINAPI InsertMenuW(HMENU hMenu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem,
+                                       LPCWSTR lpNewItem);
+SXW_USER32_API BOOL WINAPI ModifyMenuW(HMENU hMnu, UINT uPosition, UINT uFlags, UINT_PTR uIDNewItem,
+                                       LPCWSTR lpNewItem);
+SXW_USER32_API BOOL WINAPI DeleteMenu(HMENU hMenu, UINT uPosition, UINT uFlags);
+SXW_USER32_API BOOL WINAPI RemoveMenu(HMENU hMenu, UINT uPosition, UINT uFlags);
+SXW_USER32_API DWORD WINAPI CheckMenuItem(HMENU hMenu, UINT uIDCheckItem, UINT uCheck);
+SXW_USER32_API UINT WINAPI GetMenuState(HMENU hMenu, UINT uId, UINT uFlags);
+SXW_USER32_API int WINAPI GetMenuStringW(HMENU hMenu, UINT uIDItem, LPWSTR lpString, int cchMax, UINT flags);
+SXW_USER32_API int WINAPI GetMenuItemCount(HMENU hMenu);
+SXW_USER32_API UINT WINAPI GetMenuItemID(HMENU hMenu, int nPos);
+SXW_USER32_API HMENU WINAPI GetSubMenu(HMENU hMenu, int nPos);
+SXW_USER32_API BOOL WINAPI SetMenu(HWND hWnd, HMENU hMenu);
+SXW_USER32_API BOOL WINAPI DrawMenuBar(HWND hWnd);
+SXW_USER32_API HMENU WINAPI GetSystemMenu(HWND hWnd, BOOL bRevert);
+SXW_USER32_API LONG WINAPI GetMenuCheckMarkDimensions(void);
+SXW_USER32_API BOOL WINAPI SetMenuItemBitmaps(HMENU hMenu, UINT uPosition, UINT uFlags, HBITMAP hBitmapUnchecked,
+                                              HBITMAP hBitmapChecked);
+SXW_USER32_API BOOL WINAPI TrackPopupMenu(HMENU hMenu, UINT uFlags, int x, int y, int nReserved, HWND hWnd,
+                                          const RECT *prcRect);
+SXW_USER32_API HWND WINAPI CreateDialogIndirectParamW(HINSTANCE hInstance, const DLGTEMPLATE *lpTemplate,
+                                                      HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+SXW_USER32_API HWND WINAPI CreateDialogParamW(HINSTANCE hInstance, LPCWSTR lpTemplateName, HWND hWndParent,
+                                              DLGPROC lpDialogFunc, LPARAM dwInitParam);
+SXW_USER32_API INT_PTR WINAPI DialogBoxIndirectParamW(HINSTANCE hInstance, const DLGTEMPLATE *hDialogTemplate,
+                                                      HWND hWndParent, DLGPROC lpDialogFunc, LPARAM dwInitParam);
+SXW_USER32_API BOOL WINAPI IsDialogMessageW(HWND hDlg, LPMSG lpMsg);
+SXW_USER32_API LRESULT WINAPI DefDlgProcW(HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lParam);
+SXW_USER32_API BOOL WINAPI MapDialogRect(HWND hDlg, LPRECT lpRect);
+SXW_USER32_API LONG WINAPI GetDialogBaseUnits(void);
+SXW_USER32_API HWND WINAPI GetNextDlgTabItem(HWND hDlg, HWND hCtl, BOOL bPrevious);
+SXW_USER32_API HWND WINAPI GetNextDlgGroupItem(HWND hDlg, HWND hCtl, BOOL bPrevious);
+SXW_USER32_API LRESULT WINAPI SendDlgItemMessageW(HWND hDlg, int nIDDlgItem, UINT Msg, WPARAM wParam,
+                                                  LPARAM lParam);
+SXW_USER32_API BOOL WINAPI SetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPCWSTR lpString);
+SXW_USER32_API UINT WINAPI GetDlgItemTextW(HWND hDlg, int nIDDlgItem, LPWSTR lpString, int cchMax);
+SXW_USER32_API BOOL WINAPI SetDlgItemInt(HWND hDlg, int nIDDlgItem, UINT uValue, BOOL bSigned);
+SXW_USER32_API UINT WINAPI GetDlgItemInt(HWND hDlg, int nIDDlgItem, BOOL *lpTranslated, BOOL bSigned);
+SXW_USER32_API int WINAPI FillRect(HDC hDC, const RECT *lprc, HBRUSH hbr);
+SXW_USER32_API BOOL WINAPI DrawEdge(HDC hdc, LPRECT qrc, UINT edge, UINT grfFlags);
+SXW_USER32_API BOOL WINAPI DrawFocusRect(HDC hDC, const RECT *lprc);
+SXW_USER32_API HBRUSH WINAPI GetSysColorBrush(int nIndex);
+SXW_USER32_API BOOL WINAPI OpenClipboard(HWND hWndNewOwner);
+SXW_USER32_API BOOL WINAPI CloseClipboard(void);
+SXW_USER32_API BOOL WINAPI EmptyClipboard(void);
+SXW_USER32_API HANDLE WINAPI SetClipboardData(UINT uFormat, HANDLE hMem);
+SXW_USER32_API HANDLE WINAPI GetClipboardData(UINT uFormat);
+SXW_USER32_API BOOL WINAPI IsClipboardFormatAvailable(UINT format);
+SXW_USER32_API UINT WINAPI EnumClipboardFormats(UINT format);
+SXW_USER32_API int WINAPI CountClipboardFormats(void);
+SXW_USER32_API UINT WINAPI RegisterClipboardFormatW(LPCWSTR lpszFormat);
+SXW_USER32_API int WINAPI GetClipboardFormatNameW(UINT format, LPWSTR lpszFormatName, int cchMaxCount);
+SXW_USER32_API DWORD WINAPI GetClipboardSequenceNumber(void);
+SXW_USER32_API HWND WINAPI GetClipboardOwner(void);
+SXW_USER32_API HWND WINAPI GetOpenClipboardWindow(void);
 
 #ifndef SXW_BUILDING_SHELL32
 #define SXW_SHELL32_API DECLSPEC_IMPORT
@@ -1132,6 +1786,10 @@ SXW_USER32_API BOOL WINAPI WinHelpW(HWND hWndMain, LPCWSTR lpszHelp, UINT uComma
 #endif
 
 SXW_SHELL32_API int WINAPI ShellAboutW(HWND hWnd, LPCWSTR szApp, LPCWSTR szOtherStuff, HICON hIcon);
+SXW_SHELL32_API void WINAPI DragAcceptFiles(HWND hWnd, BOOL fAccept);
+SXW_SHELL32_API UINT WINAPI DragQueryFileW(HDROP hDrop, UINT iFile, LPWSTR lpszFile, UINT cch);
+SXW_SHELL32_API BOOL WINAPI DragQueryPoint(HDROP hDrop, LPPOINT ppt);
+SXW_SHELL32_API void WINAPI DragFinish(HDROP hDrop);
 
 #ifndef SXW_BUILDING_COMCTL32
 #define SXW_COMCTL32_API DECLSPEC_IMPORT
@@ -1178,5 +1836,8 @@ SXW_GDI32_API BOOL WINAPI StretchBlt(HDC hdcDest, int xDest, int yDest, int wDes
                                      int ySrc, int wSrc, int hSrc, DWORD rop);
 SXW_GDI32_API int WINAPI GetObjectA(HANDLE h, int c, LPVOID pv);
 SXW_GDI32_API BOOL WINAPI GetDCOrgEx(HDC hdc, LPPOINT lppt);
+SXW_GDI32_API int WINAPI SetBkMode(HDC hdc, int mode);
+SXW_GDI32_API COLORREF WINAPI GetBkColor(HDC hdc);
+SXW_GDI32_API COLORREF WINAPI GetTextColor(HDC hdc);
 
 #endif

@@ -5983,6 +5983,22 @@ static int windowd_native_hw_selftest(void)
     return 0;
 }
 
+static uint32_t windowd_drag_effect(uint32_t answer, uint32_t allowed);
+
+/* A drop takes what the target answered and the source allows, copy before
+ * move before link (docs/desktop/DRAG_AND_DROP.md). */
+static int windowd_drag_effect_selftest(void)
+{
+    return windowd_drag_effect(SAVANXP_DRAG_EFFECT_COPY, SAVANXP_DRAG_EFFECT_COPY) == SAVANXP_DRAG_EFFECT_COPY &&
+                   windowd_drag_effect(SAVANXP_DRAG_EFFECT_MOVE, SAVANXP_DRAG_EFFECT_COPY) == 0u &&
+                   windowd_drag_effect(SAVANXP_DRAG_EFFECTS, SAVANXP_DRAG_EFFECT_MOVE | SAVANXP_DRAG_EFFECT_LINK) ==
+                       SAVANXP_DRAG_EFFECT_MOVE &&
+                   windowd_drag_effect(SAVANXP_DRAG_EFFECT_LINK | 0x80u, SAVANXP_DRAG_EFFECTS) == SAVANXP_DRAG_EFFECT_LINK &&
+                   windowd_drag_effect(0x80u, 0xffffffffu) == 0u
+               ? 0
+               : 1;
+}
+
 static int windowd_selftest(void)
 {
     struct windowd_session session;
@@ -6027,6 +6043,12 @@ static int windowd_selftest(void)
     if (windowd_capture_motion_selftest() != 0)
     {
         puts_fd(2, "DESKTOP SMOKE FAIL captured pointer motion\n");
+        return 1;
+    }
+
+    if (windowd_drag_effect_selftest() != 0)
+    {
+        puts_fd(2, "DESKTOP SMOKE FAIL drag effect\n");
         return 1;
     }
 
@@ -7116,6 +7138,208 @@ static void publish_desktop_pointer(struct windowd_session* session, int x, int 
         publish_client_pointer(&session->desktop_windows[i], x, y, buttons, session->gfx.info.width, session->gfx.info.height);
 }
 
+/* ---- Drag and drop (docs/desktop/DRAG_AND_DROP.md) ------------------------ */
+
+/* The effect a drop takes: what the target answered and the source allows,
+ * copy before move before link; 0 for none. */
+static uint32_t windowd_drag_effect(uint32_t answer, uint32_t allowed)
+{
+    const uint32_t both = answer & allowed & SAVANXP_DRAG_EFFECTS;
+
+    if ((both & SAVANXP_DRAG_EFFECT_COPY) != 0u)
+    {
+        return SAVANXP_DRAG_EFFECT_COPY;
+    }
+    if ((both & SAVANXP_DRAG_EFFECT_MOVE) != 0u)
+    {
+        return SAVANXP_DRAG_EFFECT_MOVE;
+    }
+    return both & SAVANXP_DRAG_EFFECT_LINK;
+}
+
+static int drag_client_alive(const struct windowd_client *client, long pid)
+{
+    return client != 0 && pid > 0 && client->pid == pid;
+}
+
+static void send_drag(const struct windowd_session *session, const struct windowd_client *client, uint32_t phase,
+    int x, int y, uint32_t effect)
+{
+    struct savanxp_wm_event event;
+    const struct sx_rect area = windowd_client_surface_rect(client);
+
+    memset(&event, 0, sizeof(event));
+    event.kind = SAVANXP_WM_EVENT_DRAG;
+    event.payload.drag.phase = phase;
+    event.payload.drag.x = x - area.x;
+    event.payload.drag.y = y - area.y;
+    event.payload.drag.drag = session->drag.id;
+    event.payload.drag.effects = session->drag.effects;
+    event.payload.drag.effect = effect;
+    (void)route_event(client, &event);
+}
+
+/* What the target answered for this drag, as an effect the source allows.
+ * The header is the client's memory: each field is read once. */
+static uint32_t drag_answer(const struct windowd_session *session, const struct windowd_client *target)
+{
+    uint32_t drag;
+    uint32_t effect;
+
+    if (target == 0 || target->header == 0)
+    {
+        return 0;
+    }
+    drag = ((volatile struct savanxp_wm_drag *)&target->header->drag)->reply_drag;
+    effect = ((volatile struct savanxp_wm_drag *)&target->header->drag)->reply_effect;
+    return drag == session->drag.id ? windowd_drag_effect(effect, session->drag.effects) : 0u;
+}
+
+/* The window a drag at x, y is over: any window's client area, except a
+ * disabled owner's. */
+static struct windowd_client *drag_target_at(struct windowd_session *session, int x, int y)
+{
+    const struct windowd_client *client = top_client_at_point(session, x, y);
+
+    if (client == 0 || client->pid <= 0 || client->header == 0 || overlay_client_disabled(session, client) ||
+        !windowd_point_in_client(client, x, y))
+    {
+        return 0;
+    }
+    return (struct windowd_client *)client;
+}
+
+/* The arrow where this drag would be taken, the unavailable sign anywhere
+ * else. */
+static void drag_cursor(struct windowd_session *session)
+{
+    const struct windowd_client *target =
+        drag_client_alive(session->drag.target, session->drag.target_pid) ? session->drag.target : 0;
+    const int shape = drag_answer(session, target) != 0u ? SAVANXP_CURSOR_ARROW : SAVANXP_CURSOR_UNAVAILABLE;
+
+    session->previous_cursor_shape = session->current_cursor_shape;
+    session->current_cursor_shape = shape;
+    if (session->current_cursor_shape != session->previous_cursor_shape)
+    {
+        session->cursor_moved = 1;
+    }
+}
+
+/* The pointer at x, y during a drag: LEAVE and ENTER when the window under
+ * it changes, OVER when it moves over the same one. */
+static void drag_move(struct windowd_session *session, int x, int y)
+{
+    struct windowd_client *target = drag_target_at(session, x, y);
+    struct windowd_client *old =
+        drag_client_alive(session->drag.target, session->drag.target_pid) ? session->drag.target : 0;
+
+    if (target != old)
+    {
+        if (old != 0)
+        {
+            send_drag(session, old, SAVANXP_WM_DRAG_LEAVE, x, y, 0);
+        }
+        if (target != 0)
+        {
+            send_drag(session, target, SAVANXP_WM_DRAG_ENTER, x, y, 0);
+        }
+        session->drag.target = target;
+        session->drag.target_pid = target != 0 ? target->pid : 0;
+    }
+    else if (target != 0 && (x != session->drag.last_x || y != session->drag.last_y))
+    {
+        send_drag(session, target, SAVANXP_WM_DRAG_OVER, x, y, 0);
+    }
+    session->drag.last_x = x;
+    session->drag.last_y = y;
+    drag_cursor(session);
+}
+
+/* The drag ends: dropped where the target took it, or left there; the
+ * source hears what the drop took. */
+static void drag_finish(struct windowd_session *session, int dropped)
+{
+    struct windowd_client *target =
+        drag_client_alive(session->drag.target, session->drag.target_pid) ? session->drag.target : 0;
+    const uint32_t effect = dropped ? drag_answer(session, target) : 0u;
+
+    if (target != 0)
+    {
+        send_drag(session, target, effect != 0u ? SAVANXP_WM_DRAG_DROP : SAVANXP_WM_DRAG_LEAVE,
+            session->drag.last_x, session->drag.last_y, effect);
+    }
+    if (drag_client_alive(session->drag.source, session->drag.source_pid))
+    {
+        send_drag(session, session->drag.source, SAVANXP_WM_DRAG_END, session->drag.last_x, session->drag.last_y,
+            effect);
+    }
+    session->drag.active = 0;
+    session->drag.target = 0;
+    session->drag.target_pid = 0;
+    session->drag.source = 0;
+    session->drag.source_pid = 0;
+    session->previous_cursor_shape = session->current_cursor_shape;
+    session->current_cursor_shape = SAVANXP_CURSOR_ARROW;
+    session->cursor_moved = 1;
+}
+
+/* Every pass: a drag asked for in a main window's header starts while the
+ * left button is held on that process; a drag whose source went away ends;
+ * a target's late answer changes the cursor. */
+static void service_drag(struct windowd_session *session, int x, int y, uint32_t buttons)
+{
+    int index;
+
+    if (session->drag.active)
+    {
+        if (!drag_client_alive(session->drag.source, session->drag.source_pid))
+        {
+            drag_finish(session, 0);
+            return;
+        }
+        drag_cursor(session);
+    }
+    for (index = 0; index < WINDOWD_SESSION_CLIENT_COUNT; ++index)
+    {
+        struct windowd_client *client = session_client_at(session, index);
+        uint32_t sequence;
+        uint32_t effects;
+
+        if (client == 0 || client->pid <= 0 || client->header == 0 || client->owner_slot >= 0)
+        {
+            continue;
+        }
+        sequence = ((volatile struct savanxp_wm_drag *)&client->header->drag)->start_sequence;
+        if (sequence == client->drag_start_seen)
+        {
+            continue;
+        }
+        client->drag_start_seen = sequence;
+        __asm__ volatile("" ::: "memory");
+        effects = ((volatile struct savanxp_wm_drag *)&client->header->drag)->effects & SAVANXP_DRAG_EFFECTS;
+        if (session->drag.active || session->consent.open || effects == 0u ||
+            (buttons & SAVANXP_MOUSE_BUTTON_LEFT) == 0u || client->pid != session->press_pid)
+        {
+            continue;
+        }
+        session->drag.active = 1;
+        session->drag.next_id += 1u;
+        if (session->drag.next_id == 0u)
+        {
+            session->drag.next_id = 1u;
+        }
+        session->drag.id = session->drag.next_id;
+        session->drag.effects = effects;
+        session->drag.source = client;
+        session->drag.source_pid = client->pid;
+        session->drag.target = 0;
+        session->drag.target_pid = 0;
+        session->drag.last_x = x;
+        session->drag.last_y = y;
+        drag_move(session, x, y);
+    }
+}
+
 static void handle_pointer_event(
     struct windowd_session *session,
     const struct savanxp_mouse_event *event,
@@ -7199,7 +7423,29 @@ static void handle_pointer_event(
         last_buttons = pressed_buttons;
         goto done;
     }
+    /* A drag has the pointer: nothing under it gets a record, and the
+     * release drops. */
+    if (session->drag.active)
+    {
+        if (left_pressed == 0)
+        {
+            session->drag.last_x = cursor_x;
+            session->drag.last_y = cursor_y;
+            drag_finish(session, 1);
+        }
+        else
+        {
+            drag_move(session, cursor_x, cursor_y);
+        }
+        refresh_cursor_after_move(session, dirty, cursor_x, cursor_y, previous_cursor_x, previous_cursor_y);
+        last_buttons = pressed_buttons;
+        goto done;
+    }
     current_hover_client = top_client_at_point(session, cursor_x, cursor_y);
+    if (left_pressed != 0 && left_was_pressed == 0)
+    {
+        session->press_pid = current_hover_client != 0 ? current_hover_client->pid : 0;
+    }
 
     session->previous_cursor_shape = session->current_cursor_shape;
     session->current_cursor_shape = resolve_cursor_shape(
@@ -7562,6 +7808,15 @@ int main(int argc, char **argv)
                     }
                     continue;
                 }
+                /* Escape cancels a drag, and goes nowhere else. */
+                if (session.drag.active && key_event.key == SAVANXP_KEY_ESC)
+                {
+                    if (key_event.type == SAVANXP_INPUT_EVENT_KEY_DOWN)
+                    {
+                        drag_finish(&session, 0);
+                    }
+                    continue;
+                }
                 if (wm_handle_key(&session, &key_event, &dirty) ||
                     deliver_hotkey(&session, &key_event, &dirty))
                 {
@@ -7660,6 +7915,7 @@ int main(int argc, char **argv)
             service_client_cursor_hints(&session.overlay_clients[slot]);
         }
         service_client_starts(&session, &dirty);
+        service_drag(&session, cursor_x, cursor_y, last_buttons);
         publish_desktop_pointer(&session, cursor_x, cursor_y, last_buttons);
 
         if (!session.cursor_moved && !windowd_dirty_rect_valid(&dirty))

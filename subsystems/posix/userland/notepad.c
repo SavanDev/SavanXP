@@ -57,8 +57,9 @@ static int g_path_mode = NOTEPAD_PATH_MODE_OPEN;
 static struct sxgui_dialog g_about_dialog;
 static struct sxgui_widget g_about_widgets[4];
 
-/* Confirmacion de descarte. La accion pendiente se guarda para retomarla si el
- * usuario dice que si: es el mismo dialogo para Exit, New y Open. */
+/* The "discard changes?" question. The action it paused is kept to be taken
+ * up again if the user says yes: one dialog for Exit, New, Open and a file
+ * dropped on the window. */
 #define NOTEPAD_PENDING_NONE 0
 #define NOTEPAD_PENDING_EXIT 1
 #define NOTEPAD_PENDING_NEW 2
@@ -66,6 +67,8 @@ static struct sxgui_widget g_about_widgets[4];
 /* Exit as the WM asked for it: the window's X, Alt+F4, or the session ending
  * for a shutdown. Unlike File > Exit, a Cancel has to tell the WM. */
 #define NOTEPAD_PENDING_CLOSE 4
+/* A file dropped on the window: g_open_path is opened. */
+#define NOTEPAD_PENDING_DROP 5
 
 static struct sxgui_dialog g_confirm_dialog;
 static struct sxgui_widget g_confirm_widgets[4];
@@ -326,6 +329,9 @@ static void notepad_run_pending(void)
     case NOTEPAD_PENDING_OPEN:
         notepad_path_dialog(NOTEPAD_PATH_MODE_OPEN);
         break;
+    case NOTEPAD_PENDING_DROP:
+        (void)notepad_load(g_open_path);
+        break;
     default:
         break;
     }
@@ -401,6 +407,102 @@ static void on_about_ok(struct sxgui_widget *widget, void *user)
     (void)widget;
     (void)user;
     sxgui_dialog_end(&g_app.ui, 1);
+}
+
+/* ---- a dropped file (docs/desktop/DRAG_AND_DROP.md) ---------------------------- */
+
+static int notepad_hex(int c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+/* The first file:// URI of a text/uri-list, decoded into a path. 1 when
+ * there is one. */
+static int notepad_first_file(const char *list, int length, char *path, int capacity)
+{
+    int at = 0;
+
+    while (at < length)
+    {
+        int end = at;
+        while (end < length && list[end] != '\r' && list[end] != '\n')
+        {
+            ++end;
+        }
+        if (end - at > 7 && list[at] != '#' && strncmp(list + at, "file://", 7) == 0)
+        {
+            int out = 0;
+            int i = at + 7;
+            /* file://host/path: the host part, empty for this machine. */
+            while (i < end && list[i] != '/')
+            {
+                ++i;
+            }
+            for (; i < end && out + 1 < capacity; ++i)
+            {
+                int c = (unsigned char)list[i];
+                if (c == '%' && i + 2 < end && notepad_hex(list[i + 1]) >= 0 && notepad_hex(list[i + 2]) >= 0)
+                {
+                    c = notepad_hex(list[i + 1]) * 16 + notepad_hex(list[i + 2]);
+                    i += 2;
+                }
+                path[out++] = (char)c;
+            }
+            path[out] = '\0';
+            return out > 0 && i == end;
+        }
+        at = end;
+        while (at < length && (list[at] == '\r' || list[at] == '\n'))
+        {
+            ++at;
+        }
+    }
+    return 0;
+}
+
+/* A file can be dropped while no dialog is up: Notepad takes a copy of it,
+ * as File, Open would open it. */
+static uint32_t on_drag_over(struct sxgui_app *app, int x, int y, uint32_t effects)
+{
+    char name[SAVANXP_CLIPBOARD_NAME_CAPACITY];
+    int index;
+
+    (void)app;
+    (void)x;
+    (void)y;
+    if ((effects & SAVANXP_DRAG_EFFECT_COPY) == 0u || sxgui_dialog_active(&g_app.ui))
+    {
+        return 0u;
+    }
+    for (index = 0; dragdata_enum_format(index, name, (int)sizeof(name)) >= 0; ++index)
+    {
+        if (strcmp(name, SAVANXP_CLIPBOARD_URI_LIST) == 0)
+        {
+            return SAVANXP_DRAG_EFFECT_COPY;
+        }
+    }
+    return 0u;
+}
+
+static void on_drop(struct sxgui_app *app, int x, int y, uint32_t effect)
+{
+    char list[NOTEPAD_PATH_CAPACITY * 3 + 16];
+    int length = dragdata_get_format(SAVANXP_CLIPBOARD_URI_LIST, list, (int)sizeof(list));
+
+    (void)app;
+    (void)x;
+    (void)y;
+    (void)effect;
+    if (length < 0 || length > (int)sizeof(list) ||
+        !notepad_first_file(list, length, g_open_path, (int)sizeof(g_open_path)))
+    {
+        notepad_set_status("Only a file can be dropped here.");
+        return;
+    }
+    if (!notepad_confirm_discard(NOTEPAD_PENDING_DROP))
+    {
+        (void)notepad_load(g_open_path);
+    }
 }
 
 static void on_menu_command(int id, void *user)
@@ -662,6 +764,8 @@ int main(int argc, char **argv)
     g_app.on_resize = on_resize;
     g_app.on_close = on_close;
     g_app.on_paint = on_paint;
+    g_app.on_drag_over = on_drag_over;
+    g_app.on_drop = on_drop;
     sxgui_set_menubar(&g_app.ui, &g_menubar);
     (void)sxgui_app_set_content_size(&g_app, NOTEPAD_CONTENT_WIDTH, NOTEPAD_CONTENT_HEIGHT);
     notepad_layout(&g_app);

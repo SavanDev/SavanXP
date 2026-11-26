@@ -661,7 +661,9 @@ static int clipboard_copy_name(char *field, const char *name) {
     return length != 0;
 }
 
-int clipboard_set_formats(const struct clipboard_format* formats, int count) {
+/* The format calls, on the clipboard or on the drag's store: the same set of
+ * formats behind two device nodes (docs/desktop/DRAG_AND_DROP.md). */
+static int store_set_formats(const char* path, const struct clipboard_format* formats, int count) {
     if (formats == 0 || count <= 0 || count > (int)SAVANXP_CLIPBOARD_MAX_FORMATS) {
         return -(int)SAVANXP_EINVAL;
     }
@@ -680,7 +682,7 @@ int clipboard_set_formats(const struct clipboard_format* formats, int count) {
     request.entries = (uint64_t)(uintptr_t)entries;
     request.count = (uint32_t)count;
 
-    long fd = clipboard_open(SAVANXP_OPEN_WRITE);
+    long fd = savanxp_open_mode(path, SAVANXP_OPEN_WRITE);
     if (fd < 0) {
         return (int)fd;
     }
@@ -689,7 +691,7 @@ int clipboard_set_formats(const struct clipboard_format* formats, int count) {
     return (int)result;
 }
 
-int clipboard_get_format(const char* name, void* buffer, int capacity) {
+static int store_get_format(const char* path, const char* name, void* buffer, int capacity) {
     if (name == 0 || capacity < 0 || (buffer == 0 && capacity != 0)) {
         return -(int)SAVANXP_EINVAL;
     }
@@ -701,7 +703,7 @@ int clipboard_get_format(const char* name, void* buffer, int capacity) {
     request.buffer = (uint64_t)(uintptr_t)buffer;
     request.capacity = (uint32_t)capacity;
 
-    long fd = clipboard_open(SAVANXP_OPEN_READ);
+    long fd = savanxp_open_mode(path, SAVANXP_OPEN_READ);
     if (fd < 0) {
         return (int)fd;
     }
@@ -710,7 +712,7 @@ int clipboard_get_format(const char* name, void* buffer, int capacity) {
     return result < 0 ? (int)result : (int)request.length;
 }
 
-int clipboard_enum_format(int index, char* name, int name_capacity) {
+static int store_enum_format(const char* path, int index, char* name, int name_capacity) {
     if (index < 0 || name == 0 || name_capacity <= 0) {
         return -(int)SAVANXP_EINVAL;
     }
@@ -718,7 +720,7 @@ int clipboard_enum_format(int index, char* name, int name_capacity) {
     memset(&request, 0, sizeof(request));
     request.index = (uint32_t)index;
 
-    long fd = clipboard_open(SAVANXP_OPEN_READ);
+    long fd = savanxp_open_mode(path, SAVANXP_OPEN_READ);
     if (fd < 0) {
         return (int)fd;
     }
@@ -734,6 +736,30 @@ int clipboard_enum_format(int index, char* name, int name_capacity) {
     }
     name[length] = '\0';
     return (int)request.length;
+}
+
+int clipboard_set_formats(const struct clipboard_format* formats, int count) {
+    return store_set_formats("/dev/clipboard", formats, count);
+}
+
+int clipboard_get_format(const char* name, void* buffer, int capacity) {
+    return store_get_format("/dev/clipboard", name, buffer, capacity);
+}
+
+int clipboard_enum_format(int index, char* name, int name_capacity) {
+    return store_enum_format("/dev/clipboard", index, name, name_capacity);
+}
+
+int dragdata_set_formats(const struct clipboard_format* formats, int count) {
+    return store_set_formats("/dev/dragdata", formats, count);
+}
+
+int dragdata_get_format(const char* name, void* buffer, int capacity) {
+    return store_get_format("/dev/dragdata", name, buffer, capacity);
+}
+
+int dragdata_enum_format(int index, char* name, int name_capacity) {
+    return store_enum_format("/dev/dragdata", index, name, name_capacity);
 }
 
 long gpu_open(void) {
