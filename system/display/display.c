@@ -299,7 +299,7 @@ static uint32_t g_effects_saved = SXN_EFFECTS_ALL;
 static uint32_t g_effects_pending = SXN_EFFECTS_ALL;
 static int g_effects_unsaved;
 static int g_effects_available;
-static struct sxgui_widget g_effect_widgets[5];
+static struct sxgui_widget g_effect_widgets[6];
 static struct sxgui_dialog g_effect_dialog;
 
 static struct desktop_wallpaper_config g_saved;
@@ -710,7 +710,8 @@ static const char *const k_quality_names[] = {"Highest (32 bit)"};
 /* ---- the interface's fonts ------------------------------------------------
  *
  * appearance.cfg (sxfont/ui.h): a face and a size for the window text and
- * for title bars. The faces offered are the
+ * for title bars, and whether fonts are smoothed (on Effects). The faces
+ * offered are the
  * TrueType files in /system/fonts, named as their files name themselves. */
 
 #define DISPLAY_FONT_DIRECTORY "/system/fonts"
@@ -1672,6 +1673,11 @@ static void on_effects_ok(struct sxgui_widget *widget, void *user) {
     (void)widget; (void)user;
     g_effects_pending = (g_effect_widgets[1].value ? SXN_EFFECTS_WINDOWS : 0) |
         (g_effect_widgets[2].value ? SXN_EFFECTS_CURSOR : 0);
+    if ((g_effect_widgets[3].value != 0) != (g_appearance_pending.smoothing != 0))
+    {
+        g_appearance_pending.smoothing = g_effect_widgets[3].value != 0;
+        g_appearance_faces_stale = 1;
+    }
     sxgui_dialog_end(&g_app.ui, 1);
     sync_controls();
 }
@@ -1692,16 +1698,20 @@ static void on_effects(struct sxgui_widget *widget, void *user) {
         "Show shadows under windows", !!(g_effects_pending & SXN_EFFECTS_WINDOWS));
     g_effect_widgets[2] = sxgui_checkbox(sx_rect_make(12, 66, 320, 22),
         "Show shadow under mouse pointer", !!(g_effects_pending & SXN_EFFECTS_CURSOR));
-    g_effect_widgets[3] = sxgui_button(sx_rect_make(174, 104, 75, 23), "OK", on_effects_ok, 0);
-    g_effect_widgets[4] = sxgui_button(sx_rect_make(257, 104, 75, 23), "Cancel", on_dialog_cancel, 0);
+    /* Font smoothing belongs to the interface faces (appearance.cfg), not
+     * to compositord; the sheet's Apply saves each where it belongs. */
+    g_effect_widgets[3] = sxgui_checkbox(sx_rect_make(12, 94, 320, 22),
+        "Smooth edges of screen fonts", g_appearance_pending.smoothing != 0);
+    g_effect_widgets[4] = sxgui_button(sx_rect_make(174, 132, 75, 23), "OK", on_effects_ok, 0);
+    g_effect_widgets[5] = sxgui_button(sx_rect_make(257, 132, 75, 23), "Cancel", on_dialog_cancel, 0);
     memset(&g_effect_dialog, 0, sizeof(g_effect_dialog));
     g_effect_dialog.title = "Effects";
     g_effect_dialog.widgets = g_effect_widgets;
-    g_effect_dialog.widget_count = 5;
+    g_effect_dialog.widget_count = 6;
     g_effect_dialog.initial_focus = 1;
-    g_effect_dialog.default_button = 3;
+    g_effect_dialog.default_button = 4;
     sync_controls();
-    sxgui_dialog_begin(&g_app.ui, &g_effect_dialog, 344, 139);
+    sxgui_dialog_begin(&g_app.ui, &g_effect_dialog, 344, 167);
 }
 
 static void show_tab(int tab)

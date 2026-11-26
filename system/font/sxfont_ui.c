@@ -76,6 +76,10 @@ static void parse_line(struct sxfont_ui_config *config, const char *line, size_t
     const char *value = equals + 1;
     size_t value_length = length - key_length - 1;
     unsigned number;
+    if (key_length == 9 && memcmp(line, "smoothing", 9) == 0) {
+        if (value_length == 1 && (value[0] == '0' || value[0] == '1')) config->smoothing = value[0] == '1';
+        return;
+    }
     for (int i = 0; i < SXFONT_UI_ITEMS; i++) {
         if (key_is(line, key_length, kItems[i].key, "font")) {
             /* Absolute, and whole: a cut path would name another file. */
@@ -106,9 +110,9 @@ void sxfont_ui_parse_config(struct sxfont_ui_config *config, const char *text) {
 
 size_t sxfont_ui_format_config(const struct sxfont_ui_config *config, char *out, size_t capacity) {
     if (config == NULL || out == NULL || capacity == 0) return 0;
-    int length = snprintf(out, capacity, "%s_font=%s\n%s_size=%u\n%s_font=%s\n%s_size=%u\n", kItems[0].key,
-                          config->items[0].path, kItems[0].key, config->items[0].size, kItems[1].key,
-                          config->items[1].path, kItems[1].key, config->items[1].size);
+    int length = snprintf(out, capacity, "%s_font=%s\n%s_size=%u\n%s_font=%s\n%s_size=%u\nsmoothing=%d\n",
+                          kItems[0].key, config->items[0].path, kItems[0].key, config->items[0].size, kItems[1].key,
+                          config->items[1].path, kItems[1].key, config->items[1].size, config->smoothing ? 1 : 0);
     if (length < 0 || (size_t)length >= capacity) {
         out[0] = '\0';
         return 0;
@@ -118,6 +122,7 @@ size_t sxfont_ui_format_config(const struct sxfont_ui_config *config, char *out,
 
 int sxfont_ui_config_equal(const struct sxfont_ui_config *a, const struct sxfont_ui_config *b) {
     if (a == NULL || b == NULL) return a == b;
+    if ((a->smoothing != 0) != (b->smoothing != 0)) return 0;
     for (int i = 0; i < SXFONT_UI_ITEMS; i++)
         if (a->items[i].size != b->items[i].size || strcmp(a->items[i].path, b->items[i].path) != 0) return 0;
     return 1;
@@ -159,13 +164,12 @@ static int libsxfont_mapped(void) {
 
 /* One item's face at `size`, from `path`. Its face and strike live in the
  * engine. */
-static int open_item(struct sxfont_ui_faces *faces, int item, const char *path, unsigned size,
+static int open_item(struct sxfont_ui_faces *faces, int item, const char *path, unsigned size, unsigned flags,
                      sxfont_ui_read_file read_file) {
     size_t length = 0;
     struct sx_font_face *face = NULL;
     struct sx_font_strike *strike = NULL;
-    /* 1-bit at every size: the chrome's text is never grey (UI_FONTS.md). */
-    struct sx_font_strike_options options = {size, SX_FONT_FORCE_MONO};
+    struct sx_font_strike_options options = {size, flags};
     if (faces->buffer_count == SXFONT_UI_BUFFERS) return -1;
     void *data = read_file(path, &length);
     if (data == NULL) return -1;
@@ -186,13 +190,16 @@ struct sxfont_ui_faces *sxfont_ui_faces_open(const struct sxfont_ui_config *conf
         free(faces);
         return NULL;
     }
+    /* Without smoothing, 1-bit at every size: the chrome's text is never
+     * grey (UI_FONTS.md). With it, what each face's gasp table says. */
+    unsigned flags = config->smoothing ? 0u : SX_FONT_FORCE_MONO;
     for (int i = 0; i < SXFONT_UI_ITEMS; i++) {
         const struct sxfont_ui_item *item = &config->items[i];
-        if (open_item(faces, i, item->path, item->size, read_file) == 0) continue;
+        if (open_item(faces, i, item->path, item->size, flags, read_file) == 0) continue;
         /* A file that went missing or does not open: the default face, so
          * the interface keeps the look it was made for. */
         if (strcmp(item->path, kItems[i].path) != 0 || item->size != kItems[i].size)
-            (void)open_item(faces, i, kItems[i].path, kItems[i].size, read_file);
+            (void)open_item(faces, i, kItems[i].path, kItems[i].size, flags, read_file);
     }
     return faces;
 }

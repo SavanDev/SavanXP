@@ -1960,7 +1960,9 @@ def scenario_appearance(s):
     them too: the baked body face no longer matches either. A Display
     Properties opened afterwards reads appearance.cfg and starts in them. DOWN
     puts MS Sans Serif back and OK applies it: Notepad's line matches the
-    baked face again, pixel for pixel.
+    baked face again, pixel for pixel. Last, smoothing: title bars in
+    Liberation Sans at 20 pixels per em, 1-bit, then Smooth edges of screen
+    fonts from Effects, which draws their edges grey.
     """
     screen = (0, 0, 1280, 800)
     sample = "fontsample"
@@ -2024,6 +2026,59 @@ def scenario_appearance(s):
     wait_change(before + 2, "OK")
     expect_text(s.shot("notepad-restored"), screen, sample, TEXT, FIELD,
                 "Notepad's line in the default face once it is back")
+
+    # Smoothing. Title bars in Liberation Sans at 20 pixels per em, whose
+    # gasp table asks for grey there: applied 1-bit first, then with Smooth
+    # edges of screen fonts. Every title bar is drawn again, and the pixels
+    # that changed take colours the 1-bit screen had nowhere: the grey edges.
+    # The list is the fonts staged in /system/fonts by name: RetroSans is
+    # last and Liberation Sans ninth from it.
+    open_appearance()
+    s.qmp.tap("tab", pause=0.5)       # item
+    s.qmp.tap("down", pause=1.0)      # Title bars
+    s.qmp.tap("tab", pause=0.5)       # font
+    for _ in range(9):
+        s.qmp.tap("up", pause=0.3)
+    s.qmp.tap("tab", pause=0.5)       # size, 17
+    for _ in range(3):
+        s.qmp.tap("down", pause=0.3)
+    for _ in range(4):                # Effects..., OK, Cancel, Apply
+        s.qmp.tap("tab", pause=0.5)
+    s.qmp.tap("spc")
+    wait_change(before + 3, "Apply with Liberation Sans in the title bars")
+    # The pointer's shadow blends too: it sits in the same place in both
+    # shots, so it is no difference.
+    s.qmp.move_to(1100, 400)
+    time.sleep(1.0)
+    mono = s.shot("captions-1bit")
+    origin = find_text(mono, screen, "Effects...", TEXT, FACE)[0]
+    if origin is None:
+        raise Failure("the Effects... button is not on the Appearance tab")
+    s.qmp.move_to(origin[0] + 8, origin[1] + 5)
+    s.qmp.click()
+    time.sleep(2.0)
+    image = s.shot("effects-smoothing")
+    origin = find_text(image, screen, "Smooth edges of screen fonts", TEXT, FACE)[0]
+    if origin is None:
+        raise Failure("Effects has no Smooth edges of screen fonts")
+    s.qmp.move_to(origin[0] + 8, origin[1] + 5)
+    s.qmp.click()
+    time.sleep(1.0)
+    s.qmp.tap("ret", pause=1.0)       # the dialog's OK
+    image = s.shot("smoothing-staged")
+    origin = find_text(image, screen, "Apply", TEXT, FACE)[0]
+    if origin is None:
+        raise Failure("Apply is not enabled once smoothing is staged")
+    s.qmp.move_to(origin[0] + 8, origin[1] + 5)
+    s.qmp.click()
+    wait_change(before + 4, "Apply with smoothing")
+    s.qmp.move_to(1100, 400)
+    time.sleep(1.0)
+    smooth = s.shot("captions-smooth")
+    colours = set(mono.getdata())
+    grey = sum(1 for a, b in zip(mono.getdata(), smooth.getdata()) if a != b and b not in colours)
+    if grey < 40:
+        raise Failure("smoothing drew %d new edge pixels in the title bars; expected grey edges" % grey)
 
 
 def scenario_resolution(s):

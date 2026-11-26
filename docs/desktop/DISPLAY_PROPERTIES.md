@@ -257,12 +257,16 @@ and back again, by keyboard ([UI_FONTS.md](UI_FONTS.md#choosing-the-faces)).
 ## Effects
 
 The **Effects...** button on Appearance, where the period's sheet has it,
-opens a modal dialog with **Show shadows
-under windows** and **Show shadow under mouse pointer**. Both default to on.
-The dialog's OK stages the choices in the property sheet; Cancel or Escape
-leaves its pending choices alone. The sheet's Apply or OK sends both choices
-to `compositord` without restarting the session. Cancel discards pending edits.
-Effects are independent of the resolution trial and do not revert with it.
+opens a modal dialog with **Show shadows under windows**, **Show shadow under
+mouse pointer** (both on by default) and **Smooth edges of screen fonts**
+(off by default). The dialog's OK stages the choices in the property sheet;
+Cancel or Escape leaves its pending choices alone. The sheet's Apply or OK
+sends the two shadows to `compositord` without restarting the session, and
+saves smoothing with the fonts in `appearance.cfg`, announced like any font
+change ([Appearance](#appearance); what it draws:
+[UI_FONTS.md](UI_FONTS.md#choosing-the-faces)). Cancel discards pending
+edits. Effects are independent of the resolution trial and do not revert
+with it.
 
 `effects-settings` is a bounded native object-port service, declared in
 `include/sxn/sxneffects.h`. QUERY returns the effective flags and save status;

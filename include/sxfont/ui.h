@@ -15,10 +15,13 @@
  *     body_size=13
  *     caption_font=/system/fonts/RetroSans.ttf
  *     caption_size=17
+ *     smoothing=0
  *
- * Sizes are pixels per em. Every face is drawn 1-bit, whatever its gasp
- * table asks (UI_FONTS.md, "The rule: every UI face is 1-bit"). No file, an
- * unknown key or a bad value leaves the default for that key. */
+ * Sizes are pixels per em. Without smoothing every face is drawn 1-bit,
+ * whatever its gasp table asks; with it, each face is grey where its gasp
+ * table asks, as Windows' standard font smoothing (UI_FONTS.md, "The rule:
+ * every UI face is 1-bit"). No file, an unknown key or a bad value leaves
+ * the default for that key. */
 #pragma once
 
 #include <stddef.h>
@@ -55,6 +58,7 @@ struct sxfont_ui_item {
 
 struct sxfont_ui_config {
     struct sxfont_ui_item items[SXFONT_UI_ITEMS];
+    int smoothing; /* 1: grey where each face's gasp asks; 0 (the default): 1-bit */
 };
 
 /* The faces the tables were baked from, at the sizes they were baked at:

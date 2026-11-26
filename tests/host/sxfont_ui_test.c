@@ -1,7 +1,8 @@
 /* The interface faces' configuration and loader (include/sxfont/ui.h,
  * docs/desktop/UI_FONTS.md, "Choosing the faces"): appearance.cfg's format,
  * the faces it opens, the fallback to the default face when a file is
- * missing, the 1-bit rule, and the reload that replaces the installed faces.
+ * missing, the 1-bit rule and smoothing, and the reload that replaces the
+ * installed faces.
  *
  * Paths under /system/fonts are read from the source tree, where the build
  * stages them from. */
@@ -66,21 +67,21 @@ static void test_format(void) {
     check(strcmp(defaults.items[SXFONT_UI_ITEM_BODY].path, "/system/fonts/MSSansSerif.ttf") == 0 &&
               defaults.items[SXFONT_UI_ITEM_BODY].size == 13 &&
               strcmp(defaults.items[SXFONT_UI_ITEM_CAPTION].path, "/system/fonts/RetroSans.ttf") == 0 &&
-              defaults.items[SXFONT_UI_ITEM_CAPTION].size == 17,
-          "the defaults are the baked faces at their sizes");
+              defaults.items[SXFONT_UI_ITEM_CAPTION].size == 17 && defaults.smoothing == 0,
+          "the defaults are the baked faces at their sizes, unsmoothed");
     sxfont_ui_parse_config(&config, "");
     check(sxfont_ui_config_equal(&config, &defaults), "an empty file is the defaults");
 
     sxfont_ui_parse_config(&config,
-                           "body_size=40\ncaption_size=abc\nbody_font=relative.ttf\nunknown=1\n"
+                           "body_size=40\ncaption_size=abc\nbody_font=relative.ttf\nsmoothing=2\nunknown=1\n"
                            "caption_font=\nbody_size=9\ncaption_size=21\n");
     check(sxfont_ui_config_equal(&config, &defaults), "bad values and unknown keys leave the defaults");
 
     sxfont_ui_parse_config(&config, "caption_size=12\r\nbody_font=/system/fonts/LiberationSans-Regular.ttf\r\n"
-                                    "body_size=16");
+                                    "smoothing=1\r\nbody_size=16");
     check(config.items[SXFONT_UI_ITEM_CAPTION].size == 12 &&
               strcmp(config.items[SXFONT_UI_ITEM_BODY].path, "/system/fonts/LiberationSans-Regular.ttf") == 0 &&
-              config.items[SXFONT_UI_ITEM_BODY].size == 16,
+              config.items[SXFONT_UI_ITEM_BODY].size == 16 && config.smoothing == 1,
           "good values are taken, with CRLF lines and no final newline");
 
     size_t length = sxfont_ui_format_config(&config, text, sizeof text);
@@ -162,19 +163,26 @@ static void test_faces(void) {
     }
 
     {
-        /* Liberation Sans' gasp asks for grey at 20 ppem; the interface
-         * draws it 1-bit all the same. */
+        /* Liberation Sans' gasp asks for grey at 20 ppem: 1-bit without
+         * smoothing, grey with it. MS Sans Serif's asks for 1-bit at every
+         * size, so it stays so either way. */
         struct sxfont_ui_config outline = config;
-        struct sxfont_ui_faces *mono;
+        struct sxfont_ui_faces *mono, *smooth;
         snprintf(outline.items[SXFONT_UI_ITEM_CAPTION].path, sizeof outline.items[0].path, "%s",
                  "/system/fonts/LiberationSans-Regular.ttf");
         outline.items[SXFONT_UI_ITEM_CAPTION].size = 20;
         mono = sxfont_ui_faces_open(&outline, read_file);
         sxfont_ui_faces_install(mono);
         check(gfx_face_installed(GFX_FACE_TITLE) && !has_grey(GFX_FACE_TITLE) && !has_grey(GFX_FACE_UI),
-              "every interface face is 1-bit, an outline face whose gasp asks for grey included");
+              "without smoothing every interface face is 1-bit, an outline face whose gasp asks for grey included");
+        outline.smoothing = 1;
+        smooth = sxfont_ui_faces_open(&outline, read_file);
+        sxfont_ui_faces_install(smooth);
+        check(has_grey(GFX_FACE_TITLE), "with smoothing, a face whose gasp asks for grey draws grey");
+        check(!has_grey(GFX_FACE_UI), "with smoothing, a face whose gasp asks for 1-bit stays 1-bit");
         sxfont_ui_faces_install(faces);
         sxfont_ui_faces_close(mono);
+        sxfont_ui_faces_close(smooth);
     }
 
     sxfont_ui_faces_install(NULL);

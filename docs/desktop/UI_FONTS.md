@@ -49,6 +49,13 @@ How to keep it:
   is fine where smoothness is the point, like the boot wordmark
   (`tools/gen_boot_logo.py`).
 
+The rule is the system's look, and the person's to change: **Smooth edges
+of screen fonts** (Display Properties, Appearance, Effects...) draws the
+interface faces grey wherever each face's gasp table asks, as Windows'
+standard font smoothing does ([Choosing the faces](#choosing-the-faces)).
+It is off unless the person turns it on, and the tables, which are also
+the fallback, stay 1-bit whatever it says.
+
 The rule is about these tables, which the chrome is drawn with. Document
 text in scalable fonts comes from `libsxfont`, which follows each face's
 gasp table: 1-bit and hinted at reading sizes, grey only in large headings
@@ -157,6 +164,7 @@ body_font=/system/fonts/MSSansSerif.ttf
 body_size=13
 caption_font=/system/fonts/RetroSans.ttf
 caption_size=17
+smoothing=0
 ```
 
 - **Any TrueType file in `/system/fonts`**, the Liberation faces included.
@@ -168,9 +176,16 @@ caption_size=17
   face it is. The limits are the lines that still fit the toolkit's
   24-pixel fields and `windowd`'s 24-pixel title bar, whose heights do not
   follow the text.
-- **Still 1-bit.** Every face is opened with `SX_FONT_FORCE_MONO`, whatever
-  its gasp table asks, so an outline face draws hard pixels like the
-  defaults ([the rule](#the-rule-every-ui-face-is-1-bit)).
+- **1-bit unless smoothing is on.** With `smoothing=0`, the default, every
+  face is opened with `SX_FONT_FORCE_MONO`, whatever its gasp table asks,
+  so an outline face draws hard pixels like the defaults
+  ([the rule](#the-rule-every-ui-face-is-1-bit)). With `smoothing=1` each
+  face follows its gasp table, as Windows XP's Standard smoothing does:
+  the shipped MS Sans Serif file asks for 1-bit at every size and RetroSans
+  at its 17-pixel default, so the default look does not change; Liberation
+  Sans turns grey from 18 pixels per em, Liberation Serif at 9 and 10
+  and from 18. There is no ClearType: `libsxfont` is built without
+  subpixel rendering ([FONT_LIBRARY.md](FONT_LIBRARY.md)).
 - **The monospace face is not offered**: the terminal's grid needs
   UniFont's 8x16 cell.
 - **Who reads it.** Each program reads its own profile's file
@@ -199,8 +214,8 @@ places and draw the new text in them; a face much larger than the default
 can crowd a fixed-size control. Win32 programs keep drawing from the tables
 until `gdi32` reaches `libsxfont` (the WordPad roadmap's WP6).
 
-`sxfont-ui-test` holds the file's format, the fallback, the 1-bit rule for
-an outline face and the reload; `appearance-smoke` changes the body face
+`sxfont-ui-test` holds the file's format, the fallback, the 1-bit rule and
+smoothing for an outline face, and the reload; `appearance-smoke` changes the body face
 with Notepad open and checks the new face reaches Notepad, Display
 Properties itself and a program started afterwards, and that the default
 comes back.
