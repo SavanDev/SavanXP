@@ -1463,6 +1463,13 @@ SCENARIOS: dict[str, Scenario] = {
         "NetSurf's libraries in a SUN program: HTML to a DOM, styles through libcss",
         180.0,
     ),
+    "font-test": _qemu_scenario(
+        "fonttest",
+        "FONT TEST PASS",
+        "FONT TEST FAIL",
+        "libsxfont in a SUN program: the Liberation faces in /system/fonts, metrics, gasp, glyphs, matching",
+        180.0,
+    ),
     "https-unseeded": _qemu_scenario(
         "httpstest unseeded",
         "HTTPS TEST PASS",

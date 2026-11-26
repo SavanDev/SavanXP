@@ -15,6 +15,9 @@ assets/
       mime/                     file-type catalog (Tango 0.8.90)
         16x16/
         32x32/
+  fonts/
+    liberation/                 Liberation 2.1.5, the scalable document faces,
+                                copied as they are into /system/fonts
   licenses/                     *.notice and extracted license texts,
                                 staged into /system/licenses
 ```
@@ -166,6 +169,13 @@ wordmark. PixelSans and ImpactfulBits are baked at 13px as committed spares
 (`gfx_font_pixelsans.inc`, `gfx_font_impactfulbits.inc`) and are not linked
 into any binary yet. Provenance and licenses in
 `docs/third-party/THIRD_PARTY_PROVENANCE.md`.
+
+The scalable faces programs draw documents with are another matter:
+`assets/fonts/liberation/` holds Liberation Sans, Serif and Mono 2.1.5 in
+their four styles, unmodified, with the release's `LICENSE` and `AUTHORS`.
+Nothing bakes them. The build copies the twelve `.ttf` files into
+`/system/fonts`, and `libsxfont` rasterizes them at run time
+([`docs/desktop/FONT_LIBRARY.md`](../docs/desktop/FONT_LIBRARY.md)).
 
 To regenerate (from the repository root):
 

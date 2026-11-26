@@ -183,6 +183,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "enginetest")) {
         return "ENGINE TEST";
     }
+    if (spec != 0 && text_contains(spec, "fonttest")) {
+        return "FONT TEST";
+    }
     if (spec != 0 && text_contains(spec, "sunlibtest")) {
         return "SUN LIBRARY TEST";
     }
@@ -302,6 +305,7 @@ static int run_automation_spec(const char* spec) {
     const char* linuxtest_argv[] = {"/system/linuxtest.sxe", 0};
     const char* sunlibtest_argv[] = {"/system/sunlibtest.sxe", 0};
     const char* enginetest_argv[] = {"/system/enginetest.sxe", 0};
+    const char* fonttest_argv[] = {"/system/fonttest.sxe", 0};
     const char* ssltest_argv[] = {"/bin/ssltest", 0};
     const char* sunssltest_argv[] = {"/system/sunssltest.sxe", 0};
     const char* httpstest_argv[] = {"/system/httpstest.sxe", 0, 0};
@@ -603,6 +607,11 @@ static int run_automation_spec(const char* spec) {
              * (docs/desktop/WEBVIEWER_ENGINE.md). */
             path = "/system/enginetest.sxe";
             argv = enginetest_argv;
+            argc = 1;
+        } else if (strcmp(spec, "fonttest") == 0) {
+            /* libsxfont in a SUN program (docs/desktop/FONT_LIBRARY.md). */
+            path = "/system/fonttest.sxe";
+            argv = fonttest_argv;
             argc = 1;
         } else if (strcmp(spec, "sunlibtest") == 0) {
             /* A SUN program mapping libmath through the shared loader

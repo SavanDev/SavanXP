@@ -197,6 +197,38 @@ which is why both go into the registry.
   ([WEBVIEWER_ENGINE.md](../desktop/WEBVIEWER_ENGINE.md)); notices
   `assets/licenses/netsurf-*.notice`
 
+### FreeType
+
+- Origin: https://freetype.org, release `2.15.0`, from
+  https://download.savannah.gnu.org/releases/freetype/
+- Pinned version: `vendor/freetype/FREETYPE_RELEASE.txt`: the archive's
+  SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`,
+  2716928 bytes, and its `.sig`, a good signature by RSA key
+  `E30674707856409FF1948010BE6C3AAC63AD8E3F` (Werner Lemberg, the release
+  manager), fetched from keyserver.ubuntu.com. The key was not checked
+  through a second channel
+- Versioned: yes, `vendor/freetype/`, unmodified: `include/` (without
+  `include/dlg/`, Boost-licensed and used only with `FT_DEBUG_LOGGING`) and
+  the five modules built, `src/base`, `src/sfnt`, `src/truetype`,
+  `src/smooth` and `src/raster`. The configuration is
+  `system/font/freetype/ftoption.h`, upstream's file with its changed lines
+  marked, under the FreeType License like the original
+- License reviewed: FreeType is offered under the FreeType License (FTL) or
+  GPL-2.0; SavanXP takes the FTL, BSD-style with a clause that asks for a
+  credit in the product's documentation, which
+  [FONT_LIBRARY.md](../desktop/FONT_LIBRARY.md) and the notice carry. Text in
+  `vendor/freetype/docs/FTL.TXT`. Every built file is FTL except
+  `src/base/fthash.c`, which `ftbase.c` includes: an X11-style notice
+  (Computing Research Labs, New Mexico State University; Francesco Zappa
+  Nardelli), `assets/licenses/freetype-fthash.txt`. `src/base/md5.c`
+  (public domain) is compiled only with `FT_DEBUG_LEVEL_TRACE`, never here
+- Decision: `Adopt`. A word processor needs scalable text and SavanXP had no
+  rasterizer at run time; FreeType's TrueType interpreter v35 is the one
+  that draws as Windows XP without ClearType
+  ([WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#d1-real-fonts-rasterized-at-run-time-by-a-system-library-2026-11-21))
+- Distributed in: `/lib/libsxfont.so.0.4`, statically linked and hidden
+  (`cmake/FreeType.cmake`); notice `assets/licenses/freetype.notice`
+
 ### OpenSSL
 
 - Origin: https://github.com/openssl/openssl, release `openssl-3.5.3`, a 3.5
@@ -473,6 +505,25 @@ musl from `https://musl.libc.org/releases/`, and util-linux (libuuid) from
   `tools/gen_boot_logo.py` rasterizes into the boot screen. It was the desktop
   body face until Wine's MS Sans Serif replaced it
 - Reason: a smooth wordmark for the splash
+
+### Liberation Fonts (scalable document faces)
+
+- Origin: https://github.com/liberationfonts/liberation-fonts, release
+  `2.1.5`, `liberation-fonts-ttf-2.1.5.tar.gz` (SHA-256
+  `7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0`, as
+  downloaded on 2026-11-25; the project publishes no checksum). Copyright
+  (c) 2010 Google Corporation, with Reserved Font Arimo, Tinos and Cousine;
+  Copyright (c) 2012 Red Hat, Inc., with Reserved Font Name Liberation
+- Versioned: yes, `assets/fonts/liberation/`: the twelve TTF files, the
+  release's `LICENSE` and `AUTHORS`, unmodified
+- License reviewed: SIL OFL-1.1, `assets/fonts/liberation/LICENSE`. The
+  fonts are shipped unmodified, so the Reserved Font Names are kept
+- Decision: `Adopt`
+- Distributed in: `/system/fonts/`, staged by `savanxp_diskfs`; read at run
+  time by `libsxfont` ([FONT_LIBRARY.md](../desktop/FONT_LIBRARY.md))
+- Reason: Liberation Sans, Serif and Mono have the metrics of Arial, Times
+  New Roman and Courier New, so a document written on Windows XP lays out
+  the same; hinted, with gasp tables like those faces'
 
 ### SpicyGame pixel fonts (captions and spares)
 

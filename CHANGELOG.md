@@ -8,6 +8,10 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Scalable TrueType fonts at run time: `libsxfont.so.0.4` over FreeType 2.15.0 (SDK 2.0).** `savanxp/font.h`
+  for SUN and POSIX: faces at any size, 1-bit or grey as each face's gasp says, Windows-style metrics, face
+  matching with Arial/Times New Roman/Courier New substitutes. Liberation Sans, Serif and Mono ship in
+  `/system/fonts`. Scenario `font-test`, host test `sxfont-test`. [The font library](docs/desktop/FONT_LIBRARY.md).
 - **Drivers can start and stop cleanly: the RTL8139, the AC'97 and every virtio driver.** A
   failed start gives back what it took; a stop quiesces, then releases. Boot option
   `lifecycle-selftest=<driver>`. [Driver start and stop](docs/kernel/DRIVER_LIFECYCLE.md).

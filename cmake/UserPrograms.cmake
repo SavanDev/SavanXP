@@ -256,6 +256,10 @@ if(TARGET enginetest)
     target_include_directories(enginetest PRIVATE "${CMAKE_SOURCE_DIR}/system/webview/engine")
     add_dependencies(enginetest netsurf_symbols)
 endif()
+# libsxfont in a SUN program (docs/desktop/FONT_LIBRARY.md): the self-test the
+# host test also runs, over the faces in /system/fonts; the font-test scenario.
+savanxp_program(NAME fonttest TEST NATIVE DEPENDS libsxfont LINK_PROFILE PIE
+    SOURCES system/font/fonttest.c system/font/sxfont_selftest.c)
 # How a DT_NEEDED resolves: the exact file, else the highest newer minor of the
 # same ABI (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME resolution"). One
 # source, one library per version; the program links against the 0.4s, and
@@ -401,6 +405,14 @@ savanxp_library(NAME libsxmidi SONAME libsxmidi.so.0.4
 # consumer today is Paint, which maps it from /lib.
 savanxp_library(NAME libsximg SONAME libsximg.so.0.4
     SOURCES subsystems/posix/sdk/v1/runtime/sximg.c)
+# Scalable TrueType fonts (docs/desktop/FONT_LIBRARY.md): libsxfont over
+# FreeType, memory only. FreeType is linked in whole and hidden
+# (--exclude-libs), so the library exports only sx_font_*; like libsximg it
+# asks the program for its C library, which cmake/FreeType.cmake checks.
+savanxp_library(NAME libsxfont SONAME libsxfont.so.0.4 DEPENDS freetype_sun
+    SOURCES system/font/sxfont.c)
+target_link_options(libsxfont PRIVATE "-Wl,--exclude-libs,ALL")
+add_dependencies(libsxfont freetype_symbols)
 # The toolkit is split by subsystem (docs/kernel/SHARED_LIBRARIES.md, "The
 # toolkit, split into neutral and host"). What draws is neutral and shared by
 # SUN and POSIX programs alike; what talks to the window system is each

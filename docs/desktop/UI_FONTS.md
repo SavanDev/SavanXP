@@ -45,6 +45,11 @@ How to keep it:
   is fine where smoothness is the point, like the boot wordmark
   (`tools/gen_boot_logo.py`).
 
+The rule is about these tables, which the chrome is drawn with. Document
+text in scalable fonts comes from `libsxfont`, which follows each face's
+gasp table: 1-bit and hinted at reading sizes, grey only in large headings
+([FONT_LIBRARY.md](FONT_LIBRARY.md#smoothing-what-gasp-says)).
+
 `gfx2d-test` enforces this: `case_ui_fonts_are_one_bit_and_fit_their_line`
 fails on any grey coverage byte, and on any glyph that pokes out of the line
 its ascent and descent declare.

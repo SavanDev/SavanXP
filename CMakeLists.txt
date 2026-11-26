@@ -681,6 +681,7 @@ add_dependencies(savanxp_generated_headers savanxp_build_number)
 target_sources(savanxp_kernel_objects PRIVATE ${SAVANXP_GENERATED_HEADER_FILES})
 
 include("${CMAKE_SOURCE_DIR}/cmake/NetSurf.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/FreeType.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/UserPrograms.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/SystemServices.cmake")
 
@@ -956,6 +957,20 @@ target_include_directories(savanxp-sximg-test PRIVATE
     "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
 target_compile_options(savanxp-sximg-test PRIVATE -O1 -Wall -Wextra)
 set_target_properties(savanxp-sximg-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+
+# libsxfont over the host build of FreeType (docs/desktop/FONT_LIBRARY.md):
+# the self-test fonttest runs on SavanXP, over the Liberation faces in assets/.
+add_executable(savanxp-sxfont-test
+    system/font/sxfont.c
+    system/font/sxfont_selftest.c
+    tests/host/sxfont_test.c)
+target_include_directories(savanxp-sxfont-test PRIVATE
+    "${CMAKE_SOURCE_DIR}/system/font"
+    "${CMAKE_SOURCE_DIR}/subsystems/posix/sdk/v1/include")
+target_link_libraries(savanxp-sxfont-test PRIVATE freetype_host)
+target_compile_definitions(savanxp-sxfont-test PRIVATE
+    SAVANXP_FONT_DIR="${CMAKE_SOURCE_DIR}/assets/fonts/liberation")
+target_compile_options(savanxp-sxfont-test PRIVATE -O1 -Wall -Wextra)
 
 # Pure viewport geometry used by the native image viewer.
 add_executable(savanxp-imgview-test system/imgview/view.c tests/host/imgview_test.c)
@@ -1371,7 +1386,7 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-iconview-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-webengine-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-device-inventory-test savanxp-lifecycle-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test
+    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-iconview-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-webengine-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-device-inventory-test savanxp-lifecycle-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test savanxp-sxfont-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
@@ -1380,6 +1395,7 @@ add_test(NAME kernel-audio-gain-test COMMAND savanxp-kernel-audio-gain-test)
 add_test(NAME ccleste-wav-test COMMAND savanxp-ccleste-wav-test)
 add_test(NAME sxmidi-test COMMAND savanxp-sxmidi-test)
 add_test(NAME sximg-test COMMAND savanxp-sximg-test)
+add_test(NAME sxfont-test COMMAND savanxp-sxfont-test)
 add_test(NAME doom-mus-test COMMAND savanxp-doom-mus-test)
 add_test(NAME partition-test COMMAND savanxp-partition-test)
 add_test(NAME acpi-tables-test COMMAND savanxp-acpi-tables-test)
@@ -1658,6 +1674,11 @@ add_custom_target(savanxp_diskfs
     ${SAVANXP_LIB_COPY_COMMANDS}
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_SOURCE_DIR}/diskfs" "${SAVANXP_DISKFS_ROOT}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/fonts"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${CMAKE_SOURCE_DIR}/assets/fonts/liberation" "${SAVANXP_DISKFS_ROOT}/system/fonts"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f
+            "${SAVANXP_DISKFS_ROOT}/system/fonts/LICENSE" "${SAVANXP_DISKFS_ROOT}/system/fonts/AUTHORS"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/cursors"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_SOURCE_DIR}/assets/desktop/cursors" "${SAVANXP_DISKFS_ROOT}/system/cursors"

@@ -1,0 +1,13 @@
+name=FreeType
+license=FTL
+copyright=Copyright (C) 1996-2026 David Turner, Robert Wilhelm, and Werner Lemberg
+copyright=Copyright 2000 Computing Research Labs, New Mexico State University (src/base/fthash.c)
+copyright=Copyright 2001-2015 Francesco Zappa Nardelli (src/base/fthash.c)
+origin=https://freetype.org
+version=2.15.0
+used-in=/lib/libsxfont.so.0.4
+provenance=FreeType
+note=Portions of this software are copyright (C) 2026 The FreeType Project (https://freetype.org). All rights reserved.
+note=src/base/fthash.c, compiled into the library, is under the X11-style notice in freetype-fthash.txt.
+text=vendor/freetype/docs/FTL.TXT
+text=assets/licenses/freetype-fthash.txt

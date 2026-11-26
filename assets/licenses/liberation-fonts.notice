@@ -1,0 +1,9 @@
+name=Liberation Fonts
+license=OFL-1.1
+copyright=Digitized data copyright (c) 2010 Google Corporation, with Reserved Font Arimo, Tinos and Cousine
+copyright=Copyright (c) 2012 Red Hat, Inc., with Reserved Font Name Liberation
+origin=https://github.com/liberationfonts/liberation-fonts
+version=2.1.5
+used-in=/system/fonts (Liberation Sans, Serif and Mono, four styles each)
+provenance=Liberation Fonts (scalable document faces)
+text=assets/fonts/liberation/LICENSE

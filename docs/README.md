@@ -236,6 +236,10 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
   interpretation of the performance tables.
 - [`UI_FONTS.md`](desktop/UI_FONTS.md) — the UI, caption and console faces, the
   rule that every UI font is 1-bit, and how to change a face.
+- [`FONT_LIBRARY.md`](desktop/FONT_LIBRARY.md) — `libsxfont`, scalable TrueType
+  fonts at run time over FreeType: the API, the v35 hinting and gasp smoothing,
+  metrics as Windows reports them, the glyph cache, face matching and
+  substitutes, where font files live, and the Win32 path through `winhost`.
 - [`START_MENU.md`](desktop/START_MENU.md) — the Start menu: Programs and Settings
   cascades from progman's catalog, the cascade's timing and placement, why it is one
   level deep, the banner and its edition switch.

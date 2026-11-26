@@ -15,6 +15,7 @@
 libmath     libmath.so.0.4    subsystems/posix/sdk/v1/runtime/math.c
 libsxmidi   libsxmidi.so.0.4  subsystems/posix/sdk/v1/runtime/sxmidi.c
 libsximg    libsximg.so.0.4
+libsxfont   libsxfont.so.0.4
 libgfx2d    libgfx2d.so.0.4   system/gfx/pixels.c system/gfx/gfx2d.c system/gfx/sxchrome.c
 libsxgfx    libsxgfx.so.0.4   subsystems/posix/sdk/v1/runtime/gfx.c subsystems/posix/sdk/v1/runtime/gfx_scaled.c
 libsxgui    libsxgui.so.0.4   system/gfx/sxgui.c

@@ -140,6 +140,14 @@ tables at build time ([UI_FONTS.md](../../desktop/UI_FONTS.md)).
 The library's own design (its API, the cache, where font files live, how a
 face is chosen) is a document of its own, written before WP6.
 
+**Done (2026-11-25).** The library is `libsxfont`
+([FONT_LIBRARY.md](../../desktop/FONT_LIBRARY.md)), over FreeType 2.15.0,
+which passed the review under the FreeType License. Liberation Sans, Serif
+and Mono ship in `/system/fonts`. Text follows each face's gasp table, as
+Windows XP's standard smoothing did, with only the v35 interpreter
+compiled. `gdi32` reaches the library through `winhost` services, WP6's to
+write.
+
 ### D3: no printer (2026-11-21)
 
 SavanXP has no printers. Configurar página, Vista preliminar and Imprimir
@@ -427,7 +435,10 @@ What changed from the plan above, and why:
 
 ### WP6 — text and pictures in `gdi32`
 
-Size L. Starts once the font library of D1 exists.
+Size L. The font library of D1 exists
+([FONT_LIBRARY.md](../../desktop/FONT_LIBRARY.md)); its
+[path from `gdi32`](../../desktop/FONT_LIBRARY.md#win32-through-winhost-wp6)
+is this phase's.
 
 Fonts at any size, weight, slant and underline from `CreateFontIndirectW`;
 `EnumFontFamiliesExW` (the font box and the font dialog),

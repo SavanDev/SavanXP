@@ -148,6 +148,18 @@ in [`WEBVIEWER_ROADMAP.md`](../roadmaps/open/WEBVIEWER_ROADMAP.md).
   Web Viewer's versions are written from the CSS and HTML specifications
   (the roadmap's clean-room rule). There is no NetSurf port.
 
+## FreeType
+
+`Adopt` (2026-11-25): FreeType 2.15.0 under the FreeType License, vendored
+under `vendor/freetype/` with only the modules `libsxfont` builds
+([FONT_LIBRARY.md](../desktop/FONT_LIBRARY.md)). Writing a TrueType
+rasterizer and bytecode interpreter here was the alternative the WordPad
+roadmap kept in case the license review failed; it did not. The FTL's
+credit clause is met by the library's document and its notice, and the one
+compiled file under another license, `src/base/fthash.c`, carries its own
+notice. Fonts are reviewed case by case as the default rule says: the
+Liberation faces have their own entry in the registry.
+
 ## Ladybird
 
 `Do not adopt` (retired 2026-11-21). It was the planned engine from
