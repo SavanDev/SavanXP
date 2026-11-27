@@ -1,0 +1,58 @@
+# E4's box tree (docs/desktop/WEBVIEWER_ENGINE.md#the-box-tree), written from
+# CSS 2.1 9.2 (anonymous boxes, a block inside an inline), 12.5 (markers) and
+# 16.6.1 (white space). One line per box, two spaces a level.
+block html
+  block body
+    block p
+      text "One "
+      inline b
+        text "two "
+      text "three"
+    anonymous
+      text "Loose text "
+    block div
+      anonymous
+        text "Before "
+        inline span (split)
+          text "inline "
+      block span
+        text "block"
+      anonymous
+        inline span (continued)
+          text "after"
+        text " end"
+    block p
+      text "A"
+      break
+      text "B "
+      text "[image]" image
+      text " "
+      inline a
+        text "link" link
+    block pre
+      text "  keep  tab\ntwo"
+    block pre
+      text "first\nsecond"
+    block ul
+      block li
+        marker 1 "" outside
+        anonymous
+          text "disc "
+        block ul
+          block li
+            marker 1 "" outside
+            text "circle"
+    block ol
+      block li
+        marker 3 "3." outside
+        text "three"
+      block li
+        marker 7 "7." outside
+        text "seven"
+      block li
+        marker 8 "8." outside
+        text "eight"
+    block ul
+      block li
+        marker 1 ""
+        text "inside"

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>E4 boxes</title>
+<style>
+.hidden { display: none }
+span.block { display: block }
+pre.lines { white-space: pre-line }
+ul.inside { list-style-position: inside }
+</style>
+</head>
+<body>
+<p>One   <b> two </b>  three</p>
+Loose text
+<div>Before <span>inline <span class="block">block</span> after</span> end</div>
+<p class="hidden">Not shown</p>
+<p>A<br>B <img src="x.png" alt="x"> <a href="/second.html">link</a></p>
+<pre>  keep	tab
+two</pre>
+<pre class="lines">  first
+   second</pre>
+<ul>
+<li>disc
+<ul><li>circle</li></ul>
+</li>
+</ul>
+<ol start="3"><li>three</li><li value="7">seven</li><li>eight</li></ol>
+<ul class="inside"><li>inside</li></ul>
+</body>
+</html>

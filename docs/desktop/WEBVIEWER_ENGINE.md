@@ -157,6 +157,68 @@ The handler supplies legacy HTML color hints for the body, links and
 and the UA stylesheet live in Web Viewer. Interactive selector state and
 quirks mode remain deferred.
 
+## The box tree
+
+E4 ([roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md#e4--the-box-tree-and-normal-flow))
+turns the styled document into CSS 2.1's boxes, in
+`system/webview/engine/webengine_box.c` (`webengine_box.h`). It is written from
+CSS 2.1 chapters 9, 12 and 16, not from NetSurf's box construction (the
+clean-room rule). `webengine_tree_build` walks the DOM, styles each element
+with `webengine_style_element` and makes:
+
+- **Block boxes** for `block`, `list-item`, the table displays (tables
+  stack until E6), `flex`, `grid` and `run-in`. libcss' `css_computed_display`
+  already turns floated and absolutely positioned elements into blocks;
+  until E5 they stay in the normal flow. The root is a block whatever its
+  display.
+- **Inline boxes** for `inline` and, until they get layouts of their own,
+  `inline-block`, `inline-table`, `inline-flex` and `inline-grid`.
+- **Anonymous blocks** (9.2.1.1). A block whose children mix blocks and
+  inline content wraps each run of the inline content in one. A block
+  inside an inline splits it: the inline's boxes up to the block end, and
+  its next inline content goes into continuation pieces in a new anonymous
+  block. Only the first piece of an inline draws its left edge, and only
+  the last its right one.
+- **Text boxes**, after white-space processing (16.6.1). `normal`, `nowrap`
+  and `pre-line` collapse runs of spaces across the whole inline formatting
+  context, element boundaries included, and drop the space that would open
+  it. `pre-line` keeps newlines. `pre` and `pre-wrap` keep everything and
+  expand tabs to the next multiple of eight columns. What is left of the
+  line's ends is layout's job.
+- **Breaks** for `<br>`, and a `[image]` text box for `<img>` until E6.
+- **Markers** for list items (12.5). The ordinal follows `<ol start>` and
+  `<li value>`. Numbered styles are formatted by libcss
+  (`css_computed_format_list_style`). `disc`, `circle` and `square` carry no
+  text, because they are drawn and the faces may lack the glyphs. A marker
+  that is `inside` is the item's first inline content; an `outside` one
+  hangs from the item (`marker`), outside the flow.
+
+Each box points at a `webengine_box_style`: the computed values layout and
+paint read, with lengths in CSS pixels and percentages kept for the
+containing block. Anonymous boxes inherit the inherited properties and take
+the initial values of the others. `text-decoration` lines are collected
+down the tree, as they propagate to the text inside. A side whose border
+style is `none` or `hidden` has no width. The canvas takes the root's
+background, or body's when the root has none (14.2).
+
+The user-agent stylesheet is the engine's (`webengine_ua_css`): CSS 2.1's
+Appendix D, with the sizes and margins of HTML's rendering section where the
+two differ, and lists indented with padding, as browsers do.
+
+Fonts are the caller's (`struct webengine_fonts`): a face for a size, weight
+and family, the advance of a piece of text, and the ascent and descent of a
+face. `webengine_tree_text` makes the tree of a plain text, which is what
+the source view and `text/plain` show.
+
+`webengine_tree_dump` writes the tree a line per box. **`webengine-layout-test`**
+(host, `tests/host/webengine_layout_test.c`) lays out every corpus page that
+has an expectation beside it (`NAME.html` and `NAME.expect`) with fixed fonts,
+and compares the dump with the expectation line by line; `--print PAGE`
+prints a page's dump. The expectations are written from the specification,
+not copied from the output. `e4-boxes` covers anonymous blocks, a block in an
+inline, white space across elements, `pre`, `pre-line`, breaks, images,
+links and the three kinds of marker.
+
 ## Known costs
 
 - **libcss' style sharing and sibling combinators.** With `+` or `~`, its
