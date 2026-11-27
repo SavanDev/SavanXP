@@ -1370,7 +1370,10 @@ int sx_bmp_decode_argb_into(const unsigned char *data, size_t size, uint32_t *pi
     return bmp_decode_into(data, size, pixels, pixel_count, 1);
 }
 
-/* --- Sequential JPEG (T.81, Annexes B/C/F and A.3.3) ------------------------ */
+/* --- Sequential and progressive JPEG (T.81, Annexes B/C/F/G and A.3.3) ----- */
+
+/* Progressive coefficient store: three 4096x4096 planes, 96 MiB of int16_t. */
+#define JPEG_PROGRESSIVE_MAX_COEFFICIENTS (UINT64_C(3) * SX_IMAGE_MAX_PIXELS)
 
 static const unsigned char jpeg_zigzag[64] = {
     0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,
@@ -1385,7 +1388,7 @@ struct jpeg_huffman
     uint32_t first[17];
     uint16_t offset[17];
     unsigned char symbols[256];
-    unsigned valid;
+    unsigned valid, eob_runs;
 };
 
 struct jpeg_component
@@ -1393,6 +1396,11 @@ struct jpeg_component
     unsigned id, h, v, quant_id, dc_id, ac_id;
     uint32_t width, height, sample_width, sample_height;
     unsigned char *samples;
+    /* Progressive frames only: every block's coefficients in natural order,
+     * MCU-padded, and the quantizer latched at the component's first scan. */
+    int16_t *coefficients;
+    uint32_t blocks_across, blocks_down;
+    uint16_t quant[64];
 };
 
 struct jpeg_state
@@ -1404,6 +1412,10 @@ struct jpeg_state
     struct jpeg_component component[3];
     unsigned scan_count, scan[3], decoded;
     unsigned restart_interval, jfif, adobe, transform;
+    /* Progressive scan parameters and, per component and coefficient, the
+     * successive-approximation bit already coded plus one (0: not coded). */
+    unsigned progressive, ss, se, ah, al;
+    unsigned char approx[3][64];
     uint16_t quant[4][64];
     unsigned quant_present[4], quant_wide[4];
     struct jpeg_huffman huff[2][4];
@@ -1417,7 +1429,9 @@ struct jpeg_reader
 };
 
 /* JPEG canonical codes are MSB-first and reserve the all-ones code, which
- * makes one-bit padding distinguishable from actual Huffman symbols. */
+ * makes one-bit padding distinguishable from actual Huffman symbols. AC
+ * end-of-band runs (EOB1..EOB14) exist only in progressive scans; a table
+ * holding them is marked, and sequential scans refuse to select it. */
 static int jpeg_huffman_build(struct jpeg_huffman *table, const unsigned char *counts,
                               const unsigned char *symbols, size_t total, unsigned ac)
 {
@@ -1439,8 +1453,8 @@ static int jpeg_huffman_build(struct jpeg_huffman *table, const unsigned char *c
         {
             unsigned symbol = symbols[i];
             unsigned bits = symbol & 15u;
-            if (seen[symbol]++ || (!ac && symbol > 11u) ||
-                (ac && (bits > 10u || (bits == 0u && symbol != 0u && symbol != 0xf0u)))) return 0;
+            if (seen[symbol]++ || (!ac && symbol > 11u) || (ac && bits > 10u)) return 0;
+            if (ac && bits == 0u && symbol != 0u && symbol != 0xf0u) table->eob_runs = 1u;
             table->symbols[i] = (unsigned char)symbol;
         }
         code = (code + count) << 1;
@@ -1518,7 +1532,7 @@ static int jpeg_huffman_tables(struct jpeg_state *state, const unsigned char *bo
 
 static int jpeg_process_error(unsigned marker)
 {
-    if (marker == 0xc2u || marker == 0xc6u) return SX_IMAGE_ERROR_JPEG_PROGRESSIVE;
+    if (marker == 0xc6u) return SX_IMAGE_ERROR_JPEG_PROGRESSIVE;
     if (marker == 0xc9u || marker == 0xcau || marker == 0xcbu || marker == 0xcdu ||
         marker == 0xceu || marker == 0xcfu || marker == 0xccu) return SX_IMAGE_ERROR_JPEG_ARITHMETIC;
     if (marker == 0xc3u || marker == 0xc7u) return SX_IMAGE_ERROR_JPEG_LOSSLESS;
@@ -1555,12 +1569,55 @@ static int jpeg_application(struct jpeg_state *state, unsigned marker,
     return SX_IMAGE_OK;
 }
 
+/* Progressive scans (G.1.1.1): a DC scan (Ss=Se=0) may interleave
+ * components; an AC band (1<=Ss<=Se<=63) carries exactly one. A first scan of
+ * a coefficient has Ah=0, each refinement lowers the bit position by one
+ * (Al=Ah-1), and a component's AC bands follow its first DC scan. The
+ * quantizer is latched at that DC scan; later redefinitions do not apply. */
+static int jpeg_progressive_scan_header(struct jpeg_state *state, const unsigned char *body, size_t length)
+{
+    unsigned i, k, blocks = 0u, count = body[0], ss, se, ah, al;
+    if (count == 0u || count > state->components || length != 4u + 2u * count) return SX_IMAGE_ERROR_HEADER;
+    ss = body[1u + 2u * count]; se = body[2u + 2u * count];
+    ah = body[3u + 2u * count] >> 4; al = body[3u + 2u * count] & 15u;
+    if (ss > se || se > 63u || (ss == 0u && se != 0u) || (ss != 0u && count != 1u) ||
+        ah > 13u || al > 13u || (ah != 0u && al + 1u != ah)) return SX_IMAGE_ERROR_HEADER;
+    for (i = 0u; i < count; ++i)
+    {
+        unsigned c, dc = body[2u + 2u * i] >> 4, ac = body[2u + 2u * i] & 15u;
+        struct jpeg_component *component;
+        for (c = 0u; c < state->components && state->component[c].id != body[1u + 2u * i]; ++c) {}
+        if (c == state->components || (i != 0u && c <= state->scan[i - 1u]) || dc > 3u || ac > 3u)
+            return SX_IMAGE_ERROR_HEADER;
+        component = &state->component[c];
+        if (ss == 0u && ah == 0u && !state->huff[0][dc].valid) return SX_IMAGE_ERROR_HEADER;
+        if (ss != 0u && (!state->huff[1][ac].valid || state->approx[c][0] == 0u)) return SX_IMAGE_ERROR_HEADER;
+        for (k = ss; k <= se; ++k)
+            if (state->approx[c][k] != (ah ? ah + 1u : 0u)) return SX_IMAGE_ERROR_HEADER;
+        if (ss == 0u && ah == 0u)
+        {
+            if (!state->quant_present[component->quant_id]) return SX_IMAGE_ERROR_HEADER;
+            memcpy(component->quant, state->quant[component->quant_id], sizeof(component->quant));
+        }
+        component->dc_id = dc; component->ac_id = ac;
+        state->scan[i] = c;
+        blocks += component->h * component->v;
+    }
+    if (count > 1u && blocks > 10u) return SX_IMAGE_ERROR_JPEG_SAMPLING;
+    for (i = 0u; i < count; ++i)
+        for (k = ss; k <= se; ++k) state->approx[state->scan[i]][k] = (unsigned char)(al + 1u);
+    state->scan_count = count;
+    state->ss = ss; state->se = se; state->ah = ah; state->al = al;
+    return SX_IMAGE_OK;
+}
+
 /* Scan selectors must be unique, in frame order for interleaved scans, and
  * each sequential component occurs exactly once in the complete frame. */
 static int jpeg_scan_header(struct jpeg_state *state, const unsigned char *body, size_t length)
 {
     unsigned i, blocks = 0u, mask = state->decoded, count;
     if (!state->frame || length < 1u) return SX_IMAGE_ERROR_HEADER;
+    if (state->progressive) return jpeg_progressive_scan_header(state, body, length);
     count = body[0];
     if (count == 0u || count > state->components || length != 4u + 2u * count ||
         body[1u + 2u * count] != 0u || body[2u + 2u * count] != 63u ||
@@ -1574,7 +1631,7 @@ static int jpeg_scan_header(struct jpeg_state *state, const unsigned char *body,
             (i != 0u && c <= state->scan[i - 1u])) return SX_IMAGE_ERROR_HEADER;
         component = &state->component[c];
         if (dc > 3u || ac > 3u || (state->frame == 0xc0u && (dc > 1u || ac > 1u)) ||
-            !state->huff[0][dc].valid || !state->huff[1][ac].valid ||
+            !state->huff[0][dc].valid || !state->huff[1][ac].valid || state->huff[1][ac].eob_runs ||
             !state->quant_present[component->quant_id] ||
             (state->frame == 0xc0u && state->quant_wide[component->quant_id])) return SX_IMAGE_ERROR_HEADER;
         component->dc_id = dc; component->ac_id = ac;
@@ -1602,7 +1659,7 @@ static int jpeg_headers(struct jpeg_state *state, size_t pos)
         if (marker == 0xd8u || marker == 1u ||
             (marker >= 0xd0u && marker <= 0xd7u)) return SX_IMAGE_ERROR_HEADER;
         if (!jpeg_segment(state->data, state->size, &pos, &body, &length)) return SX_IMAGE_ERROR_HEADER;
-        if (marker == 0xc0u || marker == 0xc1u)
+        if (marker == 0xc0u || marker == 0xc1u || marker == 0xc2u)
         {
             unsigned c;
             if (state->frame || length < 6u || body[5] == 0u ||
@@ -1634,6 +1691,7 @@ static int jpeg_headers(struct jpeg_state *state, size_t pos)
                 component->height = (state->height * component->v + state->vmax - 1u) / state->vmax;
             }
             state->frame = marker;
+            state->progressive = marker == 0xc2u;
         }
         else if (marker == 0xdbu)
         {
@@ -1872,13 +1930,30 @@ static int jpeg_align(struct jpeg_reader *reader)
     return 1;
 }
 
+/* Clip one reconstructed n*n block (block units bx, by) to the component's
+ * reduced dimensions: greyscale goes straight to the output, colour to its plane. */
+static void jpeg_store_block(const struct jpeg_state *state, const struct jpeg_component *component,
+                             uint32_t bx, uint32_t by, const unsigned char *samples, uint32_t *pixels)
+{
+    unsigned n = 8u / state->scale_denom;
+    uint32_t x, y;
+    bx *= n; by *= n;
+    for (y = 0u; y < n && by + y < component->sample_height; ++y)
+        for (x = 0u; x < n && bx + x < component->sample_width; ++x)
+        {
+            size_t at = (size_t)(by + y) * component->sample_width + bx + x;
+            if (state->components == 1u) pixels[at] = (uint32_t)samples[y * n + x] * 0x010101u;
+            else component->samples[at] = samples[y * n + x];
+        }
+}
+
 /* Decode one MCU sequence using current tables. Noninterleaved MCUs have
  * one block; interleaved MCUs carry each selected component's H*V blocks. */
 static int jpeg_decode_scan(struct jpeg_state *state, uint32_t *pixels, size_t *end)
 {
     struct jpeg_reader reader = {state->data, state->size, state->entropy, 0u, 0u};
     struct jpeg_component *first = &state->component[state->scan[0]];
-    unsigned interleaved = state->scan_count > 1u, n = 8u / state->scale_denom;
+    unsigned interleaved = state->scan_count > 1u;
     uint32_t across = interleaved ? (state->width + 8u * state->hmax - 1u) / (8u * state->hmax) :
                                    (first->width + 7u) / 8u;
     uint32_t down = interleaved ? (state->height + 8u * state->vmax - 1u) / (8u * state->vmax) :
@@ -1906,19 +1981,12 @@ static int jpeg_decode_scan(struct jpeg_state *state, uint32_t *pixels, size_t *
             {
                 int32_t block[64];
                 unsigned char samples[64];
-                uint32_t x, y, bx = ((index % across) * h + dx) * n;
-                uint32_t by = ((index / across) * v + dy) * n;
                 if (!jpeg_block(&reader, &state->huff[0][component->dc_id], &state->huff[1][component->ac_id],
                                 &predictor[c], block)) return 0;
                 jpeg_dequantize(block, state->quant[component->quant_id]);
                 jpeg_idct_scaled(block, samples, state->scale_denom);
-                for (y = 0u; y < n && by + y < component->sample_height; ++y)
-                    for (x = 0u; x < n && bx + x < component->sample_width; ++x)
-                    {
-                        size_t at = (size_t)(by + y) * component->sample_width + bx + x;
-                        if (state->components == 1u) pixels[at] = (uint32_t)samples[y * n + x] * 0x010101u;
-                        else component->samples[at] = samples[y * n + x];
-                    }
+                jpeg_store_block(state, component, (index % across) * h + dx, (index / across) * v + dy,
+                                 samples, pixels);
             }
         }
     }
@@ -1926,6 +1994,222 @@ static int jpeg_decode_scan(struct jpeg_state *state, uint32_t *pixels, size_t *
     for (index = 0u; index < state->scan_count; ++index) state->decoded |= 1u << state->scan[index];
     *end = reader.pos;
     return 1;
+}
+
+/* Progressive entropy decoding (G.1.2). Coefficients are kept point-
+ * transformed back to full scale: a first scan stores value * 2^Al, a
+ * refinement adds bit Al. Every stored value stays within the 8-bit
+ * coefficient range (DC -1024..1023, AC -1023..1023), so int16_t holds it and
+ * dequantization keeps the sequential bounds. */
+static int jpeg_dc_first(struct jpeg_reader *reader, const struct jpeg_huffman *table, unsigned al,
+                         int32_t *predictor, int16_t *coefficient)
+{
+    unsigned symbol;
+    int32_t difference;
+    int64_t value;
+    if (!jpeg_symbol(reader, table, &symbol) || symbol > 11u ||
+        !jpeg_receive(reader, symbol, &difference)) return 0;
+    difference += *predictor;
+    value = (int64_t)difference * ((int64_t)1 << al);
+    if (value < -1024 || value > 1023) return 0;
+    *predictor = difference;
+    *coefficient = (int16_t)value;
+    return 1;
+}
+
+static int jpeg_dc_refine(struct jpeg_reader *reader, unsigned al, int16_t *coefficient)
+{
+    uint32_t bit;
+    if (!jpeg_bits(reader, 1u, &bit)) return 0;
+    if (bit) *coefficient = (int16_t)(*coefficient | (1 << al));
+    return 1;
+}
+
+/* EOBn ends this block's band and the next 2^n+bits-1 blocks' bands. */
+static int jpeg_eob_run(struct jpeg_reader *reader, unsigned run, uint32_t *eobrun)
+{
+    uint32_t extra = 0u;
+    if (run != 0u && !jpeg_bits(reader, run, &extra)) return 0;
+    *eobrun = (1u << run) + extra;
+    return 1;
+}
+
+static int jpeg_ac_first(struct jpeg_reader *reader, const struct jpeg_state *state,
+                         const struct jpeg_huffman *table, uint32_t *eobrun, int16_t block[64])
+{
+    unsigned k = state->ss;
+    if (*eobrun != 0u) { --*eobrun; return 1; }
+    while (k <= state->se)
+    {
+        unsigned symbol, run, count;
+        int32_t value;
+        int64_t scaled;
+        if (!jpeg_symbol(reader, table, &symbol)) return 0;
+        run = symbol >> 4; count = symbol & 15u;
+        if (count == 0u)
+        {
+            if (run == 15u)
+            {
+                if (k + 16u > state->se + 1u) return 0;
+                k += 16u;
+                continue;
+            }
+            if (!jpeg_eob_run(reader, run, eobrun)) return 0;
+            --*eobrun;
+            return 1;
+        }
+        if (k + run > state->se || !jpeg_receive(reader, count, &value)) return 0;
+        k += run;
+        scaled = (int64_t)value * ((int64_t)1 << state->al);
+        if (scaled < -1023 || scaled > 1023) return 0;
+        block[jpeg_zigzag[k++]] = (int16_t)scaled;
+    }
+    return 1;
+}
+
+/* A correction bit follows, in band order, for every coefficient that was
+ * already nonzero; zero-history coefficients are what runs count. */
+static int jpeg_refine_bit(struct jpeg_reader *reader, unsigned al, int16_t *coefficient)
+{
+    uint32_t bit;
+    if (!jpeg_bits(reader, 1u, &bit)) return 0;
+    if (bit && (*coefficient & (1 << al)) == 0)
+        *coefficient = (int16_t)(*coefficient + (*coefficient >= 0 ? (1 << al) : -(1 << al)));
+    return 1;
+}
+
+static int jpeg_ac_refine(struct jpeg_reader *reader, const struct jpeg_state *state,
+                          const struct jpeg_huffman *table, uint32_t *eobrun, int16_t block[64])
+{
+    unsigned k = state->ss, al = state->al;
+    if (*eobrun == 0u)
+    {
+        while (k <= state->se)
+        {
+            unsigned symbol, run, count, placed = 0u;
+            int value = 0;
+            if (!jpeg_symbol(reader, table, &symbol)) return 0;
+            run = symbol >> 4; count = symbol & 15u;
+            if (count != 0u)
+            {
+                uint32_t sign;
+                /* A new coefficient is +-2^Al; above the AC range it is invalid. */
+                if (count != 1u || (1 << al) > 1023 || !jpeg_bits(reader, 1u, &sign)) return 0;
+                value = sign ? (1 << al) : -(1 << al);
+            }
+            else if (run != 15u)
+            {
+                if (!jpeg_eob_run(reader, run, eobrun)) return 0;
+                break;
+            }
+            /* Skip `run` zero-history coefficients, refining the nonzero ones
+             * passed on the way, and stop at the next zero-history one. */
+            for (; k <= state->se; ++k)
+            {
+                int16_t *coefficient = &block[jpeg_zigzag[k]];
+                if (*coefficient != 0)
+                {
+                    if (!jpeg_refine_bit(reader, al, coefficient)) return 0;
+                }
+                else if (run == 0u)
+                {
+                    placed = 1u;
+                    break;
+                }
+                else --run;
+            }
+            if (!placed) return 0;
+            if (value != 0) block[jpeg_zigzag[k]] = (int16_t)value;
+            ++k;
+        }
+    }
+    if (*eobrun != 0u)
+    {
+        for (; k <= state->se; ++k)
+        {
+            int16_t *coefficient = &block[jpeg_zigzag[k]];
+            if (*coefficient != 0 && !jpeg_refine_bit(reader, al, coefficient)) return 0;
+        }
+        --*eobrun;
+    }
+    return 1;
+}
+
+/* One progressive scan into the coefficient store. An EOB run may not cross
+ * a restart marker or the end of the scan. */
+static int jpeg_decode_progressive_scan(struct jpeg_state *state, size_t *end)
+{
+    struct jpeg_reader reader = {state->data, state->size, state->entropy, 0u, 0u};
+    struct jpeg_component *first = &state->component[state->scan[0]];
+    unsigned interleaved = state->scan_count > 1u;
+    uint32_t across = interleaved ? (state->width + 8u * state->hmax - 1u) / (8u * state->hmax) :
+                                   (first->width + 7u) / 8u;
+    uint32_t down = interleaved ? (state->height + 8u * state->vmax - 1u) / (8u * state->vmax) :
+                                 (first->height + 7u) / 8u;
+    uint32_t index, total = across * down, eobrun = 0u;
+    unsigned restart = 0u;
+    int32_t predictor[3] = {0, 0, 0};
+    for (index = 0u; index < total; ++index)
+    {
+        unsigned i;
+        if (index != 0u && state->restart_interval != 0u && index % state->restart_interval == 0u)
+        {
+            unsigned marker;
+            if (eobrun != 0u || !jpeg_align(&reader) ||
+                !jpeg_marker(reader.data, reader.size, &reader.pos, &marker) ||
+                marker != 0xd0u + restart) return 0;
+            restart = (restart + 1u) & 7u;
+            memset(predictor, 0, sizeof(predictor));
+        }
+        for (i = 0u; i < state->scan_count; ++i)
+        {
+            unsigned c = state->scan[i], dx, dy;
+            struct jpeg_component *component = &state->component[c];
+            unsigned h = interleaved ? component->h : 1u, v = interleaved ? component->v : 1u;
+            for (dy = 0u; dy < v; ++dy) for (dx = 0u; dx < h; ++dx)
+            {
+                uint32_t bx = (index % across) * h + dx, by = (index / across) * v + dy;
+                int16_t *block = component->coefficients + ((size_t)by * component->blocks_across + bx) * 64u;
+                int ok;
+                if (state->ss == 0u)
+                    ok = state->ah == 0u ? jpeg_dc_first(&reader, &state->huff[0][component->dc_id], state->al,
+                                                         &predictor[c], block)
+                                         : jpeg_dc_refine(&reader, state->al, block);
+                else
+                    ok = state->ah == 0u ? jpeg_ac_first(&reader, state, &state->huff[1][component->ac_id], &eobrun, block)
+                                         : jpeg_ac_refine(&reader, state, &state->huff[1][component->ac_id], &eobrun, block);
+                if (!ok) return 0;
+            }
+        }
+    }
+    if (eobrun != 0u || !jpeg_align(&reader)) return 0;
+    if (state->ss == 0u && state->ah == 0u)
+        for (index = 0u; index < state->scan_count; ++index) state->decoded |= 1u << state->scan[index];
+    *end = reader.pos;
+    return 1;
+}
+
+/* After EOI, every block inside a component's true dimensions goes through
+ * the same dequantization and (reduced) IDCT as a sequential block. */
+static void jpeg_reconstruct(struct jpeg_state *state, uint32_t *pixels)
+{
+    unsigned c;
+    for (c = 0u; c < state->components; ++c)
+    {
+        struct jpeg_component *component = &state->component[c];
+        uint32_t bx, by, across = (component->width + 7u) / 8u, down = (component->height + 7u) / 8u;
+        for (by = 0u; by < down; ++by) for (bx = 0u; bx < across; ++bx)
+        {
+            const int16_t *stored = component->coefficients + ((size_t)by * component->blocks_across + bx) * 64u;
+            int32_t block[64];
+            unsigned char samples[64];
+            unsigned i;
+            for (i = 0u; i < 64u; ++i) block[i] = stored[i];
+            jpeg_dequantize(block, component->quant);
+            jpeg_idct_scaled(block, samples, state->scale_denom);
+            jpeg_store_block(state, component, bx, by, samples, pixels);
+        }
+    }
 }
 
 /* Q16 full-range JFIF/CCIR 601 conversion, rounded to nearest and clamped.
@@ -1942,27 +2226,48 @@ static uint32_t jpeg_ycbcr(unsigned y, unsigned cb, unsigned cr)
 static int jpeg_decode(struct jpeg_state *state, uint32_t *pixels)
 {
     unsigned c;
-    size_t size = 0u, offset = 0u, end;
+    size_t size = 0u, offset = 0u, coefficients = 0u, end;
     unsigned char *workspace = 0;
     int result;
+    /* One workspace: progressive coefficients first (jpeg_plan bounded them),
+     * then the colour planes. Each reduced byte plane is at most the output
+     * area: <= 3*4096*4096 bytes. Sequential scans dequantize immediately so
+     * later table redefinitions are harmless. */
+    if (state->progressive)
+        for (c = 0u; c < state->components; ++c)
+            coefficients += (size_t)state->component[c].blocks_across * state->component[c].blocks_down * 64u;
     if (state->components == 3u)
-    {
-        /* Each reduced byte plane is at most the output area: <= 3*4096*4096 bytes.
-         * Dequantize immediately so later table redefinitions are harmless. */
         for (c = 0u; c < 3u; ++c) size += (size_t)state->component[c].sample_width * state->component[c].sample_height;
+    size += coefficients * sizeof(int16_t);
+    if (size != 0u)
+    {
         workspace = (unsigned char *)malloc(size);
         if (workspace == 0) return 0;
-        for (c = 0u; c < 3u; ++c)
+        memset(workspace, 0, coefficients * sizeof(int16_t));
+        offset = coefficients * sizeof(int16_t);
+        coefficients = 0u;
+        for (c = 0u; c < state->components; ++c)
         {
-            state->component[c].samples = workspace + offset;
-            offset += (size_t)state->component[c].sample_width * state->component[c].sample_height;
+            struct jpeg_component *component = &state->component[c];
+            if (state->progressive)
+            {
+                component->coefficients = (int16_t *)(void *)workspace + coefficients;
+                coefficients += (size_t)component->blocks_across * component->blocks_down * 64u;
+            }
+            if (state->components == 3u)
+            {
+                component->samples = workspace + offset;
+                offset += (size_t)component->sample_width * component->sample_height;
+            }
         }
     }
     do
     {
-        if (!jpeg_decode_scan(state, pixels, &end)) { free(workspace); return 0; }
+        int ok = state->progressive ? jpeg_decode_progressive_scan(state, &end) : jpeg_decode_scan(state, pixels, &end);
+        if (!ok) { free(workspace); return 0; }
         result = jpeg_headers(state, end);
     } while (result == SX_IMAGE_OK);
+    if (result == 1 && state->progressive) jpeg_reconstruct(state, pixels);
     if (result == 1 && state->components == 3u)
     {
         uint32_t x, y;
@@ -2080,12 +2385,22 @@ static int jpeg_plan(const unsigned char *data, size_t size, const struct sx_ima
     }
     {
         unsigned c;
+        uint64_t coefficients = 0u;
+        uint32_t mcus_across = (state->width + 8u * state->hmax - 1u) / (8u * state->hmax);
+        uint32_t mcus_down = (state->height + 8u * state->vmax - 1u) / (8u * state->vmax);
         for (c = 0u; c < state->components; ++c)
         {
             struct jpeg_component *component = &state->component[c];
             component->sample_width = (component->width + state->scale_denom - 1u) / state->scale_denom;
             component->sample_height = (component->height + state->scale_denom - 1u) / state->scale_denom;
+            /* Interleaved DC scans also fill the MCU padding blocks. */
+            component->blocks_across = mcus_across * component->h;
+            component->blocks_down = mcus_down * component->v;
+            coefficients += (uint64_t)component->blocks_across * component->blocks_down * 64u;
         }
+        /* A progressive frame keeps every coefficient until EOI, whatever the
+         * output scale, so its source size is bounded by this store. */
+        if (state->progressive && coefficients > JPEG_PROGRESSIVE_MAX_COEFFICIENTS) return SX_IMAGE_ERROR_LIMIT;
     }
     metadata.format = SX_IMAGE_FORMAT_JPEG;
     metadata.source_width = state->width;
@@ -2158,7 +2473,7 @@ const char *sx_image_error_string(int result)
         case SX_IMAGE_ERROR_SCALE: return "Image decoder does not support the requested scale";
         case SX_IMAGE_ERROR_BUFFER: return "Image buffer is too small";
         case SX_IMAGE_ERROR_DECODE: return "Image decoding failed";
-        case SX_IMAGE_ERROR_JPEG_PROGRESSIVE: return "Progressive JPEG is unsupported";
+        case SX_IMAGE_ERROR_JPEG_PROGRESSIVE: return "Differential progressive JPEG is unsupported";
         case SX_IMAGE_ERROR_JPEG_ARITHMETIC: return "Arithmetic JPEG is unsupported";
         case SX_IMAGE_ERROR_JPEG_PRECISION: return "Unsupported JPEG sample precision";
         case SX_IMAGE_ERROR_JPEG_LOSSLESS: return "Lossless JPEG is unsupported";

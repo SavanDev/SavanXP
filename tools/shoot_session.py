@@ -1634,8 +1634,9 @@ def scenario_imgview(s):
     if ImageChops.difference(after.crop(patch), dragged.crop(patch)).getbbox() is None:
         raise Failure("Image Viewer dragging did not pan the enlarged image")
     step("f", "imgview-fit-again", "1024 x 768 pixels")
-    image = step("right", "imgview-progressive-error", "6 of 8")
-    expect_text(image, area(image), "Progressive JPEG is unsupported.", (255, 255, 255), (78, 78, 78), "named progressive JPEG error")
+    image = step("right", "imgview-progressive", "6 of 8")
+    label(image, "16 x 16 pixels")
+    palette(image)
     image = step("right", "imgview-broken-error", "7 of 8")
     expect_text(image, area(image), "Unable to open image", (255, 255, 255), (78, 78, 78), "late decode error replaces previous pixels")
     image = step("right", "imgview-alpha", "8 of 8")

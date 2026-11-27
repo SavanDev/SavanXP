@@ -15,6 +15,7 @@ static void test_free(void *ptr) { if(ptr) ++releases; free(ptr); }
 #include "sxjpeg_fixtures.h"
 #include "sxjpeg_color_fixtures.h"
 #include "sxjpeg_reduced_fixtures.h"
+#include "sxjpeg_progressive_fixtures.h"
 
 static int failures;
 #define CHECK(c, msg) do { if (!(c)) { printf("FAIL: %s (line %d)\n",msg,__LINE__); ++failures; } } while (0)
@@ -51,7 +52,11 @@ static void stages(void)
     unsigned char bad[]={12,0x10,0x0b};
     counts[1]=1;
     CHECK(!jpeg_huffman_build(&h,counts,bad,1,0),"8-bit DC category limit");
-    CHECK(!jpeg_huffman_build(&h,counts,bad+1,1,1),"invalid AC zero-size symbol refused");
+    // EOB1 (0x10) is a progressive AC symbol: the table is legal but marked,
+    // and a sequential scan refuses it (see malformed()).
+    CHECK(jpeg_huffman_build(&h,counts,bad+1,1,1) && h.eob_runs,"EOB run symbol accepted and marked");
+    const unsigned char ordinary[]={0x01};
+    CHECK(jpeg_huffman_build(&h,counts,ordinary,1,1) && !h.eob_runs,"ordinary AC table carries no EOB runs");
     CHECK(!jpeg_huffman_build(&h,counts,bad+2,1,1),"8-bit AC category limit");
     for (unsigned bits=0;bits<8;++bits) {
         unsigned char byte=(unsigned char)(bits<<5); int32_t value=99;
@@ -646,7 +651,7 @@ static void malformed(void) {
     options=(struct sx_image_options){0,7,0,1};
     CHECK(sx_jpeg_info(fixture,used,&options,&info)==SX_IMAGE_ERROR_LIMIT,"height limit");
     const struct {unsigned marker; int error;} unsupported[]={
-        {0xc2,SX_IMAGE_ERROR_JPEG_PROGRESSIVE},{0xc6,SX_IMAGE_ERROR_JPEG_PROGRESSIVE},
+        {0xc6,SX_IMAGE_ERROR_JPEG_PROGRESSIVE},
         {0xc9,SX_IMAGE_ERROR_JPEG_ARITHMETIC},{0xca,SX_IMAGE_ERROR_JPEG_ARITHMETIC},
         {0xc3,SX_IMAGE_ERROR_JPEG_LOSSLESS},{0xc7,SX_IMAGE_ERROR_JPEG_LOSSLESS}
     };
@@ -655,6 +660,12 @@ static void malformed(void) {
         error_expected(unsupported[i].error,1);
     }
     minimal(8,8,0); fixture[find_marker(0xc0)+4]=12; error_expected(SX_IMAGE_ERROR_JPEG_PRECISION,1);
+    // SOF2 is decoded now; a sequential scan (Ss=0, Se=63) under it is invalid.
+    minimal(8,8,0); fixture[find_marker(0xc0)+1]=0xc2; error_expected(SX_IMAGE_ERROR_HEADER,1);
+    minimal(8,8,0); { size_t at=find_marker(0xc0); fixture[at+1]=0xc2; fixture[at+4]=12; }
+    error_expected(SX_IMAGE_ERROR_JPEG_PRECISION,1);
+    // A sequential scan must not select an AC table holding EOB runs.
+    minimal(8,8,0); fixture[find_marker(0xc4)+39]=0x10; error_expected(SX_IMAGE_ERROR_HEADER,1);
     // Actual three- and four-component frames, not merely a corrupted length.
     for(unsigned components=3;components<=4;++components) {
         minimal(8,8,0); size_t at=find_marker(0xc0), tail=at+13;
@@ -750,14 +761,212 @@ static void malformed(void) {
         if(result) CHECK(metadata_equal(&info,&zero),"mutated failure metadata cleared");
         else CHECK(info.width*info.height<=256 && info.scale_denom==1,"mutated success dimensions bounded");
     }
-    CHECK(!strcmp(sx_image_error_string(SX_IMAGE_ERROR_JPEG_PROGRESSIVE),"Progressive JPEG is unsupported"),"progressive diagnostic");
+    CHECK(!strcmp(sx_image_error_string(SX_IMAGE_ERROR_JPEG_PROGRESSIVE),"Differential progressive JPEG is unsupported"),"differential progressive diagnostic");
     CHECK(!strcmp(sx_image_error_string(SX_IMAGE_ERROR_JPEG_ARITHMETIC),"Arithmetic JPEG is unsupported"),"arithmetic diagnostic");
     CHECK(!strcmp(sx_image_error_string(SX_IMAGE_ERROR_JPEG_LOSSLESS),"Lossless JPEG is unsupported"),"lossless diagnostic");
+}
+
+/* --- Progressive JPEG (I7) --- */
+
+/* Stage checks with a hand-built AC table: 000 EOB0, 001 (0,1), 010 (1,1),
+ * 011 EOB1, 100 ZRL. Bits are written MSB first into `bytes`. */
+static void progressive_stages(void)
+{
+    struct jpeg_huffman h; struct jpeg_state st; memset(&st,0,sizeof(st));
+    unsigned char counts[16]={0}, symbols[5]={0x00,0x01,0x11,0x10,0xf0}; counts[2]=5;
+    CHECK(jpeg_huffman_build(&h,counts,symbols,5,1) && h.eob_runs,"progressive AC table");
+    int16_t block[64]; uint32_t eobrun=0;
+    // Refinement: (1,1)+sign 1, correction 1 for the nonzero zz[1], then EOB0.
+    { const unsigned char b[]={0x58,0xff}; struct jpeg_reader r={b,2,0,0,0};
+      memset(block,0,sizeof(block)); block[jpeg_zigzag[1]]=2; st.ss=1; st.se=5; st.al=0;
+      CHECK(jpeg_ac_refine(&r,&st,&h,&eobrun,block) && eobrun==0,"refinement block decoded");
+      CHECK(block[jpeg_zigzag[1]]==3 && block[jpeg_zigzag[3]]==1 && block[jpeg_zigzag[2]]==0 &&
+            block[jpeg_zigzag[4]]==0,"correction bit and new coefficient placed past one zero"); }
+    // Negative coefficients grow in magnitude; a 0 correction bit leaves them.
+    { const unsigned char b[]={0x10,0x00}; struct jpeg_reader r={b,2,0,0,0}; // 000 (EOB0), bits 1 0
+      memset(block,0,sizeof(block)); block[jpeg_zigzag[1]]=-4; block[jpeg_zigzag[2]]=6; st.ss=1; st.se=2; st.al=1;
+      CHECK(jpeg_ac_refine(&r,&st,&h,&eobrun,block) && eobrun==0,"refinement inside an EOB run");
+      CHECK(block[jpeg_zigzag[1]]==-6 && block[jpeg_zigzag[2]]==6,"negative refinement and zero correction"); }
+    // EOB1 with extra bit 1: this block and two more end their band.
+    { const unsigned char b[]={0x7f}; struct jpeg_reader r={b,1,0,0,0}; // 011 1 ...
+      memset(block,0,sizeof(block)); st.ss=1; st.se=63; st.al=0; eobrun=0;
+      CHECK(jpeg_ac_first(&r,&st,&h,&eobrun,block) && eobrun==2,"EOB1 run length 3");
+      CHECK(jpeg_ac_first(&r,&st,&h,&eobrun,block) && jpeg_ac_first(&r,&st,&h,&eobrun,block) && eobrun==0 && r.pos==1 && r.remaining==4,
+            "blocks inside the run read no bits"); }
+    // First scan: (0,1) value +1 at Al=3 stores 8; ZRL past Se is invalid.
+    { const unsigned char b[]={0x3f}; struct jpeg_reader r={b,1,0,0,0}; // 001 1 1111 -> then 111 (invalid code)
+      memset(block,0,sizeof(block)); st.ss=1; st.se=1; st.al=3; eobrun=0;
+      CHECK(jpeg_ac_first(&r,&st,&h,&eobrun,block) && block[jpeg_zigzag[1]]==8,"point transform restores scale"); }
+    { const unsigned char b[]={0x80,0}; struct jpeg_reader r={b,2,0,0,0};
+      memset(block,0,sizeof(block)); st.ss=1; st.se=10; st.al=0; eobrun=0;
+      CHECK(!jpeg_ac_first(&r,&st,&h,&eobrun,block),"ZRL beyond the band refused"); }
+    { const unsigned char b[]={0x3f}; struct jpeg_reader r={b,1,0,0,0};
+      memset(block,0,sizeof(block)); st.ss=1; st.se=1; st.al=10; eobrun=0;
+      CHECK(!jpeg_ac_first(&r,&st,&h,&eobrun,block),"AC value above 1023 after the point transform refused"); }
+    { const unsigned char b[]={0x5f}; struct jpeg_reader r={b,1,0,0,0}; // (1,1) + sign at the band's last slot
+      memset(block,0,sizeof(block)); st.ss=1; st.se=1; st.al=0; eobrun=0;
+      CHECK(!jpeg_ac_refine(&r,&st,&h,&eobrun,block),"refinement coefficient past Se refused"); }
+    { const unsigned char b[]={0x3f}; struct jpeg_reader r={b,1,0,0,0};
+      memset(block,0,sizeof(block)); st.ss=1; st.se=5; st.al=10; eobrun=0;
+      CHECK(!jpeg_ac_refine(&r,&st,&h,&eobrun,block),"refinement value above the AC range refused"); }
+    // DC: first scan stores diff*2^Al, refinement ORs bit Al.
+    { struct jpeg_huffman dc; unsigned char c2[16]={0}, s2[1]={2}; c2[0]=1;
+      CHECK(jpeg_huffman_build(&dc,c2,s2,1,0),"DC table");
+      const unsigned char b[]={0x5f}; struct jpeg_reader r={b,1,0,0,0}; // 0 10 (+2) 1 (refine) 1111
+      int32_t predictor=3; int16_t coef=0;
+      CHECK(jpeg_dc_first(&r,&dc,2,&predictor,&coef) && predictor==5 && coef==20,"DC prediction on transformed values");
+      CHECK(jpeg_dc_refine(&r,1,&coef) && coef==22,"DC refinement bit");
+      r=(struct jpeg_reader){b,1,0,0,0}; predictor=255;
+      CHECK(!jpeg_dc_first(&r,&dc,2,&predictor,&coef),"DC beyond the coefficient range refused"); }
+}
+
+/* Hand-made progressive greyscale: 8 bits per blocks_w*8 x 8, a DC scan
+ * (diff 0) and optionally one AC scan with a single EOB1 run of `run`. */
+static size_t progressive_minimal(unsigned blocks_w, unsigned restart, unsigned run, unsigned ac_scan) {
+    used=pending=bit_count=0; mark(0xd8);
+    unsigned char q[65]={0}; memset(q+1,1,64); segment(0xdb,q,sizeof(q));
+    unsigned char h[37]={0}; h[1]=1; h[17]=0; h[18]=0x10; h[20]=2; h[35]=0x00; h[36]=0x10; segment(0xc4,h,sizeof(h));
+    unsigned width=blocks_w*8;
+    unsigned char f[9]={8,0,8,(unsigned char)(width>>8),(unsigned char)width,1,7,0x11,0};
+    segment(0xc2,f,sizeof(f));
+    if(restart) { unsigned char r[2]={0,(unsigned char)restart}; segment(0xdd,r,2); }
+    const unsigned char dc[6]={1,7,0x00,0,0,0}; segment(0xda,dc,6);
+    for(unsigned i=0;i<blocks_w;++i) { if(i && restart && i%restart==0) { pad(); mark(0xd0+((i/restart-1)&7)); } bits(0,1); }
+    pad();
+    if(ac_scan) {
+        const unsigned char ac[6]={1,7,0x00,1,63,0}; segment(0xda,ac,6);
+        if(run==1) { for(unsigned i=0;i<blocks_w;++i) { if(i && restart && i%restart==0) { pad(); mark(0xd0+((i/restart-1)&7)); } bits(0,2); } }
+        else { bits(1,2); bits(run-2,1); }  // EOB1: runs of 2 or 3
+        pad();
+    }
+    mark(0xd9); return used;
+}
+
+static void progressive_synthetic(void)
+{
+    static uint32_t pixels[642]; struct sx_image_metadata info={0};
+    progressive_minimal(2,0,2,1);
+    CHECK(sx_jpeg_decode_into(fixture,used,NULL,pixels+1,128,&info)==0 && info.width==16 && info.height==8,"EOB run covering the scan");
+    for(unsigned i=0;i<128;++i) CHECK(pixels[i+1]==0x808080,"progressive synthetic pixels");
+    progressive_minimal(2,0,0,0);
+    CHECK(sx_jpeg_decode_into(fixture,used,NULL,pixels+1,128,NULL)==0,"DC-only progressive frame decoded");
+    progressive_minimal(2,0,3,1); error_expected(SX_IMAGE_ERROR_DECODE,0); // EOB run past the scan
+    progressive_minimal(2,1,2,1); error_expected(SX_IMAGE_ERROR_DECODE,0); // EOB run across RST0
+    progressive_minimal(2,1,1,1);
+    CHECK(sx_jpeg_decode_into(fixture,used,NULL,pixels+1,128,NULL)==0,"per-block EOB with restarts");
+    progressive_minimal(10,1,1,1);
+    CHECK(sx_jpeg_decode_into(fixture,used,NULL,pixels+1,640,NULL)==0,"restart numbering across progressive scans");
+    unsigned before=allocations;
+    CHECK(sx_jpeg_decode_into(fixture,used,NULL,pixels+1,639,NULL)==SX_IMAGE_ERROR_BUFFER && allocations==before,
+          "progressive capacity checked before allocation");
+    // The coefficient store bounds the source: 8192x6144 greyscale fits, one more block row does not.
+    progressive_minimal(2,0,2,1); size_t sof=find_marker(0xc2);
+    fixture[sof+5]=0x18; fixture[sof+6]=0x00; fixture[sof+7]=0x20; fixture[sof+8]=0x00;
+    before=allocations;
+    CHECK(sx_jpeg_info(fixture,used,NULL,&info)==0 && info.scale_denom==2 && info.width==4096 && info.height==3072,
+          "largest progressive store planned at scale 2");
+    fixture[sof+6]=0x01;
+    CHECK(sx_jpeg_info(fixture,used,NULL,&info)==SX_IMAGE_ERROR_LIMIT && sx_image_info(fixture,used,NULL,&info)==SX_IMAGE_ERROR_LIMIT,
+          "progressive coefficient store limit");
+    CHECK(allocations==before,"progressive info allocates nothing");
+    // Header mutations of the hand-made stream.
+    for(unsigned i=0;i<9;++i) {
+        progressive_minimal(2,0,2,1); size_t dc=find_marker(0xda), ac=later_marker(0xda,1);
+        int first=1;
+        switch(i) {
+            case 0: fixture[dc+8]=1; break;                     // DC scan with Se=1
+            case 1: fixture[dc+9]=0x10; break;                  // refinement before a first scan
+            case 2: fixture[dc+7]=1; fixture[dc+8]=63; break;   // AC band before the component's DC
+            case 3: fixture[ac+9]=0x10; first=0; break;          // AC refinement of an uncoded band
+            case 4: fixture[ac+8]=64; first=0; break;            // Se beyond 63
+            case 5: fixture[ac+7]=9; fixture[ac+8]=8; first=0; break; // Ss > Se
+            case 6: fixture[ac+7]=0; fixture[ac+8]=0; first=0; break; // DC first scan twice
+            case 7: fixture[dc+9]=0x0e; break;                  // Al beyond 13
+            case 8: fixture[ac+6]=0x01; first=0; break;          // missing AC table 1
+        }
+        error_expected(first?SX_IMAGE_ERROR_HEADER:SX_IMAGE_ERROR_DECODE,first);
+    }
+}
+
+static void progressive_compare(const char *name,const unsigned char *prog,size_t prog_size,
+                                const unsigned char *seq,size_t seq_size)
+{
+    static uint32_t a[4096+2], b[4096+2];
+    struct sx_image_metadata pi={0}, si={0}, zero={0};
+    for(unsigned scale=1;scale<=8;scale*=2) {
+        const struct sx_image_options options={0,0,0,scale};
+        CHECK(sx_jpeg_info(seq,seq_size,&options,&si)==0,"sequential source plan");
+        unsigned count=si.width*si.height, before=allocations;
+        CHECK(sx_jpeg_info(prog,prog_size,&options,&pi)==0 && metadata_equal(&pi,&si) && allocations==before,
+              "progressive plan matches its source without allocating");
+        for(unsigned i=0;i<count+2;++i) a[i]=b[i]=0xdeadbeef;
+        unsigned freed=releases;
+        int pr=sx_jpeg_decode_into(prog,prog_size,&options,a+1,count,&pi);
+        CHECK(pr==0 && allocations==before+1 && releases==freed+1,"one progressive workspace released");
+        CHECK(sx_jpeg_decode_into(seq,seq_size,&options,b+1,count,&si)==0 && metadata_equal(&pi,&si),"sequential source decoded");
+        if(pr!=0 || memcmp(a,b,(count+2)*4)) printf("progressive %s scale %u differs (%d)\n",name,scale,pr);
+        CHECK(!memcmp(a,b,(count+2)*4),"progressive pixels identical to the sequential source");
+        CHECK(sx_image_decode_into(prog,prog_size,&options,b+1,count,&si)==0 && !memcmp(a,b,(count+2)*4),
+              "common API decodes progressive");
+        if(scale==1) {
+            for(size_t length=0;length<prog_size;++length) {
+                struct sx_image_metadata partial={9,9,9,9,9,9};
+                before=allocations; freed=releases; a[0]=a[count+1]=0xdeadbeef;
+                CHECK(sx_jpeg_decode_into(prog,length,&options,a+1,count,&partial)<0 && metadata_equal(&partial,&zero),
+                      "every truncated progressive prefix refused");
+                CHECK(a[0]==0xdeadbeef && a[count+1]==0xdeadbeef && allocations-before==releases-freed,
+                      "truncated progressive guards and release");
+            }
+            fail_allocation=1; for(unsigned i=0;i<count+2;++i) a[i]=0xdeadbeef;
+            CHECK(sx_jpeg_decode_into(prog,prog_size,&options,a+1,count,&pi)==SX_IMAGE_ERROR_DECODE &&
+                  metadata_equal(&pi,&zero),"progressive allocation failure");
+            for(unsigned i=0;i<count+2;++i) CHECK(a[i]==0xdeadbeef,"progressive allocation failure precedes writes");
+            fail_allocation=0;
+            CHECK(sx_jpeg_decode_into(prog,prog_size,&options,a+1,count-1,&pi)==SX_IMAGE_ERROR_BUFFER,"progressive short buffer");
+        }
+    }
+}
+
+static void progressive_fixtures(void)
+{
+#define X(prog,seq) progressive_compare(#prog,prog,sizeof(prog),seq,sizeof(seq));
+    PROGRESSIVE_FIXTURES(X)
+#undef X
+    progressive_compare("large",jpeg_large_progressive,sizeof(jpeg_large_progressive),
+                        jpeg_large_sequential,sizeof(jpeg_large_sequential));
+    // Independent reference: libjpeg-turbo's own decode of the progressive file.
+    static uint32_t pixels[64*48]; struct sx_image_metadata info={0};
+    CHECK(sx_jpeg_decode_into(jpeg_large_progressive,sizeof(jpeg_large_progressive),NULL,pixels,64*48,&info)==0 &&
+          info.width==64 && info.height==48,"large progressive decoded");
+    unsigned max_error=0;
+    for(unsigned i=0;i<64*48;++i) for(unsigned c=0;c<3;++c) {
+        unsigned delta=(unsigned)abs((int)((pixels[i]>>(16-8*c))&255)-expected_large_progressive[3*i+c]);
+        if(delta>max_error) max_error=delta;
+    }
+    printf("progressive large: maximum channel difference %u\n",max_error);
+    CHECK(max_error<=3,"progressive reference tolerance is three RGB levels");
+    // Workspace: 24 MCU-padded blocks of int16_t coefficients, then 503 plane bytes.
+    CHECK(sx_jpeg_decode_into(jpeg_progressive_color_y420,sizeof(jpeg_progressive_color_y420),NULL,pixels,17*19,NULL)==0 &&
+          last_allocation_size==24u*64u*2u+503u,"progressive workspace size");
+    // Mutations of a real progressive stream stay bounded and clean.
+    const unsigned char *original=jpeg_progressive_deep_color_y420; size_t size=sizeof(jpeg_progressive_deep_color_y420);
+    uint32_t seed=0x7a11;
+    for(unsigned i=0;i<3000;++i) {
+        static uint32_t out[17*19+2];
+        memcpy(fixture,original,size); seed=seed*1664525u+1013904223u;
+        size_t at=seed%size; seed=seed*1664525u+1013904223u; fixture[at]^=(unsigned char)(1u<<(seed%8));
+        out[0]=out[17*19+1]=0xdeadbeef;
+        unsigned before=allocations, freed=releases;
+        int result=sx_image_decode_into(fixture,size,NULL,out+1,17*19,&info);
+        CHECK(out[0]==0xdeadbeef && out[17*19+1]==0xdeadbeef && allocations-before==releases-freed,"progressive mutation guards");
+        if(!result) CHECK(info.width*info.height<=17*19,"progressive mutation dimensions bounded");
+    }
 }
 
 int main(void) {
     stages(); reduced_stages(); fixtures(); color_fixtures(); color_scans(); color_malformed(); malformed();
     reduced_fixtures(); scale_plans(); reduced_errors();
+    progressive_stages(); progressive_synthetic(); progressive_fixtures();
     if(failures) { printf("SXJPEG TEST FAIL %d\n",failures); return 1; }
     puts("SXJPEG TEST PASS"); return 0;
 }

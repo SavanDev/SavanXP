@@ -2,7 +2,7 @@
 
 Image Viewer is the SUN program `/system/imgview.sxe` (`system/imgview`),
 launched as `imgview` or from Accessories. It reads BMP, PNG and sequential
-JPEG through the common, memory-only `libsximg` API. Its native SXGUI menus,
+or progressive JPEG through the common, memory-only `libsximg` API. Its native SXGUI menus,
 toolbar, file dialog, scrollbars and status panes share the desktop's fonts,
 bevels and [icon rules](ICON_STYLE.md).
 
@@ -66,8 +66,10 @@ the reason on the canvas. Late failures release partially written pixels.
 Encoded input is limited to 64 MiB. Default common-API output limits are
 4096 pixels per side and 16,777,216 pixels. JPEG chooses full, 1/2, 1/4 or
 1/8 output to meet those bounds; PNG/BMP source dimensions must fit the
-library limits. Alpha is composited onto white. Supported encodings and
-named rejection errors, including progressive JPEG, are specified in
+library limits. A progressive JPEG also needs its whole coefficient store
+(up to 96 MiB) on the heap while it decodes. Alpha is composited onto white.
+Supported encodings and named rejection errors (arithmetic JPEG, for
+example) are specified in
 [IMAGE_FORMATS.md](../media/IMAGE_FORMATS.md).
 
 ## Verification
@@ -78,8 +80,9 @@ named rejection errors, including progressive JPEG, are specified in
   edge dimensions and case-insensitive image names.
 - `./build.sh smoke imgview-test` runs `imgview --selftest` in the guest.
   It uses the window's actual SUN load path to check exact BMP/PNG/JPEG
-  pixels, alpha, reduced JPEG metadata, missing/invalid files, cleanup after
-  late failures and folder navigation.
+  pixels (sequential and progressive), alpha, reduced JPEG metadata, a named
+  unsupported encoding kept outside the browsed folder, missing/invalid files,
+  cleanup after late failures and folder navigation.
 - `./build.sh smoke imgview-smoke` and `./tools/shoot.sh --scenario imgview`
   inspect rendered glyphs and image colours, navigate the fixtures, zoom,
   scroll and drag, open/cancel/select through the common dialog, and enter

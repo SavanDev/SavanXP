@@ -333,6 +333,10 @@ changes not released yet; each released version has its own file in
   `framebuffer::validate` and host test `framebuffer-layout-test`; nothing calls it yet, output is unchanged.
   It accepts 32-bit BGR and names it so callers can warn. FB1a of [FRAMEBUFFER_ROADMAP.md](docs/roadmaps/open/FRAMEBUFFER_ROADMAP.md).
 
+- **Progressive JPEG opens: `libsximg` decodes SOF2, so Image Viewer, wallpapers and previews show it at every scale.**
+  A source past 3x4096x4096 coefficients returns `SX_IMAGE_ERROR_LIMIT`; `SX_IMAGE_ERROR_JPEG_PROGRESSIVE` now means
+  differential (SOF6) only. I7 of [IMAGE_VIEWER_ROADMAP.md](docs/roadmaps/open/IMAGE_VIEWER_ROADMAP.md); [Progressive JPEG](docs/media/IMAGE_FORMATS.md#progressive-jpeg).
+
 ### Changed
 
 - **The SDK's Native demo and Native widgets examples are listed under Diagnostics**, beside Widgets and the other

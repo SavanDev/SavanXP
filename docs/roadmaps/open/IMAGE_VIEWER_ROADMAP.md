@@ -1,8 +1,8 @@
 # Image Viewer and the image formats
 
-Status: **phases I1–I6 landed**: shared BMP/PNG/JPEG decoders, reduced JPEG,
-wallpaper integration, and the native viewer with Open/Edit associations.
-Progressive JPEG (I7) remains.
+Status: **phases I1–I7 landed**: shared BMP/PNG/JPEG decoders, reduced JPEG,
+wallpaper integration, the native viewer with Open/Edit associations, and
+progressive JPEG. What remains is the unordered list under "Later".
 
 This page is the plan for an image viewer that opens BMP, JPEG and PNG, and
 for the image library under it: what the system has today, the decisions
@@ -22,7 +22,7 @@ same formats it reads.
 - **JPEG is written in the tree from the specification** (ITU-T T.81), the
   `Reference` category of
   [THIRD_PARTY_ADOPTION.md](../../third-party/THIRD_PARTY_ADOPTION.md), as the
-  PNG decoder was. Baseline first, progressive after the viewer exists.
+  PNG decoder was. Baseline first, progressive after the viewer existed (I7).
 - **The format is told by its first bytes, not by the extension.**
 - **PNG wallpapers come almost for free** once the wallpaper reads through
   `libsximg` (phase I2).
@@ -33,7 +33,7 @@ same formats it reads.
 |---|---|---|
 | PNG decoder | `sx_png_decode`, `sx_png_decode_argb`, `sx_png_info`, `sx_png_decode_into` (I4) | All base colour types and their legal 1/2/4/8/16-bit depths, `tRNS`, Adam7, all filters, full inflate. Up to 4096 on a side |
 | BMP decoder | `sx_bmp_info`, `sx_bmp_decode_into`, `sx_bmp_decode_argb_into` (I3) | `BI_RGB` 1/4/8/16/24/32 bpp, 16/32-bit masks and alpha, RLE4/RLE8. Up to 4096 on a side |
-| JPEG decoder | `sx_jpeg_info`, `sx_jpeg_decode_into` (I5 colour/scan delivery) | SOF0/SOF1, 8-bit greyscale/RGB/YCbCr, sampling factors 1/2, interleaved/separate scans, restart markers and JFIF/Adobe transforms. Full resolution and reduced 1/2/4/8 output with automatic fitting |
+| JPEG decoder | `sx_jpeg_info`, `sx_jpeg_decode_into` (I5 sequential, I7 progressive) | SOF0/SOF1/SOF2, 8-bit greyscale/RGB/YCbCr, sampling factors 1/2, interleaved/separate scans, spectral selection and successive approximation, restart markers and JFIF/Adobe transforms. Full resolution and reduced 1/2/4/8 output with automatic fitting |
 | Window, painting, keys, resize | `sxngui.h`: `on_paint`, `on_key`, `on_resize` | the canvas is painted in `on_paint`, as Paint paints its own |
 | Scaling | `sx_painter_draw_scaled_bitmap` (`gfx2d.h`), `SX_SCALE_NEAREST` / `BILINEAR` | zoom and fit-to-window |
 | Scrolling, toolbar, status bar | `SXGUI_SCROLLBAR`, `SXGUI_FLAG_TOOLBAR`, the status label | the frame around the image |
@@ -242,11 +242,24 @@ Files and the desktop share the actions, including document shortcuts.
 `filesapp-smoke` checks precedence and `image-assoc-smoke` checks the actual
 launches. Paint JPEG editing remains separate from this viewer phase.
 
-### I7 — Progressive JPEG
+### I7 — Progressive JPEG (done)
 
-SOF2: spectral selection and successive approximation, with the whole image
-kept as coefficients until the last scan. Phone and web pictures are often
-progressive, so this is the first thing users will miss after I6.
+SOF2 with Huffman coding: DC scans (interleaved or not), single-component AC
+bands, successive approximation and its refinements, EOB runs and restart
+intervals. The whole frame is kept as `int16_t` coefficients until EOI, then
+goes through the same dequantization, reduced IDCT and colour path as a
+sequential frame, so every output scale and consumer works unchanged. That
+store bounds the source: at most 3x4096x4096 coefficients (96 MiB), checked
+by `sx_jpeg_info` before anything is allocated. Differential (hierarchical)
+progressive frames, SOF6, stay refused with `SX_IMAGE_ERROR_JPEG_PROGRESSIVE`.
+
+The host test decodes thirty-six `jpegtran` transcodes of the existing
+fixtures (default, deep successive-approximation, spectral-only and
+restart scripts) and requires pixels identical to the sequential source at
+every scale; a larger own-sample image is also compared with libjpeg-turbo.
+Image Viewer's `06-progressive.jpg` is now a real progressive file that
+must open with exact pixels. See
+[IMAGE_FORMATS.md](../../media/IMAGE_FORMATS.md#progressive-jpeg).
 
 ### Later, unordered
 

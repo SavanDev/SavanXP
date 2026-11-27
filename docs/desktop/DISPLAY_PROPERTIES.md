@@ -78,8 +78,8 @@ Rules:
 - **An image that cannot be decoded leaves the colour.** BMPs and PNGs retain
   the formats listed in [IMAGE_FORMATS.md](../media/IMAGE_FORMATS.md), including
   indexed/masked/RLE BMP and every legal PNG sample depth, transparency and Adam7.
-  Sequential 8-bit greyscale, RGB and YCbCr JPEG is supported too; progressive,
-  arithmetic, lossless, 12-bit and CMYK/YCCK JPEG is refused.
+  Sequential and progressive 8-bit greyscale, RGB and YCbCr JPEG is supported
+  too; arithmetic, lossless, hierarchical, 12-bit and CMYK/YCCK JPEG is refused.
 - **The format is told by content, not extension.** Both the preview and the
   desktop call `sx_image_info` and `sx_image_decode_into` with identical options:
   at most 2048 decoded pixels per side and 4,194,304 pixels in total, auto scale.
@@ -93,7 +93,9 @@ Rules:
 - The file is read into a section dropped once decoded, and the pixels stay
   in a section of their own, off the heap (at most 16 MiB). The file cap remains
   16 MiB plus 64 KiB. JPEG's temporary reduced component planes need at most
-  three output areas in bytes (12 MiB at this budget), released on every exit.
+  three output areas in bytes (12 MiB at this budget), released on every exit;
+  a progressive JPEG adds its coefficient store, sized by the source (up to
+  96 MiB) rather than by this budget.
   Failed reads, planning, section allocation or decoding leave an empty image.
   See [IMAGE_FORMATS.md](../media/IMAGE_FORMATS.md) for scale/error semantics.
 

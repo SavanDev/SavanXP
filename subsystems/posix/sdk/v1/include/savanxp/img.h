@@ -136,15 +136,20 @@ int sx_image_decode_into(const unsigned char *data, size_t size,
                          const struct sx_image_options *options, uint32_t *pixels,
                          size_t pixel_count, struct sx_image_metadata *out);
 
-/* Sequential JPEG: SOF0/SOF1, 8-bit greyscale, RGB or YCbCr, sampling factors
- * 1/2, interleaved/separate scans and restart intervals. JFIF and Adobe APP14
- * select colour interpretation. IDCT reduction supports denominators 1/2/4/8.
- * Options, metadata, errors and buffer contract match the common interface.
- * Info validates through the first SOS without allocating. Decode validates
- * every scan, padding and EOI, using up to three byte planes for colour (at
- * most 3*width*height workspace bytes, using decoded dimensions); greyscale
- * needs no heap. Original-size pixel/coefficient buffers are never allocated.
- * Neither call uses floating point. Inputs and outputs must not overlap. */
+/* Sequential (SOF0/SOF1) and progressive (SOF2) Huffman JPEG: 8-bit
+ * greyscale, RGB or YCbCr, sampling factors 1/2, interleaved/separate scans and
+ * restart intervals; progressive adds spectral selection and successive
+ * approximation. JFIF and Adobe APP14 select colour interpretation. IDCT
+ * reduction supports denominators 1/2/4/8. Options, metadata, errors and
+ * buffer contract match the common interface. Info validates through the
+ * first SOS without allocating. Decode validates every scan, padding and EOI,
+ * using up to three byte planes for colour (at most 3*width*height workspace
+ * bytes, using decoded dimensions); sequential greyscale needs no heap. A
+ * progressive frame also keeps every coefficient until EOI (128 bytes per
+ * MCU-padded block, at most 3*4096*4096 coefficients, else ERROR_LIMIT).
+ * SX_IMAGE_ERROR_JPEG_PROGRESSIVE names differential (hierarchical)
+ * progressive frames only. Neither call uses floating point. Inputs and
+ * outputs must not overlap. */
 int sx_jpeg_info(const unsigned char *data, size_t size,
                  const struct sx_image_options *options, struct sx_image_metadata *out);
 int sx_jpeg_decode_into(const unsigned char *data, size_t size,

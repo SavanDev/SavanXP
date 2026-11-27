@@ -730,8 +730,14 @@ static int selftest(void)
               image.info.width == 2049 && image.info.height == 9 && image.info.scale_denom == 2 &&
               image.info.source_width == 4097,
           "JPEG reduction through the actual loader");
-    CHECK(image_read(&image, "/imgview-test/06-progressive.jpg", error, sizeof(error)) < 0 &&
-              strstr(error, "Progressive"),
+    CHECK(image_read(&image, "/imgview-test/06-progressive.jpg", error, sizeof(error)) == 0 &&
+              image.info.format == SX_IMAGE_FORMAT_JPEG && image.info.width == 16 &&
+              image.info.height == 16 && image.info.scale_denom == 1 && image.memory.data &&
+              ((uint32_t *)image.memory.data)[0] == 0xe03050 &&
+              ((uint32_t *)image.memory.data)[8 * 16 + 8] == 0xe0d030,
+          "progressive JPEG through the actual loader");
+    CHECK(image_read(&image, "/imgview-unsupported/arithmetic.jpg", error, sizeof(error)) < 0 &&
+              strstr(error, "Arithmetic"),
           "named unsupported encoding");
     CHECK(!image.memory.data && !image.memory.handle && !image.info.width,
           "failed load leaves no stale pixels");

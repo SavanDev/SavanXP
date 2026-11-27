@@ -3,7 +3,7 @@
 `libsximg.so.0.4`, declared in `savanxp/img.h`, is the memory-only image
 library shared by SUN and POSIX. It opens no files and makes no system calls.
 The caller supplies the file bytes and owns the destination pixels. Format
-support and the remaining JPEG work are tracked in
+support and its history are tracked in
 [the Image Viewer roadmap](../roadmaps/open/IMAGE_VIEWER_ROADMAP.md).
 
 ## Common interface
@@ -11,8 +11,8 @@ support and the remaining JPEG work are tracked in
 - `sx_image_format(data, size)` identifies BMP (`BM`), PNG (its eight-byte
   signature) or JPEG (`FF D8`). It returns `SX_IMAGE_FORMAT_UNKNOWN` for
   unknown or insufficient input, including a null pointer. Detection does
-  not validate the file. Sequential greyscale/RGB/YCbCr JPEG supports full
-  resolution and decoder-level reduction by 2, 4 or 8.
+  not validate the file. Sequential and progressive greyscale/RGB/YCbCr JPEG
+  supports full resolution and decoder-level reduction by 2, 4 or 8.
 - `sx_image_info(data, size, options, out)` validates supported metadata and
   plans the output. It allocates nothing. `out` is required and zeroed on
   error; on success it contains the format, original `source_width` and
@@ -80,6 +80,8 @@ are stable; later codecs may add more specific errors.
 JPEG also reports specific unsupported cases:
 `SX_IMAGE_ERROR_JPEG_PROGRESSIVE`, `_ARITHMETIC`, `_PRECISION`, `_LOSSLESS`,
 `_COLOR` and `_SAMPLING` (each with the full `SX_IMAGE_ERROR_JPEG_` prefix).
+`_PROGRESSIVE` names differential progressive frames (SOF6, hierarchical);
+ordinary progressive SOF2 is decoded.
 The colour error covers component counts other than one or three (including
 CMYK/YCCK), unsupported Adobe transforms and contradictory Adobe markers.
 
@@ -167,7 +169,8 @@ at most `3*width*height` bytes using decoded dimensions (48 MiB at the global ce
 plus fixed tables and block storage. No image-sized coefficient buffer is
 kept. Workspace is freed on every exit; allocation failure returns
 `SX_IMAGE_ERROR_DECODE`. Info allocates nothing. Output budgets do not include
-workspace. Source-size pixel/coefficient buffers are never allocated.
+workspace. Sequential decode never allocates source-size pixel or coefficient
+buffers; progressive decode must (see below).
 
 At scale 2 or 4, the separable IDCT basis averages each group of 2 or 4
 adjacent spatial samples directly from the coefficients. It emits only 4x4
@@ -224,3 +227,69 @@ large source metadata and decode, reduced buffer bounds, memory allocation
 sizes and failure, every truncated prefix at every scale, malformed discarded
 AC data, later scan errors, and mutations with explicit/automatic scales.
 All 64 sampling combinations and scan/table/restart cases run at 1/2/4/8.
+
+## Progressive JPEG
+
+SOF2 (8-bit, Huffman) is decoded with the same options, metadata, limits,
+colour rules, sampling factors and reduced IDCT as the sequential subset;
+only the entropy stage differs ([T.81](https://www.w3.org/Graphics/JPEG/itu-t81.pdf)
+Annex G). SOF2 accepts 16-bit quantizers and Huffman selectors 0..3, as SOF1
+does. Arithmetic progressive (SOF10), differential progressive (SOF6) and
+12-bit precision remain refused by name.
+
+Scans are validated against the progression of every coefficient:
+
+- A DC scan has `Ss=Se=0` and may interleave components in frame order (at
+  most ten blocks per MCU). An AC scan has `1<=Ss<=Se<=63` and exactly one
+  component, and may come only after that component's first DC scan.
+- A first scan of a coefficient has `Ah=0`; a refinement has `Ah` equal to
+  the previous scan's `Al` and `Al=Ah-1`. `Al` is at most 13. Coding a band
+  twice, refining one never coded, or skipping a bit position is invalid.
+- Each component needs its first DC scan before EOI. AC bands may be left
+  uncoded (they decode as zero), as may later refinement bits.
+- The quantizer is latched at a component's first DC scan; a DQT after that
+  does not change it.
+
+The entropy decoder implements DC prediction on point-transformed values, DC
+refinement bits, AC first scans with ZRL and EOB runs (`EOB0`..`EOB14`), and AC
+refinement with correction bits for already nonzero coefficients. Huffman
+tables may hold EOB-run symbols; a sequential scan refuses such a table. An EOB
+run may not cross a restart marker or extend past the last block of its scan.
+Restart intervals, marker order, predictor resets, padding and EOI follow the
+sequential rules. Stored values are restored to full scale and must stay in
+the 8-bit coefficient range (DC -1024..1023, AC -1023..1023), so a
+coefficient made too large by its point transform is a decode error.
+
+Every coefficient of the frame is kept until EOI as `int16_t` in natural
+order, in MCU-padded blocks (interleaved DC scans also code the padding
+blocks), and only then dequantized, transformed at the chosen scale and
+stored as a sequential block would be. The store costs 128 bytes per padded
+block whatever the output scale, so it bounds the source: at most
+50,331,648 coefficients (96 MiB), three 4096x4096 planes. That admits a
+4:2:0 source of about 33 megapixels or a 4:4:4 one of 16.7; for greyscale,
+8192x6144 fits and 8192x6152 does not. A larger frame returns
+`SX_IMAGE_ERROR_LIMIT` from `sx_jpeg_info` and `sx_image_info`, before any
+allocation. Decode takes one workspace: the zeroed coefficient store followed
+by the colour planes described above. Greyscale progressive therefore
+allocates where sequential greyscale does not.
+
+`sxjpeg-test` checks the stages with hand-built tables: EOB-run lengths,
+blocks inside a run reading no bits, correction bits on positive and negative
+coefficients, placement after zero-history coefficients, point transforms,
+and refusals for ZRL past the band, coefficients past `Se` and values out of
+range. Hand-made streams cover an EOB run that covers the scan exactly, one
+that crosses a restart or the scan end, DC-only frames, restart numbering, the
+coefficient-store boundary and nine scan-header violations.
+
+Thirty-six fixtures in `sxjpeg_progressive_fixtures.h` are lossless
+`jpegtran` (libjpeg-turbo 3.2.1) transcodes of the twenty sequential
+references with the default script, a deep successive-approximation script
+(separate and interleaved DC, two DC refinements, split AC bands, `Al` from 3
+to 0), a spectral-selection-only script, and restarts at every MCU. Their
+coefficients equal the sources', so each must decode **identically** to its
+sequential source at 1/2/4/8, through both APIs, with exact buffer guards,
+one released workspace, every truncated prefix refused and allocation failure
+before any write. A 64x48 own-sample 4:2:0 image at quality 50 (long EOB runs)
+is also compared with libjpeg-turbo's own decode of the progressive file
+(`JDCT_ISLOW`, no fancy upsampling) within three RGB levels. Random mutations
+of a deep-script stream stay bounded and release their workspace.
