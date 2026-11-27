@@ -5,8 +5,8 @@
  * specification; NetSurf's layout is not its model (the clean-room rule).
  *
  * A block's inline content becomes a row of atoms: words, runs of spaces,
- * the opening and closing edges of inline boxes, breaks, inside markers and
- * floats. Lines take atoms greedily and break at the last space that allows
+ * the opening and closing edges of inline boxes, breaks, inside markers,
+ * images and floats. Lines take atoms greedily and break at the last space that allows
  * it, in the room the floats leave them. */
 
 #include "webengine_layout.h"
@@ -15,7 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum atom_kind { ATOM_WORD, ATOM_SPACE, ATOM_OPEN, ATOM_CLOSE, ATOM_BREAK, ATOM_MARKER, ATOM_FLOAT, ATOM_ABSOLUTE };
+enum atom_kind {
+    ATOM_WORD, ATOM_SPACE, ATOM_OPEN, ATOM_CLOSE, ATOM_BREAK, ATOM_MARKER, ATOM_FLOAT, ATOM_ABSOLUTE, ATOM_IMAGE
+};
 
 struct webengine_atom {
     uint8_t kind;
@@ -165,6 +167,40 @@ static void inline_edges(struct webengine_box *box, int width) {
     }
 }
 
+/* An image's margin box on its line, with its used edges and size: a
+ * replaced inline box (10.3.2, 10.6.2). Its alt text instead when it shows
+ * that. */
+static void text_atoms(struct webengine_flow *flow, size_t *count, struct webengine_box *box);
+
+static void image_atoms(struct webengine_flow *flow, size_t *count, struct webengine_box *box, int width) {
+    inline_edges(box, width);
+    int content_width = 0;
+    int content_height = 0;
+    if (webengine_image_size(flow->tree, box, width, -1, &content_width, &content_height) == WEBENGINE_IMAGE_ALT) {
+        text_atoms(flow, count, box);
+        return;
+    }
+    box->width = content_width;
+    box->height = content_height;
+    int outer = box->margin[WEBENGINE_LEFT] + box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT] +
+        content_width + box->padding[WEBENGINE_RIGHT] + box->border[WEBENGINE_RIGHT] + box->margin[WEBENGINE_RIGHT];
+    (void)add_atom(flow, count, (struct webengine_atom){ .kind = ATOM_IMAGE, .box = box,
+                                                         .width = outer > 0 ? outer : 0 });
+}
+
+/* Whether lines may break beside an image: when its white space wraps. */
+static bool image_breaks(const struct webengine_box *box) {
+    uint8_t mode = box->style->white_space;
+    return mode != CSS_WHITE_SPACE_NOWRAP && mode != CSS_WHITE_SPACE_PRE;
+}
+
+/* The height of an image's margin box, above its baseline (10.8.1). */
+static int image_outer_height(const struct webengine_box *box) {
+    int height = box->margin[WEBENGINE_TOP] + box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] +
+        box->height + box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM] + box->margin[WEBENGINE_BOTTOM];
+    return height > 0 ? height : 0;
+}
+
 static void text_atoms(struct webengine_flow *flow, size_t *count, struct webengine_box *box) {
     uint8_t mode = box->style->white_space;
     bool wrap = mode == CSS_WHITE_SPACE_NORMAL || mode == CSS_WHITE_SPACE_PRE_WRAP ||
@@ -215,6 +251,9 @@ static size_t collect_atoms(struct webengine_flow *flow, struct webengine_box *b
             (void)add_atom(flow, &count, (struct webengine_atom){
                 .kind = ATOM_MARKER, .box = box,
                 .width = marker_width(flow, box) + marker_gap(flow, box) });
+            break;
+        case WEBENGINE_BOX_IMAGE:
+            image_atoms(flow, &count, box, width);
             break;
         case WEBENGINE_BOX_BLOCK:
             /* A float, laid out already, or an absolute box, which only
@@ -299,7 +338,18 @@ static bool split_word(struct webengine_flow *flow, size_t *count, size_t index,
 
 /* --- Vertical alignment (10.8) ------------------------------------------------------ */
 
+static long place_box(struct webengine_flow *flow, size_t *count, struct webengine_box *box, int parent,
+                      int replaced);
+
 static long place(struct webengine_flow *flow, size_t *count, struct webengine_box *box, int parent) {
+    return place_box(flow, count, box, parent, -1);
+}
+
+/* An inline box on the line, or with `replaced` >= 0 an image whose margin
+ * box is that high: all of it above its baseline, which is its bottom
+ * margin edge (10.8.1). */
+static long place_box(struct webengine_flow *flow, size_t *count, struct webengine_box *box, int parent,
+                      int replaced) {
     if (!grow((void **)&flow->placed, &flow->placed_capacity, *count, sizeof(*flow->placed))) {
         flow->failed = true;
         return -1;
@@ -310,6 +360,10 @@ static long place(struct webengine_flow *flow, size_t *count, struct webengine_b
     placed->parent = parent;
     placed->fragment = -1;
     metrics(flow, box->style, placed);
+    if (replaced >= 0) {
+        placed->ascent = placed->above = replaced;
+        placed->descent = placed->below = 0;
+    }
     if (parent < 0) {
         placed->anchor = -1;
         return (long)(*count)++;
@@ -540,6 +594,17 @@ static int build_line(struct webengine_flow *flow, struct webengine_box *block, 
             cursor += atom->width;
             break;
         }
+        case ATOM_IMAGE: {
+            int parent = *open_count == 0 ? 0 : placed_index(flow, count, flow->open[*open_count - 1]);
+            long index = place_box(flow, &count, box, parent, image_outer_height(box));
+            if (index >= 0) {
+                flow->placed[index].fragment = add_fragment(flow, (struct webengine_fragment){
+                    .type = WEBENGINE_FRAGMENT_IMAGE, .box = box, .x = cursor + box->margin[WEBENGINE_LEFT],
+                    .width = atom->width - box->margin[WEBENGINE_LEFT] - box->margin[WEBENGINE_RIGHT] });
+            }
+            cursor += atom->width;
+            break;
+        }
         case ATOM_ABSOLUTE:
             atom->x = cursor;
             break;
@@ -575,8 +640,8 @@ static int build_line(struct webengine_flow *flow, struct webengine_box *block, 
     for (size_t f = first_fragment; f < tree->fragment_count; f++) {
         struct webengine_fragment *fragment = &tree->fragments[f];
         fragment->x += shift;
-        const struct webengine_box *owner = fragment->type == WEBENGINE_FRAGMENT_INLINE ? fragment->box
-            : fragment->box->parent;
+        const struct webengine_box *owner = fragment->type == WEBENGINE_FRAGMENT_INLINE ||
+                fragment->type == WEBENGINE_FRAGMENT_IMAGE ? fragment->box : fragment->box->parent;
         const struct webengine_placed *placed = &flow->placed[placed_index(flow, count, owner)];
         /* position: relative inlines move what is in them (9.4.3). */
         int moved = 0;
@@ -589,6 +654,15 @@ static int build_line(struct webengine_flow *flow, struct webengine_box *block, 
                 fragment->x += dx;
                 moved += dy;
             }
+        }
+        if (fragment->type == WEBENGINE_FRAGMENT_IMAGE) {
+            /* Its border box, its bottom margin edge on its baseline. */
+            const struct webengine_box *box = fragment->box;
+            fragment->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + box->height +
+                box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
+            fragment->baseline = placed->baseline + moved;
+            fragment->y = placed->baseline - box->margin[WEBENGINE_BOTTOM] - fragment->height + moved;
+            continue;
         }
         if (fragment->type == WEBENGINE_FRAGMENT_INLINE) {
             const struct webengine_box *box = fragment->box;
@@ -657,6 +731,9 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
     while (i < count && !flow->failed) {
         size_t start = i;
         size_t end = count;
+        /* Where the line may end: after the last space that allows it, or
+         * before or after an image (browsers break between images as
+         * between ideographs). */
         size_t brk = SIZE_MAX;
         int left = x;
         int right = x + width;
@@ -701,15 +778,19 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
                     continue;
                 }
                 if (atom->wrap && content) {
-                    brk = j;
+                    brk = j + 1;
                 }
                 used += atom->width;
                 /* Preserved white space makes a line box (9.4.2). */
                 content = content || !atom->collapsible;
                 continue;
             }
+            bool image_wraps = atom->kind == ATOM_IMAGE && image_breaks(atom->box);
+            if (image_wraps && content) {
+                brk = j;
+            }
             if (used + atom->width > room && content && brk != SIZE_MAX) {
-                end = brk + 1;
+                end = brk;
                 break;
             }
             if (used + atom->width > room && !content && room < width) {
@@ -726,8 +807,11 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
                 break;
             }
             used += atom->width;
-            if (atom->kind == ATOM_WORD || atom->kind == ATOM_MARKER) {
+            if (atom->kind == ATOM_WORD || atom->kind == ATOM_MARKER || atom->kind == ATOM_IMAGE) {
                 content = true;
+            }
+            if (image_wraps) {
+                brk = j + 1;
             }
         }
         if (flow->failed) {
@@ -809,6 +893,18 @@ void webengine_inline_widths(struct webengine_flow *flow, struct webengine_box *
             line_start = true;
             break;
         case ATOM_ABSOLUTE:
+            break;
+        case ATOM_IMAGE:
+            /* Lines break beside images: each is a piece of its own. */
+            line += atom->width;
+            line_start = false;
+            if (image_breaks(atom->box)) {
+                widest_word = word > widest_word ? word : widest_word;
+                widest_word = atom->width > widest_word ? atom->width : widest_word;
+                word = 0;
+            } else {
+                word += atom->width;
+            }
             break;
         case ATOM_FLOAT: {
             int edges = webengine_intrinsic_edges(atom->box);

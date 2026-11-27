@@ -14,6 +14,10 @@
  * face 0 (under 18px) is 7px a character, face 1 (18px and over) 10px,
  * face 2 (monospace) 8px; bold adds a pixel a character.
  *
+ * Images are not decoded here. One whose source names its size, as
+ * "NAME-WIDTHxHEIGHT.EXT", is ready with that natural size; one whose source
+ * has "missing" in it failed; the others are still loading.
+ *
  * `--print PAGE.html [WIDTH [HEIGHT]]` prints a page's dump, painting order
  * included, instead of checking it. */
 
@@ -112,6 +116,28 @@ static void dump_paint(const struct webengine_tree *tree, struct lines *out) {
     }
 }
 
+/* The images' states, from their names (see above). */
+static void settle_images(struct webengine_tree *tree) {
+    for (size_t i = 0; i < tree->image_count; i++) {
+        struct webengine_image *image = &tree->images[i];
+        if (image->url == NULL) {
+            continue;
+        }
+        if (strstr(image->url, "missing") != NULL) {
+            image->state = WEBENGINE_IMAGE_FAILED;
+            continue;
+        }
+        const char *dash = strrchr(image->url, '-');
+        int width = 0;
+        int height = 0;
+        if (dash != NULL && sscanf(dash + 1, "%dx%d.", &width, &height) == 2 && width > 0 && height > 0) {
+            image->state = WEBENGINE_IMAGE_READY;
+            image->width = width;
+            image->height = height;
+        }
+    }
+}
+
 static int dump_page(const char *path, css_stylesheet *ua, int viewport, int viewport_height, bool paint,
                      struct lines *out) {
     size_t length = 0;
@@ -130,6 +156,9 @@ static int dump_page(const char *path, css_stylesheet *ua, int viewport, int vie
     int result = -1;
     if (webengine_styles_open(&styles, document, path, ua, NULL, NULL) == 0) {
         struct webengine_tree *tree = webengine_tree_build(document, &styles, &k_fonts);
+        if (tree != NULL) {
+            settle_images(tree);
+        }
         if (tree != NULL && (viewport <= 0 || webengine_layout(tree, &k_fonts, viewport, viewport_height) == 0)) {
             webengine_tree_dump(tree, collect, out);
             if (paint && viewport > 0) {

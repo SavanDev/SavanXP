@@ -112,6 +112,7 @@ static struct webengine_box *new_box(struct builder *b, enum webengine_box_type 
     box->type = type;
     box->style = style;
     box->link = -1;
+    box->image = -1;
     box->first_piece = true;
     box->last_piece = true;
     snprintf(box->tag, sizeof(box->tag), "%s", tag);
@@ -161,6 +162,10 @@ void webengine_tree_free(struct webengine_tree *tree) {
     for (size_t i = 0; i < tree->link_count; i++) {
         free(tree->links[i]);
     }
+    for (size_t i = 0; i < tree->image_count; i++) {
+        free(tree->images[i].url);
+    }
+    free(tree->images);
     for (size_t i = 0; i < tree->style_count; i++) {
         free(tree->styles[i]);
     }
@@ -684,7 +689,7 @@ static size_t process_white_space(struct builder *b, uint8_t mode, const char *t
     return used;
 }
 
-static void add_text_box(struct builder *b, const char *text, size_t length, bool replaced) {
+static void add_text_box(struct builder *b, const char *text, size_t length) {
     struct frame *frame = &b->stack[b->depth - 1];
     struct webengine_box *box = new_box(b, WEBENGINE_BOX_TEXT, frame->box_style, "");
     if (box == NULL) {
@@ -700,7 +705,6 @@ static void add_text_box(struct builder *b, const char *text, size_t length, boo
     box->text[length] = '\0';
     box->length = length;
     box->link = frame->link;
-    box->replaced = replaced;
     append_inline(b, box);
     if (b->failed) {
         return;
@@ -713,7 +717,7 @@ static void add_text(struct builder *b, const char *text, size_t length) {
     }
     size_t used = process_white_space(b, b->stack[b->depth - 1].box_style->white_space, text, length);
     if (used > 0) {
-        add_text_box(b, b->text, used, false);
+        add_text_box(b, b->text, used);
     }
 }
 
@@ -766,6 +770,67 @@ static int add_link(struct builder *b, const char *href, size_t length) {
     copy[length] = '\0';
     links[b->tree->link_count] = copy;
     return (int)b->tree->link_count++;
+}
+
+/* An <img>'s entry in the tree's images, its src="" as written; failed at
+ * once when it has none. Its index, or -1 when out of memory. */
+static int add_image(struct builder *b, dom_node *node) {
+    struct webengine_tree *tree = b->tree;
+    struct webengine_image *images = realloc(tree->images, (tree->image_count + 1) * sizeof(*images));
+    if (images == NULL) {
+        b->failed = true;
+        return -1;
+    }
+    tree->images = images;
+    struct webengine_image *image = &images[tree->image_count];
+    *image = (struct webengine_image){ .state = WEBENGINE_IMAGE_FAILED };
+    dom_string *src = attribute(node, "src");
+    if (src != NULL) {
+        const char *text = dom_string_data(src);
+        size_t length = dom_string_byte_length(src);
+        while (length > 0 && html_space(*text)) {
+            text++;
+            length--;
+        }
+        while (length > 0 && html_space(text[length - 1])) {
+            length--;
+        }
+        if (length > 0) {
+            image->url = malloc(length + 1);
+            if (image->url == NULL) {
+                dom_string_unref(src);
+                b->failed = true;
+                return -1;
+            }
+            memcpy(image->url, text, length);
+            image->url[length] = '\0';
+            image->state = WEBENGINE_IMAGE_LOADING;
+        }
+        dom_string_unref(src);
+    }
+    return (int)tree->image_count++;
+}
+
+/* An image box's alt="" text, its white space made spaces; none without
+ * the attribute. */
+static void add_alt(struct builder *b, struct webengine_box *box, dom_node *node) {
+    dom_string *alt = attribute(node, "alt");
+    if (alt == NULL) {
+        return;
+    }
+    size_t length = dom_string_byte_length(alt);
+    box->text = malloc(length + 1);
+    if (box->text == NULL) {
+        b->failed = true;
+    } else {
+        const char *text = dom_string_data(alt);
+        for (size_t i = 0; i < length; i++) {
+            box->text[i] = html_space(text[i]) ? ' ' : text[i];
+        }
+        box->text[length] = '\0';
+        box->length = length;
+    }
+    dom_string_unref(alt);
 }
 
 static void add_marker(struct builder *b, struct webengine_box *item, const css_computed_style *style,
@@ -898,12 +963,30 @@ static bool enter_element(struct builder *b, struct frame *frame) {
         }
         return false;
     }
+    bool inline_level = display == CSS_DISPLAY_INLINE || display == CSS_DISPLAY_INLINE_BLOCK ||
+        display == CSS_DISPLAY_INLINE_FLEX || display == CSS_DISPLAY_INLINE_GRID ||
+        display == CSS_DISPLAY_INLINE_TABLE;
+    int image = -1;
     if (strcmp(name, "img") == 0) {
-        b->depth--;
-        add_text_box(b, "[image]", 7, true);
-        b->depth++;
-        b->space = false;
-        return false;
+        image = add_image(b, frame->node);
+        if (image < 0) {
+            return false;
+        }
+        if (inline_level) {
+            /* An atom of its line, with nothing inside. */
+            struct webengine_box *box = new_box(b, WEBENGINE_BOX_IMAGE, frame->box_style, "img");
+            if (box == NULL) {
+                return false;
+            }
+            box->image = image;
+            box->link = frame->link;
+            add_alt(b, box, frame->node);
+            b->depth--;
+            append_inline(b, box);
+            b->depth++;
+            b->space = false;
+            return false;
+        }
     }
     /* inline-table is laid out as a table at block level, until inline
      * blocks have formatting contexts of their own. */
@@ -926,6 +1009,12 @@ static bool enter_element(struct builder *b, struct frame *frame) {
         return false;
     }
     box->table_role = table_role(display);
+    if (image >= 0) {
+        /* A block-level image: a block with nothing inside. */
+        box->image = image;
+        box->link = frame->link;
+        add_alt(b, box, frame->node);
+    }
     if (box->table_role == WEBENGINE_TABLE_CELL) {
         box->col_span = 1;
         box->row_span = 1;
@@ -1266,12 +1355,17 @@ static void dump_box(const struct webengine_box *box, unsigned depth, bool laid_
         break;
     case WEBENGINE_BOX_TEXT:
         quote(text, sizeof(text), box->text, box->length);
-        snprintf(out + indent, sizeof(out) - indent, "text \"%s\"%s%s", text,
-                 box->link >= 0 ? " link" : "", box->replaced ? " image" : "");
+        snprintf(out + indent, sizeof(out) - indent, "text \"%s\"%s", text, box->link >= 0 ? " link" : "");
         break;
     case WEBENGINE_BOX_BREAK:
         snprintf(out + indent, sizeof(out) - indent, "break");
         break;
+    case WEBENGINE_BOX_IMAGE: {
+        quote(text, sizeof(text), box->text != NULL ? box->text : "", box->length);
+        snprintf(out + indent, sizeof(out) - indent, "image %d%s%s%s%s", box->image, box->text != NULL ? " \"" : "",
+                 box->text != NULL ? text : "", box->text != NULL ? "\"" : "", box->link >= 0 ? " link" : "");
+        break;
+    }
     case WEBENGINE_BOX_MARKER: {
         bool outside = box->parent != NULL && box->parent->marker == box;
         quote(text, sizeof(text), box->text != NULL ? box->text : "", box->length);
@@ -1313,6 +1407,10 @@ static void dump_lines(const struct webengine_tree *tree, const struct webengine
                 quote(text, sizeof(text), fragment->box->text + fragment->start, fragment->length);
                 snprintf(out + indent, sizeof(out) - indent, "text \"%s\" %d %d %d %d", text, fragment->x,
                          fragment->y, fragment->width, fragment->height);
+                break;
+            case WEBENGINE_FRAGMENT_IMAGE:
+                snprintf(out + indent, sizeof(out) - indent, "image %d %d %d %d %d", fragment->box->image,
+                         fragment->x, fragment->y, fragment->width, fragment->height);
                 break;
             case WEBENGINE_FRAGMENT_MARKER:
                 if (fragment->box->parent != NULL && fragment->box->parent->marker == fragment->box) {

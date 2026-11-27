@@ -206,7 +206,11 @@ with `webengine_style_element` and makes:
   it. `pre-line` keeps newlines. `pre` and `pre-wrap` keep everything and
   expand tabs to the next multiple of eight columns. What is left of the
   line's ends is layout's job.
-- **Breaks** for `<br>`, and a `[image]` text box for `<img>` until E6.
+- **Breaks** for `<br>`.
+- **Images** for `<img>` (see [Images](#images)): an `image` box among inline
+  content, or a block with an image when its display is block-level, a
+  float or an absolute box. Each has an entry in the tree's `images` with
+  its `src` as written, and its `alt` text.
 - **Markers** for list items (12.5). The ordinal follows `<ol start>` and
   `<li value>`. Numbered styles are formatted by libcss
   (`css_computed_format_list_style`). `disc`, `circle` and `square` carry no
@@ -490,6 +494,41 @@ height, header and footer groups, a table in a cell, `align` and
 `<center>`, a percentage column, and anonymous table parts. `e6-table-text`
 is worked out by hand: baselines across font sizes, the middle default,
 `align` and `nowrap`.
+
+## Images
+
+The rest of E6 is CSS 2.1's replaced elements (10.3.2, 10.6.2, 10.8.1) for
+`<img>`. The engine does not fetch or decode: `webengine_tree.images` holds
+each image's `src` as written, its state (`LOADING`, `READY`, `FAILED`) and,
+once the caller has decoded it, its natural size; the caller sets those and
+lays the tree out again.
+
+- **Size** (`webengine_image_size`). A width and a height are used as they
+  are; one of them takes the other from the picture's ratio; neither is the
+  natural size. A percentage is of the containing block. Until the picture
+  is ready, an image is as big as given; with no size given, an inline one
+  is laid out as its `alt` text, and one that failed is 16 pixels square
+  without an `alt` and nothing with an empty one, as browsers show them.
+- **Inline images** are atoms of their line, their margin box all above the
+  baseline: their bottom margin edge sits on it (10.8.1), and the other
+  values of `vertical-align` move them as they move inline boxes. Lines
+  break before and after an image, as browsers break between images with
+  no space between them, unless `white-space` keeps the line whole; each
+  image is a piece of its own for minimum widths.
+- **Block-level images** are blocks of their own size: their margins are
+  solved around their width (10.3.4), and floats and absolute boxes take
+  that width too.
+- **HTML's attributes** are hints: `width`, `height`, `border` (solid, in the
+  text colour), `hspace` and `vspace` (margins), and `align`, where `left`
+  and `right` float the image and the others are `vertical-align`.
+
+`e6-images` checks a table-based page with pictures box for box against
+Chromium at 800 by 600: a banner, a side column, an image floated right in
+a cell, images wrapping in a row with no spaces between them, and block
+images sized every way. The layout test reads an image's natural size from
+its name (`NAME-WIDTHxHEIGHT.EXT`), and takes one named `missing` as failed.
+`e6-image-text` is worked out by hand: images on the baseline and in the
+middle of text, `alt` text, broken images and an image in a link.
 
 ## Painting order
 

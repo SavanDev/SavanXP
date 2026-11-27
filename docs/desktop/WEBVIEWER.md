@@ -214,7 +214,8 @@ Tables ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#tables)) lay their cells
 out in rows and columns, with HTML's table attributes (`border`,
 `cellspacing`, `cellpadding`, `width`, `height`, `bgcolor`, `align`,
 `valign`, `nowrap`, `colspan`, `rowspan`) and `align=""` on blocks and
-`<center>` aligning the blocks inside. The user-agent sheet is the engine's
+`<center>` aligning the blocks inside. Images take part in layout at their
+sizes ([Images](#images)). The user-agent sheet is the engine's
 `webengine_ua_css`, CSS 2.1's Appendix D with HTML's heading sizes, so
 `body` has its 8 pixels of margin and paragraphs and headings their em
 margins.
@@ -245,7 +246,11 @@ margins.
   `groove` and `ridge` light one pair of sides. Colours with an alpha
   channel blend over the backgrounds behind them. `visibility: hidden`
   keeps the space and paints nothing.
-- **Links.** A link is the text and inline boxes of an `<a href>`, hit
+- **Images** are painted scaled to their content box, smoothly when the
+  size differs from the picture's, with the transparency of PNG and BMP
+  over what is behind them. A picture still loading paints nothing; a
+  broken one a sunken frame.
+- **Links.** A link is the text, inline boxes and images of an `<a href>`, hit
   tested against the last paint's fragments, topmost first; a link clipped
   away by overflow cannot be clicked.
 - **View Source and text/plain** are the engine's plain-text tree
@@ -253,6 +258,32 @@ margins.
   next eighth column, wrapped at spaces, with 8 pixels of padding.
 - **The welcome page** is a small HTML document of its own, laid out like
   any page.
+
+## Images
+
+A page's pictures load after the page is shown
+([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#images) has how they are laid out).
+Each `<img src>` resolves against the page: an `http://` or `https://` URL,
+or a local path from a local page. A page loaded over `https://` takes only
+`https://` pictures, as it takes only `https://` stylesheets; `data:` and
+other schemes fail. A local picture is read and decoded at once. Remote ones
+go to the window's network worker as one request, in the order of the
+page: it fetches each through `sxnhttp`, decodes it there and hands it back
+as soon as it is done, and the page is laid out again where it was scrolled
+to. Stop and Esc are enabled while pictures are on their way, as for a
+load: they make the rest fail and keep the page. A navigation or a new
+page cancels them too, and a picture that comes back for a page no longer
+on screen is dropped.
+
+- **Formats.** PNG, BMP and JPEG through libsximg
+  ([IMAGE_FORMATS.md](../media/IMAGE_FORMATS.md)), PNG and BMP with their
+  alpha. A JPEG over 2048 pixels a side is reduced while it decodes and
+  keeps its own size on the page; a PNG or BMP that big fails.
+- **Budgets.** A picture may take 8 MiB to arrive, and a page's decoded
+  pictures 64 MiB; past that a picture fails.
+- **The same picture** used twice on a page is fetched once. The pictures
+  belong to the page on screen: View Source and back finds them, a new page
+  starts again.
 
 ## Names
 
@@ -271,8 +302,7 @@ server empties the window's DNS cache.
 
 ## What it is not (yet)
 
-Images are an `[image]` placeholder until the rest of E6.
-`inline-block` and the other inline-level displays are laid out as inline
+GIF pictures are not read yet. `inline-block` and the other inline-level displays are laid out as inline
 boxes, and `inline-table` as a table at block level. `border-collapse:
 collapse` lays out as `separate`, and `table-layout: fixed` as `auto`. `overflow: auto` and `scroll` clip without scroll bars of their own.
 Fragments reload the page top. A word wider than the page is cut
@@ -323,7 +353,10 @@ and asserts the text inside a float and the text wrapping beside one, then
 `e5-position-text.html` for a relative inline and an absolute box, and
 `e5-overflow.html`, whose clipped lines must not show. The E6 step opens
 `e6-table-cells.html` and asserts text on a cell's background, on a row's
-background under its cell, and in a cell spanning two columns.
+background under its cell, and in a cell spanning two columns; then
+`e6-image-stall.html`, whose page and arrived picture must show while its
+other picture never arrives, and `e6-images.html`, loaded while that
+picture is still pending, whose pictures must be painted.
 The SUN socket contract is checked by `smoke native-network` and
 `smoke native-network-offline`, including pending ARP, cancellation,
 initialization without a NIC, route timeout and TCP refusal/reset/retry errors.

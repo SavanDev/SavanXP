@@ -152,8 +152,9 @@ changes not released yet; each released version has its own file in
 - **Web Viewer lays pages out in CSS boxes** (E4, E5, E6): margins that collapse, borders, padding, widths and heights,
   line boxes with `white-space`, `line-height`, `vertical-align`, `text-align` and `text-indent`, list markers,
   `float` and `clear` with text wrapping beside floats, `position` (relative, absolute, fixed) with `z-index`,
-  `overflow` clipping, and tables with automatic layout and HTML's table attributes, replacing the paragraph
-  renderer. Host test `webengine-layout-test` ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#layout-and-paint-e4-e5-e6)).
+  `overflow` clipping, tables with automatic layout and HTML's table attributes, and images in the layout (PNG, BMP,
+  JPEG) loaded after the page, remote ones on the network worker, replacing the paragraph renderer. Host test
+  `webengine-layout-test` ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#layout-and-paint-e4-e5-e6)).
 - **Web Viewer has a Favorites menu:** Add to Favorites and Remove from Favorites for the page on screen, then a row
   per favorite, kept in the profile's `Settings/webview-favorites`. A new profile starts with Motherfucking Website and
   the Acid2 test. Host test `webview-favorites-test` ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#favorites)).

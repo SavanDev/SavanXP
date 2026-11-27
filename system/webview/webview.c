@@ -3,10 +3,10 @@
  * files, http:// and validated https://, by name or address.
  *
  * Pages load on a network worker of the window's; HTML and plain text are
- * shown using computed CSS styles and a paragraph renderer. Anything else
- * is a file, saved by download.c on a worker of its own.
- *
- * Images use a placeholder and table cells stack as separate lines.
+ * laid out by the engine (engine/) from computed CSS styles and painted
+ * here. Images load after the page, local ones at once and remote ones on
+ * the same worker. Anything else is a file, saved by download.c on a worker
+ * of its own.
  */
 
 #include "sxgfx/gfx2d.h"
@@ -20,6 +20,7 @@
 #include "favorites.h"
 #include "engine/webengine.h"
 #include "engine/webengine_box.h"
+#include "savanxp/img.h"
 #include "webview.sunres.h"
 #include "icons.inc"
 #include "../gfx/toolbar_glyphs/icons.inc"
@@ -128,6 +129,223 @@ struct webview_sheet {
     struct webview_sheet *next;
 };
 
+/* ---- images (E6) -------------------------------------------------------------
+ *
+ * The page's pictures, by resolved URL: what each <img> of the tree shows
+ * (docs/desktop/WEBVIEWER.md#images). The engine has each image's state and
+ * natural size; the pixels are here. They belong to the page on screen and
+ * go with it; a tree built again for the same page (View Source and back)
+ * finds them here instead of loading them again.
+ */
+
+#define WEBVIEW_IMAGE_SIDE 2048u
+#define WEBVIEW_IMAGE_PIXELS (2048u * 2048u)
+/* Decoded pixels a page may hold, and bytes one image may take to arrive. */
+#define WEBVIEW_IMAGE_BUDGET ((size_t)64 * 1024 * 1024)
+#define WEBVIEW_IMAGE_FILE_MAX ((size_t)8 * 1024 * 1024)
+
+struct webview_picture
+{
+    char url[SXNHTTP_URL_CAP];
+    uint8_t state;
+    /* Asked of the worker, waiting. */
+    int requested;
+    struct sx_bitmap bitmap;
+    /* Its natural size, which a big JPEG's bitmap may be smaller than. */
+    int width;
+    int height;
+    struct webview_picture *next;
+};
+
+/* The decoded picture: pixels `width` by `height`, malloc'd, for a natural
+ * size `natural_width` by `natural_height`. */
+struct webview_decoded
+{
+    uint32_t *pixels;
+    int width;
+    int height;
+    int natural_width;
+    int natural_height;
+    int alpha;
+};
+
+/* A remote picture for the worker to fetch and decode: the worker fills
+ * the result fields and hands the job back. */
+struct webview_image_job
+{
+    uint32_t page;
+    char url[SXNHTTP_URL_CAP];
+    int ok;
+    struct webview_decoded decoded;
+    struct webview_image_job *next;
+};
+
+static struct webview_picture *g_pictures;
+static size_t g_picture_bytes;
+/* What each image of g_tree shows: g_tree->images[i] is g_tree_pictures[i],
+ * NULL when it has none. */
+static struct webview_picture **g_tree_pictures;
+/* Changes with every page committed, so late pictures of the last page are
+ * dropped. */
+static uint32_t g_page_id = 1;
+
+static void webview_free_jobs(struct webview_image_job *jobs)
+{
+    while (jobs != NULL)
+    {
+        struct webview_image_job *next = jobs->next;
+
+        free(jobs->decoded.pixels);
+        free(jobs);
+        jobs = next;
+    }
+}
+
+static void webview_free_pictures(void)
+{
+    while (g_pictures != NULL)
+    {
+        struct webview_picture *next = g_pictures->next;
+
+        sx_bitmap_destroy(&g_pictures->bitmap);
+        free(g_pictures);
+        g_pictures = next;
+    }
+    g_picture_bytes = 0;
+}
+
+/* Decodes a picture to 0xAARRGGBB, transparency kept: PNG and BMP with
+ * their alpha, JPEG opaque and reduced when it is big, through libsximg
+ * (docs/media/IMAGE_FORMATS.md). 0, or -1 when the format is not one of
+ * those, the picture is too big or it does not decode. No system calls: the
+ * worker runs it too. */
+static int webview_decode_image(const unsigned char *data, size_t size, struct webview_decoded *decoded)
+{
+    uint32_t **pixels = &decoded->pixels;
+    int *alpha = &decoded->alpha;
+    uint32_t natural_w = 0;
+    uint32_t natural_h = 0;
+    uint32_t format = sx_image_format(data, size);
+    uint32_t w = 0;
+    uint32_t h = 0;
+    uint32_t *out;
+
+    *pixels = NULL;
+    *alpha = 0;
+    if (format == SX_IMAGE_FORMAT_PNG)
+    {
+        struct sx_png_image image = {0};
+
+        if (sx_png_info(data, size, &w, &h) != 0 || w > WEBVIEW_IMAGE_SIDE || h > WEBVIEW_IMAGE_SIDE ||
+            (uint64_t)w * h > WEBVIEW_IMAGE_PIXELS || sx_png_decode_argb(data, size, &image) != 0)
+        {
+            return -1;
+        }
+        out = malloc((size_t)image.width * image.height * sizeof(*out));
+        if (out == NULL)
+        {
+            sx_png_free(&image);
+            return -1;
+        }
+        memcpy(out, image.pixels, (size_t)image.width * image.height * sizeof(*out));
+        w = image.width;
+        h = image.height;
+        sx_png_free(&image);
+        *alpha = 1;
+        natural_w = w;
+        natural_h = h;
+    }
+    else if (format == SX_IMAGE_FORMAT_BMP)
+    {
+        if (sx_bmp_info(data, size, &w, &h) != 0 || w > WEBVIEW_IMAGE_SIDE || h > WEBVIEW_IMAGE_SIDE ||
+            (uint64_t)w * h > WEBVIEW_IMAGE_PIXELS)
+        {
+            return -1;
+        }
+        out = malloc((size_t)w * h * sizeof(*out));
+        if (out == NULL || sx_bmp_decode_argb_into(data, size, out, (size_t)w * h) != 0)
+        {
+            free(out);
+            return -1;
+        }
+        *alpha = 1;
+        natural_w = w;
+        natural_h = h;
+    }
+    else if (format == SX_IMAGE_FORMAT_JPEG)
+    {
+        /* A big photograph is reduced while it decodes. */
+        struct sx_image_options options = { WEBVIEW_IMAGE_SIDE, WEBVIEW_IMAGE_SIDE, WEBVIEW_IMAGE_PIXELS, 0 };
+        struct sx_image_metadata meta;
+
+        if (sx_image_info(data, size, &options, &meta) != SX_IMAGE_OK)
+        {
+            return -1;
+        }
+        w = meta.width;
+        h = meta.height;
+        out = malloc((size_t)w * h * sizeof(*out));
+        if (out == NULL || sx_image_decode_into(data, size, &options, out, (size_t)w * h, NULL) != SX_IMAGE_OK)
+        {
+            free(out);
+            return -1;
+        }
+        /* A reduced photograph keeps its own size for the page. */
+        natural_w = meta.source_width;
+        natural_h = meta.source_height;
+        for (size_t i = 0; i < (size_t)w * h; ++i)
+        {
+            out[i] |= 0xff000000u;
+        }
+    }
+    else
+    {
+        return -1;
+    }
+    if (w == 0 || h == 0)
+    {
+        free(out);
+        return -1;
+    }
+    *pixels = out;
+    decoded->width = (int)w;
+    decoded->height = (int)h;
+    decoded->natural_width = (int)natural_w;
+    decoded->natural_height = (int)natural_h;
+    return 0;
+}
+
+/* Gives `picture` the decoded pixels (taking them) and the page's budget a
+ * share of them; failed when the budget is spent. */
+static void webview_picture_take(struct webview_picture *picture, const struct webview_decoded *decoded)
+{
+    uint32_t *pixels = decoded->pixels;
+    int width = decoded->width;
+    int height = decoded->height;
+    int alpha = decoded->alpha;
+    size_t bytes = (size_t)width * (size_t)height * sizeof(uint32_t);
+
+    if (pixels == NULL || g_picture_bytes + bytes > WEBVIEW_IMAGE_BUDGET)
+    {
+        free(pixels);
+        picture->state = WEBENGINE_IMAGE_FAILED;
+        return;
+    }
+    g_picture_bytes += bytes;
+    memset(&picture->bitmap, 0, sizeof(picture->bitmap));
+    picture->bitmap.pixels = pixels;
+    picture->bitmap.info.width = (uint32_t)width;
+    picture->bitmap.info.height = (uint32_t)height;
+    picture->bitmap.info.pitch = (uint32_t)width * sizeof(uint32_t);
+    picture->bitmap.info.bpp = 32;
+    picture->bitmap.info.buffer_size = (uint32_t)bytes;
+    picture->bitmap.format = alpha ? SX_PIXEL_FORMAT_BGRA8888 : SX_PIXEL_FORMAT_BGRX8888;
+    picture->bitmap.owns_pixels = 1;
+    picture->width = decoded->natural_width;
+    picture->height = decoded->natural_height;
+    picture->state = WEBENGINE_IMAGE_READY;
+}
+
 static struct webview_bytes g_raw;
 static dom_document *g_document;
 static struct webview_sheet *g_sheets;
@@ -234,6 +452,8 @@ static void webview_reset_document(void)
 {
     webengine_tree_free(g_tree);
     g_tree = NULL;
+    free(g_tree_pictures);
+    g_tree_pictures = NULL;
     g_document_failed = 0;
 }
 
@@ -421,6 +641,10 @@ static struct webengine_tree *webview_build_tree(dom_document *document, const c
     return tree;
 }
 
+static void webview_attach_images(int load);
+static void webview_drop_images(void);
+static void webview_take_images(void);
+
 static void webview_parse(void)
 {
     if (g_document != NULL)
@@ -431,7 +655,9 @@ static void webview_parse(void)
     if (g_tree == NULL)
     {
         g_document_failed = 1;
+        return;
     }
+    webview_attach_images(1);
 }
 
 /* ---- document loading ------------------------------------------------------ */
@@ -635,6 +861,8 @@ struct webview_request
     char url[WEBVIEW_PATH_CAPACITY];
     struct sxn_ipv4_endpoint dns;
     struct webview_sheet *sheets;
+    /* The page's remote pictures, when that is the request. */
+    struct webview_image_job *images;
     uint64_t deadline;
 };
 
@@ -672,6 +900,8 @@ static int g_result_ready;
 static uint32_t g_progress_id;
 static char g_progress[WEBVIEW_STATUS_CAPACITY];
 static int g_progress_percent;
+/* Pictures the worker has fetched, oldest last. */
+static struct webview_image_job *g_images_done;
 
 static long g_work_event = -1;   /* auto-reset: a request, or quitting, is waiting */
 static long g_cancel_event = -1; /* manual-reset: drop what is being loaded */
@@ -1046,6 +1276,71 @@ static void webview_fetch_sheets(const struct webview_request *request, struct w
     }
 }
 
+static int webview_image_head(void *user, const struct sxnhttp_response *response)
+{
+    (void)user;
+    return response->status < 200 || response->status >= 300;
+}
+
+/* Keeps a picture's bytes, up to what one picture may take. */
+static long webview_image_body(void *user, const unsigned char *data, size_t length)
+{
+    struct webview_bytes *body = user;
+
+    if (body->length + length > WEBVIEW_IMAGE_FILE_MAX)
+    {
+        return -1;
+    }
+    return webview_append(body, data, length);
+}
+
+/* On the worker: the page's pictures one after the other, each decoded
+ * here and handed to the UI as soon as it is, until the list ends or a
+ * navigation cancels it. */
+static void webview_fetch_images(struct webview_image_job *jobs)
+{
+    static struct sxnhttp_response response;
+
+    while (jobs != NULL)
+    {
+        struct webview_image_job *job = jobs;
+        struct webview_bytes body = {0};
+
+        jobs = job->next;
+        job->next = NULL;
+        if (sxn_wait_one(g_cancel_event, 0) >= 0)
+        {
+            webview_free_jobs(job);
+            webview_free_jobs(jobs);
+            return;
+        }
+        struct sxnhttp_request load = {
+            .url = job->url,
+            .cancel = g_cancel_event,
+            .user_agent = "SavanXP-WebViewer/" SAVANXP_VERSION_STRING,
+            .user = &body,
+            .head = webview_image_head,
+            .sink = webview_image_body,
+            .sink_keep_total = 1,
+        };
+        long status = sxnhttp_get(&g_http, &load, &response);
+        job->ok = status == 0 && (response.flags & SXNHTTP_RESPONSE_HEAD_ONLY) == 0 && body.data != NULL &&
+            webview_decode_image((const unsigned char *)body.data, body.length, &job->decoded) == 0;
+        free(body.data);
+        if (status == SXNHTTP_ERROR_CANCELLED)
+        {
+            webview_free_jobs(job);
+            webview_free_jobs(jobs);
+            return;
+        }
+        webview_lock();
+        job->next = g_images_done;
+        g_images_done = job;
+        webview_unlock();
+        (void)sxngui_app_wake(&g_app);
+    }
+}
+
 /* The worker thread: one request at a time, each with the cancel event
  * cleared as it is taken, so a cancel set after that point is for it. */
 static void webview_worker_main(void *argument)
@@ -1070,6 +1365,7 @@ static void webview_worker_main(void *argument)
         {
             request = g_request;
             g_request.sheets = NULL;
+            g_request.images = NULL;
             g_request_ready = 0;
             (void)sxn_event_reset(g_cancel_event);
             have = 1;
@@ -1079,9 +1375,15 @@ static void webview_worker_main(void *argument)
         {
             continue;
         }
+        sxndns_set_server(&g_resolver, &request.dns);
+        if (request.images != NULL)
+        {
+            /* No result: each picture went back as it came. */
+            webview_fetch_images(request.images);
+            continue;
+        }
         memset(&result, 0, sizeof(result));
         result.id = request.id;
-        sxndns_set_server(&g_resolver, &request.dns);
         if (request.sheets != NULL)
         {
             webview_fetch_sheets(&request, &result);
@@ -1142,6 +1444,8 @@ static int webview_cancel_navigation(void)
     g_request_ready = 0;
     webview_free_sheets(g_request.sheets);
     g_request.sheets = NULL;
+    webview_free_jobs(g_request.images);
+    g_request.images = NULL;
     (void)sxn_event_set(g_cancel_event);
     webview_unlock();
     webview_clear_result(&g_pending_page);
@@ -1152,11 +1456,15 @@ static int webview_cancel_navigation(void)
     return 1;
 }
 
-/* Stop (the toolbar's Stop, Esc, View > Stop): the page on screen stays. */
+static int webview_stop_images(void);
+static int webview_pictures_pending(void);
+
+/* Stop (the toolbar's Stop, Esc, View > Stop): the page on screen stays,
+ * and so do the pictures it has; those still loading fail. */
 static void webview_stop(void)
 {
     webview_status_takes_over();
-    if (webview_cancel_navigation())
+    if (webview_cancel_navigation() | webview_stop_images())
     {
         snprintf(g_status, sizeof(g_status), "Stopped.");
         webview_sync_address();
@@ -1187,6 +1495,8 @@ static void webview_start_remote(const char *url, int push, int hist_target)
     }
     webview_begin_navigation(push, hist_target);
     webview_lock();
+    webview_free_jobs(g_request.images);
+    g_request.images = NULL;
     g_request.id = g_nav.id;
     snprintf(g_request.url, sizeof(g_request.url), "%s", url);
     g_request.dns = g_dns_server;
@@ -1298,6 +1608,7 @@ static void webview_commit_page(struct webview_result *result, dom_document *doc
 
     g_nav.id = 0;
     webview_set_loading(0);
+    webview_drop_images();
     free(g_raw.data);
     webview_free_sheets(g_sheets);
     dom_node_unref(g_document);
@@ -1344,6 +1655,7 @@ static void webview_prepare_page(struct webview_result *result)
         result->body = (struct webview_bytes){0};
         g_pending_document = document;
         webview_lock();
+        webview_free_jobs(g_request.images);
         g_request = (struct webview_request){
             .id = g_nav.id, .dns = g_dns_server, .sheets = plan.sheets, .deadline = g_nav.deadline,
         };
@@ -1370,6 +1682,7 @@ static void on_wake(struct sxngui_app *app)
 
     (void)app;
     webview_download_wake();
+    webview_take_images();
     webview_lock();
     if (g_progress_id != 0 && g_progress_id == nav.id)
     {
@@ -1468,15 +1781,293 @@ static void webview_stop_worker(void)
     g_request_ready = 0;
     webview_free_sheets(g_request.sheets);
     g_request.sheets = NULL;
+    webview_free_jobs(g_request.images);
+    g_request.images = NULL;
     (void)sxn_event_set(g_cancel_event);
     webview_unlock();
     (void)sxn_event_set(g_work_event);
     if (sxn_wait_one(g_worker, 2000) >= 0)
     {
         webview_clear_result(&g_result);
+        webview_free_jobs(g_images_done);
+        g_images_done = NULL;
     }
 }
 
+
+/* ---- the page's pictures ------------------------------------------------------ */
+
+/* Where an <img src> of the page points: an http(s) URL, or a local path
+ * from a local page. A page loaded over https:// takes only https://
+ * pictures, as it takes only https:// stylesheets. 0, or -1. */
+static int webview_resolve_image(const char *src, char *out, size_t capacity)
+{
+    if (webview_resolve_against(g_path, src, out, capacity) != 0)
+    {
+        return -1;
+    }
+    if (webview_location_is_http(out))
+    {
+        return strncmp(g_path, "https://", 8) == 0 && strncmp(out, "https://", 8) != 0 ? -1 : 0;
+    }
+    if (webview_location_is_http(g_path))
+    {
+        return -1;
+    }
+    if (strncmp(out, "file://", 7) == 0)
+    {
+        memmove(out, out + 7, strlen(out + 7) + 1);
+    }
+    return out[0] == '/' && out[1] != '/' ? 0 : -1;
+}
+
+static struct webview_picture *webview_picture_for(const char *url)
+{
+    for (struct webview_picture *picture = g_pictures; picture != NULL; picture = picture->next)
+    {
+        if (strcmp(picture->url, url) == 0)
+        {
+            return picture;
+        }
+    }
+    struct webview_picture *picture = calloc(1, sizeof(*picture));
+    if (picture != NULL)
+    {
+        snprintf(picture->url, sizeof(picture->url), "%s", url);
+        picture->state = WEBENGINE_IMAGE_LOADING;
+        picture->next = g_pictures;
+        g_pictures = picture;
+    }
+    return picture;
+}
+
+/* A local picture, read and decoded at once. */
+static void webview_load_local_picture(struct webview_picture *picture)
+{
+    struct webview_bytes bytes = {0};
+    struct webview_decoded decoded = {0};
+
+    picture->state = WEBENGINE_IMAGE_FAILED;
+    if (webview_read_file(picture->url, &bytes) == NULL && bytes.length <= WEBVIEW_IMAGE_FILE_MAX &&
+        webview_decode_image((const unsigned char *)bytes.data, bytes.length, &decoded) == 0)
+    {
+        webview_picture_take(picture, &decoded);
+    }
+    free(bytes.data);
+}
+
+/* Gives the tree's images what the page has of them. With `load`, a local
+ * picture is loaded at once and the remote ones not asked for yet go to
+ * the worker, in the order of the page. */
+static void webview_attach_images(int load)
+{
+    struct webview_image_job *jobs = NULL;
+    struct webview_image_job **tail = &jobs;
+
+    if (g_tree == NULL)
+    {
+        return;
+    }
+    if (g_tree_pictures == NULL && g_tree->image_count > 0)
+    {
+        g_tree_pictures = calloc(g_tree->image_count, sizeof(*g_tree_pictures));
+        if (g_tree_pictures == NULL)
+        {
+            for (size_t i = 0; i < g_tree->image_count; ++i)
+            {
+                g_tree->images[i].state = WEBENGINE_IMAGE_FAILED;
+            }
+            return;
+        }
+    }
+    for (size_t i = 0; i < g_tree->image_count; ++i)
+    {
+        struct webengine_image *image = &g_tree->images[i];
+        struct webview_picture *picture = g_tree_pictures[i];
+        char url[SXNHTTP_URL_CAP];
+
+        if (picture == NULL)
+        {
+            if (image->url == NULL || webview_resolve_image(image->url, url, sizeof(url)) != 0 ||
+                (picture = webview_picture_for(url)) == NULL)
+            {
+                image->state = WEBENGINE_IMAGE_FAILED;
+                continue;
+            }
+            g_tree_pictures[i] = picture;
+        }
+        if (load && picture->state == WEBENGINE_IMAGE_LOADING && !picture->requested)
+        {
+            if (!webview_location_is_http(picture->url))
+            {
+                webview_load_local_picture(picture);
+            }
+            else if (g_worker < 0)
+            {
+                picture->state = WEBENGINE_IMAGE_FAILED;
+            }
+            else
+            {
+                struct webview_image_job *job = calloc(1, sizeof(*job));
+
+                if (job == NULL)
+                {
+                    picture->state = WEBENGINE_IMAGE_FAILED;
+                }
+                else
+                {
+                    job->page = g_page_id;
+                    snprintf(job->url, sizeof(job->url), "%s", picture->url);
+                    *tail = job;
+                    tail = &job->next;
+                    picture->requested = 1;
+                }
+            }
+        }
+        image->state = picture->state;
+        image->width = picture->width;
+        image->height = picture->height;
+    }
+    if (jobs == NULL)
+    {
+        return;
+    }
+    webview_lock();
+    if (g_request_ready)
+    {
+        /* A navigation is waiting: it replaces this page anyway. */
+        webview_unlock();
+        webview_free_jobs(jobs);
+        return;
+    }
+    g_request = (struct webview_request){ .dns = g_dns_server, .images = jobs };
+    g_request_ready = 1;
+    webview_unlock();
+    (void)sxn_event_set(g_work_event);
+    webview_refresh_commands();
+}
+
+/* A new page: the last one's pictures go, and the worker stops fetching
+ * them. */
+static void webview_drop_images(void)
+{
+    if (++g_page_id == 0)
+    {
+        ++g_page_id;
+    }
+    free(g_tree_pictures);
+    g_tree_pictures = NULL;
+    webview_free_pictures();
+    webview_lock();
+    if (g_request.images != NULL)
+    {
+        webview_free_jobs(g_request.images);
+        g_request.images = NULL;
+        g_request_ready = 0;
+    }
+    (void)sxn_event_set(g_cancel_event);
+    webview_unlock();
+}
+
+/* Some picture of the page is still on its way: Stop stops it. */
+static int webview_pictures_pending(void)
+{
+    for (const struct webview_picture *picture = g_pictures; picture != NULL; picture = picture->next)
+    {
+        if (picture->requested)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* The pictures still loading fail, and the worker stops fetching them. 1
+ * if there were any. */
+static int webview_stop_images(void)
+{
+    int any = 0;
+
+    for (struct webview_picture *picture = g_pictures; picture != NULL; picture = picture->next)
+    {
+        if (picture->requested)
+        {
+            picture->requested = 0;
+            picture->state = WEBENGINE_IMAGE_FAILED;
+            any = 1;
+        }
+    }
+    if (!any)
+    {
+        return 0;
+    }
+    webview_lock();
+    if (g_request.images != NULL)
+    {
+        webview_free_jobs(g_request.images);
+        g_request.images = NULL;
+        g_request_ready = 0;
+    }
+    (void)sxn_event_set(g_cancel_event);
+    webview_unlock();
+    webview_attach_images(0);
+    g_layout_width = -1;
+    sxngui_app_request_repaint(&g_app);
+    webview_refresh_commands();
+    return 1;
+}
+
+/* On the UI thread: the pictures the worker has finished. The page is laid
+ * out again, where it was scrolled to, when one of them is its own. */
+static void webview_take_images(void)
+{
+    struct webview_image_job *done;
+    int changed = 0;
+
+    webview_lock();
+    done = g_images_done;
+    g_images_done = NULL;
+    webview_unlock();
+    while (done != NULL)
+    {
+        struct webview_image_job *job = done;
+
+        done = job->next;
+        job->next = NULL;
+        if (job->page == g_page_id)
+        {
+            for (struct webview_picture *picture = g_pictures; picture != NULL; picture = picture->next)
+            {
+                if (picture->requested && strcmp(picture->url, job->url) == 0)
+                {
+                    picture->requested = 0;
+                    if (job->ok)
+                    {
+                        webview_picture_take(picture, &job->decoded);
+                        job->decoded.pixels = NULL;
+                    }
+                    else
+                    {
+                        picture->state = WEBENGINE_IMAGE_FAILED;
+                    }
+                    changed = 1;
+                    break;
+                }
+            }
+        }
+        webview_free_jobs(job);
+    }
+    if (changed && g_tree != NULL && !g_show_source && !g_plain)
+    {
+        webview_attach_images(0);
+        g_layout_width = -1;
+        sxngui_app_request_repaint(&g_app);
+    }
+    if (changed)
+    {
+        webview_refresh_commands();
+    }
+}
 
 /* The single front door for every navigation: address bar, links, history,
  * dialogs, argv. Resolves `location` against the current page. A local file
@@ -1900,6 +2491,46 @@ static int webview_visible(const struct webengine_box_style *style)
     return style->visibility != CSS_VISIBILITY_HIDDEN && style->visibility != CSS_VISIBILITY_COLLAPSE;
 }
 
+/* An image's picture in the content box of its border box (x, y, width,
+ * height), scaled to it; a broken image's frame when it failed. Nothing
+ * while it loads. */
+static void webview_paint_image(struct sx_painter *painter, const struct webengine_box *box, int x, int y,
+    int width, int height)
+{
+    const struct webview_picture *picture = g_tree_pictures != NULL && box->image >= 0 &&
+        (size_t)box->image < g_tree->image_count ? g_tree_pictures[box->image] : NULL;
+    struct sx_rect content = sx_rect_make(
+        x + box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT],
+        y + box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP],
+        width - box->border[WEBENGINE_LEFT] - box->padding[WEBENGINE_LEFT] - box->padding[WEBENGINE_RIGHT] -
+            box->border[WEBENGINE_RIGHT],
+        height - box->border[WEBENGINE_TOP] - box->padding[WEBENGINE_TOP] - box->padding[WEBENGINE_BOTTOM] -
+            box->border[WEBENGINE_BOTTOM]);
+
+    if (content.width <= 0 || content.height <= 0)
+    {
+        return;
+    }
+    if (picture != NULL && picture->state == WEBENGINE_IMAGE_READY)
+    {
+        const struct sx_bitmap *bitmap = &picture->bitmap;
+        int same = content.width == (int)bitmap->info.width && content.height == (int)bitmap->info.height;
+
+        sx_painter_draw_scaled_bitmap(painter, bitmap, content,
+            sx_rect_make(0, 0, (int)bitmap->info.width, (int)bitmap->info.height),
+            same ? SX_SCALE_NEAREST : SX_SCALE_BILINEAR);
+        return;
+    }
+    if (g_tree->images[box->image].state == WEBENGINE_IMAGE_FAILED && content.width > 2 && content.height > 2)
+    {
+        /* Broken: a sunken frame, as browsers draw one. */
+        sx_painter_hline(painter, content.x, content.y, content.width, 0x808080);
+        sx_painter_vline(painter, content.x, content.y, content.height, 0x808080);
+        sx_painter_hline(painter, content.x, content.y + content.height - 1, content.width, 0xc0c0c0);
+        sx_painter_vline(painter, content.x + content.width - 1, content.y, content.height, 0xc0c0c0);
+    }
+}
+
 /* A cell with nothing in it, for empty-cells: hide (CSS 2.1 17.6.1.1). */
 static int webview_cell_empty(const struct webengine_box *box)
 {
@@ -1970,6 +2601,10 @@ static void webview_paint_block(struct sx_painter *painter, const struct webengi
     }
     webview_paint_borders(painter, box->style, g_page_x + box->x, y, box->width, height, 1, 1,
         webview_backdrop(box));
+    if (box->image >= 0)
+    {
+        webview_paint_image(painter, box, g_page_x + box->x, y, box->width, height);
+    }
 }
 
 /* A piece of text, drawn as the painter wants it: NUL-terminated. */
@@ -2020,6 +2655,16 @@ static void webview_paint_fragment(struct sx_painter *painter, const struct webe
         }
         webview_paint_borders(painter, style, x, y, fragment->width, fragment->height, fragment->left_edge,
             fragment->right_edge, webview_backdrop(box));
+        break;
+    case WEBENGINE_FRAGMENT_IMAGE:
+        if ((style->background >> 24) != 0)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(x, y, fragment->width, fragment->height),
+                webview_color_over(style->background, backdrop));
+        }
+        webview_paint_borders(painter, style, x, y, fragment->width, fragment->height, 1, 1,
+            webview_backdrop(box));
+        webview_paint_image(painter, box, x, y, fragment->width, fragment->height);
         break;
     case WEBENGINE_FRAGMENT_TEXT:
     {
@@ -2084,8 +2729,19 @@ static int webview_link_at(int x, int y, char *target, size_t capacity)
         int px = x - g_page_x;
         int py = y - (item->fixed ? g_page_area.y : g_page_area.y - WEBVIEW_SCROLL->value);
 
-        if (item->kind != WEBENGINE_PAINT_LINES || (item->clip.on && (px < item->clip.x ||
-            px >= item->clip.x + item->clip.width || py < item->clip.y || py >= item->clip.y + item->clip.height)))
+        if (item->clip.on && (px < item->clip.x || px >= item->clip.x + item->clip.width || py < item->clip.y ||
+            py >= item->clip.y + item->clip.height))
+        {
+            continue;
+        }
+        if (item->kind == WEBENGINE_PAINT_BLOCK && box->image >= 0 && box->link >= 0 && px >= box->x &&
+            px < box->x + box->width && py >= box->y && py < box->y + box->height)
+        {
+            /* A block-level image in a link. */
+            snprintf(target, capacity, "%s", g_tree->links[box->link]);
+            return 1;
+        }
+        if (item->kind != WEBENGINE_PAINT_LINES)
         {
             continue;
         }
@@ -2572,7 +3228,7 @@ static int on_key(struct sxngui_app *app, const struct savanxp_input_event *even
     {
         return 0;
     }
-    if (event->key == SAVANXP_KEY_ESC && g_nav.id != 0)
+    if (event->key == SAVANXP_KEY_ESC && (g_nav.id != 0 || webview_pictures_pending()))
     {
         webview_stop(); /* Esc stops a load; otherwise it closes, as ever */
         return 1;
@@ -2906,7 +3562,7 @@ static void webview_favorites_refresh_menu(void)
  * webview_refresh_nav, which calls this. */
 static void webview_refresh_commands(void)
 {
-    const int loading = g_nav.id != 0;
+    const int loading = g_nav.id != 0 || webview_pictures_pending();
     const int back = g_hist_index > 0;
     const int forward = g_hist_index >= 0 && g_hist_index + 1 < g_hist_count;
     const int count_view = (int)(sizeof(k_view_items) / sizeof(k_view_items[0]));

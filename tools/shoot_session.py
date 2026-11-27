@@ -3762,6 +3762,7 @@ def scenario_webview_http(s):
         webview_e3_styles(s, hostport)
         webview_e5_floats(s, hostport)
         webview_e6_tables(s, hostport)
+        webview_e6_images(s, hostport)
         check_downloads_on_disk()
     finally:
         if tls is not None:
@@ -3862,6 +3863,44 @@ def webview_e6_tables(s, hostport):
     expect_text(page, area, "north", TEXT, (255, 255, 204), "a cell's own background", solid_only=True)
     expect_text(page, area, "east", TEXT, (204, 255, 204), "a row's background under its cell", solid_only=True)
     expect_text(page, area, "wide cell", TEXT, FIELD, "a cell spanning two columns", solid_only=True)
+
+
+def count_colour(image, area, colour):
+    """How many pixels of `area` are exactly `colour`."""
+    x, y, width, height = area
+    region = image.crop((x, y, x + width, y + height)).convert("RGB")
+    return sum(1 for value in region.getdata() if value == colour)
+
+
+def webview_e6_images(s, hostport):
+    """Images (docs/desktop/WEBVIEWER_ENGINE.md#images): a page whose picture
+    stalls is shown at once, with its alt text and the picture that did
+    arrive; then a page of PNG pictures in a table, beside floats and in
+    blocks, painted at their sizes -- loading it while the stalled picture
+    is still pending proves the worker drops it."""
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, "/e6-image-stall.html")
+    s.qmp.tap("ret", pause=8.0)
+    page = s.shot("webview-e6-image-stall")
+    area = (0, 0, *page.size)
+    expect_text(page, area, "still waiting", TEXT, FIELD, "the alt text of a picture that stalls", solid_only=True)
+    if count_colour(page, area, (40, 160, 60)) < 200:
+        raise Failure("the picture that arrived beside a stalled one was not painted")
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, "/e6-images.html")
+    s.qmp.tap("ret", pause=10.0)
+    page = s.shot("webview-e6-images")
+    # Each picture is its colour with a black frame and a white diagonal:
+    # the logo alone leaves over 4000 orange pixels.
+    for colour, least, what in (((230, 140, 30), 4000, "the orange logo and its copies"),
+                                ((40, 80, 200), 1000, "the blue pictures"),
+                                ((200, 50, 40), 2000, "the red pictures"),
+                                ((120, 60, 170), 1200, "the purple side picture")):
+        found = count_colour(page, area, colour)
+        if found < least:
+            raise Failure("%s: %d pixels painted, at least %d expected" % (what, found, least))
 
 
 def wait_for_text(s, name, text, label, timeout, colour=None, background=None):

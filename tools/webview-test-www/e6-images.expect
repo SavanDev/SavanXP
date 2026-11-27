@@ -1,0 +1,48 @@
+# Images (E6, docs/desktop/WEBVIEWER_ENGINE.md#images) in a table-based page:
+# a banner cell with a logo and a spaced image, a side column with a
+# picture, a main cell with an image floated right by align="right" with
+# hspace and vspace, and an image with a border=""; a row of inline images
+# wrapping between them with no spaces; and block images at their natural
+# size, with a width or a height keeping the ratio, with both, with a
+# percentage width and centred by auto margins. Images align top on their
+# lines, so line heights do not depend on fonts. Laid out at 800 by 600;
+# every box matches Chromium's getBoundingClientRect at the same size.
+viewport 800
+block html 0 0 800 531
+  block body 8 8 784 515
+    block table 8 8 600 136
+      block tbody 8 8 600 136
+        block tr 8 8 600 58
+          block td 8 8 600 58
+            line 12 12 592 50
+              image 0 12 12 100 50
+              image 1 117 12 20 20
+        block tr 8 66 600 78
+          block td 8 66 128 78
+            anonymous 12 70 120 60
+              line 12 70 120 60
+                image 2 12 70 30 60
+            block div 12 130 120 10
+          block td 136 66 472 78
+            anonymous 140 70 464 0
+              block img float right 540 72 60 40
+            block div 140 70 464 20
+            anonymous 140 90 464 34
+              line 140 90 396 34
+                image 4 140 90 44 34
+    block div 8 144 300 100
+      line 8 144 300 50
+        image 5 8 144 60 40
+        image 6 68 144 40 30
+        image 7 108 144 100 50
+        image 8 208 144 60 40
+      line 8 194 300 50
+        image 9 8 194 100 50
+        image 10 108 194 20 20
+    block div 8 244 400 279
+      block img 8 244 40 30
+      block img 8 274 80 60
+      block img 8 334 20 15
+      block img 8 349 50 50
+      block img 8 399 200 100
+      block img 198 503 20 20

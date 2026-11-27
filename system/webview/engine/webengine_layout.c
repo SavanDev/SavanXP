@@ -40,6 +40,56 @@ int webengine_length_px(const struct webengine_len *length, int base, int automa
     }
 }
 
+/* --- Images (CSS 2.1 10.3.2, 10.6.2) ------------------------------------------------ */
+
+static int clamp_size(const struct webengine_len *min, const struct webengine_len *max, int base, int size) {
+    int high = webengine_length_px(max, base, -1);
+    int low = webengine_length_px(min, base, 0);
+    size = high >= 0 && size > high ? high : size;
+    size = size < low ? low : size;
+    return size > 0 ? size : 0;
+}
+
+uint8_t webengine_image_size(const struct webengine_tree *tree, const struct webengine_box *box, int cb_width,
+                             int cb_height, int *width, int *height) {
+    const struct webengine_box_style *style = box->style;
+    const struct webengine_image *image = &tree->images[box->image];
+    bool ready = image->state == WEBENGINE_IMAGE_READY && image->width > 0 && image->height > 0;
+    int edges_x = style->box_sizing == CSS_BOX_SIZING_BORDER_BOX ? style->border_width[WEBENGINE_LEFT] +
+        style->border_width[WEBENGINE_RIGHT] + webengine_length_px(&style->padding[WEBENGINE_LEFT], cb_width, 0) +
+        webengine_length_px(&style->padding[WEBENGINE_RIGHT], cb_width, 0) : 0;
+    int edges_y = style->box_sizing == CSS_BOX_SIZING_BORDER_BOX ? style->border_width[WEBENGINE_TOP] +
+        style->border_width[WEBENGINE_BOTTOM] + webengine_length_px(&style->padding[WEBENGINE_TOP], cb_width, 0) +
+        webengine_length_px(&style->padding[WEBENGINE_BOTTOM], cb_width, 0) : 0;
+    int w = webengine_length_px(&style->width, cb_width, -1);
+    int h = webengine_length_px(&style->height, cb_height, -1);
+    w = w >= 0 ? (w - edges_x > 0 ? w - edges_x : 0) : -1;
+    h = h >= 0 ? (h - edges_y > 0 ? h - edges_y : 0) : -1;
+    uint8_t mode = WEBENGINE_IMAGE_BOX;
+    if (w >= 0 && h >= 0) {
+        /* Both given. */
+    } else if (ready && w >= 0) {
+        h = (int)(((int64_t)w * image->height + image->width / 2) / image->width);
+    } else if (ready && h >= 0) {
+        w = (int)(((int64_t)h * image->width + image->height / 2) / image->height);
+    } else if (ready) {
+        w = image->width;
+        h = image->height;
+    } else if (w >= 0 || h >= 0) {
+        /* One side given and no picture to take the other from. */
+        w = w >= 0 ? w : 0;
+        h = h >= 0 ? h : 0;
+    } else if (box->type == WEBENGINE_BOX_IMAGE && box->text != NULL && box->length > 0) {
+        mode = WEBENGINE_IMAGE_ALT;
+        w = h = 0;
+    } else {
+        w = h = image->state == WEBENGINE_IMAGE_FAILED && box->text == NULL ? 16 : 0;
+    }
+    *width = clamp_size(&style->min_width, &style->max_width, cb_width, w);
+    *height = clamp_size(&style->min_height, &style->max_height, cb_height, h);
+    return mode;
+}
+
 /* --- Collapsing margins (CSS 2.1 8.3.1) ------------------------------------------ */
 
 /* Adjoining margins collapse into the largest positive one plus the most
@@ -373,6 +423,13 @@ static void intrinsic_block(struct webengine_flow *flow, struct webengine_box *b
     int max = 0;
     if (box->table_role == WEBENGINE_TABLE_TABLE) {
         intrinsic_table(flow, box);
+        return;
+    }
+    if (box->image >= 0) {
+        /* A percentage counts as nothing here, as elsewhere. */
+        int height = 0;
+        (void)webengine_image_size(flow->tree, box, -1, -1, &min, &height);
+        box->min_content = box->max_content = min;
         return;
     }
     if (box->inline_content) {
@@ -729,6 +786,13 @@ static void enter_block(struct layout *layout, struct webengine_box *box) {
          * are solved around it. */
         int width = table_open(layout, box, cb, cb - horizontal_margins(box, cb)) - horizontal_edges(box);
         frame->content_width = solve_width(box, cb, width > 0 ? width : 0);
+    } else if (box->image >= 0) {
+        /* A block-level image: its own width, its margins solved around it
+         * (10.3.4). */
+        int width = 0;
+        int height = 0;
+        (void)webengine_image_size(layout->flow.tree, box, cb, parent->percent_base, &width, &height);
+        frame->content_width = solve_width(box, cb, width);
     } else {
         frame->content_width = block_width(box, cb);
     }
@@ -822,6 +886,9 @@ static void enter_float(struct layout *layout, struct webengine_box *box, bool b
     if (box->table_role == WEBENGINE_TABLE_TABLE) {
         width = table_open(layout, box, cb, cb - box->margin[WEBENGINE_LEFT] - box->margin[WEBENGINE_RIGHT]) - edges;
         width = width > 0 ? width : 0;
+    } else if (box->image >= 0) {
+        int height = 0;
+        (void)webengine_image_size(layout->flow.tree, box, cb, parent->percent_base, &width, &height);
     } else {
         width = specified >= 0 ? content_width(box, specified)
             : shrink_to_fit(layout, box, cb - box->margin[WEBENGINE_LEFT] - box->margin[WEBENGINE_RIGHT] - edges);
@@ -893,6 +960,19 @@ static int used_height(const struct webengine_box *box, int percent_base, int co
     return height > 0 ? height : 0;
 }
 
+/* The used height of a block's content: an image's own, else `content`
+ * within its height, minimum and maximum. */
+static int block_height(struct layout *layout, const struct webengine_box *box, int cb_width, int percent_base,
+                        int content) {
+    if (box->image >= 0) {
+        int width = 0;
+        int height = 0;
+        (void)webengine_image_size(layout->flow.tree, box, cb_width, percent_base, &width, &height);
+        return height;
+    }
+    return used_height(box, percent_base, content);
+}
+
 /* A block's own box ends: its height, then the margins and cursor of the
  * block around it, then its relative offset. */
 static void finish_block(struct layout *layout) {
@@ -905,7 +985,7 @@ static void finish_block(struct layout *layout) {
     int min = webengine_length_px(&style->min_height, parent->percent_base, 0);
     bool context = new_context(box);
     bool bottom_edge = box->border[WEBENGINE_BOTTOM] > 0 || box->padding[WEBENGINE_BOTTOM] > 0 || context ||
-        !auto_height;
+        !auto_height || box->image >= 0;
     struct collapse *pending = pending_of(layout, index);
     struct collapse *outer = pending_of(layout, index - 1);
 
@@ -950,7 +1030,8 @@ static void finish_block(struct layout *layout) {
         /* The wrapper: the table box and its captions. */
         box->height = content_bottom - box->y;
     } else {
-        int height = used_height(box, parent->percent_base, content_bottom - frame->content_top);
+        int height = block_height(layout, box, parent->content_width, parent->percent_base,
+                                  content_bottom - frame->content_top);
         box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
             box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
     }
@@ -980,7 +1061,8 @@ static void finish_float(struct layout *layout) {
     if (box->table_role == WEBENGINE_TABLE_TABLE) {
         box->height = content_bottom - box->y;
     } else {
-        int height = used_height(box, parent->percent_base, content_bottom - frame->content_top);
+        int height = block_height(layout, box, parent->content_width, parent->percent_base,
+                                  content_bottom - frame->content_top);
         box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
             box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
     }
@@ -1058,6 +1140,10 @@ static void enter_absolute(struct layout *layout, struct webengine_box *box) {
         }
     }
     width = clamp_width(box, cb_width, width);
+    if (box->image >= 0) {
+        int height = 0;
+        (void)webengine_image_size(layout->flow.tree, box, cb_width, cb_height, &width, &height);
+    }
     if (box->table_role == WEBENGINE_TABLE_TABLE) {
         int available = cb_width - margin_left - margin_right -
             (left_auto && right_auto ? static_left : (left_auto ? 0 : left) + (right_auto ? 0 : right));
@@ -1130,7 +1216,7 @@ static void finish_absolute(struct layout *layout) {
         box->height = content_bottom - box->y;
     } else {
         int content = frame->stretch >= 0 ? frame->stretch : content_bottom - frame->content_top;
-        int height = used_height(box, frame->cb_height, content);
+        int height = block_height(layout, box, -1, frame->cb_height, content);
         box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
             box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
     }

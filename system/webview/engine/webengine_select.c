@@ -845,6 +845,50 @@ static void table_hints(struct hints *hints, dom_node *node) {
     }
 }
 
+/* HTML's rendering section for <img>: its size, border, spacing and
+ * alignment, which float it or align it on its line. */
+static void image_hints(struct hints *hints, dom_node *node) {
+    add_size(hints, node);
+    int border = integer(node, "border", -1);
+    if (border >= 0) {
+        add_border(hints, border, CSS_BORDER_STYLE_SOLID);
+    }
+    css_hint_length space;
+    if (dimension(node, "hspace", true, &space) && space.unit == CSS_UNIT_PX) {
+        add_length(hints, CSS_PROP_MARGIN_LEFT, CSS_MARGIN_SET, space);
+        add_length(hints, CSS_PROP_MARGIN_RIGHT, CSS_MARGIN_SET, space);
+    }
+    if (dimension(node, "vspace", true, &space) && space.unit == CSS_UNIT_PX) {
+        add_length(hints, CSS_PROP_MARGIN_TOP, CSS_MARGIN_SET, space);
+        add_length(hints, CSS_PROP_MARGIN_BOTTOM, CSS_MARGIN_SET, space);
+    }
+    static const struct {
+        const char *name;
+        uint8_t value;
+    } k_aligns[] = {
+        { "top", CSS_VERTICAL_ALIGN_TOP },
+        { "texttop", CSS_VERTICAL_ALIGN_TEXT_TOP },
+        { "middle", CSS_VERTICAL_ALIGN_MIDDLE },
+        { "absmiddle", CSS_VERTICAL_ALIGN_MIDDLE },
+        { "center", CSS_VERTICAL_ALIGN_MIDDLE },
+        { "bottom", CSS_VERTICAL_ALIGN_BASELINE },
+        { "baseline", CSS_VERTICAL_ALIGN_BASELINE },
+        { "absbottom", CSS_VERTICAL_ALIGN_BOTTOM },
+    };
+    if (attribute_is(node, "align", "left") || attribute_is(node, "align", "right")) {
+        add_hint(hints, (css_hint){ .prop = CSS_PROP_FLOAT, .status = attribute_is(node, "align", "left")
+                                    ? CSS_FLOAT_LEFT : CSS_FLOAT_RIGHT });
+        return;
+    }
+    for (size_t i = 0; i < sizeof(k_aligns) / sizeof(k_aligns[0]); i++) {
+        if (attribute_is(node, "align", k_aligns[i].name)) {
+            add_hint(hints, (css_hint){ .prop = CSS_PROP_VERTICAL_ALIGN, .status = k_aligns[i].value,
+                                        .data.length = { 0, CSS_UNIT_PX } });
+            return;
+        }
+    }
+}
+
 static css_error node_presentational_hint(void *pw, void *node, uint32_t *nhints, css_hint **hints) {
     struct hints out = { .values = pw };
     *nhints = 0;
@@ -864,6 +908,8 @@ static css_error node_presentational_hint(void *pw, void *node, uint32_t *nhints
                 break;
             }
         }
+    } else if (has_name_text(node, "img")) {
+        image_hints(&out, node);
     } else if (has_name_text(node, "div") || has_name_text(node, "caption")) {
         add_align(&out, node, true);
     } else if (has_name_text(node, "p") || has_name_text(node, "h1") || has_name_text(node, "h2") ||

@@ -96,6 +96,25 @@ void webengine_translate(struct webengine_tree *tree, struct webengine_box *box,
  * containing block `width` wide and `height` high (or none, when < 0). */
 void webengine_relative_offset(const struct webengine_box *box, int width, int height, int *dx, int *dy);
 
+/* How an image box is laid out. */
+enum webengine_image_mode {
+    /* A box of its size, its picture painted in it when it is ready. */
+    WEBENGINE_IMAGE_BOX,
+    /* Its alt="" text, as text of its line: an inline image that is not
+     * ready and has no size given. */
+    WEBENGINE_IMAGE_ALT,
+};
+
+/* The content size of image box `box` (CSS 2.1 10.3.2, 10.6.2) in a
+ * containing block `cb_width` wide and `cb_height` high (-1 unknown): the
+ * width and height given, one of them and the picture's ratio, or the
+ * picture's natural size. A picture not ready yet is as big as given;
+ * with no size given, an inline one shows its alt text, and one that
+ * failed and has no alt is 16 pixels square, as browsers show a broken
+ * image. */
+uint8_t webengine_image_size(const struct webengine_tree *tree, const struct webengine_box *box, int cb_width,
+                             int cb_height, int *width, int *height);
+
 /* --- Tables (webengine_table.c) --------------------------------------------- */
 
 /* A cell in the grid: its first row and column and how many it spans, and

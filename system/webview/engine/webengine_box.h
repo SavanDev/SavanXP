@@ -111,6 +111,27 @@ enum webengine_box_type {
     /* A list item's marker: in the item's inline content when
      * list-style-position is inside, otherwise its `marker`. */
     WEBENGINE_BOX_MARKER,
+    /* An inline-level image, a replaced element (CSS 2.1 10.3.2, 10.6.2):
+     * an atom of its line. A block-level one (display: block, a float, an
+     * absolute box) is a BLOCK with an `image`. */
+    WEBENGINE_BOX_IMAGE,
+};
+
+/* An image of the page (webengine_tree.images): its source as written in
+ * src="", for the caller to resolve, fetch and decode, and once it has, its
+ * natural size. The caller sets `state`, `width` and `height` and lays the
+ * tree out again. */
+enum webengine_image_state {
+    WEBENGINE_IMAGE_LOADING,
+    WEBENGINE_IMAGE_READY,
+    WEBENGINE_IMAGE_FAILED,
+};
+
+struct webengine_image {
+    char *url;
+    uint8_t state;
+    int width;
+    int height;
 };
 
 /* What a block is in a table (CSS 2.1 17.2), from its display or, for an
@@ -150,15 +171,17 @@ struct webengine_box {
     const struct webengine_box_style *style;
     /* The element's name in lower case, "" for an anonymous box. */
     char tag[12];
-    /* TEXT and MARKER: UTF-8, '\n' only where white-space preserves it. */
+    /* TEXT and MARKER: UTF-8, '\n' only where white-space preserves it.
+     * An image: its alt="" text, NULL without one. */
     char *text;
     size_t length;
+    /* An image (IMAGE, or a block-level BLOCK): webengine_tree.images[image];
+     * -1 for every other box. */
+    int image;
     /* The link the box is in (webengine_tree.links), or -1. */
     int link;
     /* MARKER: the list item's ordinal. */
     int ordinal;
-    /* TEXT: an image's placeholder, until E6. */
-    bool replaced;
     /* BLOCK: its children are inline-level (an inline formatting context). */
     bool inline_content;
     /* INLINE: which pieces of a split inline this is; only the first draws
@@ -175,7 +198,8 @@ struct webengine_box {
     int row_span;
 
     /* Set by webengine_layout. BLOCK: the border box in canvas pixels and
-     * the used widths of its edges. */
+     * the used widths of its edges. IMAGE: its content width and height,
+     * and its used edges. */
     int x;
     int y;
     int width;
@@ -242,6 +266,8 @@ enum webengine_fragment_type {
     /* A list item's marker: the text's box, or the shape's for disc,
      * circle and square. */
     WEBENGINE_FRAGMENT_MARKER,
+    /* An image: its border box. */
+    WEBENGINE_FRAGMENT_IMAGE,
 };
 
 struct webengine_fragment {
@@ -306,6 +332,8 @@ struct webengine_tree {
     size_t paint_capacity;
     char **links;
     size_t link_count;
+    struct webengine_image *images;
+    size_t image_count;
     /* Owned by the tree. */
     struct webengine_box_style **styles;
     size_t style_count;
@@ -340,7 +368,7 @@ int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *
 
 /* The tree as text, a line per box, indented two spaces a level, for the
  * tests: "block p", "anonymous", "inline b", "text \"...\"", "break",
- * "marker 1", with "float left" or "float right" after a float's name and
+ * "marker 1", "image 3" (its index in images), with "float left" or "float right" after a float's name and
  * "relative", "absolute" or "fixed" after a positioned box's. An anonymous
  * table part names its role: "anonymous table", "anonymous row",
  * "anonymous cell".

@@ -25,7 +25,7 @@ block html
       text "A"
       break
       text "B "
-      text "[image]" image
+      image 0 "x"
       text " "
       inline a
         text "link" link

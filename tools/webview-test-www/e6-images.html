@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>E6: images</title>
+<style>
+body { margin: 8px }
+img { vertical-align: top }
+.row { width: 300px; background: #eee }
+.blocks img { display: block }
+.box { background: #ddd }
+#blocks { width: 400px }
+</style>
+</head>
+<body>
+<table id="page" width="600" cellspacing="0" cellpadding="4" border="0">
+<tr><td id="banner" colspan="2" bgcolor="#336699"><img id="logo" src="e6-orange-100x50.png" alt="Logo"><img id="mark" src="e6-green-20x20.png" alt="" hspace="5"></td></tr>
+<tr>
+<td id="side" width="120" valign="top"><img id="side-picture" src="e6-purple-30x60.png" alt="side"><div class="box" style="height:10px"></div></td>
+<td id="main" valign="top"><img id="floated" src="e6-red-60x40.png" alt="float" align="right" hspace="4" vspace="2"><div class="box" style="height:20px"></div><img id="bordered" src="e6-blue-40x30.png" alt="border" border="2"></td>
+</tr>
+</table>
+<div class="row" id="inline-row"><img src="e6-red-60x40.png" alt=""><img src="e6-blue-40x30.png" alt=""><img src="e6-orange-100x50.png" alt=""><img src="e6-red-60x40.png" alt=""><img src="e6-orange-100x50.png" alt=""><img src="e6-green-20x20.png" alt=""></div>
+<div class="blocks" id="blocks">
+<img id="natural" src="e6-blue-40x30.png" alt="">
+<img id="wide" src="e6-blue-40x30.png" width="80" alt="">
+<img id="tall" src="e6-blue-40x30.png" height="15" alt="">
+<img id="both" src="e6-blue-40x30.png" width="50" height="50" alt="">
+<img id="styled" src="e6-orange-100x50.png" style="width:50%" alt="">
+<img id="centred" src="e6-green-20x20.png" style="margin:4px auto" alt="">
+</div>
+</body>
+</html>

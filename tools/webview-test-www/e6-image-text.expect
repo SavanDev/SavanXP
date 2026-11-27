@@ -1,0 +1,37 @@
+# Images among text (E6, docs/desktop/WEBVIEWER_ENGINE.md#images), worked out
+# by hand with the test's fixed fonts at 300 pixels: an image on the
+# baseline (its bottom margin edge on it, the line 20 + 5 high), one with
+# align="middle" (7 pixels down: its middle a quarter of the ascent above
+# the baseline), the alt text of an image still loading, a failed image
+# without alt (16 pixels square), with an empty alt (nothing) and with an
+# alt (its text), and an image with a border in a link.
+viewport 300
+block html 0 0 300 121
+  block body 0 0 300 121
+    block p 0 0 300 25
+      line 0 0 300 25
+        text "aa " 0 8 21 16
+        image 0 21 0 20 20
+        text " bb" 41 8 21 16
+    block p 0 25 300 20
+      line 0 25 300 20
+        text "aa " 0 26 21 16
+        image 1 21 25 20 20
+        text " bb" 41 26 21 16
+    block p 0 45 300 18
+      line 0 45 300 18
+        text "aa " 0 46 21 16
+        text "still loading" 21 46 91 16
+        text " bb" 112 46 21 16
+    block p 0 63 300 21
+      line 0 63 300 21
+        text "aa " 0 67 21 16
+        image 3 21 63 16 16
+        text " bb " 37 67 28 16
+        image 4 65 79 0 0
+        text " cc " 65 67 28 16
+        text "gone" 93 67 28 16
+    block p 0 84 300 37
+      line 0 84 300 37
+        inline a 0 104 42 16
+        image 6 0 84 42 32

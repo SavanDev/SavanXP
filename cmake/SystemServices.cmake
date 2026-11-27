@@ -219,7 +219,7 @@ savanxp_program(NAME win32test TEST NATIVE SOURCES subsystems/win32/tests/win32t
 # the OpenSSL port, so it is built only when the port is (ports/openssl); the
 # registry drops it otherwise.
 if(SAVANXP_HAVE_OPENSSL)
-    savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libssl libcrypto netsurf_css netsurf_dom
+    savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libsximg libssl libcrypto netsurf_css netsurf_dom
         SOURCES webview.c download.c favorites.c engine/webengine_html.c engine/webengine.c engine/webengine_select.c
                 engine/webengine_box.c engine/webengine_layout.c engine/webengine_lines.c
                 engine/webengine_paint.c engine/webengine_table.c
