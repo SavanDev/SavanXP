@@ -38,7 +38,7 @@ One function (`webview_refresh_commands`) enables the toolbar and the menus,
 so a grey button and a grey menu item never disagree: Stop only while a page
 loads, Refresh and Source once there is a page, Back and Forward with the
 history. Menus: File (Open, Exit), Go (Back, Forward, Home Page), View (Stop,
-Refresh, Top and End of page, View Source), Help. A right click on the page
+Refresh, Top and End of page, View Source), Favorites (below), Help. A right click on the page
 opens its context menu (Back, Forward, Refresh, View Source). Home opens
 `file:///system/samples/welcome.html`.
 
@@ -46,6 +46,33 @@ The window title names the page (`<title> - Web Viewer`), and so does its
 taskbar button. With the pointer on a link the status bar shows where it
 leads, as an absolute URL; the next status message takes the bar back, and
 the link shows again when the pointer moves.
+
+## Favorites
+
+The Favorites menu, after View, as Internet Explorer 5 had it
+(`system/webview/favorites.c`):
+
+- **Add to Favorites** adds the page on screen, named by its `<title>` (its
+  URL when it has none), and the status bar says `Added <name> to
+  Favorites.` It is grey with no page, for a page already there, and when
+  the list holds its 24. **Remove from Favorites** takes the page on screen
+  out and is grey for one that is not a favorite.
+- Under a separator, one row per favorite in the order they were added; the
+  page on screen is checked. A row opens its URL as typing it would, into
+  the history.
+- Names collapse runs of spaces and are cut with `...` to fit a menu row
+  (47 bytes, never inside a UTF-8 character).
+- The list is `webview-favorites` in the person's Settings folder
+  (`sxn_settings_path`), written whole on every change: a `#` header line,
+  then a line per favorite, the URL, a tab and the name. Blank lines and
+  other `#` lines are skipped when it is read, so it can be edited by hand.
+- A profile without the file starts with two pages that measure the browser:
+  `https://motherfuckingwebsite.com/` and `http://acid2.acidtests.org/`.
+  Once a change is saved the file decides, so an emptied list stays empty.
+
+`webview-favorites-test` checks the list and its text on the host; the
+`webview` scenario's Favorites steps check the menu, adding, opening and
+removing on screen.
 
 ## Native frontend and I/O
 

@@ -15,7 +15,9 @@
 #include "sxn/sxndns.h"
 #include "sxn/sxnhttp.h"
 #include "sxn/sxngui.h"
+#include "sxn/sxnprofile.h"
 #include "download.h"
+#include "favorites.h"
 #include "engine/webengine.h"
 #include "webview.sunres.h"
 #include "icons.inc"
@@ -44,6 +46,10 @@
 #define WEBVIEW_MENU_BACK 30
 #define WEBVIEW_MENU_FORWARD 31
 #define WEBVIEW_MENU_STOP 32
+#define WEBVIEW_MENU_FAVORITE_ADD 40
+#define WEBVIEW_MENU_FAVORITE_REMOVE 41
+/* The favorites themselves, one id each from here. */
+#define WEBVIEW_MENU_FAVORITE_FIRST 100
 
 #define WEBVIEW_CONTENT_WIDTH 600
 #define WEBVIEW_CONTENT_HEIGHT 470
@@ -2696,6 +2702,8 @@ static void on_scroll_changed(struct sxgui_widget *widget, void *user)
 }
 
 static void on_menu_command(int id, void *user);
+static void webview_favorites_change(int add);
+static void webview_favorites_open(int index);
 
 static void on_back(struct sxgui_widget *widget, void *user)
 {
@@ -2815,11 +2823,21 @@ static void on_menu_command(int id, void *user)
     case WEBVIEW_MENU_SOURCE:
         webview_toggle_source();
         break;
+    case WEBVIEW_MENU_FAVORITE_ADD:
+        webview_favorites_change(1);
+        break;
+    case WEBVIEW_MENU_FAVORITE_REMOVE:
+        webview_favorites_change(0);
+        break;
     case WEBVIEW_MENU_ABOUT:
         sxgui_dialog_begin(&g_app.ui, &g_about_dialog, WEBVIEW_ABOUT_WIDTH,
             WEBVIEW_ABOUT_HEIGHT);
         break;
     default:
+        if (id >= WEBVIEW_MENU_FAVORITE_FIRST && id < WEBVIEW_MENU_FAVORITE_FIRST + WEBVIEW_FAVORITES_MAX)
+        {
+            webview_favorites_open(id - WEBVIEW_MENU_FAVORITE_FIRST);
+        }
         break;
     }
 }
@@ -3116,6 +3134,165 @@ static void webview_button_enable(struct sxgui_widget *widget, int enabled)
     }
 }
 
+/* ---- favorites ------------------------------------------------------------------
+ *
+ * The Favorites menu, as Internet Explorer 5 had it: add or remove the page
+ * on screen, then one row per favorite. The list lives in the person's
+ * profile (sxn_settings_path, WEBVIEW_FAVORITES_FILE); a profile without the
+ * file starts with webview_favorites_defaults. */
+
+static struct webview_favorites g_favorites;
+static char g_favorites_text[WEBVIEW_FAVORITES_TEXT_CAP];
+
+#define WEBVIEW_FAVORITES_FIXED 2
+/* Its place in k_menus. */
+#define WEBVIEW_FAVORITES_MENU 3
+static struct sxgui_menu_item k_favorites_items[WEBVIEW_FAVORITES_FIXED + 1 + WEBVIEW_FAVORITES_MAX] = {
+    {"Add to Favorites", WEBVIEW_MENU_FAVORITE_ADD, 0},
+    {"Remove from Favorites", WEBVIEW_MENU_FAVORITE_REMOVE, 0},
+};
+
+static void webview_favorites_load(void)
+{
+    char path[WEBVIEW_PATH_CAPACITY];
+    long handle = -1;
+    size_t total = 0;
+
+    if (sxn_settings_path(WEBVIEW_FAVORITES_FILE, 0, path, sizeof(path)) == 0)
+    {
+        handle = sxn_open_file(path, SXN_FILE_READ);
+    }
+    if (handle < 0)
+    {
+        webview_favorites_defaults(&g_favorites);
+        return;
+    }
+    while (total + 1 < sizeof(g_favorites_text))
+    {
+        long result = sxn_read(handle, g_favorites_text + total,
+            (unsigned long)(sizeof(g_favorites_text) - 1 - total));
+
+        if (result <= 0)
+        {
+            break;
+        }
+        total += (size_t)result;
+    }
+    (void)sxn_close(handle);
+    webview_favorites_parse(&g_favorites, g_favorites_text, total);
+}
+
+/* 0, or the negative status; the status bar says when it fails. */
+static long webview_favorites_save(void)
+{
+    char path[WEBVIEW_PATH_CAPACITY];
+    size_t length = webview_favorites_format(&g_favorites, g_favorites_text, sizeof(g_favorites_text));
+    long result = length == 0 ? -1 : sxn_settings_path(WEBVIEW_FAVORITES_FILE, 1, path, sizeof(path));
+
+    return result < 0 ? result : sxn_write_file(path, g_favorites_text, (unsigned long)length);
+}
+
+static const char *webview_favorites_page_name(void)
+{
+    return g_title[0] != '\0' ? g_title : g_path;
+}
+
+/* Adds or removes the page on screen, saves the list and says so. */
+static void webview_favorites_change(int add)
+{
+    const int index = webview_favorites_find(&g_favorites, g_path);
+    char name[WEBVIEW_FAVORITE_NAME_CAP];
+
+    if (!g_has_file || (add ? index >= 0 : index < 0))
+    {
+        return;
+    }
+    if (add)
+    {
+        const int added = webview_favorites_add(&g_favorites, g_path, webview_favorites_page_name());
+
+        if (added < 0)
+        {
+            webview_status_takes_over();
+            snprintf(g_status, sizeof(g_status), "Favorites is full; remove one first.");
+            return;
+        }
+        snprintf(name, sizeof(name), "%s", g_favorites.items[added].name);
+    }
+    else
+    {
+        snprintf(name, sizeof(name), "%s", g_favorites.items[index].name);
+        (void)webview_favorites_remove(&g_favorites, index);
+    }
+    webview_status_takes_over();
+    if (webview_favorites_save() < 0)
+    {
+        snprintf(g_status, sizeof(g_status), "Favorites could not be saved.");
+    }
+    else
+    {
+        snprintf(g_status, sizeof(g_status), add ? "Added %s to Favorites." : "Removed %s from Favorites.", name);
+    }
+    webview_refresh_commands();
+}
+
+static void webview_favorites_open(int index)
+{
+    if (index >= 0 && index < g_favorites.count)
+    {
+        char url[WEBVIEW_FAVORITE_URL_CAP];
+
+        /* Copied: navigating may change the list's rows under it. */
+        snprintf(url, sizeof(url), "%s", g_favorites.items[index].url);
+        (void)webview_open_location(url, 1, -1);
+    }
+}
+
+static const struct sxgui_menu_item k_help_items[] = {
+    {"About Web Viewer", WEBVIEW_MENU_ABOUT, 0},
+};
+
+/* Not const: webview_favorites_refresh_menu sets the Favorites menu's rows. */
+static struct sxgui_menu k_menus[] = {
+    {"File", k_file_items, (int)(sizeof(k_file_items) / sizeof(k_file_items[0]))},
+    {"Go", k_go_items, (int)(sizeof(k_go_items) / sizeof(k_go_items[0]))},
+    {"View", k_view_items, (int)(sizeof(k_view_items) / sizeof(k_view_items[0]))},
+    {"Favorites", k_favorites_items, WEBVIEW_FAVORITES_FIXED},
+    {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
+};
+
+static struct sxgui_menubar g_menubar = {
+    k_menus,
+    (int)(sizeof(k_menus) / sizeof(k_menus[0])),
+    -1,
+    -1,
+    on_menu_command,
+    0
+};
+
+/* The Favorites menu after the list and the page on screen: Add for a page
+ * not in it, Remove for one that is, which is also checked in the list. */
+static void webview_favorites_refresh_menu(void)
+{
+    const int current = g_has_file ? webview_favorites_find(&g_favorites, g_path) : -1;
+    int count = WEBVIEW_FAVORITES_FIXED;
+
+    k_favorites_items[0].flags =
+        g_has_file && current < 0 && g_favorites.count < WEBVIEW_FAVORITES_MAX ? 0 : SXGUI_MENU_DISABLED;
+    k_favorites_items[1].flags = current >= 0 ? 0 : SXGUI_MENU_DISABLED;
+    if (g_favorites.count > 0)
+    {
+        k_favorites_items[count++] = (struct sxgui_menu_item){0, 0, 0};
+    }
+    for (int index = 0; index < g_favorites.count; ++index)
+    {
+        k_favorites_items[count++] = (struct sxgui_menu_item){
+            g_favorites.items[index].name, WEBVIEW_MENU_FAVORITE_FIRST + index,
+            index == current ? SXGUI_MENU_CHECKED : 0};
+    }
+    k_menus[WEBVIEW_FAVORITES_MENU].item_count = count;
+}
+
 /* One place decides what can be done now, so a grey button and a grey menu
  * item never disagree (as in Files). Back and Forward stay with
  * webview_refresh_nav, which calls this. */
@@ -3140,27 +3317,9 @@ static void webview_refresh_commands(void)
     webview_menu_enable(k_page_items, count_page, WEBVIEW_MENU_FORWARD, forward);
     webview_menu_enable(k_page_items, count_page, WEBVIEW_MENU_RELOAD, g_has_file);
     webview_menu_enable(k_page_items, count_page, WEBVIEW_MENU_SOURCE, g_has_file);
+    webview_favorites_refresh_menu();
 }
 
-static const struct sxgui_menu_item k_help_items[] = {
-    {"About Web Viewer", WEBVIEW_MENU_ABOUT, 0},
-};
-
-static const struct sxgui_menu k_menus[] = {
-    {"File", k_file_items, (int)(sizeof(k_file_items) / sizeof(k_file_items[0]))},
-    {"Go", k_go_items, (int)(sizeof(k_go_items) / sizeof(k_go_items[0]))},
-    {"View", k_view_items, (int)(sizeof(k_view_items) / sizeof(k_view_items[0]))},
-    {"Help", k_help_items, (int)(sizeof(k_help_items) / sizeof(k_help_items[0]))},
-};
-
-static struct sxgui_menubar g_menubar = {
-    k_menus,
-    (int)(sizeof(k_menus) / sizeof(k_menus[0])),
-    -1,
-    -1,
-    on_menu_command,
-    0
-};
 
 int main(int argc, char **argv)
 {
@@ -3265,6 +3424,7 @@ int main(int argc, char **argv)
         g_ua = webengine_stylesheet("", (const uint8_t *)k_webview_ua, sizeof(k_webview_ua) - 1, false);
     }
 
+    webview_favorites_load();
     webview_show_welcome();
     /* argv carries an optional resolver override plus the location to open:
      * `webview --dns 10.0.2.2:5353 http://name/page`. Files launches us with

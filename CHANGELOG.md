@@ -149,6 +149,9 @@ changes not released yet; each released version has its own file in
   pinned and unmodified under `vendor/netsurf/`, built as static archives for SUN and the host, with the libdom/libcss
   glue in `system/webview/engine/`. Host test and scenario `webengine-test`; Perl and gperf are now build requirements
   ([WEBVIEWER_ENGINE.md](docs/desktop/WEBVIEWER_ENGINE.md)).
+- **Web Viewer has a Favorites menu:** Add to Favorites and Remove from Favorites for the page on screen, then a row
+  per favorite, kept in the profile's `Settings/webview-favorites`. A new profile starts with Motherfucking Website and
+  the Acid2 test. Host test `webview-favorites-test` ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#favorites)).
 - **SDK:** `<string.h>` declares `strcasecmp` and `strncasecmp` under `_DEFAULT_SOURCE`, `_BSD_SOURCE` or `_GNU_SOURCE`.
 - **Web Viewer downloads** (D1): an attachment or a type it does not show is saved instead: Save As with the server's
   name, a download worker beside the page's, a `.part` renamed only when whole, and a modeless File Download window with

@@ -3383,7 +3383,56 @@ def scenario_webview(s):
     width, height = fwd.size
     expect_text(fwd, (0, 0, width, height), "Going further", TEXT, FIELD,
                 "volver adelante a about.html", which="title")
+    webview_favorites(s)
     scenario_webview_http(s)
+
+
+def webview_favorites(s):
+    """The Favorites menu (docs/desktop/WEBVIEWER.md#favorites), on about.html.
+
+    A new profile lists the two default favorites. Add to Favorites puts the
+    page on screen in the list and says so; from another page its row opens
+    it again; Remove takes it out. The scenario ends where it started, on
+    about.html, for the HTTP steps that follow.
+    """
+    def open_favorites(name):
+        image = s.shot(name + "-bar")
+        at = expect_text(image, (0, 0, *image.size), "Favorites", TEXT, FACE,
+                         "the Favorites menu in the menu bar", solid_only=True)
+        s.qmp.move_to(at[0] + 10, at[1] + 6)
+        s.qmp.click()
+        time.sleep(1.0)
+        return s.shot(name)
+
+    def choose(image, text, what):
+        at = expect_text(image, (0, 0, *image.size), text, TEXT, FACE, what, solid_only=True)
+        s.qmp.move_to(at[0] + 10, at[1] + 6)
+        s.qmp.click()
+
+    menu = open_favorites("webview-favorites-menu")
+    expect_text(menu, (0, 0, *menu.size), "Motherfucking Website", TEXT, FACE,
+                "the first default favorite", solid_only=True)
+    expect_text(menu, (0, 0, *menu.size), "The Acid2 Test", TEXT, FACE,
+                "the second default favorite", solid_only=True)
+    choose(menu, "Add to Favorites", "Add to Favorites, enabled on a page")
+    time.sleep(1.5)
+    added = s.shot("webview-favorites-added")
+    expect_text(added, (0, 0, *added.size), "Added Going further to Favorites.", TEXT, FACE,
+                "the status bar after adding", solid_only=True)
+    s.qmp.chord("alt", "left")
+    time.sleep(3.0)
+    menu = open_favorites("webview-favorites-list")
+    choose(menu, "Going further", "the added page's row")
+    time.sleep(3.0)
+    opened = s.shot("webview-favorites-opened")
+    expect_text(opened, (0, 0, *opened.size), "Going further", TEXT, FIELD,
+                "the favorite opens its page", which="title")
+    menu = open_favorites("webview-favorites-remove")
+    choose(menu, "Remove from Favorites", "Remove, enabled on a favorite")
+    time.sleep(1.5)
+    removed = s.shot("webview-favorites-removed")
+    expect_text(removed, (0, 0, *removed.size), "Removed Going further from Favorites.", TEXT, FACE,
+                "the status bar after removing", solid_only=True)
 
 
 def scenario_webview_http(s):
