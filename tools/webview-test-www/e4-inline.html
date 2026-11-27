@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>E4 inline</title>
+<style>
+body { margin: 8px }
+p { margin: 0 0 4px }
+.box { padding: 0 4px; border: 1px solid; background: silver }
+.center { text-align: center }
+.right { text-align: right }
+.nowrap { white-space: nowrap }
+.wrap { white-space: pre-wrap; font-family: sans-serif }
+.big { font-size: 20px }
+.tall { line-height: 30px }
+.double { line-height: 2 }
+.indent { text-indent: 14px }
+ul, ol { margin: 0; padding-left: 40px }
+</style>
+</head>
+<body><p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii</p><p>xx <span class="box">yyyy zzzz</span> ww</p><p class="center">mid</p><p class="right">end</p><p>one<br>two<br><br>four</p><p class="nowrap">aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii</p><pre>pre  kept</pre><p class="wrap">ab  cd</p><p>x<sup>up</sup>y<sub>dn</sub>z</p><p>small <span class="big">BIG</span> small</p><p class="tall">tall</p><p class="double">double</p><p class="indent">indented line</p><p>abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz</p><ul><li>disc</li></ul><ol><li>first</li><li><p>para</p></li></ol><ul style="list-style-position: inside"><li>in</li></ul></body>
+</html>

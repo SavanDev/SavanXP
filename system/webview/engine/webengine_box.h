@@ -131,6 +131,47 @@ struct webengine_box {
     int margin[4];
     int border[4];
     int padding[4];
+    /* BLOCK with inline content: its line boxes, tree->lines[first_line]
+     * on. INLINE: the used edges are in margin, border and padding too. */
+    size_t first_line;
+    size_t line_count;
+};
+
+/* A line box (CSS 2.1 9.4.2) and the fragments laid out on it. */
+struct webengine_line {
+    int x;
+    int y;
+    int width;
+    int height;
+    size_t first_fragment;
+    size_t fragment_count;
+};
+
+enum webengine_fragment_type {
+    /* A piece of an inline box on one line: its border box. */
+    WEBENGINE_FRAGMENT_INLINE,
+    /* A piece of a text box: the glyphs' box, ascent to descent. */
+    WEBENGINE_FRAGMENT_TEXT,
+    /* A list item's marker: the text's box, or the shape's for disc,
+     * circle and square. */
+    WEBENGINE_FRAGMENT_MARKER,
+};
+
+struct webengine_fragment {
+    uint8_t type;
+    /* INLINE: whether this piece draws the box's left and right edges. */
+    bool left_edge;
+    bool right_edge;
+    const struct webengine_box *box;
+    int x;
+    int y;
+    int width;
+    int height;
+    /* TEXT and MARKER: where the glyphs sit. */
+    int baseline;
+    /* TEXT and MARKER: the bytes of box->text to draw. */
+    size_t start;
+    size_t length;
 };
 
 struct webengine_tree {
@@ -139,6 +180,12 @@ struct webengine_tree {
      * everything, the root's margins included. 0 before. */
     int layout_width;
     int height;
+    struct webengine_line *lines;
+    size_t line_count;
+    size_t line_capacity;
+    struct webengine_fragment *fragments;
+    size_t fragment_count;
+    size_t fragment_capacity;
     /* The canvas: the root's background, or body's when the root has none
      * (CSS 2.1 14.2); the box it came from does not paint it again. */
     css_color canvas;
@@ -170,13 +217,16 @@ struct webengine_tree *webengine_tree_text(const char *text, size_t length, int 
 void webengine_tree_free(struct webengine_tree *tree);
 
 /* Lays the tree out in a viewport `width` CSS pixels wide (CSS 2.1 chapter
- * 10's normal flow): every block's position and size. 0, or -1 when out of
- * memory. Laying out again at another width replaces the last layout. */
+ * 10's normal flow): every block's position and size, and the line boxes
+ * and fragments of inline content. 0, or -1 when out of memory. Laying out
+ * again at another width replaces the last layout. */
 int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *fonts, int width);
 
 /* The tree as text, a line per box, indented two spaces a level, for the
  * tests: "block p", "anonymous", "inline b", "text \"...\"", "break",
  * "marker 1". Once laid out, a block's line ends with its border box,
- * "x y width height". `line` gets each one without its newline. */
+ * "x y width height", and a block with inline content lists its line boxes
+ * and their fragments in place of its children. `line` gets each one
+ * without its newline. */
 typedef void (*webengine_dump_line)(void *user, const char *line);
 void webengine_tree_dump(const struct webengine_tree *tree, webengine_dump_line line, void *user);

@@ -171,7 +171,7 @@ struct frame {
 };
 
 struct layout {
-    const struct webengine_fonts *fonts;
+    struct webengine_flow flow;
     struct frame *frames;
     size_t depth;
     size_t capacity;
@@ -218,7 +218,7 @@ static bool push_frame(struct layout *layout) {
 /* Lays out the inline content of the block at the top of the stack. The
  * height of its line boxes, 0 when it has none. */
 static int lay_out_lines(struct layout *layout, struct frame *frame) {
-    return webengine_layout_lines(layout->fonts, frame->box, frame->content_x, frame->cursor,
+    return webengine_layout_lines(&layout->flow, frame->box, frame->content_x, frame->cursor,
                                   frame->content_width);
 }
 
@@ -243,6 +243,13 @@ static void enter_block(struct layout *layout, struct webengine_box *box) {
 
     struct collapse *pending = pending_of(layout, parent_index);
     collapse_add(pending, box->margin[WEBENGINE_TOP]);
+    if (box->marker != NULL) {
+        /* An outside marker hangs from the item's first line box (12.5);
+         * one still waiting for a line goes at the top of this item. */
+        webengine_place_marker(&layout->flow, parent->cursor + collapse_value(pending));
+        layout->flow.marker_item = box;
+        layout->flow.marker_left = frame->content_x;
+    }
     if (box->border[WEBENGINE_TOP] > 0 || box->padding[WEBENGINE_TOP] > 0 || new_context(box)) {
         /* The margins above end at the top border, which is also that of
          * the enclosing boxes whose top margins collapsed with them. */
@@ -288,6 +295,12 @@ static void leave_block(struct layout *layout) {
     struct collapse *pending = pending_of(layout, index);
     struct collapse *outer = pending_of(layout, index - 1);
 
+    if (layout->flow.marker_item == box) {
+        /* No line box inside the item: its marker goes at its top. */
+        webengine_place_marker(&layout->flow, frame->resolved ? frame->content_top
+                                                              : parent->cursor + collapse_value(outer));
+    }
+
     if (!frame->resolved) {
         if (bottom_edge || min > 0) {
             /* Not empty after all: its top border ends the margins above,
@@ -332,9 +345,11 @@ static void leave_block(struct layout *layout) {
 }
 
 int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *fonts, int width) {
-    struct layout layout = { .fonts = fonts };
+    struct layout layout = { .flow = { .fonts = fonts, .tree = tree } };
     tree->layout_width = width;
     tree->height = 0;
+    tree->line_count = 0;
+    tree->fragment_count = 0;
     if (tree->root == NULL) {
         return 0;
     }
@@ -346,7 +361,7 @@ int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *
     layout.frames[0].percent_base = -1;
     layout.frames[0].resolved = true;
     enter_block(&layout, tree->root);
-    while (layout.depth > 1 && !layout.failed) {
+    while (layout.depth > 1 && !layout.failed && !layout.flow.failed) {
         struct frame *frame = &layout.frames[layout.depth - 1];
         struct webengine_box *child = frame->child;
         if (child == NULL) {
@@ -358,9 +373,11 @@ int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *
             enter_block(&layout, child);
         }
     }
+    layout.failed = layout.failed || layout.flow.failed;
     if (!layout.failed) {
         tree->height = layout.frames[0].cursor + collapse_value(&layout.frames[0].own);
     }
     free(layout.frames);
+    webengine_flow_free(&layout.flow);
     return layout.failed ? -1 : 0;
 }

@@ -158,6 +158,8 @@ void webengine_tree_free(struct webengine_tree *tree) {
     }
     free(tree->links);
     free(tree->styles);
+    free(tree->lines);
+    free(tree->fragments);
     free(tree);
 }
 
@@ -1015,13 +1017,61 @@ static void dump_box(const struct webengine_box *box, unsigned depth, bool laid_
     case WEBENGINE_BOX_BREAK:
         snprintf(out + indent, sizeof(out) - indent, "break");
         break;
-    case WEBENGINE_BOX_MARKER:
+    case WEBENGINE_BOX_MARKER: {
+        bool outside = box->parent != NULL && box->parent->marker == box;
         quote(text, sizeof(text), box->text != NULL ? box->text : "", box->length);
-        snprintf(out + indent, sizeof(out) - indent, "marker %d \"%s\"%s", box->ordinal, text,
-                 box->parent != NULL && box->parent->marker == box ? " outside" : "");
+        int used = snprintf(out + indent, sizeof(out) - indent, "marker %d \"%s\"%s", box->ordinal, text,
+                            outside ? " outside" : "");
+        if (laid_out && outside && used > 0) {
+            snprintf(out + indent + used, sizeof(out) - indent - (size_t)used, " %d %d %d %d",
+                     box->x, box->y, box->width, box->height);
+        }
         break;
     }
+    }
     line(user, out);
+}
+
+/* A laid-out block's line boxes and their fragments, in place of its
+ * children. Outside markers are dumped with their item. */
+static void dump_lines(const struct webengine_tree *tree, const struct webengine_box *block, unsigned depth,
+                       webengine_dump_line line, void *user) {
+    char text[200];
+    char out[256];
+    for (size_t l = block->first_line; l < block->first_line + block->line_count; l++) {
+        const struct webengine_line *box = &tree->lines[l];
+        unsigned indent = depth * 2 < 64 ? depth * 2 : 64;
+        memset(out, ' ', indent);
+        snprintf(out + indent, sizeof(out) - indent, "line %d %d %d %d", box->x, box->y, box->width, box->height);
+        line(user, out);
+        indent = indent + 2;
+        memset(out, ' ', indent);
+        for (size_t f = box->first_fragment; f < box->first_fragment + box->fragment_count; f++) {
+            const struct webengine_fragment *fragment = &tree->fragments[f];
+            switch (fragment->type) {
+            case WEBENGINE_FRAGMENT_INLINE:
+                snprintf(out + indent, sizeof(out) - indent, "inline %s %d %d %d %d%s%s", fragment->box->tag,
+                         fragment->x, fragment->y, fragment->width, fragment->height,
+                         fragment->left_edge ? "" : " (open left)", fragment->right_edge ? "" : " (open right)");
+                break;
+            case WEBENGINE_FRAGMENT_TEXT:
+                quote(text, sizeof(text), fragment->box->text + fragment->start, fragment->length);
+                snprintf(out + indent, sizeof(out) - indent, "text \"%s\" %d %d %d %d", text, fragment->x,
+                         fragment->y, fragment->width, fragment->height);
+                break;
+            case WEBENGINE_FRAGMENT_MARKER:
+                if (fragment->box->parent != NULL && fragment->box->parent->marker == fragment->box) {
+                    continue;
+                }
+                quote(text, sizeof(text), fragment->box->text != NULL ? fragment->box->text : "",
+                      fragment->box->length);
+                snprintf(out + indent, sizeof(out) - indent, "marker %d \"%s\" %d %d %d %d", fragment->box->ordinal,
+                         text, fragment->x, fragment->y, fragment->width, fragment->height);
+                break;
+            }
+            line(user, out);
+        }
+    }
 }
 
 void webengine_tree_dump(const struct webengine_tree *tree, webengine_dump_line line, void *user) {
@@ -1032,7 +1082,9 @@ void webengine_tree_dump(const struct webengine_tree *tree, webengine_dump_line 
         if (box->marker != NULL) {
             dump_box(box->marker, depth + 1, tree->layout_width > 0, line, user);
         }
-        if (box->first != NULL) {
+        if (tree->layout_width > 0 && box->type == WEBENGINE_BOX_BLOCK && box->inline_content) {
+            dump_lines(tree, box, depth + 1, line, user);
+        } else if (box->first != NULL) {
             box = box->first;
             depth++;
             continue;

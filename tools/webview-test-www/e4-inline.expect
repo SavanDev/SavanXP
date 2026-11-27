@@ -1,0 +1,98 @@
+# E4's inline flow (docs/desktop/WEBVIEWER_ENGINE.md#the-inline-flow), worked
+# out by hand from CSS 2.1 9.4.2, 10.8, 12.5 and 16 with the test's fixed
+# fonts: face 0 is 7px a character, 12 above the baseline and 4 below, so a
+# "normal" line is 18 (1.15 x 16) with 1px of half-leading above and 1 below
+# after rounding; face 1 (20px text) is 10px a character, 16 and 4, a line of
+# 23; monospace is 8px a character. Lines: "line x y width height"; fragments
+# under them: "text" the glyphs' box, "inline" a piece's border box.
+# Wrapping at the last space that fits; an inline with padding and a border;
+# centre and right; <br>, also twice in a row; nowrap overflowing; pre; pre-wrap;
+# sup and sub raising the line; a bigger font; line-height in pixels and as a
+# number; text-indent; a word wider than the line cut; outside disc and
+# numbers, one hanging from a nested paragraph's first line; an inside disc.
+viewport 300
+block html 0 0 300 553
+  block body 8 8 284 537
+    block p 8 8 284 36
+      line 8 8 284 18
+        text "aaaa bbbb cccc dddd eeee ffff gggg hhhh" 8 9 273 16
+      line 8 26 284 18
+        text "iiii" 8 27 28 16
+    block p 8 48 284 18
+      line 8 48 284 18
+        text "xx " 8 49 21 16
+        inline span 29 48 73 18
+        text "yyyy zzzz" 34 49 63 16
+        text " ww" 102 49 21 16
+    block p 8 70 284 18
+      line 8 70 284 18
+        text "mid" 139 71 21 16
+    block p 8 92 284 18
+      line 8 92 284 18
+        text "end" 271 93 21 16
+    block p 8 114 284 72
+      line 8 114 284 18
+        text "one" 8 115 21 16
+      line 8 132 284 18
+        text "two" 8 133 21 16
+      line 8 150 284 18
+      line 8 168 284 18
+        text "four" 8 169 28 16
+    block p 8 190 284 18
+      line 8 190 284 18
+        text "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii" 8 191 308 16
+    block pre 8 224 284 18
+      line 8 224 284 18
+        text "pre  kept" 8 225 72 16
+    block p 8 258 284 18
+      line 8 258 284 18
+        text "ab  cd" 8 259 42 16
+    block p 8 280 284 26
+      line 8 280 284 26
+        text "x" 8 286 7 16
+        inline sup 15 281 14 16
+        text "up" 15 281 14 16
+        text "y" 29 286 7 16
+        inline sub 36 289 14 16
+        text "dn" 36 289 14 16
+        text "z" 50 286 7 16
+    block p 8 310 284 23
+      line 8 310 284 23
+        text "small " 8 315 42 16
+        inline span 50 311 30 20
+        text "BIG" 50 311 30 20
+        text " small" 80 315 42 16
+    block p 8 337 284 30
+      line 8 337 284 30
+        text "tall" 8 344 28 16
+    block p 8 371 284 32
+      line 8 371 284 32
+        text "double" 8 379 42 16
+    block p 8 407 284 18
+      line 8 407 284 18
+        text "indented line" 22 408 91 16
+    block p 8 429 284 36
+      line 8 429 284 18
+        text "abcdefghijklmnopqrstuvwxyzabcdefghijklmn" 8 430 280 16
+      line 8 447 284 18
+        text "opqrstuvwxyz" 8 448 84 16
+    block ul 8 469 284 18
+      block li 48 469 244 18
+        marker 1 "" outside 36 475 5 5
+        line 48 469 244 18
+          text "disc" 48 470 28 16
+    block ol 8 487 284 36
+      block li 48 487 244 18
+        marker 1 "1." outside 27 488 14 16
+        line 48 487 244 18
+          text "first" 48 488 35 16
+      block li 48 505 244 18
+        marker 2 "2." outside 27 506 14 16
+        block p 48 505 244 18
+          line 48 505 244 18
+            text "para" 48 506 28 16
+    block ul 8 527 284 18
+      block li 48 527 244 18
+        line 48 527 244 18
+          marker 1 "" 48 533 5 5
+          text "in" 60 528 14 16

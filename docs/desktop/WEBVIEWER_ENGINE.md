@@ -252,6 +252,56 @@ The walk keeps an explicit stack, as the style walk does.
 expected geometry does not depend on fonts; it was checked against
 Chromium's `getBoundingClientRect` at the same width.
 
+## The inline flow
+
+A block whose children are inline lays them out in line boxes
+(`webengine_lines.c`), written from CSS 2.1 9.4.2, 10.8, 12.5, 16.1, 16.2 and
+16.6.1. The block flow calls it where the block's content starts, and the
+height of its lines is the block's content.
+
+- **Atoms.** The inline content becomes a row of words, runs of spaces, the
+  opening and closing edges of inline boxes (their horizontal margin, border
+  and padding, on the first and last piece only), breaks and inside markers.
+- **Breaking.** A line takes atoms until the next one does not fit, and
+  breaks at the last run of spaces that allows it: `normal`, `pre-wrap` and
+  `pre-line` wrap, `nowrap` and `pre` do not. An inline's edges stay with
+  the word next to them. A word wider than an empty line is cut at a
+  character boundary instead of overflowing, as `overflow-wrap: break-word`
+  would, so no text is lost past the right edge. A break or a newline that
+  `white-space` kept ends the line.
+- **White space at the ends** (16.6.1): collapsible spaces at the start and
+  the end of a line go; preserved ones hang past the end, except under `pre`.
+  A line with no text, no preserved white space, no marker and no break is
+  not a line box (9.4.2).
+- **Heights** (10.8.1). Every inline box on a line, and the block's own
+  strut, takes its `line-height`: `normal` is 1.15 times the face's ascent
+  plus descent, a number multiplies the font size, a length is itself.
+  Half the leading goes above the face and half below. The line box is as
+  tall as those boxes reach, after `vertical-align`: `baseline`, `sub`
+  (down a fifth of the parent's font size), `super` (up a third),
+  `text-top`, `text-bottom`, `middle` (half the ascent taken as the
+  x-height), a length or a percentage of the line height, and `top` and
+  `bottom`, which align the box and what sits on it to the line's edges.
+- **Fragments.** Each line keeps its fragments for paint and hit testing:
+  the border box of each inline's piece on the line (only the first piece
+  draws the left edge, only the last the right), the glyphs of each run of
+  text, from the face's ascent to its descent around the baseline, and
+  markers.
+- **`text-align`** moves the line's fragments left, right or to the centre
+  of the room left on the line; `justify` aligns left until it is done.
+  `text-indent` moves the first line of a block.
+- **Markers** (12.5). An outside marker hangs on the baseline of the first
+  line box inside its item, however deep, ending one space before the
+  item's content. With no line box inside, it goes at the item's top. Disc,
+  circle and square are a third of the face's height, on the middle of the
+  x-height; numbers are text.
+
+`e4-inline` is worked out by hand at 300 pixels with the test's fixed fonts.
+It covers wrapping, an inline with padding and a border, centre and right,
+consecutive breaks, `nowrap`, `pre`, `pre-wrap`, `sup` and `sub`, a bigger
+font in a line, `line-height` as a length and as a number, `text-indent`, a
+cut word and the three kinds of marker.
+
 ## Known costs
 
 - **libcss' style sharing and sibling combinators.** With `+` or `~`, its
