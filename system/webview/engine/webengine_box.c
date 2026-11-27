@@ -950,6 +950,8 @@ struct webengine_tree *webengine_tree_text(const char *text, size_t length, int 
         style->max_width = style->max_height = (struct webengine_len){ WEBENGINE_LEN_NONE, 0 };
         for (int side = 0; side < 4; side++) {
             style->border_style[side] = CSS_BORDER_STYLE_NONE;
+            /* The page's 8px body margin, so text does not touch the frame. */
+            style->padding[side] = (struct webengine_len){ WEBENGINE_LEN_PX, INTTOFIX(8) };
         }
         b.tree->root = new_box(&b, WEBENGINE_BOX_BLOCK, style, "");
     }

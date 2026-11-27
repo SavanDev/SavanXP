@@ -4,8 +4,9 @@ NetSurf's MIT libraries are vendored, built and proven here. They read HTML
 into a DOM and compute CSS styles; Web Viewer's own layout, paint and,
 later, scripting go on top. This is stage E1 of
 [WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md#e1--the-libraries-build).
-Since E2, Web Viewer walks the document libhubbub and libdom produce. E3
-uses libcss computed styles in the paragraph renderer.
+Since E2, Web Viewer walks the document libhubbub and libdom produce, and
+E3 computes its styles with libcss. Since E4 the engine makes the document's
+CSS boxes and lays them out, and Web Viewer paints them.
 
 ## What is vendored
 

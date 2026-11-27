@@ -1,13 +1,13 @@
 # Web Viewer: the native browser
 
-> **Status as of 2026-11-24: N1–N5, D1 and E1–E3 are implemented.** Web Viewer runs as
+> **Status as of 2026-11-27: N1–N5, D1 and E1–E4 are implemented.** Web Viewer runs as
 > `/system/webview.sxe`, resolves through SUN's `sxndns`, loads on a
 > per-window network worker through SUN's `sxnhttp`, opens validated
 > `https://`, and saves what it does not show in a download window of its
 > own. It reads HTML through libhubbub and libdom
 > ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md)) and builds its
-> paragraphs and runs from the DOM using computed CSS. The next engine
-> stage is E4.
+> boxes from the DOM using computed CSS and lays them out in the normal
+> flow. The next engine stage is E5.
 
 ## Direction
 
@@ -234,6 +234,10 @@ replaces "paragraphs that wrap" with a layout engine.
 lists lays out as its corpus expectation says, box for box, up to font
 metrics.
 
+**Implemented 2026-11-27.** The engine builds the box tree and lays it out
+(blocks, collapsing margins, line boxes, markers), and Web Viewer paints
+from it. The checkpoint below has the details.
+
 ### E5 — floats and positioning
 
 `float` and `clear`, then `position: relative` and `absolute`, then `overflow`
@@ -313,6 +317,34 @@ corpus run; security fixes in the parsers are taken when published.
 
 The stages as they landed, newest first. Their "next step" lists and
 mentions of the Ladybird plan are history; the stages above are current.
+
+## E4 implementation checkpoint — 2026-11-27
+
+**E4 is complete.** The details are in
+[WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md#the-box-tree) and
+[WEBVIEWER.md](../../desktop/WEBVIEWER.md#layout-and-paint-e4).
+
+- **The box tree** (`webengine_box.c`): blocks, inlines, anonymous blocks,
+  a block splitting an inline, white space across the inline formatting
+  context, breaks, image placeholders and list markers, each box with the
+  computed values layout reads. The user-agent sheet moved into the engine.
+- **The block flow** (`webengine_layout.c`): widths, auto margins, min and
+  max sizes, `box-sizing`, percentages, heights and collapsing margins, on
+  an explicit stack.
+- **The inline flow** (`webengine_lines.c`): line breaking per
+  `white-space`, line heights with half-leading, `vertical-align`,
+  `text-align`, `text-indent` and markers.
+- **Web Viewer** paints blocks and line fragments, hit tests links on the
+  fragments, and shows View Source, `text/plain` and its welcome page through
+  the same tree. The paragraph renderer is gone.
+- **Evidence:** `webengine-layout-test` checks `e4-boxes` (the tree),
+  `e4-blocks` (geometry also checked against Chromium at the same width) and
+  `e4-inline` (worked out by hand with fixed fonts), box for box. The
+  `webview` scenario passes on the new renderer.
+
+Left for later stages: floats and positioning (E5), tables and images (E6),
+`inline-block` as its own formatting context, italic faces, and the
+font's real ascent from the painter.
 
 ## E1 implementation checkpoint — 2026-11-22
 

@@ -210,7 +210,7 @@ struct webengine_tree *webengine_tree_build(dom_document *document, struct weben
 
 /* A tree of plain text, for the source view and text/plain: one block whose
  * text keeps its line breaks and wraps at spaces (pre-wrap), black on white,
- * in the face for `font_size`. */
+ * in the face for `font_size`, with 8 pixels of padding around it. */
 struct webengine_tree *webengine_tree_text(const char *text, size_t length, int font_size,
                                            const struct webengine_fonts *fonts);
 

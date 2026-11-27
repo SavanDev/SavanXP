@@ -3,8 +3,8 @@
 > Web Viewer runs on SUN as `/system/webview.sxe` (N1), loads remote pages on a
 > network worker with Stop (N3) through SUN's HTTP loader (N4), over validated
 > HTTPS (N5), and saves what it does not show (D1). It parses HTML through
-> libhubbub and libdom (E2) and computes styles with libcss (E3). See the
-> [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
+> libhubbub and libdom (E2), computes styles with libcss (E3) and lays pages
+> out in CSS boxes (E4). See the [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 >
 > It is built only when the OpenSSL port is (`ports/openssl/build.sh`, then
 > `./build.sh build`); without it the image has no Web Viewer and the registry
@@ -13,8 +13,8 @@
 `/system/webview.sxe` ("Web Viewer", also launched as `webview`) is the in-tree
 browser prototype, in the spirit of IE 1.1, with an address bar, history, menus,
 local files and HTTP fetching by name or IP. libhubbub builds a libdom tree.
-libcss selects and composes the styles. Web Viewer projects the styled tree
-onto paragraphs and inline runs, then wraps and paints the text.
+libcss selects and composes the styles. The engine turns the styled tree
+into CSS boxes and lays them out, and Web Viewer paints the result.
 
 This document pins what it renders and what it openly ignores, so later
 milestones extend a contract instead of rediscovering it.
@@ -197,23 +197,42 @@ screen at 800×600 CSS pixels. Alternate stylesheets, `@import`, the
 interactive states (`:hover`, `:visited`, `:active`, `:focus`, `:target`)
 and quirks mode are deferred.
 
-## Properties
+## Layout and paint (E4)
 
-| Computed property | Paragraph renderer |
-|---|---|
-| `color` | Text and links use the computed color |
-| `background-color` | Page background or a paragraph-width color band |
-| `text-align` | Left, center or right; justified text aligns left |
-| `font-weight` | Bold text gets a one-pixel double strike, counted in wrapping |
-| `text-decoration` | Underlines propagate to descendant text |
-| `font-size` | Paragraphs use the title face at 18 CSS pixels or more and the UI face otherwise |
-| `display` | `none` hides a subtree; blocks, list items and table cells feed the paragraph model |
+Web Viewer lays pages out with the engine's box tree and normal flow
+([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#the-box-tree)): blocks with
+margins (collapsing), borders, padding, widths and heights, and line boxes
+with wrapping, `white-space`, `line-height`, `vertical-align`, `text-align`,
+`text-indent` and list markers. The user-agent sheet is the engine's
+`webengine_ua_css`, CSS 2.1's Appendix D with HTML's heading sizes, so
+`body` has its 8 pixels of margin and paragraphs and headings their em
+margins.
 
-An `<a href>` remains clickable under author styling. The default UA sheet
-uses blue, underlined links and a larger face for the first three heading
-levels. Backgrounds and text with an alpha channel blend over the painted
-background. The box tree, geometry from CSS and per-run fonts are future
-layout work.
+- **The width.** The layout viewport is the page's area, the window less
+  its frame and the scroll bar. The page is laid out again only when that
+  width changes, so a resize reflows; scrolling repaints from the same
+  layout.
+- **Faces.** Text under 18 CSS pixels uses the UI face and larger text the
+  title face; `monospace` (`pre`, `code`, `tt`, `kbd`, `samp`) uses the
+  console's. Bold is the bitmap double strike, one pixel more per character,
+  counted in the layout. Italic has no face yet and draws upright. The
+  painter gives no ascent, so baselines use the baked faces' proportions.
+- **Paint.** The canvas takes the root's background, or body's (CSS 2.1
+  14.2). Then each block's background and borders in tree order, and the
+  line fragments: an inline's background and borders on each line it
+  spans, text, its underline, overline or line-through, and markers. Disc,
+  circle and square are drawn shapes; numbers are text. Border styles
+  `dotted`, `dashed` and `double` are drawn as such; `inset`, `outset`,
+  `groove` and `ridge` light one pair of sides. Colours with an alpha
+  channel blend over the backgrounds behind them. `visibility: hidden`
+  keeps the space and paints nothing.
+- **Links.** A link is the text and inline boxes of an `<a href>`, hit
+  tested against the last paint's fragments.
+- **View Source and text/plain** are the engine's plain-text tree
+  (`webengine_tree_text`): the bytes as they came, newlines kept, tabs to the
+  next eighth column, wrapped at spaces, with 8 pixels of padding.
+- **The welcome page** is a small HTML document of its own, laid out like
+  any page.
 
 ## Names
 
@@ -232,10 +251,12 @@ server empties the window's DNS cache.
 
 ## What it is not (yet)
 
-Images use an `[image]` marker, tables stack their cells, and fragments reload
-the page top. The raw document, paragraphs, runs and links grow with the
-page. View Source keeps the
-original bytes, and long lines wrap in both views.
+Floats and positioned boxes stay in the normal flow until E5; tables stack
+their cells as blocks and images are an `[image]` placeholder until E6.
+`inline-block` and the other inline-level displays are laid out as inline
+boxes. Fragments reload the page top. A word wider than the page is cut
+rather than overflowing (the engine's emergency break), and there is no
+horizontal scroll.
 
 ## Verification
 

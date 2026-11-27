@@ -19,6 +19,7 @@
 #include "download.h"
 #include "favorites.h"
 #include "engine/webengine.h"
+#include "engine/webengine_box.h"
 #include "webview.sunres.h"
 #include "icons.inc"
 #include "../gfx/toolbar_glyphs/icons.inc"
@@ -95,37 +96,6 @@
 
 #define WEBVIEW_HISTORY_MAX 32
 
-/* Style runs cover the paragraph text. Link runs also index g_links. */
-struct webview_run {
-    int start;
-    int length;
-    uint32_t color;
-    int bold;
-    int underline;
-    int link;
-};
-
-/* Inline style boundaries: pushed whenever the active style changes, consumed
- * into runs at the next flush. Offsets are into g_cur. */
-struct webview_mark {
-    int offset;
-    uint32_t color;
-    int bold;
-    int underline;
-    int link;
-};
-
-/* Style and paragraph spacing of the active block. */
-struct webview_block {
-    int gap;
-    int heading;
-    int indent;
-    int align;
-    int face;
-    int hasBg;
-    uint32_t bg;
-};
-
 #define WEBVIEW_OPEN_WIDTH 340
 #define WEBVIEW_OPEN_HEIGHT 112
 #define WEBVIEW_ABOUT_WIDTH 330
@@ -170,58 +140,17 @@ static char g_history[WEBVIEW_HISTORY_MAX][WEBVIEW_PATH_CAPACITY];
 static int g_hist_count = 0;
 static int g_hist_index = -1;
 
-static char **g_links;
-static size_t g_links_capacity;
-static int g_link_count = 0;
-
-static struct webview_run *g_runs;
-static size_t g_runs_capacity;
-static int g_run_count = 0;
-
-static struct webview_mark *g_marks;
-static size_t g_marks_capacity;
-static int g_mark_count = 0;
-
-/* The DOM walk saves and restores the active style as it enters and leaves
- * elements. Marks snapshot it at offsets in the current paragraph. */
-static struct webview_mark g_inline;
-
-static uint32_t g_page_bg;
-
-/* Clickable fragments from the last paint, in window coordinates. */
-struct webview_link_run {
-    int link;
-    int x1;
-    int x2;
-    int y;
-    int height;
-};
-
-static struct webview_link_run *g_link_runs;
-static size_t g_link_runs_capacity;
-static size_t g_link_run_count;
-static struct sx_rect g_text_area;
+/* The page on screen as the engine's boxes (docs/desktop/WEBVIEWER_ENGINE.md),
+ * built when the page or the view changes and laid out again when the width
+ * does. */
+static struct webengine_tree *g_tree;
+/* View Source (Ctrl+U) shows the page's bytes instead of the page. */
 static int g_show_source = 0;
-
-struct webview_para {
-    char *text;
-    int length;
-    int first_run;
-    int run_count;
-    int height;
-    int heading; /* 0 = body, 1..3 = h1..h3 */
-    int rule;    /* 1 = <hr>, text unused */
-    int indent;  /* 1 = list item */
-    int gap;     /* pixels of air above this paragraph */
-    int align; /* 0 = left, 1 = center, 2 = right */
-    int hasBg;
-    uint32_t bg;
-    int face; /* 0 = UI, 1 = title */
-};
-
-static struct webview_para *g_paras;
-static size_t g_paras_capacity;
-static int g_para_count = 0;
+/* The page's area on screen and where its canvas origin is, scrolled, from
+ * the last paint: what hit testing reads. */
+static struct sx_rect g_page_area;
+static int g_page_x;
+static int g_page_y;
 
 static char g_path[WEBVIEW_PATH_CAPACITY];
 static char g_title[WEBVIEW_TITLE_CAPACITY];
@@ -241,7 +170,7 @@ static int g_plain = 0;
 
 static struct sx_rect g_view;
 static int g_total_height = 0;
-static int g_measured_width = -1;
+static int g_layout_width = -1;
 
 static struct sxgui_dialog g_open_dialog;
 static struct sxgui_widget g_open_widgets[4];
@@ -250,8 +179,6 @@ static char g_open_path[WEBVIEW_PATH_CAPACITY];
 static struct sxgui_dialog g_about_dialog;
 static struct sxgui_widget g_about_widgets[5];
 
-static struct webview_bytes g_cur;
-static struct webview_block g_pending;
 
 /* Vectors grow geometrically and keep their previous storage on failure. */
 static void *webview_reserve(void *data, size_t *capacity, size_t count, size_t item)
@@ -304,209 +231,14 @@ static int webview_append(struct webview_bytes *buffer, const void *bytes, size_
 
 static void webview_reset_document(void)
 {
-    for (int i = 0; i < g_para_count; ++i)
-    {
-        free(g_paras[i].text);
-    }
-    for (int i = 0; i < g_link_count; ++i)
-    {
-        free(g_links[i]);
-    }
-    g_para_count = 0;
-    g_link_count = 0;
-    g_run_count = 0;
-    g_mark_count = 0;
-    g_link_run_count = 0;
-    g_cur.length = 0;
+    webengine_tree_free(g_tree);
+    g_tree = NULL;
     g_document_failed = 0;
-    g_inline = (struct webview_mark){ .color = 0xff000000, .link = -1 };
-    g_page_bg = SXGUI_COLOR_FIELD;
-    memset(&g_pending, 0, sizeof(g_pending));
-}
-
-static void webview_push_mark(void)
-{
-    struct webview_mark *marks;
-    int offset = (int)g_cur.length;
-
-    g_inline.offset = offset;
-    if (g_mark_count > 0 && g_marks[g_mark_count - 1].offset == offset)
-    {
-        g_marks[g_mark_count - 1] = g_inline;
-        return;
-    }
-    marks = webview_reserve(g_marks, &g_marks_capacity, (size_t)g_mark_count + 1, sizeof(*marks));
-    if (marks == NULL)
-    {
-        g_document_failed = 1;
-        return;
-    }
-    g_marks = marks;
-    g_marks[g_mark_count++] = g_inline;
-}
-
-static void webview_close_marks(struct webview_para *para)
-{
-    para->first_run = g_run_count;
-    for (int i = 0; i < g_mark_count; ++i)
-    {
-        const struct webview_mark *mark = &g_marks[i];
-        int end = i + 1 < g_mark_count ? g_marks[i + 1].offset : para->length;
-        struct webview_run *runs;
-
-        if (end > para->length)
-        {
-            end = para->length;
-        }
-        if (end <= mark->offset)
-        {
-            continue;
-        }
-        runs = g_run_count < INT_MAX ?
-            webview_reserve(g_runs, &g_runs_capacity, (size_t)g_run_count + 1, sizeof(*runs)) : NULL;
-        if (runs == NULL)
-        {
-            g_document_failed = 1;
-            break;
-        }
-        g_runs = runs;
-        g_runs[g_run_count++] = (struct webview_run){
-            .start = mark->offset, .length = end - mark->offset,
-            .color = mark->color, .bold = mark->bold, .underline = mark->underline, .link = mark->link,
-        };
-    }
-    para->run_count = g_run_count - para->first_run;
-}
-
-static void webview_open_anchor(const char *target)
-{
-    char **links;
-
-    if (target[0] == '\0' || strlen(target) >= WEBVIEW_PATH_CAPACITY)
-    {
-        return;
-    }
-    links = webview_reserve(g_links, &g_links_capacity, (size_t)g_link_count + 1, sizeof(*links));
-    if (links == NULL)
-    {
-        g_document_failed = 1;
-        return;
-    }
-    g_links = links;
-    links[g_link_count] = strdup(target);
-    if (links[g_link_count] == NULL)
-    {
-        g_document_failed = 1;
-        return;
-    }
-    g_inline.link = g_link_count++;
 }
 
 static int webview_html_space(unsigned char value)
 {
     return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\f';
-}
-
-static void webview_cur_append_text(const char *text, size_t length)
-{
-    for (size_t i = 0; i < length && !g_document_failed; ++i)
-    {
-        unsigned char value = (unsigned char)text[i];
-
-        if (webview_html_space(value))
-        {
-            if (g_cur.length == 0 || g_cur.data[g_cur.length - 1] == ' ')
-            {
-                continue;
-            }
-            value = ' ';
-        }
-        if (value >= 32 && webview_append(&g_cur, &value, 1) != 0)
-        {
-            g_document_failed = 1;
-        }
-    }
-}
-
-static struct webview_para *webview_push_para(const char *text, int length, int heading,
-    int rule, int indent, int gap)
-{
-    struct webview_para *paras;
-    struct webview_para *para;
-    char *copy = NULL;
-
-    paras = webview_reserve(g_paras, &g_paras_capacity, (size_t)g_para_count + 1, sizeof(*paras));
-    if (paras == NULL)
-    {
-        g_document_failed = 1;
-        return NULL;
-    }
-    g_paras = paras;
-    if (length > 0)
-    {
-        copy = malloc((size_t)length + 1);
-        if (copy == NULL)
-        {
-            g_document_failed = 1;
-            return NULL;
-        }
-        memcpy(copy, text, (size_t)length);
-        copy[length] = '\0';
-    }
-    para = &g_paras[g_para_count++];
-    *para = (struct webview_para){
-        .text = copy, .length = length, .heading = heading, .rule = rule,
-        .indent = indent, .gap = gap, .face = heading >= 1 && heading <= 3,
-    };
-    return para;
-}
-
-static void webview_push_literal(const char *text, int heading, int rule, int indent, int gap)
-{
-    (void)webview_push_para(text, (int)strlen(text), heading, rule, indent, gap);
-}
-
-static void webview_flush_text(void)
-{
-    while (g_cur.length > 0 && g_cur.data[g_cur.length - 1] == ' ')
-    {
-        --g_cur.length;
-    }
-    if (g_cur.length > 0)
-    {
-        struct webview_para *para = webview_push_para(g_cur.data, (int)g_cur.length,
-            g_pending.heading, 0, g_pending.indent, g_pending.gap);
-        if (para != NULL)
-        {
-            para->face = g_pending.face;
-            para->align = g_pending.align;
-            para->hasBg = g_pending.hasBg;
-            para->bg = g_pending.bg;
-            webview_close_marks(para);
-        }
-        g_pending.gap = 0;
-    }
-    g_cur.length = 0;
-    g_mark_count = 0;
-    webview_push_mark();
-}
-
-static dom_string *webview_attribute(dom_node *node, const char *key)
-{
-    dom_string *name = NULL;
-    dom_string *value = NULL;
-
-    if (dom_string_create((const uint8_t *)key, strlen(key), &name) != DOM_NO_ERR)
-    {
-        g_document_failed = 1;
-        return NULL;
-    }
-    if (dom_element_get_attribute(node, name, &value) != DOM_NO_ERR)
-    {
-        g_document_failed = 1;
-    }
-    dom_string_unref(name);
-    return value;
 }
 
 static void webview_set_title(const char *text, size_t length)
@@ -546,18 +278,6 @@ static void webview_set_title(const char *text, size_t length)
     g_title[used] = '\0';
 }
 
-/* Defaults from CSS 2.1 Appendix D and HTML's rendering rules, adapted
- * to the viewer's two bitmap faces and paragraph renderer. */
-static const char k_webview_ua[] =
-    "html, body, div, p, blockquote, h1, h2, h3, ul, ol, hr {display:block}"
-    "head, script, style, title, link, template {display:none}"
-    "h1, h2, h3 {font-size:large}"
-    "li {display:list-item}"
-    "table {display:table} tr {display:table-row} td, th {display:table-cell}"
-    "b, strong {font-weight:bold}"
-    "u {text-decoration:underline}"
-    "a:link {color:blue; text-decoration:underline}";
-
 static uint32_t webview_color_over(css_color color, uint32_t background)
 {
     unsigned alpha = color >> 24;
@@ -575,222 +295,67 @@ static uint32_t webview_color_over(css_color color, uint32_t background)
     return result;
 }
 
-static void webview_block_style(struct webview_block *block, const css_computed_style *style,
-    const css_unit_ctx *units)
-{
-    css_fixed size;
-    css_unit unit;
-    css_color background = 0;
-    uint8_t align = css_computed_text_align(style);
+/* ---- the engine's fonts ----------------------------------------------------
+ *
+ * The page is laid out with the painter's faces: the UI face for text under
+ * 18 CSS pixels, the title face from there, the console's for monospace.
+ * Bold is the bitmap fake bold, a second strike a pixel to the right, so it
+ * adds a pixel a character. The painter gives no ascent, so it comes from
+ * the baked faces' proportions (system/gfx/gfx_font_*.inc). */
 
-    block->align = align == CSS_TEXT_ALIGN_CENTER ? 1 : align == CSS_TEXT_ALIGN_RIGHT ? 2 : 0;
-    css_computed_font_size(style, &size, &unit);
-    block->face = css_unit_len2css_px(style, units, size, unit) >= INTTOFIX(18);
-    css_computed_background_color(style, &background);
-    if (background >> 24)
-    {
-        block->bg = webview_color_over(background, block->hasBg ? block->bg : g_page_bg);
-        block->hasBg = 1;
-    }
+static int webview_font_face(void *user, int size, bool bold, bool monospace)
+{
+    (void)user;
+    (void)bold;
+    return monospace ? SX_FONT_MONO : size >= 18 ? SX_FONT_UI_TITLE : SX_FONT_UI;
 }
 
-struct webview_dom_frame {
-    dom_node *node;
-    css_computed_style *style;
-    struct webview_mark previous;
-    struct webview_block previous_block;
-    int restore_inline;
-    int block;
+static int webview_font_width(void *user, int face, bool bold, const char *text, size_t length)
+{
+    struct sx_painter *painter = &g_app.ui.painter;
+    char small[256];
+    char *copy = length < sizeof(small) ? small : malloc(length + 1);
+    int characters = 0;
+    int width;
+    int previous;
+
+    (void)user;
+    for (size_t i = 0; i < length; ++i)
+    {
+        characters += ((unsigned char)text[i] & 0xc0) != 0x80;
+    }
+    if (copy == NULL)
+    {
+        return characters * 8;
+    }
+    memcpy(copy, text, length);
+    copy[length] = '\0';
+    previous = sx_painter_set_font(painter, face);
+    width = sx_painter_text_width(painter, copy);
+    (void)sx_painter_set_font(painter, previous);
+    if (copy != small)
+    {
+        free(copy);
+    }
+    return width + (bold ? characters : 0);
+}
+
+static void webview_font_metrics(void *user, int face, int *ascent, int *descent)
+{
+    struct sx_painter *painter = &g_app.ui.painter;
+    int previous = sx_painter_set_font(painter, face);
+    int height = sx_painter_text_height(painter);
+
+    (void)user;
+    (void)sx_painter_set_font(painter, previous);
+    *ascent = face == SX_FONT_UI_TITLE ? height * 12 / 17 : face == SX_FONT_MONO ? height * 13 / 16
+                                                                             : height * 11 / 13;
+    *descent = height - *ascent;
+}
+
+static const struct webengine_fonts k_webview_fonts = {
+    0, webview_font_face, webview_font_width, webview_font_metrics,
 };
-
-static void webview_begin_block(struct webview_dom_frame *frame, const css_unit_ctx *units,
-    int gap, int heading, int indent)
-{
-    webview_flush_text();
-    frame->previous_block = g_pending;
-    frame->block = 1;
-    g_pending.gap = gap;
-    g_pending.heading = heading;
-    g_pending.indent = indent;
-    webview_block_style(&g_pending, frame->style, units);
-}
-
-/* Keep the paragraph model for layout while reading its visual properties
- * from the cascade. Text decorations propagate through descendant runs. */
-static int webview_enter_element(struct webview_dom_frame *frame, const char *name,
-    const css_unit_ctx *units)
-{
-    dom_node *node = frame->node;
-    const css_computed_style *style = frame->style;
-    css_color color = 0;
-    uint8_t display = css_computed_display(style, 0);
-    int heading = name[0] == 'h' && name[1] >= '1' && name[1] <= '3' && name[2] == '\0'
-        ? name[1] - '0' : 0;
-
-    if (strcmp(name, "title") == 0)
-    {
-        dom_string *value = NULL;
-        if (dom_node_get_text_content(node, &value) != DOM_NO_ERR)
-        {
-            g_document_failed = 1;
-        }
-        if (value != NULL)
-        {
-            webview_set_title(dom_string_data(value), dom_string_byte_length(value));
-            dom_string_unref(value);
-        }
-        return 0;
-    }
-    /* Head normally has display:none; walk its children for the window title. */
-    if (strcmp(name, "head") == 0)
-    {
-        return 1;
-    }
-    if (display == CSS_DISPLAY_NONE || strcmp(name, "script") == 0 ||
-        strcmp(name, "template") == 0 || strcmp(name, "style") == 0)
-    {
-        return 0;
-    }
-    if (strcmp(name, "html") == 0 || strcmp(name, "body") == 0)
-    {
-        css_color background = 0;
-
-        css_computed_background_color(style, &background);
-        g_page_bg = webview_color_over(background, g_page_bg);
-        webview_block_style(&g_pending, style, units);
-        g_pending.hasBg = 0;
-    }
-    else if (strcmp(name, "hr") == 0)
-    {
-        webview_flush_text();
-        webview_push_literal("", 0, 1, 0, 4);
-        return 0;
-    }
-    else if (strcmp(name, "br") == 0)
-    {
-        webview_flush_text();
-        return 0;
-    }
-    else if (display == CSS_DISPLAY_LIST_ITEM)
-    {
-        webview_begin_block(frame, units, 1, 0, 1);
-    }
-    else if (display == CSS_DISPLAY_TABLE_CELL)
-    {
-        webview_begin_block(frame, units, 0, 0, 0);
-    }
-    else if (display == CSS_DISPLAY_BLOCK || display == CSS_DISPLAY_TABLE ||
-             display == CSS_DISPLAY_TABLE_ROW)
-    {
-        webview_begin_block(frame, units, heading == 1 ? 8 : heading > 0 ? 6 : 2, heading, 0);
-    }
-
-    frame->previous = g_inline;
-    css_computed_color(style, &color);
-    g_inline.color = color;
-    uint8_t weight = css_computed_font_weight(style);
-    g_inline.bold = weight == CSS_FONT_WEIGHT_BOLD || weight == CSS_FONT_WEIGHT_BOLDER ||
-        weight >= CSS_FONT_WEIGHT_700;
-    g_inline.underline |= (css_computed_text_decoration(style) & CSS_TEXT_DECORATION_UNDERLINE) != 0;
-    if (strcmp(name, "a") == 0)
-    {
-        dom_string *href = webview_attribute(node, "href");
-        if (href != NULL)
-        {
-            webview_open_anchor(dom_string_data(href));
-            dom_string_unref(href);
-        }
-    }
-    if (frame->previous.color != g_inline.color || frame->previous.bold != g_inline.bold ||
-        frame->previous.underline != g_inline.underline || frame->previous.link != g_inline.link)
-    {
-        frame->restore_inline = 1;
-        webview_push_mark();
-    }
-    if (strcmp(name, "img") == 0)
-    {
-        webview_cur_append_text(" [image] ", sizeof(" [image] ") - 1);
-    }
-    return 1;
-}
-
-static int webview_enter_node(struct webview_dom_frame *frame, struct webengine_styles *styles,
-    const css_computed_style *parent)
-{
-    dom_node *node = frame->node;
-    dom_node_type type;
-    dom_string *value = NULL;
-
-    if (dom_node_get_node_type(node, &type) != DOM_NO_ERR)
-    {
-        g_document_failed = 1;
-        return 0;
-    }
-    if (type == DOM_TEXT_NODE)
-    {
-        if (dom_node_get_node_value(node, &value) != DOM_NO_ERR)
-        {
-            g_document_failed = 1;
-        }
-        if (value != NULL)
-        {
-            webview_cur_append_text(dom_string_data(value), dom_string_byte_length(value));
-            dom_string_unref(value);
-        }
-        return 0;
-    }
-    if (type != DOM_ELEMENT_NODE)
-    {
-        return 0;
-    }
-    char name[16] = {0};
-    if (dom_node_get_node_name(node, &value) != DOM_NO_ERR)
-    {
-        g_document_failed = 1;
-        return 0;
-    }
-    size_t length = dom_string_byte_length(value);
-    if (length < sizeof(name))
-    {
-        const char *text = dom_string_data(value);
-        for (size_t i = 0; i < length; ++i)
-        {
-            char ch = text[i];
-            name[i] = ch >= 'A' && ch <= 'Z' ? (char)(ch + 'a' - 'A') : ch;
-        }
-    }
-    dom_string_unref(value);
-    frame->style = webengine_style_element(styles, (dom_element *)node, parent);
-    if (frame->style == NULL)
-    {
-        g_document_failed = 1;
-        return 0;
-    }
-    return webview_enter_element(frame, name, styles->units);
-}
-
-static void webview_leave_node(struct webview_dom_frame *frame)
-{
-    if (frame->block)
-    {
-        webview_flush_text();
-        g_pending = frame->previous_block;
-    }
-    if (frame->restore_inline)
-    {
-        g_inline = frame->previous;
-        webview_push_mark();
-    }
-}
-
-static void webview_release_frame(struct webview_dom_frame *frame)
-{
-    if (frame->style != NULL)
-    {
-        css_computed_style_destroy(frame->style);
-    }
-    dom_node_unref(frame->node);
-}
 
 static struct webengine_sheet_source webview_link_sheet(void *user, dom_element *element)
 {
@@ -807,67 +372,64 @@ static struct webengine_sheet_source webview_link_sheet(void *user, dom_element 
     };
 }
 
-static void webview_parse(void)
+/* The document's <title>, for the window and the status bar. */
+static void webview_find_title(dom_document *document)
 {
-    struct webengine_styles styles;
-    struct webview_sheet *next_sheet = g_sheets;
-    dom_element *root = NULL;
-    struct webview_dom_frame *stack = NULL;
-    size_t depth = 0;
-    size_t capacity = 0;
+    dom_string *name = NULL;
+    dom_nodelist *list = NULL;
+    dom_node *title = NULL;
+    dom_string *text = NULL;
+    uint32_t count = 0;
 
-    if (g_document == NULL || g_ua == NULL || webengine_styles_open(
-            &styles, g_document, g_path, g_ua, webview_link_sheet, &next_sheet) != 0)
+    if (dom_string_create((const uint8_t *)"title", 5, &name) != DOM_NO_ERR)
     {
-        g_document_failed = 1;
         return;
     }
-    if (dom_document_get_document_element(g_document, &root) != DOM_NO_ERR)
+    if (dom_document_get_elements_by_tag_name(document, name, &list) == DOM_NO_ERR && list != NULL &&
+        dom_nodelist_get_length(list, &count) == DOM_NO_ERR && count > 0 &&
+        dom_nodelist_item(list, 0, &title) == DOM_NO_ERR && title != NULL &&
+        dom_node_get_text_content(title, &text) == DOM_NO_ERR && text != NULL)
+    {
+        webview_set_title(dom_string_data(text), dom_string_byte_length(text));
+    }
+    dom_string_unref(text);
+    dom_node_unref(title);
+    if (list != NULL)
+    {
+        dom_nodelist_unref(list);
+    }
+    dom_string_unref(name);
+}
+
+/* The boxes of `document`, styled with the user-agent sheet, its own sheets
+ * and the fetched ones; NULL when that fails. */
+static struct webengine_tree *webview_build_tree(dom_document *document, const char *url,
+    struct webview_sheet *sheets)
+{
+    struct webengine_styles styles;
+    struct webview_sheet *next_sheet = sheets;
+    struct webengine_tree *tree;
+
+    if (document == NULL || g_ua == NULL || webengine_styles_open(
+            &styles, document, url, g_ua, webview_link_sheet, &next_sheet) != 0)
+    {
+        return NULL;
+    }
+    tree = webengine_tree_build(document, &styles, &k_webview_fonts);
+    webengine_styles_close(&styles);
+    return tree;
+}
+
+static void webview_parse(void)
+{
+    if (g_document != NULL)
+    {
+        webview_find_title(g_document);
+    }
+    g_tree = webview_build_tree(g_document, g_path, g_sheets);
+    if (g_tree == NULL)
     {
         g_document_failed = 1;
-    }
-    dom_node *node = (dom_node *)root;
-    webview_push_mark();
-    /* Keep the node references and the composed parent styles on the heap. */
-    while (node != NULL && !g_document_failed)
-    {
-        struct webview_dom_frame *frames = webview_reserve(stack, &capacity, depth + 1, sizeof(*stack));
-        if (frames == NULL)
-        {
-            g_document_failed = 1;
-            break;
-        }
-        stack = frames;
-        stack[depth] = (struct webview_dom_frame){ .node = node };
-        css_computed_style *parent = depth == 0 ? NULL : stack[depth - 1].style;
-        node = NULL;
-        if (webview_enter_node(&stack[depth], &styles, parent) &&
-            dom_node_get_first_child(stack[depth].node, &node) != DOM_NO_ERR)
-        {
-            g_document_failed = 1;
-        }
-        ++depth;
-        while (node == NULL && depth > 0 && !g_document_failed)
-        {
-            struct webview_dom_frame *frame = &stack[--depth];
-            webview_leave_node(frame);
-            if (depth > 0 && dom_node_get_next_sibling(frame->node, &node) != DOM_NO_ERR)
-            {
-                g_document_failed = 1;
-            }
-            webview_release_frame(frame);
-        }
-    }
-    dom_node_unref(node);
-    while (depth > 0)
-    {
-        webview_release_frame(&stack[--depth]);
-    }
-    free(stack);
-    webengine_styles_close(&styles);
-    if (!g_document_failed)
-    {
-        webview_flush_text();
     }
 }
 
@@ -907,7 +469,7 @@ static void webview_refresh_status(void)
 
 static void webview_invalidate_layout(void)
 {
-    g_measured_width = -1;
+    g_layout_width = -1;
     WEBVIEW_SCROLL->value = 0;
     sxngui_app_request_repaint(&g_app);
 }
@@ -915,30 +477,33 @@ static void webview_invalidate_layout(void)
 static int webview_open_location(const char *location, int push, int hist_target);
 static void webview_navigate(const char *address, int push);
 
+/* The welcome page, shown with no file open: HTML of its own, laid out as
+ * any page is. */
+static const char k_webview_welcome[] =
+    "<h1>Web Viewer</h1>"
+    "<p>A minimal browser for local files and HTTP by name or IP, in the spirit of IE 1.1. "
+    "It lays pages out with CSS boxes, follows links and redirects, and shows source with "
+    "Ctrl+U.</p><hr>"
+    "<ul><li>Type a path or an http:// address up there and press Go (or Enter). "
+    "File &gt; Open (F3) works too: try /system/samples/welcome.html.</li>"
+    "<li>Double-clicking an .html file in Files opens it here.</li></ul>"
+    "<p>Pages load in the background: Stop (Esc) drops a slow one. "
+    "Not in this version: images.</p>";
+
 static void webview_show_welcome(void)
 {
+    dom_document *document;
+
     g_has_file = 0;
     g_path[0] = '\0';
     webview_reset_document();
     free(g_raw.data);
     g_raw = (struct webview_bytes){0};
     g_title[0] = '\0';
-    webview_push_literal("Web Viewer", 1, 0, 0, 0);
-    webview_push_literal(
-        "A minimal browser for local files and HTTP by name or IP, in the spirit "
-        "of IE 1.1. This version fetches pages, follows links and redirects, "
-        "paints a first CSS and shows source with Ctrl+U.",
-        0, 0, 0, 2);
-    webview_push_literal("", 0, 1, 0, 4);
-    webview_push_literal("Type a path or an http:// address up there "
-                      "and press Go (or Enter). File > Open (F3) works too: try "
-                      "/system/samples/welcome.html.",
-        0, 0, 1, 2);
-    webview_push_literal("Double-clicking an .html file in Files opens it here.", 0, 0, 1, 1);
-    webview_push_literal(
-        "Pages load in the background: Stop (Esc) drops a slow one. "
-        "Not in this version: images.",
-        0, 0, 0, 2);
+    document = webengine_parse_html((const uint8_t *)k_webview_welcome, sizeof(k_webview_welcome) - 1,
+        NULL, NULL, 0);
+    g_tree = webview_build_tree(document, "", NULL);
+    dom_node_unref(document);
     webview_refresh_status();
     webview_invalidate_layout();
 }
@@ -990,43 +555,6 @@ static void webview_free_sheets(struct webview_sheet *sheets)
     }
 }
 
-/* View Source: the raw buffer as plain lines, no tag stripping and no entity
- * decoding (source must show &amp; as typed). Control bytes are dropped, tabs
- * become two spaces so columns survive. */
-static void webview_build_source(void)
-{
-    size_t cursor = 0;
-
-    while (cursor < g_raw.length && !g_document_failed)
-    {
-        g_cur.length = 0;
-        while (cursor < g_raw.length)
-        {
-            unsigned char value = (unsigned char)g_raw.data[cursor++];
-            int result = 0;
-
-            if (value == '\n')
-            {
-                break;
-            }
-            if (value == '\t')
-            {
-                result = webview_append(&g_cur, "  ", 2);
-            }
-            else if (value >= 32 && value != 127)
-            {
-                result = webview_append(&g_cur, &value, 1);
-            }
-            if (result != 0)
-            {
-                g_document_failed = 1;
-                return;
-            }
-        }
-        (void)webview_push_para(g_cur.data, (int)g_cur.length, 0, 0, 0, 0);
-    }
-}
-
 /* The window title names the page, as "<title> - Web Viewer". */
 static void webview_update_title(void)
 {
@@ -1051,7 +579,10 @@ static void webview_render_current(void)
     g_title[0] = '\0';
     if (g_show_source || g_plain)
     {
-        webview_build_source();
+        /* View Source and text/plain: the bytes as they came, lines kept. */
+        g_tree = webengine_tree_text(g_raw.data != NULL ? g_raw.data : "", g_raw.length, 16,
+            &k_webview_fonts);
+        g_document_failed = g_tree == NULL;
     }
     else
     {
@@ -1064,10 +595,6 @@ static void webview_render_current(void)
     }
     else
     {
-        if (g_para_count == 0)
-        {
-            webview_push_literal("(Empty document)", 0, 0, 0, 0);
-        }
         webview_refresh_status();
     }
     webview_update_title();
@@ -2163,108 +1690,16 @@ static void webview_navigate(const char *address, int push)
 
 /* ---- layout and painting ----------------------------------------------------
  *
- * Paragraphs are wrapped against the live viewport width on every paint, so a
- * resize reflows for free. Measuring and drawing share webview_next_line: the
- * measure pass runs first (only when the width changed), then the draw pass
- * reuses it with a scroll offset.
+ * The engine lays the page out (docs/desktop/WEBVIEWER_ENGINE.md) at the
+ * width of the page's area, again only when that width changes, so a resize
+ * reflows. Painting walks the blocks for their backgrounds and borders, then
+ * the line fragments for inline boxes, text and markers, skipping what lies
+ * outside the visible area.
  */
-
-/* Cuts the next visual line and reports its byte range in the paragraph. */
-static int webview_bold_extra(int para, int start, int end);
-
-static int webview_next_line(struct sx_painter *painter, int para, int *start, int avail,
-    char out[WEBVIEW_LINE_BUFFER])
-{
-    const char *text = g_paras[para].text;
-    int length = g_paras[para].length;
-    int offset = *start;
-    int end;
-    int limit;
-    int accepted;
-    char trial[WEBVIEW_LINE_BUFFER];
-
-    while (offset < length && text[offset] == ' ')
-    {
-        ++offset;
-    }
-    if (offset >= length)
-    {
-        return -1;
-    }
-    *start = offset;
-    limit = length - offset < WEBVIEW_LINE_BUFFER ? length : offset + WEBVIEW_LINE_BUFFER - 1;
-    while (limit > offset + 1 && limit < length && ((unsigned char)text[limit] & 0xc0) == 0x80)
-    {
-        --limit;
-    }
-    accepted = offset;
-    end = offset;
-    while (end < limit)
-    {
-        int count;
-
-        while (end < limit && text[end] == ' ')
-        {
-            ++end;
-        }
-        if (end == limit)
-        {
-            break;
-        }
-        while (end < limit && text[end] != ' ')
-        {
-            ++end;
-        }
-        if (accepted > offset && end == limit && limit < length && text[limit] != ' ')
-        {
-            break;
-        }
-        count = end - offset;
-        memcpy(trial, text + offset, (size_t)count);
-        trial[count] = '\0';
-        if (sx_painter_text_width(painter, trial) + webview_bold_extra(para, offset, end) > avail)
-        {
-            if (accepted == offset)
-            {
-                /* A word wider than a line still advances, at a UTF-8 boundary. */
-                while (end > offset)
-                {
-                    int shorter = end - 1;
-
-                    while (shorter > offset && ((unsigned char)text[shorter] & 0xc0) == 0x80)
-                    {
-                        --shorter;
-                    }
-                    if (shorter == offset)
-                    {
-                        break;
-                    }
-                    end = shorter;
-                    trial[end - offset] = '\0';
-                    if (sx_painter_text_width(painter, trial) + webview_bold_extra(para, offset, end) <= avail)
-                    {
-                        break;
-                    }
-                }
-                accepted = end;
-            }
-            break;
-        }
-        accepted = end;
-    }
-    memcpy(out, text + offset, (size_t)(accepted - offset));
-    out[accepted - offset] = '\0';
-    return accepted;
-}
-
-static int webview_line_height(struct sx_painter *painter, int heading)
-{
-    return sx_painter_text_height(painter) + (heading ? 6 : 2);
-}
 
 static int webview_page_height(void)
 {
-    int height = g_view.height - 2 * (SXGUI_BORDER_SUNKEN + SXGUI_TEXT_PAD);
+    int height = g_view.height - 2 * SXGUI_BORDER_SUNKEN;
 
     return height > 0 ? height : 1;
 }
@@ -2295,41 +1730,23 @@ static void webview_set_scroll(int value)
     }
 }
 
-static void webview_measure(struct sx_painter *painter, int avail)
+/* Lays the page out at `width` and sizes the scroll bar after it. */
+static void webview_measure(int width)
 {
-    int index;
-    int height = 0;
-    char line[WEBVIEW_LINE_BUFFER];
-
-    for (index = 0; index < g_para_count; ++index)
+    g_layout_width = width;
+    g_total_height = 0;
+    if (g_tree != NULL)
     {
-        int offset = 0;
-        int next;
-
-        int top = height;
-
-        if (g_paras[index].rule)
+        if (webengine_layout(g_tree, &k_webview_fonts, width) == 0)
         {
-            g_paras[index].height = 4 + 10;
-            height += g_paras[index].height;
-            continue;
+            g_total_height = g_tree->height;
         }
-        (void)sx_painter_set_font(painter, g_paras[index].face ? SX_FONT_UI_TITLE : SX_FONT_UI);
-        if (index > 0)
+        else
         {
-            height += g_paras[index].gap;
+            webview_reset_document();
+            snprintf(g_status, sizeof(g_status), "Not enough memory to lay out this document.");
         }
-        while ((next = webview_next_line(painter, index, &offset, avail, line)) >= 0)
-        {
-            height += webview_line_height(painter, g_paras[index].heading);
-            offset = next;
-        }
-        height += g_paras[index].heading ? 4 : 2;
-        g_paras[index].height = height - top;
     }
-    (void)sx_painter_set_font(painter, SX_FONT_UI);
-    g_total_height = height;
-    g_measured_width = avail;
     WEBVIEW_SCROLL->range_max = webview_scroll_max();
     WEBVIEW_SCROLL->page = webview_page_height();
     if (WEBVIEW_SCROLL->value > WEBVIEW_SCROLL->range_max)
@@ -2338,140 +1755,296 @@ static void webview_measure(struct sx_painter *painter, int avail)
     }
 }
 
-/* Extra width of [start, end): one pixel per bold character for the
- * double-strike. Whole-paragraph bold counts everything. */
-static int webview_bold_extra(int para, int start, int end)
+/* The canvas behind everything: the page's colour over the field's. */
+static uint32_t webview_canvas(void)
 {
-    int extra = 0;
-    int i;
+    return g_tree != NULL ? webview_color_over(g_tree->canvas, SXGUI_COLOR_FIELD) : SXGUI_COLOR_FIELD;
+}
 
-    if (end <= start)
-    {
-        return 0;
-    }
-    for (i = g_paras[para].first_run; i < g_paras[para].first_run + g_paras[para].run_count; ++i)
-    {
-        int run_start;
-        int run_end;
+/* What is painted behind `box`: the backgrounds of it and its ancestors,
+ * composed over the canvas, for colours with an alpha channel. */
+static uint32_t webview_backdrop(const struct webengine_box *box)
+{
+    const struct webengine_box *chain[32];
+    int count = 0;
+    uint32_t color;
 
-        if (g_runs[i].start >= end)
-        {
-            break;
-        }
-        if (!g_runs[i].bold)
+    for (; box != NULL && count < 32; box = box->parent)
+    {
+        if (box->type != WEBENGINE_BOX_BLOCK && box->type != WEBENGINE_BOX_INLINE)
         {
             continue;
         }
-        run_start = g_runs[i].start > start ? g_runs[i].start : start;
-        run_end = g_runs[i].start + g_runs[i].length < end ? g_runs[i].start + g_runs[i].length
-                                                           : end;
-        if (run_end > run_start)
+        if ((box->style->background >> 24) != 0 && box != g_tree->canvas_source)
         {
-            extra += run_end - run_start;
-        }
-    }
-    return extra;
-}
-
-/* One text run: double-strike when bold (the bitmap fake-bold). */
-static void webview_draw_run_text(struct sx_painter *painter, int x, int y, const char *text,
-    uint32_t color, int bold)
-{
-    sx_painter_draw_text(painter, x, y, text, color);
-    if (bold)
-    {
-        sx_painter_draw_text(painter, x + 1, y, text, color);
-    }
-}
-
-/* Width of the first `length` bytes of `text` in the painter's active font. */
-static int webview_prefix_width(struct sx_painter *painter, const char *text, int length)
-{
-    char piece[WEBVIEW_LINE_BUFFER];
-    int copy = length;
-
-    if (copy < 0)
-    {
-        copy = 0;
-    }
-    if (copy >= (int)sizeof(piece))
-    {
-        copy = (int)sizeof(piece) - 1;
-    }
-    memcpy(piece, text, (size_t)copy);
-    piece[copy] = '\0';
-    return sx_painter_text_width(painter, piece);
-}
-
-/* Paints each styled run once and records clickable glyph spans. */
-static void webview_paint_runs(struct sx_painter *painter, int para, int start,
-    int end, int x, int y, int height, uint32_t background)
-{
-    const char *text = g_paras[para].text;
-    int i;
-
-    for (i = g_paras[para].first_run; i < g_paras[para].first_run + g_paras[para].run_count; ++i)
-    {
-        int run_start;
-        int run_end;
-        int x1;
-        int x2;
-        char piece[WEBVIEW_LINE_BUFFER];
-        int piece_length;
-        uint32_t color;
-
-        if (g_runs[i].start >= end)
-        {
-            break;
-        }
-        run_start = g_runs[i].start > start ? g_runs[i].start : start;
-        run_end = g_runs[i].start + g_runs[i].length < end ? g_runs[i].start + g_runs[i].length : end;
-        if (run_end <= run_start)
-        {
-            continue;
-        }
-        color = webview_color_over(g_runs[i].color, background);
-        x1 = x + webview_prefix_width(painter, text + start, run_start - start) +
-            webview_bold_extra(para, start, run_start);
-        x2 = x + webview_prefix_width(painter, text + start, run_end - start) +
-            webview_bold_extra(para, start, run_end);
-        piece_length = run_end - run_start;
-        if (piece_length >= (int)sizeof(piece))
-        {
-            piece_length = (int)sizeof(piece) - 1;
-        }
-        memcpy(piece, text + run_start, (size_t)piece_length);
-        piece[piece_length] = '\0';
-        webview_draw_run_text(painter, x1, y, piece, color, g_runs[i].bold);
-        if (g_runs[i].underline && x2 > x1)
-        {
-            sx_painter_hline(painter, x1, y + height - 3, x2 - x1, color);
-        }
-        if (g_runs[i].link >= 0)
-        {
-            struct webview_link_run *runs = webview_reserve(g_link_runs, &g_link_runs_capacity,
-                g_link_run_count + 1, sizeof(*runs));
-
-            if (runs != NULL)
+            chain[count++] = box;
+            if ((box->style->background >> 24) == 255)
             {
-                g_link_runs = runs;
-                g_link_runs[g_link_run_count++] = (struct webview_link_run){
-                    .link = g_runs[i].link, .x1 = x1, .x2 = x2, .y = y, .height = height,
-                };
+                break;
             }
         }
     }
+    color = webview_canvas();
+    while (count > 0)
+    {
+        color = webview_color_over(chain[--count]->style->background, color);
+    }
+    return color;
 }
 
+static uint32_t webview_shade(uint32_t color, int light)
+{
+    uint32_t result = 0;
+
+    for (unsigned shift = 0; shift < 24; shift += 8)
+    {
+        unsigned value = (color >> shift) & 255;
+
+        value = light ? value + (255 - value) * 3 / 4 : value;
+        result |= value << shift;
+    }
+    return result;
+}
+
+/* One side of a border as a band, dashed or dotted when its style says. */
+static void webview_border_band(struct sx_painter *painter, struct sx_rect band, uint8_t style,
+    int horizontal, uint32_t color)
+{
+    int length = horizontal ? band.width : band.height;
+    int thickness = horizontal ? band.height : band.width;
+    int on = style == CSS_BORDER_STYLE_DOTTED ? thickness : thickness * 3;
+
+    if (style != CSS_BORDER_STYLE_DOTTED && style != CSS_BORDER_STYLE_DASHED)
+    {
+        if (style == CSS_BORDER_STYLE_DOUBLE && thickness >= 3)
+        {
+            int line = (thickness + 1) / 3;
+
+            sx_painter_fill_rect(painter, horizontal
+                ? sx_rect_make(band.x, band.y, band.width, line) : sx_rect_make(band.x, band.y, line, band.height),
+                color);
+            sx_painter_fill_rect(painter, horizontal
+                ? sx_rect_make(band.x, band.y + thickness - line, band.width, line)
+                : sx_rect_make(band.x + thickness - line, band.y, line, band.height), color);
+            return;
+        }
+        sx_painter_fill_rect(painter, band, color);
+        return;
+    }
+    if (on < 1)
+    {
+        on = 1;
+    }
+    for (int offset = 0; offset < length; offset += on * 2)
+    {
+        int piece = offset + on <= length ? on : length - offset;
+
+        sx_painter_fill_rect(painter, horizontal
+            ? sx_rect_make(band.x + offset, band.y, piece, band.height)
+            : sx_rect_make(band.x, band.y + offset, band.width, piece), color);
+    }
+}
+
+/* A box's borders around (x, y, width, height), its border box. inset,
+ * outset, groove and ridge shade the colour, lighter on one pair of sides. */
+static void webview_paint_borders(struct sx_painter *painter, const struct webengine_box_style *style,
+    int x, int y, int width, int height, int left_edge, int right_edge, uint32_t backdrop)
+{
+    const int top = style->border_width[WEBENGINE_TOP];
+    const int bottom = style->border_width[WEBENGINE_BOTTOM];
+    const int left = left_edge ? style->border_width[WEBENGINE_LEFT] : 0;
+    const int right = right_edge ? style->border_width[WEBENGINE_RIGHT] : 0;
+    const struct sx_rect bands[4] = {
+        sx_rect_make(x, y, width, top),
+        sx_rect_make(x + width - right, y + top, right, height - top - bottom),
+        sx_rect_make(x, y + height - bottom, width, bottom),
+        sx_rect_make(x, y + top, left, height - top - bottom),
+    };
+
+    for (int side = 0; side < 4; ++side)
+    {
+        uint8_t kind = style->border_style[side];
+        uint32_t color;
+        int light = 0;
+
+        if (bands[side].width <= 0 || bands[side].height <= 0)
+        {
+            continue;
+        }
+        color = webview_color_over(style->border_color[side], backdrop);
+        if (kind == CSS_BORDER_STYLE_INSET || kind == CSS_BORDER_STYLE_GROOVE)
+        {
+            light = side == WEBENGINE_BOTTOM || side == WEBENGINE_RIGHT;
+        }
+        else if (kind == CSS_BORDER_STYLE_OUTSET || kind == CSS_BORDER_STYLE_RIDGE)
+        {
+            light = side == WEBENGINE_TOP || side == WEBENGINE_LEFT;
+        }
+        webview_border_band(painter, bands[side], kind, side == WEBENGINE_TOP || side == WEBENGINE_BOTTOM,
+            webview_shade(color, light));
+    }
+}
+
+static int webview_visible(const struct webengine_box_style *style)
+{
+    return style->visibility != CSS_VISIBILITY_HIDDEN && style->visibility != CSS_VISIBILITY_COLLAPSE;
+}
+
+/* Blocks in tree order: their backgrounds, then their borders. */
+static void webview_paint_blocks(struct sx_painter *painter, int top, int bottom)
+{
+    const struct webengine_box *box = g_tree->root;
+
+    while (box != NULL)
+    {
+        int y = g_page_y + box->y;
+
+        if (box->type == WEBENGINE_BOX_BLOCK && webview_visible(box->style) &&
+            y < bottom && y + box->height > top)
+        {
+            uint32_t backdrop = webview_backdrop(box->parent);
+
+            if ((box->style->background >> 24) != 0 && box != g_tree->canvas_source)
+            {
+                sx_painter_fill_rect(painter, sx_rect_make(g_page_x + box->x, y, box->width, box->height),
+                    webview_color_over(box->style->background, backdrop));
+            }
+            webview_paint_borders(painter, box->style, g_page_x + box->x, y, box->width, box->height, 1, 1,
+                webview_backdrop(box));
+        }
+        if (box->type == WEBENGINE_BOX_BLOCK && !box->inline_content && box->first != NULL)
+        {
+            box = box->first;
+            continue;
+        }
+        while (box != NULL && box->next == NULL)
+        {
+            box = box->parent;
+        }
+        if (box != NULL)
+        {
+            box = box->next;
+        }
+    }
+}
+
+/* A piece of text, drawn as the painter wants it: NUL-terminated. */
+static void webview_draw_text(struct sx_painter *painter, int x, int y, const char *text, size_t length,
+    uint32_t color, int bold)
+{
+    char small[512];
+    char *copy = length < sizeof(small) ? small : malloc(length + 1);
+
+    if (copy == NULL)
+    {
+        return;
+    }
+    memcpy(copy, text, length);
+    copy[length] = '\0';
+    sx_painter_draw_text(painter, x, y, copy, color);
+    if (bold)
+    {
+        sx_painter_draw_text(painter, x + 1, y, copy, color);
+    }
+    if (copy != small)
+    {
+        free(copy);
+    }
+}
+
+static void webview_paint_fragment(struct sx_painter *painter, const struct webengine_fragment *fragment)
+{
+    const struct webengine_box *box = fragment->box;
+    const struct webengine_box_style *style = box->style;
+    const int x = g_page_x + fragment->x;
+    const int y = g_page_y + fragment->y;
+    const int baseline = g_page_y + fragment->baseline;
+    const uint32_t backdrop = webview_backdrop(box->parent);
+    const uint32_t color = webview_color_over(style->color, backdrop);
+
+    if (!webview_visible(style))
+    {
+        return;
+    }
+    switch (fragment->type)
+    {
+    case WEBENGINE_FRAGMENT_INLINE:
+        if ((style->background >> 24) != 0)
+        {
+            sx_painter_fill_rect(painter, sx_rect_make(x, y, fragment->width, fragment->height),
+                webview_color_over(style->background, backdrop));
+        }
+        webview_paint_borders(painter, style, x, y, fragment->width, fragment->height, fragment->left_edge,
+            fragment->right_edge, webview_backdrop(box));
+        break;
+    case WEBENGINE_FRAGMENT_TEXT:
+    {
+        int ascent = baseline - y;
+
+        (void)sx_painter_set_font(painter, style->face);
+        webview_draw_text(painter, x, y, box->text + fragment->start, fragment->length, color, style->bold);
+        if (style->decoration & CSS_TEXT_DECORATION_UNDERLINE)
+        {
+            sx_painter_hline(painter, x, baseline + 1, fragment->width, color);
+        }
+        if (style->decoration & CSS_TEXT_DECORATION_OVERLINE)
+        {
+            sx_painter_hline(painter, x, y, fragment->width, color);
+        }
+        if (style->decoration & CSS_TEXT_DECORATION_LINE_THROUGH)
+        {
+            sx_painter_hline(painter, x, baseline - ascent / 3, fragment->width, color);
+        }
+        break;
+    }
+    case WEBENGINE_FRAGMENT_MARKER:
+    {
+        struct sx_rect shape = sx_rect_make(x, y, fragment->width, fragment->height);
+
+        if (box->text != NULL)
+        {
+            (void)sx_painter_set_font(painter, style->face);
+            webview_draw_text(painter, x, y, box->text, box->length, color, style->bold);
+        }
+        else if (style->list_style_type == CSS_LIST_STYLE_TYPE_SQUARE)
+        {
+            sx_painter_fill_rect(painter, shape, color);
+        }
+        else if (style->list_style_type == CSS_LIST_STYLE_TYPE_CIRCLE)
+        {
+            sx_painter_draw_ellipse(painter, shape, color);
+        }
+        else
+        {
+            sx_painter_fill_ellipse(painter, shape, color);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+/* The link under (x, y) in the window, from the last paint's layout. */
 static int webview_link_at(int x, int y, char *target, size_t capacity)
 {
-    for (size_t i = 0; i < g_link_run_count; ++i)
-    {
-        const struct webview_link_run *run = &g_link_runs[i];
+    int px = x - g_page_x;
+    int py = y - g_page_y;
 
-        if (y >= run->y && y < run->y + run->height && x >= run->x1 && x < run->x2)
+    if (g_tree == NULL || !sx_rect_contains_point(g_page_area, x, y))
+    {
+        return 0;
+    }
+    for (size_t i = 0; i < g_tree->fragment_count; ++i)
+    {
+        const struct webengine_fragment *fragment = &g_tree->fragments[i];
+        int link = fragment->box->link;
+
+        if (link >= 0 && fragment->type != WEBENGINE_FRAGMENT_MARKER &&
+            px >= fragment->x && px < fragment->x + fragment->width &&
+            py >= fragment->y && py < fragment->y + fragment->height)
         {
-            snprintf(target, capacity, "%s", g_links[run->link]);
+            snprintf(target, capacity, "%s", g_tree->links[link]);
             return 1;
         }
     }
@@ -2482,13 +2055,9 @@ static void on_paint(struct sxngui_app *app)
 {
     struct sx_painter *painter = &app->ui.painter;
     struct sx_rect interior;
-    int text_left;
-    int avail;
-    int y;
-    int index;
-    char line[WEBVIEW_LINE_BUFFER];
+    int top;
+    int bottom;
 
-    (void)app;
     if (g_page_secure && g_has_file)
     {
         const struct sx_rect zone = WEBVIEW_ZONE->rect;
@@ -2499,106 +2068,43 @@ static void on_paint(struct sxngui_app *app)
     sxgui_draw_sunken_edge(painter, g_view);
     interior = sx_rect_make(g_view.x + SXGUI_BORDER_SUNKEN, g_view.y + SXGUI_BORDER_SUNKEN,
         g_view.width - SXGUI_BORDER_SUNKEN * 2, g_view.height - SXGUI_BORDER_SUNKEN * 2);
-    sx_painter_fill_rect(painter, interior, g_page_bg);
-    /* The text area keeps the scrollbar strip clear on the right. */
+    /* The page keeps the scrollbar strip clear on the right. */
     interior.width -= SXGUI_SCROLLBAR_THICKNESS + SXGUI_GAP;
-    text_left = interior.x + SXGUI_TEXT_PAD + SXGUI_BORDER_SUNKEN;
-    avail = interior.width - (text_left - interior.x) - SXGUI_TEXT_PAD;
-    if (avail < 40)
+    if (interior.width < 40)
     {
-        avail = 40;
+        interior.width = 40;
     }
-    if (avail != g_measured_width)
+    if (interior.width != g_layout_width)
     {
         int before = WEBVIEW_SCROLL->value;
 
-        webview_measure(painter, avail);
+        webview_measure(interior.width);
         if (WEBVIEW_SCROLL->value != before)
         {
             sxngui_app_request_repaint(&g_app);
         }
     }
-    if (!sx_painter_push_clip(painter, interior))
+    sx_painter_fill_rect(painter, sx_rect_make(interior.x, interior.y,
+        g_view.width - SXGUI_BORDER_SUNKEN * 2, interior.height), webview_canvas());
+    g_page_area = interior;
+    g_page_x = interior.x;
+    g_page_y = interior.y - WEBVIEW_SCROLL->value;
+    if (g_tree == NULL || !sx_painter_push_clip(painter, interior))
     {
         return;
     }
-    g_text_area = sx_rect_make(text_left, interior.y, avail, interior.height);
-    g_link_run_count = 0;
-    y = interior.y + SXGUI_TEXT_PAD - WEBVIEW_SCROLL->value;
-    for (index = 0; index < g_para_count; ++index)
+    top = interior.y;
+    bottom = interior.y + interior.height;
+    webview_paint_blocks(painter, top, bottom);
+    for (size_t i = 0; i < g_tree->fragment_count; ++i)
     {
-        int offset = 0;
-        int next;
-        int height;
-        int line_x;
+        const struct webengine_fragment *fragment = &g_tree->fragments[i];
+        int y = g_page_y + fragment->y;
 
-        if (y + g_paras[index].height < interior.y)
+        if (y < bottom && y + fragment->height > top)
         {
-            y += g_paras[index].height;
-            continue;
+            webview_paint_fragment(painter, fragment);
         }
-        if (y > interior.y + interior.height)
-        {
-            break;
-        }
-        if (g_paras[index].rule)
-        {
-            y += 4;
-            if (y >= interior.y - 8 && y <= interior.y + interior.height + 8)
-            {
-                sx_painter_hline(painter, text_left, y, avail, SXGUI_COLOR_SHADOW);
-                sx_painter_hline(painter, text_left, y + 1, avail, SXGUI_COLOR_LIGHT);
-            }
-            y += 10;
-            continue;
-        }
-        (void)sx_painter_set_font(painter, g_paras[index].face ? SX_FONT_UI_TITLE : SX_FONT_UI);
-        height = webview_line_height(painter, g_paras[index].heading);
-        line_x = text_left + (g_paras[index].indent ? 16 : 0);
-        if (index > 0)
-        {
-            y += g_paras[index].gap;
-        }
-        while (y <= interior.y + interior.height &&
-               (next = webview_next_line(painter, index, &offset, avail, line)) >= 0)
-        {
-            if (y + height >= interior.y && y <= interior.y + interior.height)
-            {
-                int width = sx_painter_text_width(painter, line) +
-                            webview_bold_extra(index, offset, next);
-                int draw_x = line_x;
-                uint32_t background = g_paras[index].hasBg ? g_paras[index].bg : g_page_bg;
-
-                if (g_paras[index].align == 1)
-                {
-                    draw_x = text_left + (avail - width) / 2;
-                }
-                else if (g_paras[index].align == 2)
-                {
-                    draw_x = text_left + avail - width;
-                }
-                if (draw_x < text_left)
-                {
-                    draw_x = text_left;
-                }
-                if (g_paras[index].hasBg)
-                {
-                    sx_painter_fill_rect(painter,
-                        sx_rect_make(text_left, y, avail, height), g_paras[index].bg);
-                }
-                if (g_paras[index].run_count == 0)
-                {
-                    sx_painter_draw_text(painter, draw_x, y, line, SXGUI_COLOR_TEXT);
-                }
-                else
-                {
-                    webview_paint_runs(painter, index, offset, next, draw_x, y, height, background);
-                }
-            }
-            y += height;
-            offset = next;
-        }
-        y += g_paras[index].heading ? 4 : 2;
     }
     (void)sx_painter_set_font(painter, SX_FONT_UI);
     sx_painter_pop_clip(painter);
@@ -2689,7 +2195,7 @@ static void webview_layout(struct sxngui_app *app)
 static void on_resize(struct sxngui_app *app)
 {
     webview_layout(app);
-    g_measured_width = -1;
+    g_layout_width = -1;
 }
 
 /* ---- interaction -------------------------------------------------------------- */
@@ -2865,7 +2371,7 @@ static void webview_hover(int x, int y)
 {
     char href[WEBVIEW_PATH_CAPACITY];
     char target[WEBVIEW_PATH_CAPACITY];
-    int over = sx_rect_contains_point(g_text_area, x, y) &&
+    int over = sx_rect_contains_point(g_page_area, x, y) &&
                webview_link_at(x, y, href, sizeof(href));
 
     /* The link as it would be opened, absolute, not as the page wrote it. */
@@ -2930,7 +2436,7 @@ static int on_pointer(struct sxngui_app *app, const struct savanxp_gui_pointer_e
     left = (event->buttons & SAVANXP_MOUSE_BUTTON_LEFT) != 0;
     if (left && !g_prev_left)
     {
-        g_press_in_text = sx_rect_contains_point(g_text_area, event->x, event->y);
+        g_press_in_text = sx_rect_contains_point(g_page_area, event->x, event->y);
     }
     if (!left && g_prev_left)
     {
@@ -2938,7 +2444,7 @@ static int on_pointer(struct sxngui_app *app, const struct savanxp_gui_pointer_e
 
         g_press_in_text = 0;
         g_prev_left = 0;
-        if (pressed && sx_rect_contains_point(g_text_area, event->x, event->y))
+        if (pressed && sx_rect_contains_point(g_page_area, event->x, event->y))
         {
             char target[WEBVIEW_PATH_CAPACITY];
 
@@ -3421,7 +2927,7 @@ int main(int argc, char **argv)
     webview_download_init(&g_app);
     if (webengine_init() == 0)
     {
-        g_ua = webengine_stylesheet("", (const uint8_t *)k_webview_ua, sizeof(k_webview_ua) - 1, false);
+        g_ua = webengine_stylesheet("", (const uint8_t *)webengine_ua_css, webengine_ua_css_length, false);
     }
 
     webview_favorites_load();
@@ -3486,15 +2992,9 @@ int main(int argc, char **argv)
         {
             css_stylesheet_destroy(g_ua);
         }
-        webengine_fini();
         webview_reset_document();
+        webengine_fini();
         free(g_raw.data);
-        free(g_cur.data);
-        free(g_paras);
-        free(g_links);
-        free(g_runs);
-        free(g_marks);
-        free(g_link_runs);
         return exit_code;
     }
 }
