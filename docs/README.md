@@ -422,6 +422,9 @@ all its phases have landed; the links to it move with it.
 - [`VIRGL_ROADMAP.md`](roadmaps/open/VIRGL_ROADMAP.md) — a hardware backend for SxGL:
   virgl in `virtio_gpu`, per-process 3D ioctls on `/dev/gpu0`, an in-tree virgl
   encoder, readback into the window surface, and the `--gl` QEMU machine.
+- [`VMSVGA_ROADMAP.md`](roadmaps/open/VMSVGA_ROADMAP.md) — a driver for the
+  VMware SVGA II adapter (VirtualBox VMSVGA, QEMU `-vga vmware`): research
+  first, then 2D, a VirtualBox harness as the gate, and SVGA3D for SxGL.
 - [`SXGL_VERSIONS_ROADMAP.md`](roadmaps/open/SXGL_VERSIONS_ROADMAP.md) — SxGL
   from a documented subset to OpenGL's own versions: extensions as increments,
   `GL_VERSION` raised only when a version is complete, `<GL/gl.h>` and a
