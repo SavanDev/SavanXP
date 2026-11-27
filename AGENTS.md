@@ -36,6 +36,12 @@ imports it, so Claude Code loads the rules when it works in the area.
   documented in `CHANGELOG.md` under `[Unreleased]`, in the matching subsection
   (`Added`/`Changed`/`Removed`/`Fixed`), as part of the same commit that
   introduces it.
+- `[Unreleased]` describes how the next release differs from the last
+  published one, not the history of commits. A change to something already
+  released gets its own entry. A change to something added since the last
+  release gets none: the entry that added it is edited to say what ships
+  (a feature added and then reworked is one `Added` entry, not an `Added`
+  plus a `Changed`; one added and then removed leaves no entry at all).
 - Do not add entries to a version section that is already closed (dated): that
   rewrites published history. If `[Unreleased]` does not exist at the top of
   the file, create it.
