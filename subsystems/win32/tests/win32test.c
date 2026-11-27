@@ -570,30 +570,44 @@ static int run_drop(const char *self) {
     return ok;
 }
 
+/* Whether the first argument is exactly this option. A prefix is not
+ * enough: --source and --solitaire share "--so". */
+static int option_is(int argc, char **argv, const char *option) {
+    if (argc < 2) {
+        return 0;
+    }
+    const char *a = argv[1];
+    while (*a != 0 && *a == *option) {
+        ++a;
+        ++option;
+    }
+    return *a == 0 && *option == 0;
+}
+
 int main(int argc, char **argv) {
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 's' && argv[1][3] == 'o') {
+    if (option_is(argc, argv, "--source")) {
         sxn_exit(drag_source() ? 0 : 1);
     }
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'd' && argv[1][3] == 'r') {
+    if (option_is(argc, argv, "--drop")) {
         sxn_exit(run_drop(argv[0]) ? 0 : 1);
     }
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'w') {
+    if (option_is(argc, argv, "--window")) {
         sxn_exit(run_window(&k_window) ? 0 : 1);
     }
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'd') {
+    if (option_is(argc, argv, "--dialog")) {
         sxn_exit(run_window(&k_dialog) ? 0 : 1);
     }
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'c' && argv[1][3] == 'o') {
+    if (option_is(argc, argv, "--controls")) {
         sxn_exit(run_window(&k_controls) ? 0 : 1);
     }
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'r') {
+    if (option_is(argc, argv, "--richedit")) {
         static char input[] = "input";
         sxn_exit(run_window_with(&k_richedit_input, input) ? 0 : 1);
     }
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'c') {
+    if (option_is(argc, argv, "--cards")) {
         sxn_exit(run(&k_cards) ? 0 : 1);
     }
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 's') {
+    if (option_is(argc, argv, "--solitaire")) {
         sxn_exit(run_solitaire() ? 0 : 1);
     }
     /* A fresh registry, so the counter starts where Windows XP's did. */

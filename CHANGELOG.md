@@ -425,6 +425,9 @@ changes not released yet; each released version has its own file in
 
 ### Fixed
 
+- **The `win32-solitaire` scenario runs Solitaire again.** `win32test.sxe`
+  matched its options by prefix, so `--solitaire` started the drag source of
+  `--source` instead; options now have to match whole.
 - **Device Manager no longer lists QEMU's virtio sound card as a failed `ac97`.**
   The AC'97 driver matched it by class code and took it over; it now also needs
   AC'97's two I/O BARs.
