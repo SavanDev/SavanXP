@@ -2442,6 +2442,16 @@ int unmap_view_address(process::Process& proc, uint64_t base_address) {
     return sx::unmap_view(proc, base_address);
 }
 
+/* flags are SAVANXP_SECTION_READ, _WRITE and _EXEC only: no default access,
+ * and no view flag, since sharing on fork was decided at the map. */
+int protect_view_address(process::Process& proc, uint64_t base_address, uint32_t flags) {
+    const uint32_t known = SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE | SAVANXP_SECTION_EXEC;
+    if (flags == 0 || (flags & ~known) != 0) {
+        return negative_error(SX_EINVAL);
+    }
+    return sx::protect_view(proc, base_address, object_access_for_section_flags(flags, object::access_none));
+}
+
 namespace {
 
 // The thread's own timer for sleep_via_timer, made on its first sleep and

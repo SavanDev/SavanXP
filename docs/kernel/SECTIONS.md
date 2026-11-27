@@ -9,7 +9,7 @@ meant to live in it.
 The kernel side is `object::SectionObject` (`include/kernel/object.hpp`),
 `vm::map_section_view` (`kernel/vmm.cpp`) and the syscall handlers in
 `kernel/process.cpp`. The userland surface is `section_create` / `map_view` /
-`unmap_view` (`subsystems/posix/sdk/v1/include/savanxp/libc.h`).
+`unmap_view` / `protect_view` (`subsystems/posix/sdk/v1/include/savanxp/libc.h`).
 
 ## What uses a section today
 
@@ -121,6 +121,42 @@ preferred base ([WIN32_SUBSYSTEM_ROADMAP.md](../roadmaps/open/WIN32_SUBSYSTEM_RO
 `nativetest` asserts the placement, each refusal, and a remap of the same
 section at the same base with a different access.
 
+## `protect_view`: a view's access after the map
+
+`protect_view(base, flags)` gives the whole view that starts at `base` a new
+access: `SAVANXP_SECTION_READ`, `_WRITE` and `_EXEC`, never writable and
+executable at once. It is `VirtualProtect` on a mapped view, and what a
+loader needs to write an image through a view and then run it from the same
+one.
+
+The ceiling is the grant the view was mapped with: the handle's granted
+access and the section's own, intersected at `map_view` time and kept in the
+view (`SectionView::max_access`). The view already holds a reference to its
+section, so with its ceiling it needs nothing else: the handle can be closed
+right after the map, and a loader's regions cost no descriptors. Before this
+call `winhost` kept every region's handle open to unmap and map the view
+again with the new access, so a Win32 process's regions were bounded by its
+64 descriptors as well as by the loader's own table.
+
+| Case | Result |
+| --- | --- |
+| `base` is not the start of a view | `EINVAL` |
+| No access, a bit other than read, write and execute, or writable and executable | `EINVAL` |
+| More than the view's grant (execution from a section that never granted it) | `EACCES` |
+
+The page entries are rewritten in place. Another core that holds the address
+space keeps its old translation until the shootdown's IPI reaches it, the
+same window an unmap followed by a map at the same base leaves; anonymous
+regions' `protect_regions` refuses outright while another core holds the
+space, and does not need that window. `fork` copies a view's ceiling with
+the view.
+
+Native programs reach it as `SXN_SYS_PROTECT_VIEW` (`sxn_protect_view`),
+POSIX ones as `protect_view`. `nativetest` lowers a view to read-only after
+closing its handle, raises it back, checks each refusal, and has a child
+die with a `#PF` writing to the lowered view; `sectiontest` runs code from a
+view it wrote and then protected.
+
 ## The grant is the intersection of three things
 
 `SAVANXP_SECTION_READ`, `_WRITE` and `_EXEC` are requested at two separate
@@ -175,7 +211,9 @@ grant and the W^X rule are enforced. Widening `mmap` would have made executable
 memory reachable from the path least able to explain why it is allowed.
 
 This is the whole of what was added. There is no `mprotect`, no file-backed
-mapping, and no dynamic loader yet.
+mapping, and no dynamic loader yet. (A view's access can later change through
+`protect_view`, above, within its grant and still never writable and
+executable; `mmap` is unchanged.)
 
 ## The budget
 

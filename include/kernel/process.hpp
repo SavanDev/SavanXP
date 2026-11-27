@@ -430,6 +430,7 @@ int open_section_handle(Process& proc, uint64_t fd, uint32_t flags);
 int64_t map_view_base_handle(Process& proc, uint64_t fd, uint64_t base, uint32_t flags);
 int64_t map_view_handle(Process& proc, uint64_t fd, uint32_t flags);
 int unmap_view_address(Process& proc, uint64_t base_address);
+int protect_view_address(Process& proc, uint64_t base_address, uint32_t flags);
 int wait_on_handle(Thread& self, uint64_t fd, int64_t timeout_ms);
 int wait_on_many_handles(Thread& self, uint64_t user_handles, size_t count, bool wait_all, int64_t timeout_ms);
 // Shared child-wait core behind both WAITPID paths (see kernel/process.cpp).

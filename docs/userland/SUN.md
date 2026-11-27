@@ -195,6 +195,7 @@ the Win32 API belongs to the planned Win32 subsystem, not to this table.
 | `CreateEvent`, `SetEvent`, `ResetEvent` | `sxn_event_*` | done |
 | `CreateFileMapping`, `MapViewOfFile` | `sxn_section_create`, `sxn_map_view` | done |
 | `MapViewOfFileEx` (a chosen base) | `sxn_map_view_at` | done (K2 of the Win32 roadmap; consumer: the Win32 loader) |
+| `VirtualProtect` on a mapped view | `sxn_protect_view` (the whole view, within its grant; slice 33) | done; consumer: `winhost`, which closes each region's handle after the map |
 | `CreateFileMapping` over a file (`SEC_IMAGE`'s shared text) | `sxn_section_open_range` (read-only, one section per file range system-wide) | done; consumer: the loader shared by SUN and POSIX ([SHARED_LIBRARIES.md](../kernel/SHARED_LIBRARIES.md#one-loader-over-sxn)) |
 | Implicitly linked DLLs (the import table, shared text) | `savanxp_program(... NATIVE LINK_PROFILE PIE DEPENDS lib...)`: `DT_NEEDED`, mapped before `main` by the loader POSIX uses too | done: `libmath` (consumer `sunlibtest`) and the toolkit, `libsxgui` and `libgfx2d` (`SAVANXP_SUN_TOOLKIT`: Task Manager, Log Viewer, Sound, Mouse, Display Properties, Disk Management, SxGL Diagnostic) ([SHARED_LIBRARIES.md](../kernel/SHARED_LIBRARIES.md#the-toolkit-split-into-neutral-and-host)) |
 | `ReadFile` / `WriteFile` on pipes and devices | `sxn_read`, `sxn_write`, `sxn_set_nonblocking` | done |

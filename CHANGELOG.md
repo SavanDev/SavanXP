@@ -8,6 +8,9 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **A section view's access can change after the map: `SXN_SYS_PROTECT_VIEW`, `sxn_protect_view` and POSIX's
+  `protect_view` (SDK 2.0)**, within the view's grant and never writable and executable, so the section's handle can be
+  closed once the view is mapped ([SECTIONS.md](docs/kernel/SECTIONS.md#protect_view-a-views-access-after-the-map)).
 - **SUN programs open shared libraries at run time: `sxn_library_open`, `sxn_library_symbol`, `sxn_library_close`,
   `sxn_library_address` (SDK 2.0)**, `<dlfcn.h>`'s counterpart over the same loader. A program that uses them exports
   its runtime: `DLOPEN`, `build-user.sh --export-dynamic`. [Run-time loading in SUN](docs/kernel/SHARED_LIBRARIES.md#run-time-loading-in-sun).

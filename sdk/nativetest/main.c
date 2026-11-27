@@ -384,6 +384,64 @@ static void test_view_at(void) {
     check(sxn_log("nativetest: view at done") == 0);
 }
 
+/* A view whose access changes after its section's handle is closed: the
+ * view holds the section and its grant (SXN_SYS_PROTECT_VIEW). */
+static void test_protect_view(void) {
+    const uint64_t base = 0x10000000ull;
+    long section = sxn_section_create(2u * 4096u, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    char* fault_argv[2];
+    int32_t status = 0;
+    long child;
+
+    check(section >= 0);
+    if (section < 0) {
+        return;
+    }
+    check(sxn_map_view_at(section, base, SXN_SECTION_READ | SXN_SECTION_WRITE) == (long)base);
+    check(sxn_close(section) == 0);
+    volatile uint32_t* words = (volatile uint32_t*)(uintptr_t)base;
+    words[0] = 0x9207EC7u;
+    words[1024] = 0x55u;
+    check(sxn_protect_view(base, SXN_SECTION_READ) == 0);
+    check(words[0] == 0x9207EC7u && words[1024] == 0x55u);
+    /* More than the grant, writable and executable, no access, other bits,
+     * and an address that is not a view's base. */
+    check(sxn_protect_view(base, SXN_SECTION_READ | SXN_SECTION_EXEC) == -SAVANXP_EACCES);
+    check(sxn_protect_view(base, SXN_SECTION_READ | SXN_SECTION_WRITE | SXN_SECTION_EXEC) == -SAVANXP_EINVAL);
+    check(sxn_protect_view(base, 0) == -SAVANXP_EINVAL);
+    check(sxn_protect_view(base, SXN_SECTION_READ | (1u << 8)) == -SAVANXP_EINVAL);
+    check(sxn_protect_view(base + 4096u, SXN_SECTION_READ) == -SAVANXP_EINVAL);
+    check(sxn_protect_view(base, SXN_SECTION_READ | SXN_SECTION_WRITE) == 0);
+    words[1024] = 0x66u;
+    check(words[1024] == 0x66u);
+    check(sxn_unmap_view(base) == 0);
+
+    /* A write to a view made read-only ends the process with a #PF. */
+    fault_argv[0] = "/bin/nativetest.sxe";
+    fault_argv[1] = "protect-fault";
+    child = sxn_spawn("/bin/nativetest.sxe", fault_argv, 2);
+    check(child > 0);
+    if (child > 0) {
+        check(sxn_waitpid(child, &status) == child && status == 128 + 14); /* a #PF */
+    }
+    check(sxn_log("nativetest: protect view done") == 0);
+}
+
+static void protect_fault_child(void) {
+    const uint64_t base = 0x10000000ull;
+    long section = sxn_section_create(4096u, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    if (section < 0 || sxn_map_view_at(section, base, SXN_SECTION_READ | SXN_SECTION_WRITE) != (long)base) {
+        sxn_exit(1);
+    }
+    (void)sxn_close(section);
+    *(volatile uint32_t*)(uintptr_t)base = 1u;
+    if (sxn_protect_view(base, SXN_SECTION_READ) != 0) {
+        sxn_exit(2);
+    }
+    *(volatile uint32_t*)(uintptr_t)base = 2u;
+    sxn_exit(3);
+}
+
 static int streq(const char* a, const char* b) {
     while (*a != '\0' && *a == *b) {
         a += 1;
@@ -4653,6 +4711,9 @@ int main(int argc, char** argv) {
     if (argc > 1 && streq(argv[1], "fault32")) {
         fault32_child();
     }
+    if (argc > 1 && streq(argv[1], "protect-fault")) {
+        protect_fault_child();
+    }
     if (argc > 1 && streq(argv[1], "syscall-trap")) {
         syscall_trap_child();
     }
@@ -5595,6 +5656,7 @@ int main(int argc, char** argv) {
     test_drag_calls();
     test_clipboard_changes();
     test_view_at();
+    test_protect_view();
     test_file_sections();
     test_system_time();
     test_pointer_speed();

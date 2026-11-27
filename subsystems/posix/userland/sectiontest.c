@@ -90,6 +90,69 @@ static long open_known_file(void) {
     }    return -1;
 }
 
+/* --- protect_view: one view whose access changes ------------------------
+ *
+ * What a loader does with one view instead of two: write the code through
+ * it, close the section's handle, and make the view read-execute. The view
+ * keeps its section and its grant, so the handle is not needed for that. */
+static int test_protect_view(void) {
+    long section = section_create(
+        4096, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE | SAVANXP_SECTION_EXEC);
+    if (!expect_success(section, "create section to protect")) {
+        return 0;
+    }
+    void* view = map_view((int)section, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    savanxp_close((int)section);
+    if (!expect_pointer(view, "map view to protect")) {
+        return 0;
+    }
+    memcpy(view, kExecProbe, sizeof(kExecProbe));
+    int ok = expect_success(protect_view(view, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC),
+                            "protect_view to read-execute");
+    if (ok) {
+        long (*probe)(void);
+        memcpy(&probe, &view, sizeof(probe));
+        if (probe() != kExecProbeResult) {
+            eprintf("sectiontest: the protected view ran and returned %ld\n", probe());
+            ok = 0;
+        }
+    }
+    /* Never writable and executable; no access, unknown bits and an address
+     * that is not a view's base are refused too. */
+    if (protect_view(view, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE | SAVANXP_SECTION_EXEC) != -SAVANXP_EINVAL ||
+        protect_view(view, 0) != -SAVANXP_EINVAL ||
+        protect_view(view, SAVANXP_SECTION_READ | SAVANXP_VIEW_PRIVATE) != -SAVANXP_EINVAL ||
+        protect_view((char*)view + 4096, SAVANXP_SECTION_READ) != -SAVANXP_EINVAL) {
+        eprintf("sectiontest: protect_view accepted an access it must refuse\n");
+        ok = 0;
+    }
+    /* Back to writable: the grant allows it. */
+    if (ok && expect_success(protect_view(view, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE),
+                             "protect_view back to read-write")) {
+        ((volatile unsigned char*)view)[0] = 0x90;
+    } else {
+        ok = 0;
+    }
+    unmap_view(view);
+
+    /* A section that never granted execution: the view cannot get it later. */
+    long plain = section_create(4096, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    if (!expect_success(plain, "create plain section to protect")) {
+        return 0;
+    }
+    view = map_view((int)plain, SAVANXP_SECTION_READ | SAVANXP_SECTION_WRITE);
+    savanxp_close((int)plain);
+    if (!expect_pointer(view, "map plain view to protect")) {
+        return 0;
+    }
+    if (protect_view(view, SAVANXP_SECTION_READ | SAVANXP_SECTION_EXEC) != -SAVANXP_EACCES) {
+        eprintf("sectiontest: protect_view gave execution the section never granted\n");
+        ok = 0;
+    }
+    unmap_view(view);
+    return ok;
+}
+
 /* --- secciones respaldadas por archivo -----------------------------------
  *
  * Un backing de solo lectura: se abre un descriptor, la seccion se llena con el
@@ -649,6 +712,9 @@ int main(void) {
     savanxp_close((int)code_section);
 
     if (!test_file_backed_section()) {
+        return 1;
+    }
+    if (!test_protect_view()) {
         return 1;
     }
 

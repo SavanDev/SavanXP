@@ -1336,6 +1336,7 @@ bool native_call_open_to_all_subsystems(uint64_t number) {
         case SXN_SYS_MAP_VIEW:
         case SXN_SYS_MAP_VIEW_AT:
         case SXN_SYS_UNMAP_VIEW:
+        case SXN_SYS_PROTECT_VIEW:
         case SXN_SYS_CLOSE:
         case SXN_SYS_DUPLICATE:
         case SXN_SYS_READ:
@@ -1717,6 +1718,10 @@ SavedContext* dispatch_native_syscall(SavedContext* context) {
             return context;
         case SXN_SYS_UNMAP_VIEW:
             context->rax = static_cast<uint64_t>(unmap_view_address(*caller, context->rdi));
+            return context;
+        case SXN_SYS_PROTECT_VIEW:
+            context->rax = static_cast<uint64_t>(protect_view_address(*caller, context->rdi,
+                static_cast<uint32_t>(context->rsi)));
             return context;
         // Graficos: mismos internals (display::*) y misma sesion exclusiva por
         // pid que los ioctls GPU de posix (kernel/gpu_device.cpp). La sesion se

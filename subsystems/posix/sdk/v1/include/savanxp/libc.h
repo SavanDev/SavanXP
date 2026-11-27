@@ -91,6 +91,9 @@ long section_open_range(int handle, unsigned long offset, unsigned long length, 
 void* map_view(int handle, unsigned long flags);
 void* map_view_at(int handle, unsigned long base, unsigned long flags);
 long unmap_view(void* base);
+/* A new access for the whole view at base, up to the one it was mapped with:
+ * SAVANXP_SECTION_READ, _WRITE, _EXEC; never writable and executable. */
+long protect_view(void* base, unsigned long flags);
 
 /* The heap's page source (docs/userland/NATIVE_HEAP.md): where malloc gets
  * the arenas it grows by, and gives them back. The runtime's definitions are

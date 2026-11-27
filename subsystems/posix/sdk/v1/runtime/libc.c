@@ -407,6 +407,10 @@ long unmap_view(void* base) {
     return syscall1(SAVANXP_SYS_UNMAP_VIEW, (unsigned long)base);
 }
 
+long protect_view(void* base, unsigned long flags) {
+    return syscall2(SAVANXP_SYS_PROTECT_VIEW, (unsigned long)base, flags);
+}
+
 long pipe_send_handle(int pipe_fd, int handle) {
     return syscall2(SAVANXP_SYS_PIPE_SEND_HANDLE, (unsigned long)pipe_fd, (unsigned long)handle);
 }

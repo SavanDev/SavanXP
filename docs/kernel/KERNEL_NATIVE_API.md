@@ -263,6 +263,26 @@ Two things stayed on purpose, and the guard says so:
   inverted; renaming 345 call sites to a name nobody else uses would be
   cosmetics, not isolation.
 
+## Slice 33: a view's access after the map
+
+What lets `winhost` close a region's section handle once the view is in
+place, so a Win32 process's regions stop costing descriptors (WP7 of
+[WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md)).
+
+- `SXN_SYS_PROTECT_VIEW` (`0x1053`): rdi = the base of a view, rsi =
+  `SXN_SECTION_READ`, `_WRITE`, `_EXEC`. The whole view gets that access,
+  up to the grant it was mapped with, which the view keeps
+  (`SectionView::max_access`). `-EINVAL` for an address that is not a
+  view's base, no access, other bits, or writable and executable;
+  `-EACCES` past the grant. `VirtualProtect` on a mapped view. POSIX has
+  the same call as `protect_view` (`SAVANXP_SYS_PROTECT_VIEW`, 79).
+  [SECTIONS.md](./SECTIONS.md#protect_view-a-views-access-after-the-map)
+  has the rules.
+
+`nativetest` lowers a view to read-only after closing its handle, raises it
+back, checks the refusals, and has a child die with a `#PF` writing to the
+lowered view.
+
 ## Slice 32: spawning in a directory
 
 What the SUN desktop needs to open a shortcut with `workdir=`

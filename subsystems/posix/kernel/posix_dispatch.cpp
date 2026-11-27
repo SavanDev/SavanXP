@@ -940,6 +940,9 @@ SavedContext* dispatch_posix_syscall(SavedContext* context) {
         case SAVANXP_SYS_UNMAP_VIEW:
             context->rax = static_cast<uint64_t>(unmap_view_address(caller, context->rdi));
             return context;
+        case SAVANXP_SYS_PROTECT_VIEW:
+            context->rax = static_cast<uint64_t>(protect_view_address(caller, context->rdi, static_cast<uint32_t>(context->rsi)));
+            return context;
         case SAVANXP_SYS_PIPE_SEND_HANDLE:
             context->rax = static_cast<uint64_t>(pipe_send_handle(caller, context->rdi, context->rsi));
             return context;

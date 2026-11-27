@@ -24,6 +24,8 @@ constexpr uint64_t kPageMask = 0x000ffffffffff000ULL;
 constexpr uint64_t kKernelPml4Start = 256;
 constexpr uint64_t kKernelPml4WindowBytes = 1ULL << 39;
 constexpr uint64_t kSectionAslrWindowBytes = 16ULL << 30;
+// The access bits a section view can carry.
+constexpr uint32_t kViewAccessBits = object::access_read | object::access_write | object::access_execute;
 
 uint64_t g_hhdm_offset = 0;
 uint64_t g_kernel_pml4_physical = 0;
@@ -1087,7 +1089,7 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
 
         uint64_t base_address = view.base_address;
         if (view.share_on_fork != 0) {
-            if (!map_section_view(clone, *view.section, view.access_mask, base_address, true)) {
+            if (!map_section_view(clone, *view.section, view.access_mask, view.max_access, base_address, true)) {
                 destroy_address_space(clone);
                 return false;
             }
@@ -1103,7 +1105,7 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
         // A new section has no references; the view's is the clone's only one.
         // Releasing it here as well freed the child's private pages while the
         // child still mapped them (docs/kernel/KERNEL_SECURITY.md, F1).
-        if (!map_section_view(clone, *cloned_section, view.access_mask, base_address, false)) {
+        if (!map_section_view(clone, *cloned_section, view.access_mask, view.max_access, base_address, false)) {
             object::Header* header = &cloned_section->header;
             object::release(header);
             destroy_address_space(clone);
@@ -1115,13 +1117,14 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination) {
     return true;
 }
 
-bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t access_mask, uint64_t& base_address, bool share_on_fork) {
+bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t access_mask, uint32_t max_access,
+                      uint64_t& base_address, bool share_on_fork) {
     g_view_failure = 1;
     if (!g_ready || !section.in_use || section.page_count == 0 || section.physical_pages == nullptr) {
         return false;
     }
 
-    if ((access_mask & section.access_mask) != access_mask) {
+    if ((access_mask & section.access_mask) != access_mask || (access_mask & max_access) != access_mask) {
         g_view_failure = 2;
         return false;
     }
@@ -1192,12 +1195,53 @@ bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t a
     view->section = &section;
     view->access_mask = access_mask;
     view->share_on_fork = share_on_fork ? 1u : 0u;
-    view->reserved0 = 0;
+    view->max_access = static_cast<uint8_t>(max_access & section.access_mask & kViewAccessBits);
     view->reserved1 = 0;
     if (base_address + view_size > space.next_section_base) {
         space.next_section_base = base_address + view_size;
     }
     return true;
+}
+
+/* Rewrites the access bits of every page of the view in place. Another core
+ * that holds the space keeps its old translation until finish_shootdown's
+ * IPI reaches it, the same window an unmap followed by a map at the same base
+ * leaves, which is what a loader did before this call existed. */
+ViewProtect protect_section_view(VmSpace& space, uint64_t base_address, uint32_t access_mask) {
+    VmSpace::SectionView* view = find_section_view(space, base_address);
+    if (!g_ready || view == nullptr) {
+        return ViewProtect::not_a_view;
+    }
+    if (access_mask == 0 || (access_mask & ~kViewAccessBits) != 0 ||
+        ((access_mask & object::access_execute) != 0 && (access_mask & object::access_write) != 0)) {
+        return ViewProtect::invalid;
+    }
+    if ((access_mask & view->max_access) != access_mask) {
+        return ViewProtect::denied;
+    }
+
+    uint64_t page_flags = kPageUser;
+    if ((access_mask & object::access_write) != 0) {
+        page_flags |= kPageWrite;
+    }
+    if ((access_mask & object::access_execute) == 0) {
+        page_flags |= kPageNoExecute;
+    }
+    const uint64_t page_count = view->size_bytes / memory::kPageSize;
+    for (uint64_t page_index = 0; page_index < page_count; ++page_index) {
+        const uint64_t page = view->base_address + (page_index * memory::kPageSize);
+        uint64_t* table = leaf_table(space, page);
+        if (table == nullptr) {
+            continue; /* every page of a view is mapped, so its table exists */
+        }
+        uint64_t& entry = table[pt_index(page)];
+        entry = (entry & kPageMask) | page_flags | kPagePresent;
+        note_user_unmap(space, page);
+    }
+    uint32_t cpus = 0;
+    (void)finish_shootdown(cpus);
+    view->access_mask = access_mask;
+    return ViewProtect::ok;
 }
 
 FixedRange classify_fixed_range(const VmSpace& space, uint64_t base_address, uint64_t size) {

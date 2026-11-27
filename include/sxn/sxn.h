@@ -106,6 +106,11 @@ static inline long sxn_unmap_view(uint64_t base_address) {
     return sxn_trap(SXN_SYS_UNMAP_VIEW, (unsigned long)base_address, 0, 0);
 }
 
+/* A new access for the whole view at base_address (SXN_SYS_PROTECT_VIEW). */
+static inline long sxn_protect_view(uint64_t base_address, unsigned flags) {
+    return sxn_trap(SXN_SYS_PROTECT_VIEW, (unsigned long)base_address, (unsigned long)flags, 0);
+}
+
 static inline long sxn_gfx_info(struct sxn_gfx_info* out) {
     return sxn_trap(SXN_SYS_GFX_INFO, (unsigned long)out, 0, 0);
 }

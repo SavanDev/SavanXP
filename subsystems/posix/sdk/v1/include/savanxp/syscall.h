@@ -139,6 +139,10 @@ enum savanxp_syscall_number {
      * there are (more than count when they did not fit), -EINVAL for a size
      * below V1 or a bad buffer. Any process may read it. */
     SAVANXP_SYS_DEVICE_SNAPSHOT = 78,
+    /* PROTECT_VIEW(base, SAVANXP_SECTION_*): a new access for the whole view
+     * at base, up to the one it was mapped with; as SUN's
+     * SXN_SYS_PROTECT_VIEW. 0, -EINVAL, -EACCES. */
+    SAVANXP_SYS_PROTECT_VIEW = 79,
 };
 enum savanxp_identity_field {
     SAVANXP_IDENTITY_UID = 0,

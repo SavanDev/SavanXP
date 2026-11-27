@@ -498,6 +498,13 @@ enum sxn_syscall_number {
      * current directory), -EINVAL (a relative path or "/"), -EACCES,
      * -EROFS. RemoveDirectory. */
     SXN_SYS_DELETE_DIRECTORY = 0x1052,
+    /* rdi = base of a view, rsi = SXN_SECTION_READ, _WRITE and _EXEC. The
+     * whole view gets that access, up to the grant it was mapped with, so
+     * the section's handle can be closed after the map. 0, -EINVAL (not a
+     * view's base, no access, other bits, or writable and executable),
+     * -EACCES (more than the grant). Same call as the POSIX protect_view.
+     * VirtualProtect on a mapped view. */
+    SXN_SYS_PROTECT_VIEW = 0x1053,
 };
 
 /* Where the date came from (sxn_clock_status.source). */

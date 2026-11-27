@@ -116,6 +116,10 @@ object::SectionObject* create_section(uint64_t size_bytes, uint32_t access_mask)
 object::SectionObject* open_file_section(vfs::Vnode& node, uint64_t offset, uint64_t length, uint32_t access_mask);
 int64_t map_view(process::Process& proc, object::SectionObject& section, uint32_t requested_access, uint32_t granted_access, uint64_t base, bool share_on_fork);
 int unmap_view(process::Process& proc, uint64_t base_address);
+/* A new access for the view at base_address, up to what it was mapped with.
+ * 0, -EINVAL (not a view's base, no access, unknown bits, or writable and
+ * executable), -EACCES (more than the view's grant). */
+int protect_view(process::Process& proc, uint64_t base_address, uint32_t requested_access);
 
 // Files: the one open/read/write/seek/close path every subsystem goes through
 // (kernel/sx_file.cpp). Results carry a status and a length instead of

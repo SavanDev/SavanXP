@@ -324,7 +324,8 @@ int64_t map_view(process::Process& proc, object::SectionObject& section, uint32_
         return negative_error(SX_EINVAL);
     }
     uint64_t base_address = base;
-    if (!vm::map_section_view(proc.address_space, section, requested_access, base_address, share_on_fork)) {
+    if (!vm::map_section_view(proc.address_space, section, requested_access, granted_access & section.access_mask,
+                              base_address, share_on_fork)) {
         /* At a chosen base, say why: a range outside the user half is the
          * caller's mistake (EINVAL), and an occupied one is EEXIST, as
          * Linux's MAP_FIXED_NOREPLACE answers. A loader that falls back to
@@ -346,6 +347,19 @@ int unmap_view(process::Process& proc, uint64_t base_address) {
         return negative_error(SX_EINVAL);
     }
     return 0;
+}
+
+int protect_view(process::Process& proc, uint64_t base_address, uint32_t requested_access) {
+    if (base_address == 0) {
+        return negative_error(SX_EINVAL);
+    }
+    switch (vm::protect_section_view(proc.address_space, base_address, requested_access)) {
+        case vm::ViewProtect::ok: return 0;
+        case vm::ViewProtect::denied: return negative_error(SX_EACCES);
+        case vm::ViewProtect::not_a_view:
+        case vm::ViewProtect::invalid: break;
+    }
+    return negative_error(SX_EINVAL);
 }
 
 } // namespace sx

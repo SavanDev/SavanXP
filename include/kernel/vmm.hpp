@@ -99,7 +99,10 @@ struct VmSpace {
         object::SectionObject* section;
         uint32_t access_mask;
         uint8_t share_on_fork;
-        uint8_t reserved0;
+        /* What protect_section_view may raise the view to: the grant it was
+         * mapped with, the handle's and the section's together. The view
+         * outlives the handle, so it carries its own ceiling. */
+        uint8_t max_access;
         uint16_t reserved1;
     };
 
@@ -135,8 +138,16 @@ bool clone_address_space(const VmSpace& source, VmSpace& destination);
 // administrador de tareas muestra como uso de memoria de un proceso: paginas
 // presentes con el bit de usuario, contadas recorriendo las tablas.
 uint64_t resident_user_bytes(const VmSpace& space);
-bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t access_mask, uint64_t& base_address, bool share_on_fork);
+/* max_access is the most the view may later be given (see SectionView); it
+ * holds access_mask. */
+bool map_section_view(VmSpace& space, object::SectionObject& section, uint32_t access_mask, uint32_t max_access,
+                      uint64_t& base_address, bool share_on_fork);
 bool unmap_section_view(VmSpace& space, uint64_t base_address);
+
+/* Gives the whole view that starts at base_address a new access, within its
+ * max_access and never writable and executable at once. */
+enum class ViewProtect : uint8_t { ok, not_a_view, denied, invalid };
+ViewProtect protect_section_view(VmSpace& space, uint64_t base_address, uint32_t access_mask);
 
 /* Why a view at a caller-chosen base cannot go there: the range is outside
  * the user half below the stack guard (or empty, or wraps), or something is
