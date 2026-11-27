@@ -1,10 +1,11 @@
 # SXE resources of the SDK's SUN window example. See docs/userland/SXE_FORMAT.md.
 #
-# With a category it is listed in the menu like any app. subsystem=native is
-# informational: the loader goes by EI_OSABI, which --native stamps.
+# With a category it is listed in the menu like any app, under Diagnostics
+# beside the other test programs. subsystem=native is informational: the
+# loader goes by EI_OSABI, which --native stamps.
 name=SUN GUI demo
 description=SXGUI window from a SUN program built with the SDK
 version=system
 vendor=SavanXP
 subsystem=native
-category=Accessories
+category=Diagnostics
