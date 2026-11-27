@@ -1240,6 +1240,18 @@ SCENARIOS: dict[str, Scenario] = {
         no_ps2=True,
         usb_pointer="tablet",
     ),
+    "win32-richedit": _qemu_scenario(
+        "win32richedit",
+        "WIN32 RICHEDIT PASS",
+        "WIN32 RICHEDIT FAIL",
+        "SSW's RichEdit control under windowd: typing, the keyboard, the pointer and the clipboard against Windows XP, pixels against the golden images",
+        300.0,
+        ready="WIN32 RICHEDIT READY",
+        qmp_callback="tools/win32_richedit_smoke.py",
+        usb=True,
+        no_ps2=True,
+        usb_pointer="tablet",
+    ),
     "win32-drop": _qemu_scenario(
         "win32drop",
         "WIN32 DROP PASS",

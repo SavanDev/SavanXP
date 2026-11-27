@@ -1,0 +1,975 @@
+richedit.exe: msftedit.dll loaded
+class: RICHEDIT50W style 0x00004088 class extra 0 window extra 4 cursor none background 0x00000006 menu no
+  other class : [RICHEDIT50A] not registered
+  other class : [RichEdit20W] not registered
+  other class : [RichEdit20A] not registered
+  other class : [RichEdit] not registered
+create:  made
+styles : 0x50008144 ex 0x00000000 client 300x150
+dlgcode : 0x00000087
+eventmask : 0x00000000 options 0x00008140 limit 32767 textmode 0x0000002a editstyle 0x00000000 langoptions 0x00000082 wordwrap 0x00000000 urldetect 0
+font : no zoom 1 0/0 canpaste 0
+  rect : default 1,0,299,150 no bar
+  text : 0/0 []
+  sel : 0-0 getsel 0x00000000 0-0
+  modify : 0 canundo 0 canredo 0
+  lengths:  default=0 crlf=0 precise chars=0 crlf precise chars=0 close=0 bytes 1200=0 precise bytes 1252=0 crlf precise bytes acp=0 chars and bytes=-2147024809
+  lines : 1 first visible 0
+   line : 0 index 0 length 0 getline 1 [\r] fromchar 0
+   line : 1 index -1 length 0 getline 0 [] fromchar 0 -1 index 0 -1 length 0 linefromchar -1 0
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+seteventmask : returns 0x00000000 now 0x00080007
+setfont:  font no
+  command : rich EN_UPDATE
+settext : []
+  returns : 1
+  text : 0/0 []
+  sel : 0-0 getsel 0x00000000 0-0
+settext : [Hello world]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 11/11 [Hello world]
+  sel : 0-0 getsel 0x00000000 0-0
+  lengths:  default=11 crlf=22 precise chars=11 crlf precise chars=11 close=22 bytes 1200=22 precise bytes 1252=11 crlf precise bytes acp=11 chars and bytes=-2147024809
+  modify : 0 canundo 0 canredo 0
+settext : [one\r\ntwo\nthree\rfour]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 21/21 [one\r\ntwo\r\nthree\r\nfour]
+  sel : 0-0 getsel 0x00000000 0-0
+  lengths:  default=18 crlf=42 precise chars=18 crlf precise chars=21 close=36 bytes 1200=36 precise bytes 1252=18 crlf precise bytes acp=21 chars and bytes=-2147024809
+  lines : 4 first visible 0
+   line : 0 index 0 length 3 getline 4 [one\r] fromchar 0
+   line : 1 index 4 length 3 getline 4 [two\r] fromchar 1
+   line : 2 index 8 length 5 getline 6 [three\r] fromchar 2
+   line : 3 index 14 length 4 getline 5 [four\r] fromchar 3
+   line : 4 index -1 length 3 getline 0 [] fromchar 0 -1 index 0 -1 length 3 linefromchar -1 0
+  gettextex : default 18 [one\rtwo\rthree\rfour] terminated
+  gettextex : crlf 21 [one\r\ntwo\r\nthree\r\nfour] terminated
+  gettextex : default in 10 bytes 4 [one\r] terminated
+  gettextex : crlf in 12 bytes 5 [one\r\n] terminated
+  range : 2,9 7 [e\rtwo\rt]
+  range : 0,-1 18 [one\rtwo\rthree\rfour]
+  range : 5,100 13 [wo\rthree\rfour]
+  range : 9,2 0 untouched
+settext : [end\r\n]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 5/5 [end\r\n]
+  sel : 0-0 getsel 0x00000000 0-0
+  lengths:  default=4 crlf=10 precise chars=4 crlf precise chars=5 close=8 bytes 1200=8 precise bytes 1252=4 crlf precise bytes acp=5 chars and bytes=-2147024809
+  lines : 2 first visible 0
+   line : 0 index 0 length 3 getline 4 [end\r] fromchar 0
+   line : 1 index 4 length 0 getline 1 [\r] fromchar 1
+   line : 2 index -1 length 3 getline 0 [] fromchar 0 -1 index 0 -1 length 3 linefromchar -1 0
+settext : [a\r\r\nb\n\nc]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 8/8 [a b\r\n\r\nc]
+  sel : 0-0 getsel 0x00000000 0-0
+  lengths:  default=6 crlf=16 precise chars=6 crlf precise chars=8 close=12 bytes 1200=12 precise bytes 1252=6 crlf precise bytes acp=8 chars and bytes=-2147024809
+  lines : 3 first visible 0
+   line : 0 index 0 length 3 getline 4 [a b\r] fromchar 0
+   line : 1 index 4 length 0 getline 1 [\r] fromchar 1
+   line : 2 index 5 length 1 getline 2 [c\r] fromchar 2
+   line : 3 index -1 length 3 getline 0 [] fromchar 0 -1 index 0 -1 length 3 linefromchar -1 0
+settext : [tab\u0009here \u00e9t\u00e9 \u20ac]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 14/14 [tab\u0009here \u00e9t\u00e9 \u20ac]
+  sel : 0-0 getsel 0x00000000 0-0
+  lengths:  default=14 crlf=28 precise chars=14 crlf precise chars=14 close=28 bytes 1200=28 precise bytes 1252=14 crlf precise bytes acp=14 chars and bytes=-2147024809
+setmodify TRUE: 
+  modify : -1 canundo 0 canredo 0
+settext : [after modify]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 12/12 [after modify]
+  sel : 0-0 getsel 0x00000000 0-0
+  modify : 0 canundo 0 canredo 0
+  command : rich EN_UPDATE
+settext : [The quick brown fox jumps over the lazy dog]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 43/43 [The quick brown fox jumps over the lazy dog]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 4,9
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 4-9 type 0x00000005
+  returns : 9
+  sel : 4-9 getsel 0x00090004 4-9
+  seltext : 5 [quick] type 0x00000005
+exsetsel : 9,4
+  command : rich EN_UPDATE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 4-9 type 0x00000005
+  returns : 9
+  sel : 4-9 getsel 0x00090004 4-9
+  seltext : 5 [quick] type 0x00000005
+exsetsel : 0,-1
+  command : rich EN_UPDATE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-44 type 0x00000005
+  returns : 44
+  sel : 0-44 getsel 0x002c0000 0-44
+  seltext : 43 [The quick brown fox jumps over the lazy dog] type 0x00000005
+exsetsel : -1,0
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 43-43 type 0x00000000
+  returns : 43
+  sel : 43-43 getsel 0x002b002b 43-43
+exsetsel : -1,-1
+  returns : 43
+  sel : 43-43 getsel 0x002b002b 43-43
+exsetsel : 10,1000
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 10-44 type 0x00000005
+  returns : 44
+  sel : 10-44 getsel 0x002c000a 10-44
+exsetsel : 1000,1000
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 43-43 type 0x00000000
+  returns : 43
+  sel : 43-43 getsel 0x002b002b 43-43
+exsetsel : -5,3
+  returns : 43
+  sel : 43-43 getsel 0x002b002b 43-43
+exsetsel : 3,-5
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 3-44 type 0x00000005
+  returns : 44
+  sel : 3-44 getsel 0x002c0003 3-44
+exsetsel : 20,20
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 20-20 type 0x00000000
+  returns : 20
+  sel : 20-20 getsel 0x00140014 20-20
+  seltext : 0 [] type 0x00000000
+setsel : 4,9
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 4-9 type 0x00000005
+  returns : 9
+  sel : 4-9 getsel 0x00090004 4-9
+setsel : 9,4
+  command : rich EN_UPDATE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 4-9 type 0x00000005
+  returns : 9
+  sel : 4-9 getsel 0x00090004 4-9
+setsel : 0,-1
+  command : rich EN_UPDATE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-44 type 0x00000005
+  returns : 44
+  sel : 0-44 getsel 0x002c0000 0-44
+setsel : -1,0
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 43-43 type 0x00000000
+  returns : 43
+  sel : 43-43 getsel 0x002b002b 43-43
+setsel : -1,-1
+  returns : 43
+  sel : 43-43 getsel 0x002b002b 43-43
+setsel : 5,2
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 2-5 type 0x00000005
+  returns : 5
+  sel : 2-5 getsel 0x00050002 2-5
+  command : rich EN_UPDATE
+hideselection TRUE : returns 0
+  sel : 2-5 getsel 0x00050002 2-5
+  command : rich EN_UPDATE
+hideselection FALSE : returns 0
+settext : [The quick brown fox]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 19/19 [The quick brown fox]
+  sel : 0-0 getsel 0x00000000 0-0
+  modify : 0 canundo 0 canredo 0
+exsetsel : 4,9
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 4-9 type 0x00000005
+  returns : 9
+  sel : 4-9 getsel 0x00090004 4-9
+replacesel : [slow] undoable
+  notify : rich EN_SELCHANGE 8-8 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 4
+  text : 18/18 [The slow brown fox]
+  sel : 8-8 getsel 0x00080008 8-8
+  modify : -1 canundo 1 canredo 0
+undo the replacement: 
+  notify : rich EN_SELCHANGE 4-9 type 0x00000005
+  command : rich EN_CHANGE
+  undo returns : 1
+  text : 19/19 [The quick brown fox] (nothing to undo)
+  notify : rich EN_SELCHANGE 8-8 type 0x00000000
+  command : rich EN_CHANGE
+  redo returns : 1
+  text : 18/18 [The slow brown fox]
+  (nothing to redo): 
+exsetsel : 4,9
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 4-9 type 0x00000005
+  returns : 9
+  sel : 4-9 getsel 0x00090004 4-9
+replacesel : [one\r\ntwo] undoable
+  notify : rich EN_SELCHANGE 11-11 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 7
+  text : 21/21 [The one\r\ntwobrown fox]
+  sel : 11-11 getsel 0x000b000b 11-11
+  modify : -1 canundo 1 canredo 0
+  lines : 2 first visible 0
+   line : 0 index 0 length 7 getline 8 [The one\r] fromchar 0
+   line : 1 index 8 length 12 getline 13 [twobrown fox\r] fromchar 1
+   line : 2 index -1 length 12 getline 0 [] fromchar 1 -1 index 8 -1 length 12 linefromchar -1 1
+exsetsel : 0,3
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-3 type 0x00000005
+  returns : 3
+  sel : 0-3 getsel 0x00030000 0-3
+replacesel : [] undoable
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 0
+  text : 18/18 [ one\r\ntwobrown fox]
+  sel : 0-0 getsel 0x00000000 0-0
+  modify : -1 canundo 1 canredo 0
+exsetsel : 3,3
+  notify : rich EN_SELCHANGE 3-3 type 0x00000000
+  returns : 3
+  sel : 3-3 getsel 0x00030003 3-3
+replacesel : [ABC] not undoable
+  notify : rich EN_SELCHANGE 6-6 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 3
+  text : 21/21 [ onABCe\r\ntwobrown fox]
+  sel : 6-6 getsel 0x00060006 6-6
+  modify : -1 canundo 0 canredo 0
+undo after one that cannot be undone:  (nothing to undo)
+  (nothing to redo): 
+emptyundobuffer : returns 0
+  modify : -1 canundo 0 canredo 0
+stopgrouptyping : returns 0
+  command : rich EN_UPDATE
+settext : []
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 0/0 []
+  sel : 0-0 getsel 0x00000000 0-0
+type : [a]
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  command : rich EN_CHANGE[b]
+  notify : rich EN_SELCHANGE 2-2 type 0x00000000
+  command : rich EN_CHANGE[ ]
+  notify : rich EN_SELCHANGE 3-3 type 0x00000000
+  command : rich EN_CHANGE[c]
+  notify : rich EN_SELCHANGE 4-4 type 0x00000000
+  command : rich EN_CHANGE[d]
+  notify : rich EN_SELCHANGE 5-5 type 0x00000000
+  command : rich EN_CHANGE
+  text : 5/5 [ab cd]
+  sel : 5-5 getsel 0x00050005 5-5
+  modify : -1 canundo 1 canredo 0
+undo the typing: 
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  undo returns : 1
+  text : 0/0 [] (nothing to undo)
+  notify : rich EN_SELCHANGE 5-5 type 0x00000000
+  command : rich EN_CHANGE
+  redo returns : 1
+  text : 5/5 [ab cd]
+  (nothing to redo): 
+settext : []
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 0/0 []
+  sel : 0-0 getsel 0x00000000 0-0
+type : [a]
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  command : rich EN_CHANGE[b]
+  notify : rich EN_SELCHANGE 2-2 type 0x00000000
+  command : rich EN_CHANGE
+  text : 2/2 [ab]
+  sel : 2-2 getsel 0x00020002 2-2
+  modify : -1 canundo 1 canredo 0
+stopgrouptyping: 
+type : [c]
+  notify : rich EN_SELCHANGE 3-3 type 0x00000000
+  command : rich EN_CHANGE[d]
+  notify : rich EN_SELCHANGE 4-4 type 0x00000000
+  command : rich EN_CHANGE
+  text : 4/4 [abcd]
+  sel : 4-4 getsel 0x00040004 4-4
+  modify : -1 canundo 1 canredo 0
+undo with a stop between: 
+  notify : rich EN_SELCHANGE 2-2 type 0x00000000
+  command : rich EN_CHANGE
+  undo returns : 1
+  text : 2/2 [ab]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  undo returns : 1
+  text : 0/0 [] (nothing to undo)
+  notify : rich EN_SELCHANGE 2-2 type 0x00000000
+  command : rich EN_CHANGE
+  redo returns : 1
+  text : 2/2 [ab]
+  notify : rich EN_SELCHANGE 4-4 type 0x00000000
+  command : rich EN_CHANGE
+  redo returns : 1
+  text : 4/4 [abcd]
+  (nothing to redo): 
+settext : [xyz]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 3/3 [xyz]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 1,2
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 1-2 type 0x00000001
+  returns : 2
+  sel : 1-2 getsel 0x00020001 1-2
+type : [Q]
+  notify : rich EN_SELCHANGE 2-2 type 0x00000000
+  command : rich EN_CHANGE
+  text : 3/3 [xQz]
+  sel : 2-2 getsel 0x00020002 2-2
+  modify : -1 canundo 1 canredo 0
+type : [\u0008][\u0008]
+  text : 3/3 [xQz]
+  sel : 2-2 getsel 0x00020002 2-2
+  modify : -1 canundo 1 canredo 0
+exsetsel : 3,3
+  notify : rich EN_SELCHANGE 3-3 type 0x00000000
+  returns : 3
+  sel : 3-3 getsel 0x00030003 3-3
+type : [\r]
+  text : 3/3 [xQz]
+  sel : 3-3 getsel 0x00030003 3-3
+  modify : -1 canundo 1 canredo 0
+type : [\n]
+  text : 3/3 [xQz]
+  sel : 3-3 getsel 0x00030003 3-3
+  modify : -1 canundo 1 canredo 0
+type : [\u0009]
+  notify : rich EN_SELCHANGE 4-4 type 0x00000000
+  command : rich EN_CHANGE
+  text : 4/4 [xQz\u0009]
+  sel : 4-4 getsel 0x00040004 4-4
+  modify : -1 canundo 1 canredo 0
+  lines : 1 first visible 0
+   line : 0 index 0 length 4 getline 5 [xQz\u0009\r] fromchar 0
+   line : 1 index -1 length 4 getline 0 [] fromchar 0 -1 index 0 -1 length 4 linefromchar -1 0
+undo enter and backspace: 
+  notify : rich EN_SELCHANGE 3-3 type 0x00000000
+  command : rich EN_CHANGE
+  undo returns : 1
+  text : 3/3 [xQz]
+  notify : rich EN_SELCHANGE 1-2 type 0x00000001
+  command : rich EN_CHANGE
+  undo returns : 1
+  text : 3/3 [xyz] (nothing to undo)
+  notify : rich EN_SELCHANGE 2-2 type 0x00000000
+  command : rich EN_CHANGE
+  redo returns : 1
+  text : 3/3 [xQz]
+  notify : rich EN_SELCHANGE 4-4 type 0x00000000
+  command : rich EN_CHANGE
+  redo returns : 1
+  text : 4/4 [xQz\u0009]
+  (nothing to redo): 
+exsetsel : 1,1
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  returns : 1
+  sel : 1-1 getsel 0x00010001 1-1
+type : [\u007f]
+  text : 4/4 [xQz\u0009]
+  sel : 1-1 getsel 0x00010001 1-1
+  modify : -1 canundo 1 canredo 0
+undolimit 0 : returns 0
+settext : [abc]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 3/3 [abc]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 3,3
+  notify : rich EN_SELCHANGE 3-3 type 0x00000000
+  returns : 3
+  sel : 3-3 getsel 0x00030003 3-3
+type : [d]
+  notify : rich EN_SELCHANGE 4-4 type 0x00000000
+  command : rich EN_CHANGE
+  text : 4/4 [abcd]
+  sel : 4-4 getsel 0x00040004 4-4
+  modify : -1 canundo 0 canredo 0
+replacesel : [e] undoable
+  notify : rich EN_SELCHANGE 5-5 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 5/5 [abcde]
+  sel : 5-5 getsel 0x00050005 5-5
+  modify : -1 canundo 0 canredo 0
+undolimit 100 : returns 100
+  command : rich EN_UPDATE
+exlimittext 10 : returns 0 limit 10
+settext : [0123456789abcdef]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 16/16 [0123456789abcdef]
+  sel : 0-0 getsel 0x00000000 0-0
+  limit : 16
+settext : [01234567]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 8/8 [01234567]
+  sel : 0-0 getsel 0x00000000 0-0
+  limit : 16
+exsetsel : 8,8
+  notify : rich EN_SELCHANGE 8-8 type 0x00000000
+  returns : 8
+  sel : 8-8 getsel 0x00080008 8-8
+replacesel : [ABCD] undoable
+  notify : rich EN_SELCHANGE 12-12 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 4
+  text : 12/12 [01234567ABCD]
+  sel : 12-12 getsel 0x000c000c 12-12
+  modify : -1 canundo 1 canredo 0
+type : [x]
+  notify : rich EN_SELCHANGE 13-13 type 0x00000000
+  command : rich EN_CHANGE
+  text : 13/13 [01234567ABCDx]
+  sel : 13-13 getsel 0x000d000d 13-13
+  modify : -1 canundo 1 canredo 0
+exsetsel : 0,2
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-2 type 0x00000005
+  returns : 2
+  sel : 0-2 getsel 0x00020000 0-2
+type : [y]
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  command : rich EN_CHANGE[z]
+  notify : rich EN_SELCHANGE 2-2 type 0x00000000
+  command : rich EN_CHANGE
+  text : 13/13 [yz234567ABCDx]
+  sel : 2-2 getsel 0x00020002 2-2
+  modify : -1 canundo 1 canredo 0
+exlimittext 10 : returns 0
+settext : [0123456]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 7/7 [0123456]
+  sel : 0-0 getsel 0x00000000 0-0
+  limit : 10
+exsetsel : 7,7
+  notify : rich EN_SELCHANGE 7-7 type 0x00000000
+  returns : 7
+  sel : 7-7 getsel 0x00070007 7-7
+replacesel : [ABCDE] undoable
+  notify : rich EN_SELCHANGE 12-12 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 5
+  text : 12/12 [0123456ABCDE]
+  sel : 12-12 getsel 0x000c000c 12-12
+  modify : -1 canundo 1 canredo 0
+exsetsel : 9,9
+  notify : rich EN_SELCHANGE 9-9 type 0x00000000
+  returns : 9
+  sel : 9-9 getsel 0x00090009 9-9
+type : [x]
+  command : rich EN_MAXTEXT[y]
+  command : rich EN_MAXTEXT
+  text : 12/12 [0123456ABCDE]
+  sel : 9-9 getsel 0x00090009 9-9
+  modify : -1 canundo 1 canredo 0
+exsetsel : 0,3
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-3 type 0x00000005
+  returns : 3
+  sel : 0-3 getsel 0x00030000 0-3
+replacesel : [PQRSTU] undoable
+  notify : rich EN_SELCHANGE 6-6 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 6
+  text : 15/15 [PQRSTU3456ABCDE]
+  sel : 6-6 getsel 0x00060006 6-6
+  modify : -1 canundo 1 canredo 0
+exsetsel : 0,0
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  returns : 0
+  sel : 0-0 getsel 0x00000000 0-0
+  command : rich EN_MAXTEXT
+paste : returns 0
+  text : 15/15 [PQRSTU3456ABCDE]
+  sel : 0-0 getsel 0x00000000 0-0
+exlimittext 0 : returns 0 limit 65536
+limittext 5 : returns 0 limit 5
+limittext 0 : returns 0 limit 65536
+exlimittext 100000 : returns 0 limit 100000
+  command : rich EN_UPDATE
+settext : [WordPad lays a paragraph out in lines as wide as the window allows, breaking after spaces and keeping words whole.\rA second paragraph follows the first.\r\rThe third, after an empty one, has a word much too long to fit: Pneumonoultramicroscopicsilicovolcanoconiosisandsomemoreletters.]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 285/285 [WordPad lays a paragraph out in lines as wide as the window allows, breaking after spaces and keeping words whole.\r\nA second paragraph follows the first.\r\n\r\nThe third, after an empty one, has a word much too long to fit: Pneumonoultramicroscopicsilicovolcanoconiosisandsomemoreletters.]
+  sel : 0-0 getsel 0x00000000 0-0
+  lines : 9 first visible 0
+   line : 0 index 0 length 49 getline 49 [WordPad lays a paragraph out in lines as wide as ] fromchar 0
+   line : 1 index 49 length 45 getline 45 [the window allows, breaking after spaces and ] fromchar 1
+   line : 2 index 94 length 20 getline 21 [keeping words whole.\r] fromchar 2
+   line : 3 index 115 length 37 getline 38 [A second paragraph follows the first.\r] fromchar 3
+   line : 4 index 153 length 0 getline 1 [\r] fromchar 4
+   line : 5 index 154 length 51 getline 51 [The third, after an empty one, has a word much too ] fromchar 5
+   line : 6 index 205 length 13 getline 13 [long to fit: ] fromchar 6
+   line : 7 index 218 length 47 getline 47 [Pneumonoultramicroscopicsilicovolcanoconiosisan] fromchar 7
+   line : 8 index 265 length 17 getline 18 [dsomemoreletters.\r] fromchar 8
+   line : 9 index -1 length 49 getline 0 [] fromchar 0 -1 index 0 -1 length 49 linefromchar -1 0
+  posfromchar:  0=1,0 1=14,0 7=55,0 8=59,0 20=130,0 95=8,30 96=15,30 120=35,45 157=22,75 158=26,75 159=30,75 230=81,105 290=109,120 291=109,120 400=109,120 -1=1,0
+  charfrompos:  0,0=0 1,1=0 3,5=0 30,5=4 31,5=4 50,20=57 150,40=114 299,5=49 320,5=49 5,200=266 500,500=282 -5,-5=0 5,64=153 100,100=218
+  rect : before setrect 1,0,299,150 no bar
+  command : rich EN_UPDATE
+setrect 20,10,200,100 : returns 0
+  rect : after 20,10,184,100 bar shown
+  lines : 14 first visible 0
+   line : 0 index 0 length 25 getline 25 [WordPad lays a paragraph ] fromchar 0
+   line : 1 index 25 length 28 getline 28 [out in lines as wide as the ] fromchar 1
+   line : 2 index 53 length 24 getline 24 [window allows, breaking ] fromchar 2
+   line : 3 index 77 length 25 getline 25 [after spaces and keeping ] fromchar 3
+   line : 4 index 102 length 12 getline 13 [words whole.\r] fromchar 4
+   line : 5 index 115 length 27 getline 27 [A second paragraph follows ] fromchar 5
+   line : 6 index 142 length 10 getline 11 [the first.\r] fromchar 6
+   line : 7 index 153 length 0 getline 1 [\r] fromchar 7
+   line : 8 index 154 length 26 getline 26 [The third, after an empty ] fromchar 8
+   line : 9 index 180 length 25 getline 25 [one, has a word much too ] fromchar 9
+   line : 10 index 205 length 13 getline 13 [long to fit: ] fromchar 10
+   line : 11 index 218 length 25 getline 25 [Pneumonoultramicroscopics] fromchar 11
+   line : 12 index 243 length 26 getline 26 [ilicovolcanoconiosisandsom] fromchar 12
+   line : 13 index 269 length 13 getline 14 [emoreletters.\r] fromchar 13
+   line : 14 index -1 length 25 getline 0 [] fromchar 0 -1 index 0 -1 length 25 linefromchar -1 0
+  posfromchar:  0=20,10 1=33,10 7=74,10 8=78,10
+  charfrompos:  0,0=0 1,1=0 3,5=0 30,5=1 31,5=1 50,20=4
+  command : rich EN_UPDATE
+setrect NULL : returns 0
+  rect : after 1,0,299,150 no bar
+setrectnp -10,-10,1000,1000 : returns 0
+  rect : after 0,0,300,150 no bar
+  lines : 9 first visible 0
+   line : 0 index 0 length 49 getline 49 [WordPad lays a paragraph out in lines as wide as ] fromchar 0
+   line : 1 index 49 length 45 getline 45 [the window allows, breaking after spaces and ] fromchar 1
+   line : 2 index 94 length 20 getline 21 [keeping words whole.\r] fromchar 2
+   line : 3 index 115 length 37 getline 38 [A second paragraph follows the first.\r] fromchar 3
+   line : 4 index 153 length 0 getline 1 [\r] fromchar 4
+   line : 5 index 154 length 51 getline 51 [The third, after an empty one, has a word much too ] fromchar 5
+   line : 6 index 205 length 13 getline 13 [long to fit: ] fromchar 6
+   line : 7 index 218 length 47 getline 47 [Pneumonoultramicroscopicsilicovolcanoconiosisan] fromchar 7
+   line : 8 index 265 length 17 getline 18 [dsomemoreletters.\r] fromchar 8
+   line : 9 index -1 length 49 getline 0 [] fromchar 0 -1 index 0 -1 length 49 linefromchar -1 0
+setrect NULL : returns 0
+  rect : after 1,0,299,150 no bar
+settargetdevice NULL,1 : returns 1
+  rect : without wrapping 1,0,299,150 no bar
+  lines : 4 first visible 0
+   line : 0 index 0 length 114 getline 115 [WordPad lays a paragraph out in lines as wide as the window allows, breaking after spaces and keeping words whole.\r] fromchar 0
+   line : 1 index 115 length 37 getline 38 [A second paragraph follows the first.\r] fromchar 1
+   line : 2 index 153 length 0 getline 1 [\r] fromchar 2
+   line : 3 index 154 length 128 getline 129 [The third, after an empty one, has a word much too long to fit: Pneumonoultramicroscopicsilicovolcanoconiosisandsomemoreletters.\r] fromchar 3
+   line : 4 index -1 length 114 getline 0 [] fromchar 0 -1 index 0 -1 length 114 linefromchar -1 0
+  posfromchar:  0=1,0 1=14,0 7=55,0 8=59,0 20=130,0 95=564,0 96=571,0 120=35,15 157=22,45 158=26,45 159=30,45 230=441,45 290=761,45 291=761,45 400=761,45 -1=1,0
+  charfrompos:  0,0=0 1,1=0 3,5=0
+settargetdevice NULL,0 : returns 1
+  rect : wrapping again 1,0,299,150 no bar
+  lines : 9 first visible 0
+   line : 0 index 0 length 49 getline 49 [WordPad lays a paragraph out in lines as wide as ] fromchar 0
+   line : 1 index 49 length 45 getline 45 [the window allows, breaking after spaces and ] fromchar 1
+   line : 2 index 94 length 20 getline 21 [keeping words whole.\r] fromchar 2
+   line : 3 index 115 length 37 getline 38 [A second paragraph follows the first.\r] fromchar 3
+   line : 4 index 153 length 0 getline 1 [\r] fromchar 4
+   line : 5 index 154 length 51 getline 51 [The third, after an empty one, has a word much too ] fromchar 5
+   line : 6 index 205 length 13 getline 13 [long to fit: ] fromchar 6
+   line : 7 index 218 length 47 getline 47 [Pneumonoultramicroscopicsilicovolcanoconiosisan] fromchar 7
+   line : 8 index 265 length 17 getline 18 [dsomemoreletters.\r] fromchar 8
+   line : 9 index -1 length 49 getline 0 [] fromchar 0 -1 index 0 -1 length 49 linefromchar -1 0
+setoptions OR selectionbar : returns 0x01008140
+  rect : with selection bar 1,0,299,150 bar shown
+  lines : 9 first visible 0
+   line : 0 index 0 length 49 getline 49 [WordPad lays a paragraph out in lines as wide as ] fromchar 0
+   line : 1 index 49 length 45 getline 45 [the window allows, breaking after spaces and ] fromchar 1
+   line : 2 index 94 length 20 getline 21 [keeping words whole.\r] fromchar 2
+   line : 3 index 115 length 37 getline 38 [A second paragraph follows the first.\r] fromchar 3
+   line : 4 index 153 length 0 getline 1 [\r] fromchar 4
+   line : 5 index 154 length 47 getline 47 [The third, after an empty one, has a word much ] fromchar 5
+   line : 6 index 201 length 17 getline 17 [too long to fit: ] fromchar 6
+   line : 7 index 218 length 46 getline 46 [Pneumonoultramicroscopicsilicovolcanoconiosisa] fromchar 7
+   line : 8 index 264 length 18 getline 19 [ndsomemoreletters.\r] fromchar 8
+   line : 9 index -1 length 49 getline 0 [] fromchar 0 -1 index 0 -1 length 49 linefromchar -1 0
+  posfromchar:  0=9,0 1=22,0 7=63,0
+  charfrompos:  0,0=0 1,1=0 3,5=0
+setoptions AND ~selectionbar : returns 0x00008140
+  rect : without 1,0,299,150 bar shown
+  lines : 9 first visible 0
+   line : 0 index 0 length 49 getline 49 [WordPad lays a paragraph out in lines as wide as ] fromchar 0
+   line : 1 index 49 length 45 getline 45 [the window allows, breaking after spaces and ] fromchar 1
+   line : 2 index 94 length 20 getline 21 [keeping words whole.\r] fromchar 2
+   line : 3 index 115 length 37 getline 38 [A second paragraph follows the first.\r] fromchar 3
+   line : 4 index 153 length 0 getline 1 [\r] fromchar 4
+   line : 5 index 154 length 51 getline 51 [The third, after an empty one, has a word much too ] fromchar 5
+   line : 6 index 205 length 13 getline 13 [long to fit: ] fromchar 6
+   line : 7 index 218 length 47 getline 47 [Pneumonoultramicroscopicsilicovolcanoconiosisan] fromchar 7
+   line : 8 index 265 length 17 getline 18 [dsomemoreletters.\r] fromchar 8
+   line : 9 index -1 length 49 getline 0 [] fromchar 0 -1 index 0 -1 length 49 linefromchar -1 0
+setoptions SET autowordselection|autovscroll : returns 0x00000041 style 0x50200044
+setoptions SET as created : returns 0x00008140 style 0x50208144
+  command : rich EN_UPDATE
+settext : [line 1\rline 2\rline 3\rline 4\rline 5\rline 6\rline 7\rline 8\rline 9\rline 10\rline 11\rline 12\rline 13\rline 14\rline 15\rline 16\rline 17\rline 18\rline 19\rline 20\rline 21\rline 22\rline 23\rline 24\rline 25\rline 26\rline 27\rline 28\rline 29\rline 30\rline 31\rline 32\rline 33\rline 34\rline 35\rline 36\rline 37\rline 38\rline 39\rline 40]
+  command : rich EN_UPDATE
+  command : rich EN_CHANGE
+  returns : 1
+  text : 349/349 [line 1\r\nline 2\r\nline 3\r\nline 4\r\nline 5\r\nline 6\r\nline 7\r\nline 8\r\nline 9\r\nline 10\r\nline 11\r\nline 12\r\nline 13\r\nline 14\r\nline 15\r\nline 16\r\nline 17\r\nline 18\r\nline 19\r\nline 20\r\nline 21\r\nline 22\r\nline 23\r\nline 24\r\nline 25\r\nline 26\r\nline 27\r\nline 28\r\nline 29\r\nline 30\r\nline 31\r\nline 32\r\nline 33\r\nline 34\r\nline 35\r\nline 36\r\nline 37\r\nline 38\r\nline 39\r\nline 40]
+  sel : 0-0 getsel 0x00000000 0-0
+  scroll : 0..600 page 150 pos 0 scrollpos 0,0 first visible 0 bar shown
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+linescroll 0,5 : returns 1
+  scroll : 0..600 page 150 pos 75 scrollpos 0,75 first visible 5 bar shown
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+linescroll 0,-2 : returns 1
+  scroll : 0..600 page 150 pos 45 scrollpos 0,45 first visible 3 bar shown
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+scroll SB_PAGEDOWN : returns 0x00010009
+  scroll : 0..600 page 150 pos 180 scrollpos 0,180 first visible 12 bar shown
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+scroll SB_LINEUP : returns 0x0001ffff
+  scroll : 0..600 page 150 pos 165 scrollpos 0,165 first visible 11 bar shown
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+scroll SB_PAGEUP : returns 0x0001fff7
+  scroll : 0..600 page 150 pos 30 scrollpos 0,30 first visible 2 bar shown
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+scroll SB_PAGEUP : returns 0x0001fffe
+  scroll : 0..600 page 150 pos 0 scrollpos 0,0 first visible 0 bar shown
+exsetsel : 250,250
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 250-250 type 0x00000000
+  returns : 250
+  sel : 250-250 getsel 0x00fa00fa 250-250
+scrollcaret : returns 0
+  scroll : 0..600 page 150 pos 345 scrollpos 0,345 first visible 23 bar shown
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+setscrollpos 0,30 : returns 1
+  scroll : 0..600 page 150 pos 30 scrollpos 0,30 first visible 2 bar shown
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+vscroll SB_TOP : returns 0
+  scroll : 0..600 page 150 pos 0 scrollpos 0,0 first visible 0 bar shown
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+vscroll SB_BOTTOM : returns 0
+  scroll : 0..600 page 150 pos 450 scrollpos 0,450 first visible 30 bar shown
+  command : rich EN_UPDATE
+vscroll SB_THUMBPOSITION 100 : returns 0
+  scroll : 0..600 page 150 pos 100 scrollpos 0,100 first visible 6 bar shown
+  posfromchar:  0=1,-100 250=14,380 280=4,440
+  charfrompos:  5,5=50 5,60=72
+exsetsel : 0,0
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  returns : 0
+  sel : 0-0 getsel 0x00000000 0-0
+after a selection at the start: 
+  scroll : 0..600 page 150 pos 0 scrollpos 0,0 first visible 0 bar shown
+settext : [short]
+  command : rich EN_UPDATE
+  command : rich EN_CHANGE
+  returns : 1
+  text : 5/5 [short]
+  sel : 0-0 getsel 0x00000000 0-0
+  scroll : 0..600 page 150 pos 0 scrollpos 0,0 first visible 0 no bar
+settext : [The quick,  brown fox.\rNext-line (here) 123.45 x]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 49/49 [The quick,  brown fox.\r\nNext-line (here) 123.45 x]
+  sel : 0-0 getsel 0x00000000 0-0
+findwordbreak : left 0 0 0 3 3 4 4 4 4 4 10 10 10 12 12 12 12 17 17 18 18 18 22 22 22 22 22 22 28 28 28 28 32 32 33 33 33 33 33 39 39 40 40 40 40 40 46 46 47 49
+findwordbreak : right 0 4 4 4 12 12 12 12 12 12 12 12 18 18 18 18 18 18 22 22 22 22 28 28 28 28 28 28 33 33 33 33 33 40 40 40 40 40 40 40 47 47 47 47 47 47 47 49 49 49
+findwordbreak : isdelimiter 0 0 0 1 0 0 0 0 0 0 1 1 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1 0 0 0 0 0 0 1 0 0 0
+findwordbreak : classify 0x00000000 0x00000000 0x00000000 0x00000032 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000001 0x00000032 0x00000032 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000032 0x00000000 0x00000000 0x00000000 0x00000001 0x00000014 0x00000000 0x00000000 0x00000000 0x00000000 0x00000041 0x00000000 0x00000000 0x00000000 0x00000000 0x00000032 0x00000001 0x00000000 0x00000000 0x00000000 0x00000000 0x00000001 0x00000032 0x00000000 0x00000000 0x00000000 0x00000001 0x00000000 0x00000000 0x00000032 0x00000000 0x00000014 0x00000000
+findwordbreak : movewordleft 0 0 0 0 0 4 4 4 4 4 9 9 9 12 12 12 12 12 12 18 18 18 21 22 23 23 23 23 27 28 28 28 28 28 33 34 34 34 34 38 38 40 40 40 43 44 44 44 47 48
+findwordbreak : movewordright 4 4 4 4 9 9 9 9 9 12 12 12 18 18 18 18 18 18 21 21 21 22 23 27 27 27 27 28 33 33 33 33 33 34 38 38 38 38 40 40 43 43 43 44 47 47 47 48 49 49
+findwordbreak : leftbreak 0 0 0 3 3 3 3 3 3 3 10 10 10 10 10 10 10 17 17 17 17 17 22 22 22 22 22 22 28 28 28 28 32 32 32 32 32 32 32 39 39 39 39 39 39 39 46 46 46 49
+findwordbreak : rightbreak 0 3 3 4 10 10 10 10 10 10 12 12 17 17 17 17 17 18 22 22 22 22 28 28 28 28 28 28 32 32 32 32 33 39 39 39 39 39 39 40 46 46 46 46 46 46 47 49 49 49
+  command : rich EN_UPDATE
+settext : [Hello there\rsecond]
+  command : rich EN_CHANGE
+  returns : 1
+  text : 19/19 [Hello there\r\nsecond]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 0,5
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-5 type 0x00000005
+  returns : 5
+  sel : 0-5 getsel 0x00050000 0-5
+copy : returns 0
+  clipboard:  unicode yes text yes
+   unicode : [Hello]
+  text : 19/19 [Hello there\r\nsecond]
+exsetsel : 6,18
+  command : rich EN_UPDATE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 6-18 type 0x00000005
+  returns : 18
+  sel : 6-18 getsel 0x00120006 6-18
+copy across a paragraph : returns 0
+  clipboard:  unicode yes text yes
+   unicode : [there\r\nsecond]
+canpaste 0 : 1 unicode 1 text 1 bitmap 0
+exsetsel : 5,5
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 5-5 type 0x00000000
+  returns : 5
+  sel : 5-5 getsel 0x00050005 5-5
+  notify : rich EN_SELCHANGE 16-16 type 0x00000000
+  command : rich EN_CHANGE
+paste : returns 0
+  text : 31/31 [Hellopasted\r\ntext there\r\nsecond]
+  sel : 16-16 getsel 0x00100010 16-16
+  modify : -1 canundo 1 canredo 0
+  lines : 3 first visible 0
+   line : 0 index 0 length 11 getline 12 [Hellopasted\r] fromchar 0
+   line : 1 index 12 length 10 getline 11 [text there\r] fromchar 1
+   line : 2 index 23 length 6 getline 7 [second\r] fromchar 2
+   line : 3 index -1 length 10 getline 0 [] fromchar 1 -1 index 12 -1 length 10 linefromchar -1 1
+exsetsel : 0,5
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-5 type 0x00000005
+  returns : 5
+  sel : 0-5 getsel 0x00050000 0-5
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+cut : returns 0
+  text : 26/26 [pasted\r\ntext there\r\nsecond]
+  sel : 0-0 getsel 0x00000000 0-0
+  clipboard:  unicode yes text yes
+   unicode : [Hello]
+undo cut and paste: 
+  notify : rich EN_SELCHANGE 0-5 type 0x00000005
+  command : rich EN_CHANGE
+  undo returns : 1
+  text : 31/31 [Hellopasted\r\ntext there\r\nsecond]
+  notify : rich EN_SELCHANGE 5-5 type 0x00000000
+  command : rich EN_CHANGE
+  undo returns : 1
+  text : 19/19 [Hello there\r\nsecond] (nothing to undo)
+  notify : rich EN_SELCHANGE 16-16 type 0x00000000
+  command : rich EN_CHANGE
+  redo returns : 1
+  text : 31/31 [Hellopasted\r\ntext there\r\nsecond]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  redo returns : 1
+  text : 26/26 [pasted\r\ntext there\r\nsecond]
+  (nothing to redo): 
+exsetsel : 3,3
+  notify : rich EN_SELCHANGE 3-3 type 0x00000000
+  returns : 3
+  sel : 3-3 getsel 0x00030003 3-3
+copy of an empty selection : returns 0
+  clipboard:  unicode yes text yes
+   unicode : [Hello]
+settext : [[]]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 2/2 [[]]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 1,1
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  returns : 1
+  sel : 1-1 getsel 0x00010001 1-1
+paste : [x\ny]
+  notify : rich EN_SELCHANGE 4-4 type 0x00000000
+  command : rich EN_CHANGE
+ : returns 0
+  text : 6/6 [[x\r\ny]]
+  sel : 4-4 getsel 0x00040004 4-4
+settext : [[]]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 2/2 [[]]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 1,1
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  returns : 1
+  sel : 1-1 getsel 0x00010001 1-1
+paste : [a\r\nb\r\n]
+  notify : rich EN_SELCHANGE 4-4 type 0x00000000
+  command : rich EN_CHANGE
+ : returns 0
+  text : 6/6 [[a\r\nb]]
+  sel : 4-4 getsel 0x00040004 4-4
+settext : [[]]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 2/2 [[]]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 1,1
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  returns : 1
+  sel : 1-1 getsel 0x00010001 1-1
+paste : [tail\r]
+  notify : rich EN_SELCHANGE 5-5 type 0x00000000
+  command : rich EN_CHANGE
+ : returns 0
+  text : 6/6 [[tail]]
+  sel : 5-5 getsel 0x00050005 5-5
+settext : [[]]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 2/2 [[]]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 1,1
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  returns : 1
+  sel : 1-1 getsel 0x00010001 1-1
+paste : [\r\n]
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  command : rich EN_CHANGE
+ : returns 0
+  text : 2/2 [[]]
+  sel : 1-1 getsel 0x00010001 1-1
+settext : [[]]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 2/2 [[]]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 1,1
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  returns : 1
+  sel : 1-1 getsel 0x00010001 1-1
+paste : [one\r\r\ntwo]
+  notify : rich EN_SELCHANGE 8-8 type 0x00000000
+  command : rich EN_CHANGE
+ : returns 0
+  text : 9/9 [[one two]]
+  sel : 8-8 getsel 0x00080008 8-8
+settext : [[]]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 2/2 [[]]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 1,1
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  returns : 1
+  sel : 1-1 getsel 0x00010001 1-1
+paste : [\n]
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  command : rich EN_CHANGE
+ : returns 0
+  text : 2/2 [[]]
+  sel : 1-1 getsel 0x00010001 1-1
+settext : [[]]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 2/2 [[]]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 1,1
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  returns : 1
+  sel : 1-1 getsel 0x00010001 1-1
+paste : [end\n\n]
+  notify : rich EN_SELCHANGE 5-5 type 0x00000000
+  command : rich EN_CHANGE
+ : returns 0
+  text : 7/7 [[end\r\n]]
+  sel : 5-5 getsel 0x00050005 5-5
+canpaste on an empty clipboard : 0
+paste on an empty clipboard : returns 0
+  text : 7/7 [[end\r\n]]
+  command : rich EN_UPDATE
+settext : [locked]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 6/6 [locked]
+  sel : 0-0 getsel 0x00000000 0-0
+setreadonly TRUE : returns 1 style 0x50008944 options 0x00008940
+exsetsel : 6,6
+  notify : rich EN_SELCHANGE 6-6 type 0x00000000
+  returns : 6
+  sel : 6-6 getsel 0x00060006 6-6
+type : [x]
+  text : 6/6 [locked]
+  sel : 6-6 getsel 0x00060006 6-6
+  modify : 0 canundo 0 canredo 0
+replacesel : [Y] undoable
+  notify : rich EN_SELCHANGE 7-7 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 7/7 [lockedY]
+  sel : 7-7 getsel 0x00070007 7-7
+  modify : -1 canundo 1 canredo 0
+settext : [still settable]
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  returns : 1
+  text : 14/14 [still settable]
+  sel : 0-0 getsel 0x00000000 0-0
+paste : returns 0
+  text : 14/14 [still settable]
+exsetsel : 0,5
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-5 type 0x00000005
+  returns : 5
+  sel : 0-5 getsel 0x00050000 0-5
+cut : returns 0
+  text : 14/14 [still settable]
+setreadonly FALSE : returns 1 style 0x50008144
+single line styles : 0x50000080 dlgcode 0x0000008b options 0x00000080
+  text : 3/3 [one]
+  lines : 1 first visible 0
+   line : 0 index 0 length 3 getline 4 [one\r] fromchar 0
+   line : 1 index -1 length 3 getline 0 [] fromchar 0 -1 index 0 -1 length 3 linefromchar -1 0
+  rect : single 1,0,199,24 no bar
+settext : [first\rsecond]
+  returns : 1
+  text : 5/5 [first]
+  sel : 0-0 getsel 0x00000000 0-0
+exsetsel : 2,2
+  returns : 2
+  sel : 2-2 getsel 0x00020002 2-2
+replacesel : [a\r\nb] undoable
+  returns : 1
+  text : 6/6 [fiarst]
+  sel : 3-3 getsel 0x00030003 3-3
+  modify : -1 canundo 1 canredo 0
+type : [\r]
+  text : 6/6 [fiarst]
+  sel : 3-3 getsel 0x00030003 3-3
+  modify : -1 canundo 1 canredo 0
+  text : 6/6 [fiarst]
+  lines : 1 first visible 0
+   line : 0 index 0 length 6 getline 7 [fiarst\r] fromchar 0
+   line : 1 index -1 length 6 getline 0 [] fromchar 0 -1 index 0 -1 length 6 linefromchar -1 0
+destroy: 

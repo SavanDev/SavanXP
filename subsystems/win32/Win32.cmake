@@ -202,7 +202,7 @@ function(sxw_declared stem)
     set(SXW_${stem}_DECLARED "${gen}/${stem}_declared.c" "${SXW_DLLS}/common/declared.c" PARENT_SCOPE)
     set(SXW_${stem}_DEF "${gen}/${stem}.def" PARENT_SCOPE)
 endfunction()
-foreach(stem kernel32 msvcrt advapi32 gdi32 user32 shell32 ole32 comdlg32 shlwapi)
+foreach(stem kernel32 msvcrt advapi32 gdi32 user32 shell32 ole32 comdlg32 shlwapi msftedit)
     sxw_declared(${stem})
 endforeach()
 
@@ -255,6 +255,12 @@ sxw_image(NAME comdlg32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x763b0000
     SOURCES ${SXW_comdlg32_DECLARED} DEF "${SXW_comdlg32_DEF}" LIBS ntdll)
 sxw_image(NAME shlwapi.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f60000
     SOURCES "${SXW_DLLS}/shlwapi/shlwapi.c" ${SXW_shlwapi_DECLARED} DEF "${SXW_shlwapi_DEF}" LIBS ntdll)
+# WP7: the RichEdit control WordPad's document is (WIN32_WORDPAD_ROADMAP.md,
+# "RichEdit is written here"), at Windows XP's base for msftedit.dll.
+sxw_image(NAME msftedit.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x4b460000 ENTRY DllMain
+    SOURCES "${SXW_DLLS}/msftedit/msftedit.c" "${SXW_DLLS}/msftedit/text.c" "${SXW_DLLS}/msftedit/layout.c"
+            "${SXW_DLLS}/msftedit/undo.c" ${SXW_msftedit_DECLARED}
+    DEF "${SXW_msftedit_DEF}" LIBS user32 gdi32 kernel32 ntdll)
 
 # Fixtures: hello.exe; initorder.exe with alpha.dll and beta.dll, which
 # share a base; missingdll.exe and missingsym.exe, whose loads must fail.
@@ -329,6 +335,9 @@ sxw_image(NAME clip.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY s
 # WP6: text and pictures in gdi32.
 sxw_image(NAME text.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/text/text.c" LIBS user32 gdi32 kernel32)
+# WP7: the RichEdit control.
+sxw_image(NAME richedit.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
+    SOURCES "${SXW_FX}/richedit/richedit.c" LIBS user32 gdi32 kernel32)
 sxw_image(NAME nosuch.dll KIND dll DIR "${SXW_STUBS}"
     SOURCES "${SXW_FX}/missing/stub.c" DEF "${SXW_FX}/missing/nosuch.def")
 sxw_image(NAME kernel32.dll KIND dll DIR "${SXW_STUBS}"
@@ -356,6 +365,7 @@ set(SAVANXP_WIN32_COPY_COMMANDS
             "${SXW_SYSTEM32}/gdi32.dll" "${SXW_SYSTEM32}/user32.dll"
             "${SXW_SYSTEM32}/shell32.dll" "${SXW_SYSTEM32}/comctl32.dll"
             "${SXW_SYSTEM32}/ole32.dll" "${SXW_SYSTEM32}/comdlg32.dll" "${SXW_SYSTEM32}/shlwapi.dll"
+            "${SXW_SYSTEM32}/msftedit.dll"
             "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/windows/system32/"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${SAVANXP_DISKFS_ROOT}/system/start"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -374,7 +384,7 @@ if(SAVANXP_INCLUDE_TEST_APPS)
                 "${SXW_FIXTURES}/files.exe" "${SXW_FIXTURES}/memory.exe" "${SXW_FIXTURES}/locale.exe"
                 "${SXW_FIXTURES}/threads.exe" "${SXW_FIXTURES}/tlog.dll" "${SXW_FIXTURES}/tquiet.dll"
                 "${SXW_FIXTURES}/hooks.exe" "${SXW_FIXTURES}/controls.exe" "${SXW_FIXTURES}/clip.exe"
-                "${SXW_FIXTURES}/text.exe"
+                "${SXW_FIXTURES}/text.exe" "${SXW_FIXTURES}/richedit.exe"
                 "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/"
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
                 "${SXW_FX}/expected" "${SAVANXP_DISKFS_ROOT}/${SXW_DRIVE_C}/tests/expected")

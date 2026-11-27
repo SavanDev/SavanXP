@@ -1,0 +1,8 @@
+LIBRARY msftedit.dll
+EXPORTS
+    IID_IRichEditOle DATA
+    IID_IRichEditOleCallback DATA
+    IID_ITextServices DATA
+    IID_ITextHost DATA
+    IID_ITextHost2 DATA
+    RichEditWndProc

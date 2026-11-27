@@ -219,6 +219,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "win32controls")) {
         return "WIN32 CONTROLS";
     }
+    if (spec != 0 && text_contains(spec, "win32richedit")) {
+        return "WIN32 RICHEDIT";
+    }
     if (spec != 0 && text_contains(spec, "win32drop")) {
         return "WIN32 DROP";
     }
@@ -329,6 +332,7 @@ static int run_automation_spec(const char* spec) {
     const char* win32cards_argv[] = {"/system/win32test.sxe", "--cards", 0};
     const char* win32dialog_argv[] = {"/system/win32test.sxe", "--dialog", 0};
     const char* win32controls_argv[] = {"/system/win32test.sxe", "--controls", 0};
+    const char* win32richedit_argv[] = {"/system/win32test.sxe", "--richedit", 0};
     const char* win32solitaire_argv[] = {"/system/win32test.sxe", "--solitaire", 0};
     const char* win32drop_argv[] = {"/system/win32test.sxe", "--drop", 0};
     const char* pthreadtest_argv[] = {"/bin/pthreadtest", 0};
@@ -690,6 +694,11 @@ static int run_automation_spec(const char* spec) {
             /* Win32's standard controls under windowd, driven over QMP. */
             path = "/system/win32test.sxe";
             argv = win32controls_argv;
+            argc = 2;
+        } else if (strcmp(spec, "win32richedit") == 0) {
+            /* SSW's RichEdit control under windowd, driven over QMP. */
+            path = "/system/win32test.sxe";
+            argv = win32richedit_argv;
             argc = 2;
         } else if (strcmp(spec, "win32drop") == 0) {
             /* A drag from a SUN window onto a Win32 one, driven over QMP. */

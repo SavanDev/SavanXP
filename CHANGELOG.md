@@ -26,6 +26,9 @@ changes not released yet; each released version has its own file in
 - **Win32 programs draw TrueType text: `gdi32` over `libsxfont` through `winhost`, with Windows XP's metrics.** Any size,
   style and charset from `/system/fonts` and `C:\windows\fonts`: `ExtTextOutW`, `GetCharWidthW`, `GetOutlineTextMetricsW`,
   `EnumFontFamiliesExW`, `StretchDIBits`, `CreatePen`; fixture `text.exe`. [Text](docs/userland/WIN32.md#user32-and-gdi32).
+- **Win32 programs get a RichEdit control: SSW's own `msftedit.dll` with `RICHEDIT50W` (WP7a).** Text, lines, caret,
+  selections by keyboard and pointer, scrolling, undo and redo, the `EN_` notifications and copy and paste of text, as
+  Windows XP's control answers them; fixture `richedit.exe`, scenario `win32-richedit`. [RichEdit](docs/userland/WIN32.md#richedit).
 - **Display Properties gains an Appearance tab: interface fonts and font smoothing, applied live (SDK 2.0).** Face and
   size for window text and title bars in `appearance.cfg`; Effects moved there. `sxnwm_settings_changed`,
   `gfx_settings_changed`, `SAVANXP_WM_EVENT_SETTINGS`; `appearance-smoke`. [Appearance](docs/desktop/DISPLAY_PROPERTIES.md#appearance).

@@ -6,7 +6,8 @@ the subsystem's name. Its source tree keeps the API's name
 (`subsystems/win32/`), its code the `sxw_` prefix, and its host program is
 `winhost`.
 
-> **Status: W6 complete (2026-11-13). WordPad's WP4 complete (2026-11-25).**
+> **Status: W6 complete (2026-11-13). WordPad's WP6 complete (2026-11-26);
+> WP7a, [RichEdit](#richedit)'s text, written (2026-11-27).**
 > The user's Windows XP [WordPad](#wordpad) and its MFC load and start up
 > to their first window. SSW handles [software exceptions](#software-exceptions),
 > runs [threads](#threads), and has [files](#files), heaps, atoms and
@@ -39,7 +40,7 @@ subsystems/win32/
   pe/            the PE32 parser and mapper, portable C
   loader/        the process loader, portable C
   dlls/          ntdll, kernel32, msvcrt, advapi32, gdi32, user32, shell32,
-                 comctl32, ole32, comdlg32, shlwapi (PE32); common/ holds the
+                 comctl32, ole32, comdlg32, shlwapi, msftedit (PE32); common/ holds the
                  code page, regions, memcpy and declared entry points they
                  share; declared.py generates those from each declared.txt
   fixtures/      hello, initorder (+ alpha.dll, beta.dll), missing, startup,
@@ -56,7 +57,7 @@ On the disk image, under `/system/win/drive_c` (the guest's `C:`):
 
 ```text
 windows/system32/   ntdll, kernel32, msvcrt, advapi32, gdi32, user32, shell32,
-                    comctl32, ole32, comdlg32 and shlwapi .dll
+                    comctl32, ole32, comdlg32, shlwapi and msftedit .dll
 tests/              the fixtures, when the test applications are built
 ```
 
@@ -249,8 +250,8 @@ Windows XP's own bases (`ntdll.dll` at `0x7C900000`, `kernel32.dll` at
 `0x7C800000`, `msvcrt.dll` at `0x77C10000`, `advapi32.dll` at `0x77DD0000`,
 `gdi32.dll` at `0x77F10000`, `user32.dll` at `0x7E410000`, `shell32.dll` at
 `0x7C9C0000`, `comctl32.dll` at `0x5D090000`, `ole32.dll` at `0x774E0000`,
-`comdlg32.dll` at `0x763B0000`, `shlwapi.dll` at `0x77F60000`), so none of
-them relocates. `include/windows.h` is the subsystem's own header;
+`comdlg32.dll` at `0x763B0000`, `shlwapi.dll` at `0x77F60000`,
+`msftedit.dll` at `0x4B460000`), so none of them relocates. `include/windows.h` is the subsystem's own header;
 it declares what the DLLs and fixtures use and grows with the W0 matrix.
 `dlls/common/codepage.c`, compiled into the DLLs that need it, converts
 between UTF-16 and the "ANSI" code page, Windows-1252, the one Windows XP uses
@@ -269,6 +270,7 @@ in Western European languages.
 | `ole32.dll` | `OleInitialize`, `OleUninitialize`, `CoRegisterMessageFilter`, `CoTaskMemAlloc`, `CoTaskMemFree`: the minimum WordPad and MFC need ([WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#ole-is-the-minimum-wordpad-and-mfc-need)) |
 | `shlwapi.dll` | `PathFindFileNameW` |
 | `comdlg32.dll` | Declared entry points only (below) |
+| `msftedit.dll` | The `RICHEDIT50W` class, registered when it attaches, and `RichEditWndProc` ([RichEdit](#richedit)); the `IID_IRichEditOle`, `IID_IRichEditOleCallback`, `IID_ITextServices`, `IID_ITextHost` and `IID_ITextHost2` GUIDs |
 
 The table lists what is written. Each DLL also exports the entry points of
 its `declared.txt`, below.
@@ -950,6 +952,93 @@ fixture, in `win32-harness-test` and in the `win32-drop` scenario. A Win32
 program as a drag source (`DoDragDrop`) and OLE's `RegisterDragDrop` targets
 are not there yet.
 
+## RichEdit
+
+`dlls/msftedit/` is SSW's `msftedit.dll`, at Windows XP's base
+(`0x4B460000`), with the `RICHEDIT50W` class WordPad's document is made of
+([the plan's decision](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#richedit-is-written-here-2026-11-21)).
+WP7a, the text, is written: `text.c` keeps it and converts it in and out,
+`layout.c` breaks it into lines, `undo.c` keeps undo and redo, and
+`msftedit.c` is the window. Every rule below is what Microsoft's
+`msftedit.dll` answered `richedit.exe` on Windows XP RTM, and the fixture's
+two outputs are byte for byte that control's.
+
+- **The class.** Registered when the DLL attaches: `CS_GLOBALCLASS |
+  CS_PARENTDC | CS_DBLCLKS`, four bytes of window extra, no cursor (the
+  control sets the I-beam on `WM_SETCURSOR`), `COLOR_WINDOW` behind. Only
+  `RICHEDIT50W`; `RichEdit20W` is `riched20.dll`'s, which nothing loads.
+- **The text** is paragraphs ending in one CR, and the document ends in one
+  more paragraph mark that is not part of the text: `WM_GETTEXTLENGTH` of
+  "abc" is 3, but selecting everything gives 0 to 4, and `EM_GETLINE`
+  returns each paragraph's last line with its CR, the last one included.
+  Coming in (`WM_SETTEXT`, `EM_REPLACESEL`, a paste), CR LF and a lone LF
+  are a CR and CR CR LF is a space; a single-line control keeps what comes
+  before the first line break. Going out, `WM_GETTEXT` writes CR LF;
+  `EM_GETTEXTEX` and `EM_GETTEXTRANGE` write the CR alone unless asked
+  (`GT_USECRLF`). `EM_GETTEXTLENGTHEX` is exact with `GTL_NUMCHARS`,
+  `GTL_PRECISE` or no flag, twice the length otherwise, and
+  `E_INVALIDARG` for characters and bytes together.
+- **Lines** are as wide as the formatting rectangle, which is the client
+  area less a pixel left and right (`EM_SETRECT` moves it and keeps it as
+  insets from the client area's edges, so it follows a scroll bar that
+  comes; `EM_SETRECTNP` only stores it for the next layout), less the
+  selection bar's 8 pixels with `ECO_SELECTIONBAR`. A line breaks after a
+  run of spaces, which stays at its end however wide, or after a hyphen; a
+  word wider than the line breaks where it stops fitting. `EM_SETTARGETDEVICE`
+  with a line width of 1 stops wrapping. Widths are `gdi32`'s
+  (`GetCharWidthW`), tabs stop every 48 pixels, every line is the font's
+  height, and `EM_CHARFROMPOS` gives the boundary nearest the point.
+- **Selections** a program sets (`EM_EXSETSEL`, `EM_SETSEL`) return the
+  new end: a negative start puts the caret at the end, a negative end runs
+  past the last paragraph mark, which a collapsed selection cannot sit
+  after; a range given backwards keeps its anchor at the higher end. The
+  old highlight and the new one are each painted at once, and the view
+  follows the caret. A selection the user makes is painted once. Shift+End
+  takes the paragraph mark; a drag past the end of a paragraph's line takes
+  it too. A double click selects the word and the spaces after it, and a
+  press on the selection drags it: dropped elsewhere in the control, the
+  text moves, as one undo, and stays selected.
+- **Notifications.** `EN_CHANGE`, `EN_SELCHANGE` and `EN_VSCROLL` go out as
+  `EM_SETEVENTMASK` asks; `EN_UPDATE` goes out with every paint whatever the
+  mask, and `EN_MAXTEXT`, `EN_SETFOCUS`, `EN_KILLFOCUS` always. Their order
+  is Windows XP's: a paint, then `EN_SELCHANGE`, then `EN_CHANGE`.
+  `WM_SETTEXT` of empty text over empty text sends nothing; a paste sends
+  `EN_SELCHANGE` even when the caret stays, and so do Delete and
+  Backspace. A control destroyed while the clipboard holds its copy sends
+  `EN_SAVECLIPBOARD`.
+- **Undo** keeps 100 actions (`EM_SETUNDOLIMIT`). Typing grows one action
+  until something else happens or `EM_STOPGROUPTYPING`; `WM_SETTEXT` and an
+  `EM_REPLACESEL` that is not undoable empty both lists. Undoing selects
+  what comes back, except after Backspace, where the caret goes after it;
+  redoing leaves the caret after what goes in again. `EM_GETMODIFY` answers
+  -1 when modified.
+- **The limit** is 32,767 characters, 65,536 for a limit of 0. Typing and
+  pasting stop at it with `EN_MAXTEXT`; `EM_REPLACESEL` does not, and
+  `WM_SETTEXT` raises it to the text's length.
+- **Scrolling.** A window made with `WS_VSCROLL` loses it until its text is
+  taller than the view; then the bar comes with a range of the text's
+  height and a page of the view's, and goes when the text fits again,
+  keeping its range. `EM_SETOPTIONS` writes the style back from the options
+  with the `WS_VSCROLL` the window was made with, as a bit only, without
+  recalculating the frame. Page Up and Page Down move the view a page less
+  a line, Page Down as far as the last line at the top, and the caret as
+  many lines as the view moved. `SB_THUMBPOSITION` scrolls to the pixel
+  without `EN_VSCROLL`.
+- **Words** (`EM_FINDWORDBREAK`, Ctrl with the arrows, Backspace and
+  Delete): letters and digits, punctuation, the hyphen (which a line may
+  break after), spaces, and the paragraph mark are each a class, and a word
+  is a run of one class followed by its spaces.
+- **The clipboard** is `user32`'s plain one: a copy puts `CF_UNICODETEXT`
+  with CR LF, and a paste takes it, dropping the text's last paragraph mark.
+  Windows XP's control also offers OLE's formats and RTF, and pastes its own
+  copy back as RTF, which keeps that mark; until WP7c's RTF, the control
+  recognizes its own copy by the clipboard's sequence number.
+
+Not there yet: formats (WP7b), streams and RTF (WP7c), finding text and the
+OLE interfaces (WP7d), horizontal scrolling, and the I-beam pointer, which
+waits for `SetCursor` (only declared). Inside WordPad's process the DLL does
+not load yet: see [WordPad](#wordpad).
+
 ## The registry
 
 `HKEY_CURRENT_USER` is one text file per user, kept by the host
@@ -1028,6 +1117,8 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `clip.exe` | WP5: the clipboard calls refused while it is closed; text, Rich Text Format and a format of its own set and read back; the formats Windows makes and their order, the owner, the sequence, a format rendered when asked for, `WM_DESTROYCLIPBOARD`; a file list read with `DragQueryFileW` and `DragQueryPoint`, wide and ANSI, and `DragAcceptFiles`. With `put` it leaves text, RTF and its own format; with `get` it writes what another program left. With `drop` it shows a window that takes files, with a child that does not, and writes the first `WM_DROPFILES` it gets: the names with `DragQueryFileW` and the point with `DragQueryPoint` | `expected/clip.out`; run as `clip.exe put` then `clip.exe get`: `clip-put.out` and `clip-get.out`; status 0. `clip-drop.out` is the harness's: an input script cannot drag from another program on Windows XP |
 | `text.exe` | WP6: with `liberation`, the three Liberation families added with `AddFontResourceW`; without it, Arial, Times New Roman and Courier New. Per face, style and size (-8 to -72, 0, 12, 20): `GetTextMetricsW`, `GetCharWidthW` over ASCII, an extent, `GetOutlineTextMetricsW`, `GetTextCharsetInfo`; the faces substituted for missing families, weights, ANSI and wide widths, three enumerations; then pictures read back with `GetPixel`: the ink's box and count for opaque, clipped, aligned, positioned, underlined and transparent text, the grey levels of a smoothed line, and CRCs of `StretchDIBits` (4, 8 and 24 bits), `R2_XORPEN` lines, `Rectangle`, `CreateBitmap` blits and `PATCOPY`. It prints the screen's depth and `SPI_GETFONTSMOOTHING` first | `expected/text-liberation.out`, Windows XP RTM's, compared through `tests/host/win32_text_compare.py` (ink counts within 3%, grey levels within one, family lines in any order, the faces substituted for missing families skipped: XP has Arial there); `text-savanxp.out`, the harness's own, byte for byte, which `win32test` holds `winhost` to outside the substituted faces. Plain `text.exe` against XP's output is `win32-text-xp-test`, with the user's own XP fonts (`SAVANXP_WIN32_TEXT`), a pixel per glyph of slack |
 
+| `richedit.exe` | WP7a: `RICHEDIT50W` from `msftedit.dll` next to it, at Liberation Sans -13 (given to Windows XP from the files beside it). Without arguments: the class, the control's defaults, then text set and read back with every length and text message, selections, replacements, undo and redo, `WM_CHAR`, the limit, lines and positions both ways, the formatting rectangle, wrapping, the options, scrolling, every `EM_FINDWORDBREAK` code at every position, the clipboard, read-only and a single-line control, with every `WM_COMMAND` and `WM_NOTIFY` its parent gets. With `input`, driven by its input script: typing, the caret and selections by keyboard, deleting, undo, the clipboard, clicks, a double click, drags that select and one that moves text, scrolling by typing and by page; F2 writes the state, and a dump holds the control with a selection, where no caret blinks | Microsoft's own `msftedit.dll` on Windows XP RTM: `expected/richedit.out` and, run as `richedit.exe input`, `richedit-input.out`; status 0 |
+
 The bytes Windows XP wrote are kept in `subsystems/win32/fixtures/expected/`
 (`-text` in `.gitattributes`: CRLF and Windows-1252 as they came). Both hosts'
 tests compare against them.
@@ -1081,6 +1172,7 @@ these files built with Clang and lld 23.1.4:
 | `hooks.exe` | `44c41cea36ae717d97af9e482120ae967274c8bd0f129d23d0a44f9518ef724f` (2026-11-25) |
 | `controls.exe` | `d3479f319704dcfdfa1e2b8fe8e7f509705eebe46f21dbb02284423cfd2212ca` (2026-11-25) |
 | `clip.exe` | `a38ab7dcfa1c567eaedadd5fbf4698fc7f45c31b30cd48c8ee466d4b28506e9a` (2026-11-25) |
+| `richedit.exe` | `e35e5b1f41a250dc17208cf33c666fb495461589f5d8de8a940e267cce327569` (2026-11-27, on the English Windows XP, with the user's `msftedit.dll` beside it) |
 
 A different compiler version may change the bytes, not the behaviour; when
 a fixture changes, it is run on Windows XP again and this table follows. The
@@ -1435,6 +1527,17 @@ reaches MFC's delay-load lookup for `ole32!CoFreeUnusedLibraries` (WP9). The
 missing export raises a software exception, and the guest exits with
 `0xc06d007f`.
 
+Since WP7a the DLL is there, and loads in any program, but not yet in
+WordPad's process: the loader keeps at most 64 mapped regions
+(`SXW_MAX_REGIONS`), one per protection run of each image plus stacks and
+heaps, and WordPad and MFC have used them all by then, so `LoadLibraryW`
+fails with `ERROR_NOT_ENOUGH_MEMORY` and WordPad shows the same box. With
+more regions the control loads and WordPad goes on to `wsprintfW` and
+`LoadBitmapW`, both only declared, and a missing delay-loaded export. On
+SavanXP each region is a section handle of `winhost`'s, and the kernel gives
+a process 64 handles (`kMaxFileHandles`) and 128 views
+(`kMaxSectionViews`), so the limit cannot simply be raised.
+
 What the run reaches and is only declared is on the debug output; since WP5
 the start-up up to that first window reaches none (MFC's message-filter
 hook is installed). WordPad's look for its Word converters next to it
@@ -1522,7 +1625,8 @@ produced for the same files. A failed load must also name its cause and
 release every mapping and file. `window.exe`, `dialog.exe` and
 `controls.exe` play their input scripts, and what they dump must equal the
 golden images (`expected/window.ppm.gz`, `dialog-menu.ppm.gz`,
-`dialog-settings.ppm.gz`, `controls-dropdown.ppm.gz`, `controls-menu.ppm.gz`);
+`dialog-settings.ppm.gz`, `controls-dropdown.ppm.gz`, `controls-menu.ppm.gz`),
+as must `richedit.exe input`'s (`richedit-selection.ppm.gz`);
 `clip.exe put` and `clip.exe get` share one `--clipboard` file;
 a different one is kept in the build directory as `win32-NAME-actual.ppm`.
 
@@ -1543,7 +1647,7 @@ the golden image, while the guest compares the messages and the status
 with Windows XP's. Run it under `--accel kvm` as well.
 
 After the console fixtures `win32test.sxe` starts `windowd` and runs the
-windowed ones, `hooks.exe` and `clip.exe`, then the clipboard across
+windowed ones, `hooks.exe`, `clip.exe` and `richedit.exe`, then the clipboard across
 subsystems: `clip.exe put` leaves its formats, `win32test` checks the set on
 `/dev/clipboard` with SUN's calls and writes the same set itself, and
 `clip.exe get` must print what Windows XP printed after `put`.
@@ -1562,6 +1666,9 @@ and, once its window is up, a small SUN window the host presses on to start
 a drag of two files, then drags onto `clip.exe`'s window and releases:
 `clip.exe` must write `clip-drop.out` and the source hear that the drop
 took a copy ([DRAG_AND_DROP.md](../desktop/DRAG_AND_DROP.md)).
+`win32-richedit` (`win32test.sxe --richedit`, `tools/win32_richedit_smoke.py`)
+runs `richedit.exe input`: the control driven by its script, what its parent
+hears against Windows XP's, and its dump against the golden image.
 
 `win32-wordpad-test` starts the user's `wordpad.exe` through the harness,
 with `mfc42u.dll` and `mfc42loc.dll` from `SAVANXP_WIN32_WORDPAD/system32`

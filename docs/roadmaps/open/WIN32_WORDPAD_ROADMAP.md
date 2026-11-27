@@ -1,10 +1,10 @@
 # Windows XP WordPad on SSW — the second Win32 profile
 
-> **Status: WP1 to WP6 complete (2026-11-26). WordPad starts up to its
-> first window; SSW handles x86 software exceptions, runs a second thread,
-> has WordPad's files, heaps, atoms and locale, the hooks, positions,
-> standard controls and clipboard MFC needs, and TrueType text and the
-> pictures its frame draws.** This is the plan of
+> **Status: WP1 to WP6 complete (2026-11-26); WP7a done (2026-11-27). WordPad
+> starts up to its first window; SSW handles x86 software exceptions, runs a
+> second thread, has WordPad's files, heaps, atoms and locale, the hooks,
+> positions, standard controls and clipboard MFC needs, TrueType text and
+> the pictures its frame draws, and its own RichEdit control's text.** This is the plan of
 > [W7](WIN32_SUBSYSTEM_ROADMAP.md#w7--later-profiles)'s first named profile.
 > Its inventory, the W0 record taken before any code, is
 > [WIN32_WORDPAD_PROFILE.md](../../userland/WIN32_WORDPAD_PROFILE.md); every
@@ -475,6 +475,22 @@ Size XL, in parts, each its own commits.
   (words, lines, a drag that moves the selection), scrolling, undo and redo,
   `EN_*` notifications as `EM_SETEVENTMASK` asks, copy and paste through
   `user32`'s clipboard in RTF and text.
+
+  **Done (2026-11-27), RTF on the clipboard excepted.** `richedit.exe`,
+  driven by messages and by its input script, writes byte for byte what it
+  wrote with Microsoft's `msftedit.dll` on Windows XP RTM, and the control
+  with a selection is XP's on screen but for one pixel of a glyph's ink
+  (`win32-harness-test`, `win32-hello`, `win32-richedit`). Copy and paste
+  carry text; the RTF on the clipboard comes with 7c's writer and reader,
+  and until then the control knows its own copy by the clipboard's sequence
+  number, so pasting it keeps its last paragraph mark as XP's RTF does. See
+  [WIN32.md](../../userland/WIN32.md#richedit), "RichEdit".
+
+  Inside WordPad's process the DLL does not load yet: WordPad and MFC have
+  used the loader's 64 regions by then (`SXW_MAX_REGIONS`), and on SavanXP
+  each region is one of `winhost`'s section handles, which the kernel
+  bounds at 64 per process. That limit has to move before WP9's "WordPad
+  starts" can be met ([WIN32.md](../../userland/WIN32.md#wordpad)).
 - **7b, formats.** `CHARFORMAT2` (face, size, bold, italic, underline,
   colour, charset) and `PARAFORMAT2` (alignment, indents, tab stops,
   bullets), set and read by range; the word-wrap modes WordPad's Options

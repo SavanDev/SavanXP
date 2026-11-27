@@ -27,6 +27,7 @@ typedef const WCHAR *LPCWSTR;
 typedef unsigned char BYTE;
 typedef BYTE *LPBYTE;
 typedef unsigned short WORD;
+typedef short SHORT;
 typedef unsigned long DWORD;
 typedef void *HANDLE;
 typedef HANDLE *LPHANDLE;
@@ -677,6 +678,8 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 #define GET_X_LPARAM(l) ((int)(short)LOWORD(l))
 #define GET_Y_LPARAM(l) ((int)(short)HIWORD(l))
 #define MAKELPARAM(l, h) ((LPARAM)(DWORD)((WORD)(l) | ((DWORD)(WORD)(h) << 16)))
+#define MAKELONG(l, h) ((LONG)(DWORD)((WORD)(l) | ((DWORD)(WORD)(h) << 16)))
+#define MAKEWPARAM(l, h) ((WPARAM)(DWORD)((WORD)(l) | ((DWORD)(WORD)(h) << 16)))
 #define RGB(r, g, b) ((COLORREF)((BYTE)(r) | ((WORD)(BYTE)(g) << 8) | ((DWORD)(BYTE)(b) << 16)))
 #define GetRValue(c) ((BYTE)(c))
 #define GetGValue(c) ((BYTE)((c) >> 8))
@@ -812,6 +815,7 @@ typedef struct _IMAGE_TLS_DIRECTORY32 {
 #define CS_CLASSDC 0x0040
 #define CS_PARENTDC 0x0080
 #define CS_SAVEBITS 0x0800
+#define CS_GLOBALCLASS 0x4000
 
 #define SW_HIDE 0
 #define SW_SHOWNORMAL 1
@@ -1430,6 +1434,10 @@ typedef struct {
 #define EM_GETSEL 0x00b0
 #define EM_SETSEL 0x00b1
 #define EM_GETRECT 0x00b2
+#define EM_SETRECT 0x00b3
+#define EM_SETRECTNP 0x00b4
+#define EM_SCROLL 0x00b5
+#define EM_LINESCROLL 0x00b6
 #define EM_SCROLLCARET 0x00b7
 #define EM_GETMODIFY 0x00b8
 #define EM_SETMODIFY 0x00b9
@@ -1453,6 +1461,9 @@ typedef struct {
 #define EM_GETLIMITTEXT 0x00d5
 #define EM_POSFROMCHAR 0x00d6
 #define EM_CHARFROMPOS 0x00d7
+#define WB_LEFT 0
+#define WB_RIGHT 1
+#define WB_ISDELIMITER 2
 #define EC_LEFTMARGIN 0x0001
 #define EC_RIGHTMARGIN 0x0002
 #define EC_USEFONTINFO 0xffff
@@ -1800,6 +1811,7 @@ SXW_USER32_API BOOL WINAPI InflateRect(LPRECT lprc, int dx, int dy);
 SXW_USER32_API BOOL WINAPI IntersectRect(LPRECT lprcDst, const RECT *lprcSrc1, const RECT *lprcSrc2);
 SXW_USER32_API BOOL WINAPI PtInRect(const RECT *lprc, POINT pt);
 SXW_USER32_API HCURSOR WINAPI LoadCursorW(HINSTANCE hInstance, LPCWSTR lpCursorName);
+SXW_USER32_API HCURSOR WINAPI SetCursor(HCURSOR hCursor);
 SXW_USER32_API HBITMAP WINAPI LoadBitmapA(HINSTANCE hInstance, LPCSTR lpBitmapName);
 SXW_USER32_API int WINAPI LoadStringW(HINSTANCE hInstance, UINT uID, LPWSTR lpBuffer, int cchBufferMax);
 SXW_USER32_API int WINAPI LoadStringA(HINSTANCE hInstance, UINT uID, LPSTR lpBuffer, int cchBufferMax);

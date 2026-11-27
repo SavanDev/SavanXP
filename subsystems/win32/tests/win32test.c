@@ -19,10 +19,13 @@
  * With --dialog it runs dialog.exe the same way for win32-dialog, logging
  * "WIN32 DIALOG READY" (tools/win32_dialog_smoke.py), and with --controls
  * controls.exe for win32-controls, logging "WIN32 CONTROLS READY"
- * (tools/win32_controls_smoke.py).
+ * (tools/win32_controls_smoke.py). With --richedit it runs "richedit.exe
+ * input" for win32-richedit, logging "WIN32 RICHEDIT READY"
+ * (tools/win32_richedit_smoke.py): SSW's RichEdit control driven by its input
+ * script, its output compared with what Microsoft's control gave on Windows XP.
  *
  * After the console fixtures it starts windowd and runs the windowed ones:
- * hooks.exe, clip.exe, and the clipboard across subsystems -- "clip.exe
+ * hooks.exe, clip.exe, richedit.exe, and the clipboard across subsystems -- "clip.exe
  * put" leaves its formats, this program (a SUN one) checks them on
  * /dev/clipboard and leaves the same set itself, and "clip.exe get" must
  * then print what Windows XP printed after put.
@@ -103,6 +106,7 @@ static const fixture k_fixtures[] = {
 static const fixture k_windowed[] = {
     {"hooks.exe", "hooks.out", 0u, 0, 0, 0},
     {"clip.exe", "clip.out", 0u, 0, 0, 0},
+    {"richedit.exe", "richedit.out", 0u, 0, 0, 0},
 };
 static const fixture k_clip_put = {"clip.exe", "clip-put.out", 0u, 0, 0, 0};
 /* gdi32's text over the host's faces in /system/fonts; text-savanxp.out is
@@ -116,6 +120,8 @@ static const fixture k_clip_drop = {"clip.exe", "clip-drop.out", 0u, 0, 0, DROP_
 
 #define CONTROLS_READY "WIN32 CONTROLS READY"
 static const fixture k_controls = {"controls.exe", "controls.out", 0u, 0, 0, CONTROLS_READY};
+#define RICHEDIT_READY "WIN32 RICHEDIT READY"
+static const fixture k_richedit_input = {"richedit.exe", "richedit-input.out", 0u, 0, 0, RICHEDIT_READY};
 static const fixture k_window = {"window.exe", "window.out", 3u, 0, 0, WINDOW_READY};
 static const fixture k_dialog = {"dialog.exe", "dialog.out", 5u, 0, 0, DIALOG_READY};
 /* Needs the user's cards.dll next to it, which only the win32-cards
@@ -423,6 +429,14 @@ static int run_window(const fixture *f) {
     return run(f);
 }
 
+static int run_window_with(const fixture *f, char *argument) {
+    if (!start_windowd()) {
+        say("win32test: FAIL ", "windowd", ": did not start");
+        return 0;
+    }
+    return run_with(f, argument);
+}
+
 /* sol.exe once under windowd on the solitaire registry; 1 when it exits 0. */
 static int run_solitaire_once(int pass) {
     char *argv[] = {WINHOST, "--registry", SOLITAIRE_REGISTRY, "--time", SOLITAIRE_TIME, SOLITAIRE};
@@ -571,6 +585,10 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'c' && argv[1][3] == 'o') {
         sxn_exit(run_window(&k_controls) ? 0 : 1);
+    }
+    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'r') {
+        static char input[] = "input";
+        sxn_exit(run_window_with(&k_richedit_input, input) ? 0 : 1);
     }
     if (argc > 1 && argv[1][0] == '-' && argv[1][1] == '-' && argv[1][2] == 'c') {
         sxn_exit(run(&k_cards) ? 0 : 1);

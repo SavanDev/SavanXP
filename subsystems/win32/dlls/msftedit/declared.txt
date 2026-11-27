@@ -1,0 +1,15 @@
+# msftedit.dll: entry points exported so that imports resolve, with no behaviour
+# yet (docs/userland/WIN32.md, "Declared entry points"). Name, argument
+# bytes popped (or cdecl, or data), and the value returned. A function moves
+# out of this table when it is written. Windows XP's msftedit.dll exports
+# these; WordPad imports none of them, since it loads the DLL by name for its
+# window class.
+
+CreateTextServices            12  0x80004001
+DllGetVersion                  4  0x80004001
+REExtendedRegisterClass        0  0
+RichEditANSIWndProc           16  0
+RichEdit10ANSIWndProc         16  0
+SetCustomTextOutHandlerEx      8  0
+RichListBoxWndProc            16  0
+RichComboBoxWndProc           16  0

@@ -1,0 +1,575 @@
+richedit.exe input: msftedit.dll loaded
+  command : rich EN_SETFOCUS
+  notify : rich EN_SELCHANGE 1-1 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 2-2 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 3-3 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 4-4 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 5-5 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 6-6 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 7-7 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 8-8 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 9-9 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 10-10 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 11-11 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 12-12 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 13-13 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 14-14 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 15-15 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 16-16 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 17-17 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 18-18 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 19-19 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 20-20 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 21-21 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 22-22 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 23-23 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 24-24 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 25-25 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 26-26 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 27-27 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 28-28 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 29-29 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 30-30 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 31-31 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 32-32 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 33-33 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 34-34 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 35-35 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 36-36 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 37-37 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 38-38 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 39-39 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 40-40 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 41-41 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 42-42 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 43-43 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+state: 
+  text : 45/45 [the quick brown fox\r\njumps over\r\nthe lazy dog]
+  sel : 43-43 getsel 0x002b002b 43-43
+  lines : 3 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 10 getline 11 [jumps over\r] fromchar 1
+   line : 2 index 31 length 12 getline 13 [the lazy dog\r] fromchar 2
+   line : 3 index -1 length 12 getline 0 [] fromchar 2 -1 index 31 -1 length 12 linefromchar -1 2
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  notify : rich EN_SELCHANGE 31-31 type 0x00000000
+  notify : rich EN_SELCHANGE 43-43 type 0x00000000
+  notify : rich EN_SELCHANGE 42-42 type 0x00000000
+  notify : rich EN_SELCHANGE 41-41 type 0x00000000
+  notify : rich EN_SELCHANGE 42-42 type 0x00000000
+  notify : rich EN_SELCHANGE 30-30 type 0x00000000
+  notify : rich EN_SELCHANGE 11-11 type 0x00000000
+  notify : rich EN_SELCHANGE 30-30 type 0x00000000
+  notify : rich EN_SELCHANGE 26-26 type 0x00000000
+  notify : rich EN_SELCHANGE 20-20 type 0x00000000
+  notify : rich EN_SELCHANGE 26-26 type 0x00000000
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  notify : rich EN_SELCHANGE 43-43 type 0x00000000
+state: 
+  text : 45/45 [the quick brown fox\r\njumps over\r\nthe lazy dog]
+  sel : 43-43 getsel 0x002b002b 43-43
+  lines : 3 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 10 getline 11 [jumps over\r] fromchar 1
+   line : 2 index 31 length 12 getline 13 [the lazy dog\r] fromchar 2
+   line : 3 index -1 length 12 getline 0 [] fromchar 2 -1 index 31 -1 length 12 linefromchar -1 2
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 42-43 type 0x00000001
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 41-43 type 0x00000005
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 40-43 type 0x00000005
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 35-43 type 0x00000005
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 31-43 type 0x00000005
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 20-43 type 0x00000005
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 20-20 type 0x00000000
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 20-31 type 0x00000005
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 31-31 type 0x00000000
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 31-44 type 0x00000005
+state: 
+  text : 45/45 [the quick brown fox\r\njumps over\r\nthe lazy dog]
+  sel : 31-44 getsel 0x002c001f 31-44
+  lines : 3 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 10 getline 11 [jumps over\r] fromchar 1
+   line : 2 index 31 length 12 getline 13 [the lazy dog\r] fromchar 2
+   line : 3 index -1 length 0 getline 0 [] fromchar 2 -1 index 31 -1 length 0 linefromchar -1 2
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 31-31 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 30-30 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 20-20 type 0x00000000
+  notify : rich EN_SELCHANGE 20-20 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 20-20 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 24-24 type 0x00000000
+  notify : rich EN_SELCHANGE 20-20 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+state: 
+  text : 21/21 [the quick brown fox\r\n]
+  sel : 20-20 getsel 0x00140014 20-20
+  lines : 2 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 0 getline 1 [\r] fromchar 1
+   line : 2 index -1 length 0 getline 0 [] fromchar 1 -1 index 20 -1 length 0 linefromchar -1 1
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  notify : rich EN_SELCHANGE 24-24 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 20-25 type 0x00000005
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 20-20 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+state: 
+  text : 25/25 [the quick brown fox\r\nover]
+  sel : 20-20 getsel 0x00140014 20-20
+  lines : 2 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index -1 length 4 getline 0 [] fromchar 1 -1 index 20 -1 length 4 linefromchar -1 1
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 1
+  focus : rich
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-20 type 0x00000005
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 24-24 type 0x00000000
+  notify : rich EN_SELCHANGE 25-25 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 45-45 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+state: 
+  text : 48/48 [the quick brown fox\r\nover\r\nthe quick brown fox\r\n]
+  sel : 45-45 getsel 0x002d002d 45-45
+  lines : 4 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 25 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 45 length 0 getline 1 [\r] fromchar 3
+   line : 4 index -1 length 0 getline 0 [] fromchar 3 -1 index 45 -1 length 0 linefromchar -1 3
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 25-45 type 0x00000005
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 25-25 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+state: 
+  text : 27/27 [the quick brown fox\r\nover\r\n]
+  sel : 25-25 getsel 0x00190019 25-25
+  lines : 3 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 25 length 0 getline 1 [\r] fromchar 2
+   line : 3 index -1 length 0 getline 0 [] fromchar 2 -1 index 25 -1 length 0 linefromchar -1 2
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  notify : rich EN_SELCHANGE 25-45 type 0x00000005
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+state: 
+  text : 48/48 [the quick brown fox\r\nover\r\nthe quick brown fox\r\n]
+  sel : 25-45 getsel 0x002d0019 25-45
+  lines : 4 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 25 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 45 length 0 getline 1 [\r] fromchar 3
+   line : 4 index -1 length 0 getline 0 [] fromchar 2 -1 index 25 -1 length 0 linefromchar -1 2
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 1
+  focus : rich
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 24-24 type 0x00000000
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 2-24 type 0x00000005
+state: 
+  text : 48/48 [the quick brown fox\r\nover\r\nthe quick brown fox\r\n]
+  sel : 2-24 getsel 0x00180002 2-24
+  lines : 4 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 25 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 45 length 0 getline 1 [\r] fromchar 3
+   line : 4 index -1 length 2 getline 0 [] fromchar 0 -1 index 0 -1 length 2 linefromchar -1 0
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 1
+  focus : rich
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 8-8 type 0x00000000
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 4-10 type 0x00000005
+state: 
+  text : 48/48 [the quick brown fox\r\nover\r\nthe quick brown fox\r\n]
+  sel : 4-10 getsel 0x000a0004 4-10
+  lines : 4 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 25 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 45 length 0 getline 1 [\r] fromchar 3
+   line : 4 index -1 length 13 getline 0 [] fromchar 0 -1 index 0 -1 length 13 linefromchar -1 0
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 1
+  focus : rich
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 26-26 type 0x00000000
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 26-27 type 0x00000001
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 26-31 type 0x00000005
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 25-26 type 0x00000001
+state: 
+  text : 48/48 [the quick brown fox\r\nover\r\nthe quick brown fox\r\n]
+  sel : 25-26 getsel 0x001a0019 25-26
+  lines : 4 first visible 0
+   line : 0 index 0 length 19 getline 20 [the quick brown fox\r] fromchar 0
+   line : 1 index 20 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 25 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 45 length 0 getline 1 [\r] fromchar 3
+   line : 4 index -1 length 18 getline 0 [] fromchar 2 -1 index 25 -1 length 18 linefromchar -1 2
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 1
+  focus : rich
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 3-3 type 0x00000000
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-4 type 0x00000005
+  command : rich EN_UPDATE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 41-45 type 0x00000005
+  command : rich EN_CHANGE
+state: 
+  text : 48/48 [quick brown fox\r\nover\r\nthe quick brown fox\r\nthe ]
+  sel : 41-45 getsel 0x002d0029 41-45
+  lines : 4 first visible 0
+   line : 0 index 0 length 15 getline 16 [quick brown fox\r] fromchar 0
+   line : 1 index 16 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 21 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 41 length 4 getline 5 [the \r] fromchar 3
+   line : 4 index -1 length 0 getline 0 [] fromchar 3 -1 index 41 -1 length 0 linefromchar -1 3
+  scroll : (none) -7..-7 page 7 pos -7 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 45-45 type 0x00000000
+  notify : rich EN_SELCHANGE 46-46 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 47-47 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 48-48 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 49-49 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 50-50 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 51-51 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 52-52 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 53-53 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 54-54 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 55-55 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 56-56 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 57-57 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  command : rich EN_UPDATE
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 58-58 type 0x00000000
+  command : rich EN_CHANGE
+  notify : rich EN_SELCHANGE 59-59 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 60-60 type 0x00000000
+  command : rich EN_CHANGE
+  notify : rich EN_SELCHANGE 61-61 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 62-62 type 0x00000000
+  command : rich EN_CHANGE
+  notify : rich EN_SELCHANGE 63-63 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 64-64 type 0x00000000
+  command : rich EN_CHANGE
+  notify : rich EN_SELCHANGE 65-65 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 66-66 type 0x00000000
+  command : rich EN_CHANGE
+  notify : rich EN_SELCHANGE 67-67 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 68-68 type 0x00000000
+  command : rich EN_CHANGE
+  notify : rich EN_SELCHANGE 69-69 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+state: 
+  text : 84/84 [quick brown fox\r\nover\r\nthe quick brown fox\r\nthe \r\n0\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n0\r\n1]
+  sel : 69-69 getsel 0x00450045 69-69
+  lines : 16 first visible 6
+   line : 0 index 0 length 15 getline 16 [quick brown fox\r] fromchar 0
+   line : 1 index 16 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 21 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 41 length 4 getline 5 [the \r] fromchar 3
+   line : 4 index 46 length 1 getline 2 [0\r] fromchar 4
+   line : 5 index 48 length 1 getline 2 [1\r] fromchar 5
+   line : 6 index 50 length 1 getline 2 [2\r] fromchar 6
+   line : 7 index 52 length 1 getline 2 [3\r] fromchar 7
+   line : 8 index 54 length 1 getline 2 [4\r] fromchar 8
+   line : 9 index 56 length 1 getline 2 [5\r] fromchar 9
+   line : 10 index 58 length 1 getline 2 [6\r] fromchar 10
+   line : 11 index 60 length 1 getline 2 [7\r] fromchar 11
+   line : 12 index 62 length 1 getline 2 [8\r] fromchar 12
+   line : 13 index 64 length 1 getline 2 [9\r] fromchar 13
+   line : 14 index 66 length 1 getline 2 [0\r] fromchar 14
+   line : 15 index 68 length 1 getline 2 [1\r] fromchar 15
+   line : 16 index -1 length 1 getline 0 [] fromchar 15 -1 index 68 -1 length 1 linefromchar -1 15
+  scroll : 0..240 page 150 pos 90 scrollpos 0,90 first visible 6 bar shown
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 57-57 type 0x00000000
+state: 
+  text : 84/84 [quick brown fox\r\nover\r\nthe quick brown fox\r\nthe \r\n0\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n0\r\n1]
+  sel : 57-57 getsel 0x00390039 57-57
+  lines : 16 first visible 0
+   line : 0 index 0 length 15 getline 16 [quick brown fox\r] fromchar 0
+   line : 1 index 16 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 21 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 41 length 4 getline 5 [the \r] fromchar 3
+   line : 4 index 46 length 1 getline 2 [0\r] fromchar 4
+   line : 5 index 48 length 1 getline 2 [1\r] fromchar 5
+   line : 6 index 50 length 1 getline 2 [2\r] fromchar 6
+   line : 7 index 52 length 1 getline 2 [3\r] fromchar 7
+   line : 8 index 54 length 1 getline 2 [4\r] fromchar 8
+   line : 9 index 56 length 1 getline 2 [5\r] fromchar 9
+   line : 10 index 58 length 1 getline 2 [6\r] fromchar 10
+   line : 11 index 60 length 1 getline 2 [7\r] fromchar 11
+   line : 12 index 62 length 1 getline 2 [8\r] fromchar 12
+   line : 13 index 64 length 1 getline 2 [9\r] fromchar 13
+   line : 14 index 66 length 1 getline 2 [0\r] fromchar 14
+   line : 15 index 68 length 1 getline 2 [1\r] fromchar 15
+   line : 16 index -1 length 1 getline 0 [] fromchar 9 -1 index 56 -1 length 1 linefromchar -1 9
+  scroll : 0..240 page 150 pos 0 scrollpos 0,0 first visible 0 bar shown
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 69-69 type 0x00000000
+state: 
+  text : 84/84 [quick brown fox\r\nover\r\nthe quick brown fox\r\nthe \r\n0\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n0\r\n1]
+  sel : 69-69 getsel 0x00450045 69-69
+  lines : 16 first visible 9
+   line : 0 index 0 length 15 getline 16 [quick brown fox\r] fromchar 0
+   line : 1 index 16 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 21 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 41 length 4 getline 5 [the \r] fromchar 3
+   line : 4 index 46 length 1 getline 2 [0\r] fromchar 4
+   line : 5 index 48 length 1 getline 2 [1\r] fromchar 5
+   line : 6 index 50 length 1 getline 2 [2\r] fromchar 6
+   line : 7 index 52 length 1 getline 2 [3\r] fromchar 7
+   line : 8 index 54 length 1 getline 2 [4\r] fromchar 8
+   line : 9 index 56 length 1 getline 2 [5\r] fromchar 9
+   line : 10 index 58 length 1 getline 2 [6\r] fromchar 10
+   line : 11 index 60 length 1 getline 2 [7\r] fromchar 11
+   line : 12 index 62 length 1 getline 2 [8\r] fromchar 12
+   line : 13 index 64 length 1 getline 2 [9\r] fromchar 13
+   line : 14 index 66 length 1 getline 2 [0\r] fromchar 14
+   line : 15 index 68 length 1 getline 2 [1\r] fromchar 15
+   line : 16 index -1 length 1 getline 0 [] fromchar 15 -1 index 68 -1 length 1 linefromchar -1 15
+  scroll : 0..240 page 150 pos 91 scrollpos 0,135 first visible 9 bar shown
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  command : rich EN_VSCROLL
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+state: 
+  text : 84/84 [quick brown fox\r\nover\r\nthe quick brown fox\r\nthe \r\n0\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n0\r\n1]
+  sel : 0-0 getsel 0x00000000 0-0
+  lines : 16 first visible 0
+   line : 0 index 0 length 15 getline 16 [quick brown fox\r] fromchar 0
+   line : 1 index 16 length 4 getline 5 [over\r] fromchar 1
+   line : 2 index 21 length 19 getline 20 [the quick brown fox\r] fromchar 2
+   line : 3 index 41 length 4 getline 5 [the \r] fromchar 3
+   line : 4 index 46 length 1 getline 2 [0\r] fromchar 4
+   line : 5 index 48 length 1 getline 2 [1\r] fromchar 5
+   line : 6 index 50 length 1 getline 2 [2\r] fromchar 6
+   line : 7 index 52 length 1 getline 2 [3\r] fromchar 7
+   line : 8 index 54 length 1 getline 2 [4\r] fromchar 8
+   line : 9 index 56 length 1 getline 2 [5\r] fromchar 9
+   line : 10 index 58 length 1 getline 2 [6\r] fromchar 10
+   line : 11 index 60 length 1 getline 2 [7\r] fromchar 11
+   line : 12 index 62 length 1 getline 2 [8\r] fromchar 12
+   line : 13 index 64 length 1 getline 2 [9\r] fromchar 13
+   line : 14 index 66 length 1 getline 2 [0\r] fromchar 14
+   line : 15 index 68 length 1 getline 2 [1\r] fromchar 15
+   line : 16 index -1 length 15 getline 0 [] fromchar 0 -1 index 0 -1 length 15 linefromchar -1 0
+  scroll : 0..240 page 150 pos 0 scrollpos 0,0 first visible 0 bar shown
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-70 type 0x00000005
+  command : rich EN_UPDATE
+  command : rich EN_UPDATE
+  notify : rich EN_SELCHANGE 0-0 type 0x00000000
+  command : rich EN_CHANGE
+  command : rich EN_UPDATE
+state: 
+  text : 0/0 []
+  sel : 0-0 getsel 0x00000000 0-0
+  lines : 1 first visible 0
+   line : 0 index 0 length 0 getline 1 [\r] fromchar 0
+   line : 1 index -1 length 0 getline 0 [] fromchar 0 -1 index 0 -1 length 0 linefromchar -1 0
+  scroll : 0..240 page 150 pos 0 scrollpos 0,0 first visible 0 no bar
+  modify : -1 canundo 1 canredo 0
+  focus : rich
+  command : rich EN_KILLFOCUS
+  notify : rich EN_SAVECLIPBOARD

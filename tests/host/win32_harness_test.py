@@ -18,7 +18,10 @@ a context menu open. "clip.exe put" and "clip.exe get" share one
 "clip.exe drop" plays fixtures/clip/drop.txt, two files dragged onto its
 window; an input script cannot drag from another program on Windows XP, so
 clip-drop.out is the harness's, checked by hand against what Windows
-documents for WM_DROPFILES, not recorded there.
+documents for WM_DROPFILES, not recorded there. richedit.exe drives SSW's
+RichEdit control by messages, and "richedit.exe input" by
+fixtures/richedit/input.txt, dumping the control with a selection; both
+outputs are Windows XP's, from Microsoft's msftedit.dll.
 
 With --cards FOLDER it runs only cards.exe, with the user's own cards.dll
 from FOLDER copied next to it in a temporary folder; without the file it
@@ -104,6 +107,8 @@ CASES = [
     ("clip.exe", ["get"], "clip-get.out", 0x0, None, False, None),
     ("clip.exe", ["drop"], "clip-drop.out", 0x0, None, False, "clip/drop.txt"),
     ("text.exe", ["liberation"], "text-savanxp.out", 0x0, None, False, None),
+    ("richedit.exe", [], "richedit.out", 0x0, None, False, None),
+    ("richedit.exe", ["input"], "richedit-input.out", 0x0, None, False, "richedit/input.txt"),
 ]
 
 # The fixtures that leave the clipboard to the next run: they share one
@@ -115,6 +120,7 @@ DUMPS = {
     "window.exe": ["window"],
     "dialog.exe": ["dialog-menu", "dialog-settings"],
     "controls.exe": ["controls-dropdown", "controls-menu"],
+    "richedit.exe": ["richedit-selection"],
 }
 
 
