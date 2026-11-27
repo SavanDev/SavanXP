@@ -986,19 +986,23 @@ static void quote(char *out, size_t capacity, const char *text, size_t length) {
     out[used] = '\0';
 }
 
-static void dump_box(const struct webengine_box *box, unsigned depth, webengine_dump_line line, void *user) {
+static void dump_box(const struct webengine_box *box, unsigned depth, bool laid_out, webengine_dump_line line,
+                     void *user) {
     char text[200];
     char out[256];
     unsigned indent = depth * 2 < 64 ? depth * 2 : 64;
     memset(out, ' ', indent);
     switch (box->type) {
-    case WEBENGINE_BOX_BLOCK:
-        if (box->tag[0] == '\0') {
-            snprintf(out + indent, sizeof(out) - indent, "anonymous");
-        } else {
-            snprintf(out + indent, sizeof(out) - indent, "block %s", box->tag);
+    case WEBENGINE_BOX_BLOCK: {
+        int used = box->tag[0] == '\0'
+            ? snprintf(out + indent, sizeof(out) - indent, "anonymous")
+            : snprintf(out + indent, sizeof(out) - indent, "block %s", box->tag);
+        if (laid_out && used > 0) {
+            snprintf(out + indent + used, sizeof(out) - indent - (size_t)used, " %d %d %d %d",
+                     box->x, box->y, box->width, box->height);
         }
         break;
+    }
     case WEBENGINE_BOX_INLINE:
         snprintf(out + indent, sizeof(out) - indent, "inline %s%s%s", box->tag,
                  box->first_piece ? "" : " (continued)", box->last_piece ? "" : " (split)");
@@ -1024,9 +1028,9 @@ void webengine_tree_dump(const struct webengine_tree *tree, webengine_dump_line 
     const struct webengine_box *box = tree->root;
     unsigned depth = 0;
     while (box != NULL) {
-        dump_box(box, depth, line, user);
+        dump_box(box, depth, tree->layout_width > 0, line, user);
         if (box->marker != NULL) {
-            dump_box(box->marker, depth + 1, line, user);
+            dump_box(box->marker, depth + 1, tree->layout_width > 0, line, user);
         }
         if (box->first != NULL) {
             box = box->first;

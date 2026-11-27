@@ -215,9 +215,42 @@ the source view and `text/plain` show.
 has an expectation beside it (`NAME.html` and `NAME.expect`) with fixed fonts,
 and compares the dump with the expectation line by line; `--print PAGE`
 prints a page's dump. The expectations are written from the specification,
-not copied from the output. `e4-boxes` covers anonymous blocks, a block in an
+not copied from the output. A line `viewport WIDTH` in an expectation lays the
+tree out at that width first, and each block's line then ends with its border
+box. `e4-boxes` covers anonymous blocks, a block in an
 inline, white space across elements, `pre`, `pre-line`, breaks, images,
 links and the three kinds of marker.
+
+## The block flow
+
+`webengine_layout` (`webengine_layout.c`) lays the tree out at a viewport
+width, written from CSS 2.1 8.3.1, 10.3.3, 10.4, 10.6.3 and 10.7. It gives
+every block its border box in canvas pixels (`x`, `y`, `width`, `height`) and
+its used margins, borders and padding, and gives the tree its total height.
+The walk keeps an explicit stack, as the style walk does.
+
+- **Widths.** `auto` takes what the containing block leaves. Two `auto`
+  margins centre a box with a width. When the sizes add up to more than the
+  containing block, the right margin gives way, as left-to-right text has it.
+  `max-width` and then `min-width` replace the width and solve again.
+  `box-sizing: border-box` counts padding and borders in the width and the
+  height.
+- **Percentages.** Widths, horizontal and vertical padding and margins take
+  their percentages from the containing block's width. A percentage height
+  needs a containing block with a specified height, otherwise it is `auto`.
+- **Margins collapse** (8.3.1): adjoining margins become the largest positive
+  one plus the most negative one. A box's top margin collapses with its first
+  child's when no border or padding separates them, and its bottom margin
+  with its last child's when its height is also `auto`. An empty box lets
+  its margins collapse through it, and its top edge is where it would be with
+  a bottom border. Line boxes, borders and padding separate margins. The
+  root, and a box whose `overflow` is not `visible`, start a new formatting
+  context, so their margins do not collapse with their children's. Floats
+  and positioned boxes join them in E5.
+
+`e4-blocks` checks these rules at 800 pixels. It has no text, so the
+expected geometry does not depend on fonts; it was checked against
+Chromium's `getBoundingClientRect` at the same width.
 
 ## Known costs
 

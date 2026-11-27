@@ -1,0 +1,30 @@
+# E4's block flow (docs/desktop/WEBVIEWER_ENGINE.md#the-block-flow), written
+# from CSS 2.1 8.3.1, 10.3.3 and 10.6.3, and checked against Chromium's
+# getBoundingClientRect at the same width: border boxes, "x y width height".
+# a: margins, padding and border; b: auto margins centre; c: percentages of
+# the containing block; d: a parent's top margin collapses with its first
+# child's, and an empty child's collapse through it; f: a negative margin,
+# box-sizing: border-box; g: max-width and min-height; h: over-constrained
+# margins; i: a border keeps margins apart; j: overflow hidden starts a new
+# context; k, l: a percentage height needs a containing block height.
+viewport 800
+block html 0 0 800 312
+  block body 8 10 784 294
+    block div 28 10 744 44
+    block div 300 64 200 10
+    block div 8 89 588 10
+    block div 8 129 784 32
+      block div 8 129 784 10
+      block div 8 151 784 0
+      block div 8 151 784 10
+    block div 8 157 100 20
+    block div 8 177 306 26
+    block div 58 203 100 5
+    block div 8 214 784 18
+      block div 8 227 784 5
+    block div 8 232 784 22
+      block div 8 242 784 5
+    block div 8 254 784 10
+      block div 8 254 784 10
+    block div 8 264 784 40
+      block div 8 264 784 20

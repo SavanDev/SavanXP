@@ -121,10 +121,24 @@ struct webengine_box {
     bool last_piece;
     /* BLOCK of a list item with an outside marker. */
     struct webengine_box *marker;
+
+    /* Set by webengine_layout. BLOCK: the border box in canvas pixels and
+     * the used widths of its edges. */
+    int x;
+    int y;
+    int width;
+    int height;
+    int margin[4];
+    int border[4];
+    int padding[4];
 };
 
 struct webengine_tree {
     struct webengine_box *root;
+    /* Set by webengine_layout: the width it laid out for, and the height of
+     * everything, the root's margins included. 0 before. */
+    int layout_width;
+    int height;
     /* The canvas: the root's background, or body's when the root has none
      * (CSS 2.1 14.2); the box it came from does not paint it again. */
     css_color canvas;
@@ -155,8 +169,14 @@ struct webengine_tree *webengine_tree_text(const char *text, size_t length, int 
 
 void webengine_tree_free(struct webengine_tree *tree);
 
+/* Lays the tree out in a viewport `width` CSS pixels wide (CSS 2.1 chapter
+ * 10's normal flow): every block's position and size. 0, or -1 when out of
+ * memory. Laying out again at another width replaces the last layout. */
+int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *fonts, int width);
+
 /* The tree as text, a line per box, indented two spaces a level, for the
  * tests: "block p", "anonymous", "inline b", "text \"...\"", "break",
- * "marker 1". `line` gets each one without its newline. */
+ * "marker 1". Once laid out, a block's line ends with its border box,
+ * "x y width height". `line` gets each one without its newline. */
 typedef void (*webengine_dump_line)(void *user, const char *line);
 void webengine_tree_dump(const struct webengine_tree *tree, webengine_dump_line line, void *user);
