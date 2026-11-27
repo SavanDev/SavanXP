@@ -150,9 +150,10 @@ changes not released yet; each released version has its own file in
   glue in `system/webview/engine/`. Host test and scenario `webengine-test`; Perl and gperf are now build requirements
   ([WEBVIEWER_ENGINE.md](docs/desktop/WEBVIEWER_ENGINE.md)).
 - **Web Viewer lays pages out in CSS boxes** (E4, E5): margins that collapse, borders, padding, widths and heights,
-  line boxes with `white-space`, `line-height`, `vertical-align`, `text-align` and `text-indent`, list markers, and
-  `float` and `clear` with text wrapping beside floats, replacing the paragraph renderer. Host test
-  `webengine-layout-test` ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#layout-and-paint-e4-e5)).
+  line boxes with `white-space`, `line-height`, `vertical-align`, `text-align` and `text-indent`, list markers,
+  `float` and `clear` with text wrapping beside floats, and `position` (relative, absolute, fixed) with `z-index`,
+  replacing the paragraph renderer. Host test `webengine-layout-test`
+  ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#layout-and-paint-e4-e5)).
 - **Web Viewer has a Favorites menu:** Add to Favorites and Remove from Favorites for the page on screen, then a row
   per favorite, kept in the profile's `Settings/webview-favorites`. A new profile starts with Motherfucking Website and
   the Acid2 test. Host test `webview-favorites-test` ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#favorites)).

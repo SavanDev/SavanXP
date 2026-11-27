@@ -3,14 +3,18 @@
  * NAME.expect) is parsed, styled with the engine's user-agent sheet and its
  * own <style>, and made into boxes; the dump must match the expectation line
  * for line. Lines of the expectation starting with '#' are comments. One
- * that reads "viewport WIDTH" lays the boxes out at that width first, so the
- * dump carries their geometry.
+ * that reads "viewport WIDTH [HEIGHT]" lays the boxes out in a viewport that
+ * size first (600 pixels high unless it says), so the dump carries their
+ * geometry. One that reads "paint" adds the painting order after the boxes,
+ * a line per item: "paint block TAG X Y", "paint lines TAG X Y" or "paint
+ * marker", with "fixed" after an item that does not scroll.
  *
  * The fonts are fixed, so the expectations do not depend on the system's:
  * face 0 (under 18px) is 7px a character, face 1 (18px and over) 10px,
  * face 2 (monospace) 8px; bold adds a pixel a character.
  *
- * `--print PAGE.html [WIDTH]` prints a page's dump instead of checking it. */
+ * `--print PAGE.html [WIDTH [HEIGHT]]` prints a page's dump, painting order
+ * included, instead of checking it. */
 
 #include "webengine.h"
 #include "webengine_box.h"
@@ -87,7 +91,23 @@ static void free_lines(struct lines *lines) {
 }
 
 /* The dump of the page at `path`, into `out`. 0, or -1. */
-static int dump_page(const char *path, css_stylesheet *ua, int viewport, struct lines *out) {
+static void dump_paint(const struct webengine_tree *tree, struct lines *out) {
+    for (size_t i = 0; i < tree->paint_count; i++) {
+        const struct webengine_paint *item = &tree->paint[i];
+        char line[128];
+        if (item->kind == WEBENGINE_PAINT_MARKER) {
+            snprintf(line, sizeof(line), "paint marker%s", item->fixed ? " fixed" : "");
+        } else {
+            snprintf(line, sizeof(line), "paint %s %s %d %d%s", item->kind == WEBENGINE_PAINT_BLOCK ? "block" : "lines",
+                     item->box->tag[0] != '\0' ? item->box->tag : "anonymous", item->box->x, item->box->y,
+                     item->fixed ? " fixed" : "");
+        }
+        collect(out, line);
+    }
+}
+
+static int dump_page(const char *path, css_stylesheet *ua, int viewport, int viewport_height, bool paint,
+                     struct lines *out) {
     size_t length = 0;
     char *html = read_file(path, &length);
     if (html == NULL) {
@@ -104,8 +124,11 @@ static int dump_page(const char *path, css_stylesheet *ua, int viewport, struct 
     int result = -1;
     if (webengine_styles_open(&styles, document, path, ua, NULL, NULL) == 0) {
         struct webengine_tree *tree = webengine_tree_build(document, &styles, &k_fonts);
-        if (tree != NULL && (viewport <= 0 || webengine_layout(tree, &k_fonts, viewport) == 0)) {
+        if (tree != NULL && (viewport <= 0 || webengine_layout(tree, &k_fonts, viewport, viewport_height) == 0)) {
             webengine_tree_dump(tree, collect, out);
+            if (paint && viewport > 0) {
+                dump_paint(tree, out);
+            }
             result = 0;
         }
         webengine_tree_free(tree);
@@ -127,13 +150,21 @@ static int check_page(const char *html_path, const char *expect_path, css_styles
     }
     struct lines expected = { 0 };
     int viewport = 0;
+    int viewport_height = 600;
+    bool paint = false;
     for (char *line = expect; line != NULL && *line != '\0';) {
         char *end = strchr(line, '\n');
         if (end != NULL) {
             *end = '\0';
         }
         if (strncmp(line, "viewport ", 9) == 0) {
-            viewport = atoi(line + 9);
+            char *rest = NULL;
+            viewport = (int)strtol(line + 9, &rest, 10);
+            if (rest != NULL && *rest == ' ') {
+                viewport_height = atoi(rest + 1);
+            }
+        } else if (strcmp(line, "paint") == 0) {
+            paint = true;
         } else if (line[0] != '#' && line[0] != '\0') {
             collect(&expected, line);
         }
@@ -141,7 +172,7 @@ static int check_page(const char *html_path, const char *expect_path, css_styles
     }
     free(expect);
     struct lines got = { 0 };
-    int failures = dump_page(html_path, ua, viewport, &got) != 0;
+    int failures = dump_page(html_path, ua, viewport, viewport_height, paint, &got) != 0;
     for (size_t i = 0; failures == 0 && (i < expected.count || i < got.count); i++) {
         const char *want = i < expected.count ? expected.line[i] : "(nothing)";
         const char *have = i < got.count ? got.line[i] : "(nothing)";
@@ -159,8 +190,8 @@ static int check_page(const char *html_path, const char *expect_path, css_styles
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2 && !((argc == 3 || argc == 4) && strcmp(argv[1], "--print") == 0)) {
-        fprintf(stderr, "usage: webengine-layout-test <corpus directory> | --print <page.html> [width]\n");
+    if (argc != 2 && !(argc >= 3 && argc <= 5 && strcmp(argv[1], "--print") == 0)) {
+        fprintf(stderr, "usage: webengine-layout-test <corpus directory> | --print <page.html> [width [height]]\n");
         return 2;
     }
     if (webengine_init() != 0) {
@@ -176,7 +207,8 @@ int main(int argc, char **argv) {
     int failures = 0;
     if (argc >= 3) {
         struct lines got = { 0 };
-        failures = dump_page(argv[2], ua, argc == 4 ? atoi(argv[3]) : 0, &got) != 0;
+        failures = dump_page(argv[2], ua, argc >= 4 ? atoi(argv[3]) : 0, argc == 5 ? atoi(argv[4]) : 600, true,
+                             &got) != 0;
         for (size_t i = 0; i < got.count; i++) {
             printf("%s\n", got.line[i]);
         }

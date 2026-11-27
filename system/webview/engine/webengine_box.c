@@ -228,6 +228,19 @@ static void margin_lengths(const css_computed_style *style, const css_unit_ctx *
     LENGTH_OR(css_computed_text_indent, CSS_TEXT_INDENT_SET, WEBENGINE_LEN_PX);
 }
 
+static void offset_lengths(const css_computed_style *style, const css_unit_ctx *units,
+                           struct webengine_box_style *box) {
+    struct webengine_len *out;
+    out = &box->offset[WEBENGINE_TOP];
+    LENGTH_OR(css_computed_top, CSS_TOP_SET, WEBENGINE_LEN_AUTO);
+    out = &box->offset[WEBENGINE_RIGHT];
+    LENGTH_OR(css_computed_right, CSS_RIGHT_SET, WEBENGINE_LEN_AUTO);
+    out = &box->offset[WEBENGINE_BOTTOM];
+    LENGTH_OR(css_computed_bottom, CSS_BOTTOM_SET, WEBENGINE_LEN_AUTO);
+    out = &box->offset[WEBENGINE_LEFT];
+    LENGTH_OR(css_computed_left, CSS_LEFT_SET, WEBENGINE_LEN_AUTO);
+}
+
 static void border_side(const css_computed_style *style, const css_unit_ctx *units,
                         struct webengine_box_style *box, int side) {
     typedef uint8_t (*width_getter)(const css_computed_style *, css_fixed *, css_unit *);
@@ -314,6 +327,14 @@ static const struct webengine_box_style *element_style(struct builder *b, const 
     box->overflow = css_computed_overflow_y(style);
     box->float_side = css_computed_float(style);
     box->clear = css_computed_clear(style);
+    box->position = css_computed_position(style);
+    if (box->position == CSS_POSITION_STICKY) {
+        box->position = CSS_POSITION_STATIC;
+    }
+    int32_t z_index = 0;
+    box->z_auto = css_computed_z_index(style, &z_index) != CSS_Z_INDEX_SET;
+    box->z_index = box->z_auto ? 0 : z_index;
+    offset_lengths(style, units, box);
     box->vertical_align = css_computed_vertical_align(style, &value, &unit);
     box->vertical_align_length = box->vertical_align == CSS_VERTICAL_ALIGN_SET
         ? length(style, units, value, unit) : (struct webengine_len){ WEBENGINE_LEN_PX, 0 };
@@ -363,6 +384,11 @@ static const struct webengine_box_style *anonymous_style(struct builder *b,
     box->overflow = CSS_OVERFLOW_VISIBLE;
     box->float_side = CSS_FLOAT_NONE;
     box->clear = CSS_CLEAR_NONE;
+    box->position = CSS_POSITION_STATIC;
+    box->z_auto = true;
+    for (int side = 0; side < 4; side++) {
+        box->offset[side] = (struct webengine_len){ WEBENGINE_LEN_AUTO, 0 };
+    }
     box->vertical_align = CSS_VERTICAL_ALIGN_BASELINE;
     box->width = box->height = box->min_width = box->min_height =
         (struct webengine_len){ WEBENGINE_LEN_AUTO, 0 };
@@ -772,10 +798,12 @@ static bool enter_element(struct builder *b, struct frame *frame) {
     if (box == NULL) {
         return false;
     }
-    if (frame->box_style->float_side == CSS_FLOAT_LEFT || frame->box_style->float_side == CSS_FLOAT_RIGHT) {
-        /* A float is out of the flow: it splits no inline and stays where
-         * it is in the inline content, and white space collapses across
-         * it as if it were not there (CSS 2.1 9.5, 16.6.1). */
+    if (frame->box_style->float_side == CSS_FLOAT_LEFT || frame->box_style->float_side == CSS_FLOAT_RIGHT ||
+        frame->box_style->position == CSS_POSITION_ABSOLUTE || frame->box_style->position == CSS_POSITION_FIXED) {
+        /* A float or an absolute box is out of the flow: it splits no
+         * inline and stays where it is in the inline content, and white
+         * space collapses across it as if it were not there (CSS 2.1 9.5,
+         * 9.6, 16.6.1). */
         b->depth--;
         struct webengine_box *container = inline_target(b);
         b->depth++;
@@ -980,6 +1008,11 @@ struct webengine_tree *webengine_tree_text(const char *text, size_t length, int 
         style->overflow = CSS_OVERFLOW_VISIBLE;
         style->float_side = CSS_FLOAT_NONE;
         style->clear = CSS_CLEAR_NONE;
+        style->position = CSS_POSITION_STATIC;
+        style->z_auto = true;
+        for (int side = 0; side < 4; side++) {
+            style->offset[side] = (struct webengine_len){ WEBENGINE_LEN_AUTO, 0 };
+        }
         style->width = style->height = style->min_width = style->min_height =
             (struct webengine_len){ WEBENGINE_LEN_AUTO, 0 };
         style->max_width = style->max_height = (struct webengine_len){ WEBENGINE_LEN_NONE, 0 };
@@ -1035,9 +1068,12 @@ static void dump_box(const struct webengine_box *box, unsigned depth, bool laid_
     case WEBENGINE_BOX_BLOCK: {
         const char *side = !webengine_box_floats(box) ? ""
             : box->style->float_side == CSS_FLOAT_LEFT ? " float left" : " float right";
+        const char *position = !webengine_box_positioned(box) ? ""
+            : box->style->position == CSS_POSITION_RELATIVE ? " relative"
+            : box->style->position == CSS_POSITION_ABSOLUTE ? " absolute" : " fixed";
         int used = box->tag[0] == '\0'
             ? snprintf(out + indent, sizeof(out) - indent, "anonymous")
-            : snprintf(out + indent, sizeof(out) - indent, "block %s%s", box->tag, side);
+            : snprintf(out + indent, sizeof(out) - indent, "block %s%s%s", box->tag, side, position);
         if (laid_out && used > 0) {
             snprintf(out + indent + used, sizeof(out) - indent - (size_t)used, " %d %d %d %d",
                      box->x, box->y, box->width, box->height);

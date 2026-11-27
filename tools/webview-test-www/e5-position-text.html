@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>E5: positioning in text</title>
+<style>
+body { margin: 0 }
+p { margin: 0 }
+.up { position: relative; top: -3px; left: 5px; border: 1px solid black }
+.spot { position: absolute; width: 10px; height: 10px }
+.mid { text-align: center }
+.frame { position: relative; margin-left: 20px; height: 40px }
+.corner { position: absolute; right: 0; bottom: 0 }
+</style>
+</head>
+<body><p>aaaa <span class="up">bbbb</span> cccc</p><p>xx <span class="spot"></span>yy</p><p class="mid">mid<span class="spot"></span></p><div class="frame"><span class="corner">hello</span></div></body>
+</html>

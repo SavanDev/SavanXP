@@ -1,0 +1,28 @@
+# Positioning in text (E5, docs/desktop/WEBVIEWER_ENGINE.md#positioning),
+# worked out by hand with the test's fixed fonts (7px a character, 18px
+# lines): a relative inline moves its own fragments, not the text after it;
+# absolute boxes in a line take their static position from where the line
+# put them, centring included; a shrink-to-fit absolute box in the bottom
+# right corner of a relative block.
+viewport 300
+block html 0 0 300 94
+  block body 0 0 300 94
+    block p 0 0 300 18
+      line 0 0 300 18
+        text "aaaa " 0 1 35 16
+        inline span 40 -3 30 18
+        text "bbbb" 41 -2 28 16
+        text " cccc" 65 1 35 16
+    block p 0 18 300 18
+      line 0 18 300 18
+        text "xx " 0 19 21 16
+        text "yy" 21 19 14 16
+      block span absolute 21 18 10 10
+    block p 0 36 300 18
+      line 0 36 300 18
+        text "mid" 139 37 21 16
+      block span absolute 160 36 10 10
+    block div relative 20 54 280 40
+      block span absolute 265 76 35 18
+        line 265 76 35 18
+          text "hello" 265 77 35 16

@@ -4,7 +4,7 @@
 > network worker with Stop (N3) through SUN's HTTP loader (N4), over validated
 > HTTPS (N5), and saves what it does not show (D1). It parses HTML through
 > libhubbub and libdom (E2), computes styles with libcss (E3) and lays pages
-> out in CSS boxes (E4) with floats (E5). See the [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
+> out in CSS boxes (E4) with floats and positioning (E5). See the [roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 >
 > It is built only when the OpenSSL port is (`ports/openssl/build.sh`, then
 > `./build.sh build`); without it the image has no Web Viewer and the registry
@@ -205,14 +205,16 @@ margins (collapsing), borders, padding, widths and heights, and line boxes
 with wrapping, `white-space`, `line-height`, `vertical-align`, `text-align`,
 `text-indent` and list markers. Floats and `clear`
 ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#floats)) take boxes out of that
-flow and wrap the text beside them. The user-agent sheet is the engine's
+flow and wrap the text beside them, and `position`
+([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#positioning)) moves boxes relative to
+it or out of it. The user-agent sheet is the engine's
 `webengine_ua_css`, CSS 2.1's Appendix D with HTML's heading sizes, so
 `body` has its 8 pixels of margin and paragraphs and headings their em
 margins.
 
-- **The width.** The layout viewport is the page's area, the window less
-  its frame and the scroll bar. The page is laid out again only when that
-  width changes, so a resize reflows; scrolling repaints from the same
+- **The viewport.** The layout viewport is the page's area, the window less
+  its frame and the scroll bar. The page is laid out again only when its
+  size changes, so a resize reflows; scrolling repaints from the same
   layout.
 - **Faces.** Text under 18 CSS pixels uses the UI face and larger text the
   title face; `monospace` (`pre`, `code`, `tt`, `kbd`, `samp`) uses the
@@ -221,8 +223,11 @@ margins.
   painter gives no ascent, so baselines use the baked faces' proportions.
 - **Paint.** The canvas takes the root's background, or body's (CSS 2.1
   14.2). Then the engine's painting order (`webengine_tree.paint`): each
-  block's background and borders in tree order, the floats whole, and then
-  the line fragments: an inline's background and borders on each line it
+  block's background and borders in tree order, the floats whole, then the
+  line fragments, then positioned boxes by `z-index`
+  ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#painting-order)). Fixed boxes
+  are painted where they are on the screen, whatever the scroll. The line
+  fragments are: an inline's background and borders on each line it
   spans, text, its underline, overline or line-through, and markers. Disc,
   circle and square are drawn shapes; numbers are text. Border styles
   `dotted`, `dashed` and `double` are drawn as such; `inset`, `outset`,
@@ -230,7 +235,7 @@ margins.
   channel blend over the backgrounds behind them. `visibility: hidden`
   keeps the space and paints nothing.
 - **Links.** A link is the text and inline boxes of an `<a href>`, hit
-  tested against the last paint's fragments.
+  tested against the last paint's fragments, topmost first.
 - **View Source and text/plain** are the engine's plain-text tree
   (`webengine_tree_text`): the bytes as they came, newlines kept, tabs to the
   next eighth column, wrapped at spaces, with 8 pixels of padding.
@@ -254,7 +259,7 @@ server empties the window's DNS cache.
 
 ## What it is not (yet)
 
-Positioned boxes stay in the normal flow until the rest of E5; tables stack
+Tables stack
 their cells as blocks and images are an `[image]` placeholder until E6.
 `inline-block` and the other inline-level displays are laid out as inline
 boxes. Fragments reload the page top. A word wider than the page is cut
@@ -301,7 +306,8 @@ The E3 page asserts glyph colors from linked CSS, selector matches,
 cascade order, media and inline declarations. The scenario follows a
 styled link, checks the rendered page after View Source, and stops a
 navigation waiting for a stylesheet. The E5 step opens `e5-float-text.html`
-and asserts the text inside a float and the text wrapping beside one.
+and asserts the text inside a float and the text wrapping beside one, then
+`e5-position-text.html` for a relative inline and an absolute box.
 The SUN socket contract is checked by `smoke native-network` and
 `smoke native-network-offline`, including pending ARP, cancellation,
 initialization without a NIC, route timeout and TCP refusal/reset/retry errors.

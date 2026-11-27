@@ -171,6 +171,7 @@ static int g_plain = 0;
 static struct sx_rect g_view;
 static int g_total_height = 0;
 static int g_layout_width = -1;
+static int g_layout_height = -1;
 
 static struct sxgui_dialog g_open_dialog;
 static struct sxgui_widget g_open_widgets[4];
@@ -1730,14 +1731,16 @@ static void webview_set_scroll(int value)
     }
 }
 
-/* Lays the page out at `width` and sizes the scroll bar after it. */
+/* Lays the page out in the page's area, `width` wide, and sizes the scroll
+ * bar after it. The area's height is the viewport of fixed boxes. */
 static void webview_measure(int width)
 {
     g_layout_width = width;
+    g_layout_height = webview_page_height();
     g_total_height = 0;
     if (g_tree != NULL)
     {
-        if (webengine_layout(g_tree, &k_webview_fonts, width) == 0)
+        if (webengine_layout(g_tree, &k_webview_fonts, width, g_layout_height) == 0)
         {
             g_total_height = g_tree->height;
         }
@@ -2005,27 +2008,42 @@ static void webview_paint_fragment(struct sx_painter *painter, const struct webe
     }
 }
 
-/* The link under (x, y) in the window, from the last paint's layout. */
+/* The link under (x, y) in the window, from the last paint's layout: the
+ * topmost, so the painting order is walked backwards. */
 static int webview_link_at(int x, int y, char *target, size_t capacity)
 {
-    int px = x - g_page_x;
-    int py = y - g_page_y;
-
     if (g_tree == NULL || !sx_rect_contains_point(g_page_area, x, y))
     {
         return 0;
     }
-    for (size_t i = 0; i < g_tree->fragment_count; ++i)
+    for (size_t i = g_tree->paint_count; i > 0; --i)
     {
-        const struct webengine_fragment *fragment = &g_tree->fragments[i];
-        int link = fragment->box->link;
+        const struct webengine_paint *item = &g_tree->paint[i - 1];
+        const struct webengine_box *box = item->box;
+        int px = x - g_page_x;
+        int py = y - (item->fixed ? g_page_area.y : g_page_area.y - WEBVIEW_SCROLL->value);
 
-        if (link >= 0 && fragment->type != WEBENGINE_FRAGMENT_MARKER &&
-            px >= fragment->x && px < fragment->x + fragment->width &&
-            py >= fragment->y && py < fragment->y + fragment->height)
+        if (item->kind != WEBENGINE_PAINT_LINES)
         {
-            snprintf(target, capacity, "%s", g_tree->links[link]);
-            return 1;
+            continue;
+        }
+        for (size_t l = box->first_line; l < box->first_line + box->line_count; ++l)
+        {
+            const struct webengine_line *line = &g_tree->lines[l];
+
+            for (size_t f = line->first_fragment; f < line->first_fragment + line->fragment_count; ++f)
+            {
+                const struct webengine_fragment *fragment = &g_tree->fragments[f];
+                int link = fragment->box->link;
+
+                if (link >= 0 && fragment->type != WEBENGINE_FRAGMENT_MARKER &&
+                    px >= fragment->x && px < fragment->x + fragment->width &&
+                    py >= fragment->y && py < fragment->y + fragment->height)
+                {
+                    snprintf(target, capacity, "%s", g_tree->links[link]);
+                    return 1;
+                }
+            }
         }
     }
     return 0;
@@ -2054,7 +2072,7 @@ static void on_paint(struct sxngui_app *app)
     {
         interior.width = 40;
     }
-    if (interior.width != g_layout_width)
+    if (interior.width != g_layout_width || webview_page_height() != g_layout_height)
     {
         int before = WEBVIEW_SCROLL->value;
 
@@ -2082,6 +2100,8 @@ static void on_paint(struct sxngui_app *app)
         const struct webengine_paint *item = &g_tree->paint[i];
         const struct webengine_box *box = item->box;
 
+        /* Fixed boxes stay where they are while the page scrolls. */
+        g_page_y = item->fixed ? interior.y : interior.y - WEBVIEW_SCROLL->value;
         if (item->kind == WEBENGINE_PAINT_BLOCK)
         {
             webview_paint_block(painter, box, top, bottom);
@@ -2116,6 +2136,7 @@ static void on_paint(struct sxngui_app *app)
             }
         }
     }
+    g_page_y = interior.y - WEBVIEW_SCROLL->value;
     (void)sx_painter_set_font(painter, SX_FONT_UI);
     sx_painter_pop_clip(painter);
 }

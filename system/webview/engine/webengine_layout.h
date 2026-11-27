@@ -92,5 +92,9 @@ void webengine_inline_widths(struct webengine_flow *flow, struct webengine_box *
  * it by (dx, dy). */
 void webengine_translate(struct webengine_tree *tree, struct webengine_box *box, int dx, int dy);
 
+/* The offsets of a position: relative box (9.4.3), percentages of a
+ * containing block `width` wide and `height` high (or none, when < 0). */
+void webengine_relative_offset(const struct webengine_box *box, int width, int height, int *dx, int *dy);
+
 /* The tree's painting order, from its layout. 0, or -1 when out of memory. */
 int webengine_paint_order(struct webengine_tree *tree);

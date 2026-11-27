@@ -7,7 +7,7 @@ later, scripting go on top. This is stage E1 of
 Since E2, Web Viewer walks the document libhubbub and libdom produce, and
 E3 computes its styles with libcss. Since E4 the engine makes the document's
 CSS boxes and lays them out, and Web Viewer paints them; E5 adds
-[floats](#floats).
+[floats](#floats) and [positioning](#positioning).
 
 ## What is vendored
 
@@ -171,10 +171,10 @@ with `webengine_style_element` and makes:
 - **Block boxes** for `block`, `list-item`, the table displays (tables
   stack until E6), `flex`, `grid` and `run-in`. libcss' `css_computed_display`
   already turns floated and absolutely positioned elements into blocks. A
-  float stays where it is: among inline content it is a block child of the
-  inline content's container, splitting nothing, and white space collapses
-  across it as if it were not there. The root is a block whatever its
-  display.
+  float or an absolute box stays where it is: among inline content it is a
+  block child of the inline content's container, splitting nothing, and
+  white space collapses across it as if it were not there. The root is a
+  block whatever its display.
 - **Inline boxes** for `inline` and, until they get layouts of their own,
   `inline-block`, `inline-table`, `inline-flex` and `inline-grid`.
 - **Anonymous blocks** (9.2.1.1). A block whose children mix blocks and
@@ -248,9 +248,9 @@ The walk keeps an explicit stack, as the style walk does.
   with its last child's when its height is also `auto`. An empty box lets
   its margins collapse through it, and its top edge is where it would be with
   a bottom border. Line boxes, borders and padding separate margins. The
-  root, a float, and a box whose `overflow` is not `visible`, start a new
-  formatting context, so their margins do not collapse with their
-  children's.
+  root, a float, an absolute box and a box whose `overflow` is not
+  `visible` start a new formatting context, so their margins do not
+  collapse with their children's.
 
 `e4-blocks` checks these rules at 800 pixels. It has no text, so the
 expected geometry does not depend on fonts; it was checked against
@@ -346,14 +346,6 @@ adds CSS 2.1 9.5's floats and clearance to the two flows.
   containing block's edges. With a fixed width it moves down to where it
   fits. Only the rows of its top, or of its specified height, are checked.
 
-**Painting order** (`webengine_paint.c`). Layout ends with
-`webengine_tree.paint`, the order of CSS 2.1 Appendix E for what the engine
-lays out. The root and every float is a layer. A layer paints its blocks'
-backgrounds and borders in tree order, then the layers inside it, whole and
-in tree order, then its line boxes and outside markers. A float therefore
-covers the backgrounds around it, and the text around it covers the float.
-Web Viewer paints the list as it comes.
-
 Not done: a float met on a line before the point where the line breaks
 still goes on that line, not on the next one, and the room beside floats
 is measured over the block's line height, not the line's own.
@@ -364,6 +356,64 @@ earlier ones, clearance, a context's height, a shrink-to-fit float, contexts
 beside a float, and a float inside an inline. `e5-float-text` is worked out
 by hand at 300 pixels: lines shortened by a float, a float under its line,
 a line moved below a float, and shrink-to-fit floats around text.
+
+## Positioning
+
+The rest of E5 is CSS 2.1 9.6 and 9.4.3, with 10.3.7 and 10.6.4 for the sizes
+of absolute boxes. `sticky` counts as `static`.
+
+- **`relative`.** A block moves by its offsets once it has ended, with
+  everything inside it, so nothing around it moves. libcss already resolves
+  the offsets (`top` wins over `bottom`, `left` over `right`). A relative
+  inline moves the fragments of its own content on each line.
+- **`absolute`.** The containing block is the padding box of the nearest
+  positioned block, or the viewport. An absolute box records its static
+  position where it is met: where the next block would start, or where its
+  line put it. It is laid out once its containing block has ended, so its
+  size is known. A box's frame stays on the stack until the absolute boxes
+  it contains are done, and then a relative one has already moved, so they
+  follow it.
+- **Sizes** (10.3.7, 10.6.4). Horizontally, `left`, margins, borders,
+  padding, `width` and `right` add up to the containing block's width:
+  with both offsets `auto` the box sits at its static position, an `auto`
+  width beside an `auto` offset shrinks to fit, an `auto` width between
+  two offsets stretches, and two `auto` margins between offsets and a width
+  centre it. Vertically the same, after the content: `top` and `bottom` with
+  an `auto` height stretch it, and `bottom` alone places its content's height
+  up from the bottom.
+- **`fixed`** is absolute in the viewport, which is the size
+  `webengine_layout` is given, and its items in the painting order are
+  marked `fixed`, so they do not scroll.
+- **The page's height** takes in the absolute boxes, the fixed ones aside.
+
+The containing block of an absolute box inside a positioned inline is the
+nearest positioned block instead of the inline's fragments.
+
+`e5-positioned` checks block geometry at 800 by 585 pixels against
+Chromium, box for box, and the painting order of `z-index`. `e5-position-text`
+is worked out by hand: a relative inline, static positions on a line, and an
+absolute box in a corner.
+
+## Painting order
+
+Layout ends with `webengine_tree.paint` (`webengine_paint.c`), the order of
+CSS 2.1 Appendix E for what the engine lays out. The root is a layer, and
+so is every float and every positioned box. A layer paints, in order:
+
+1. its own background and borders;
+2. its positioned layers with a negative `z-index`, lowest first;
+3. the backgrounds and borders of its other blocks, in tree order;
+4. its floats;
+5. its line boxes and outside markers;
+6. its positioned layers with `z-index` `auto` or 0, in tree order;
+7. those with a positive one, lowest first.
+
+Each layer inside is painted whole where it comes, with the same steps. A
+float therefore covers the backgrounds around it, and the text around it
+covers the float. Every positioned box counts as a stacking context of its
+own, even with `z-index: auto`, where CSS would put its positioned
+descendants in the outer context. Web Viewer paints the list as it comes,
+and hit tests links on it backwards, topmost first.
 
 ## Known costs
 

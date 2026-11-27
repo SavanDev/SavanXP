@@ -1,12 +1,15 @@
-/* Web Viewer's layout (webengine_box.h): CSS 2.1 chapter 10's normal flow
- * and 9.5's floats over the box tree. Written from CSS 2.1 8.3.1 (collapsing
- * margins), 9.5 (floats and clearance), 10.3.3 and 10.3.5 (block and float
- * widths), 10.6.3 and 10.6.7 (heights) and 10.4/10.7 (minimum and maximum
+/* Web Viewer's layout (webengine_box.h): CSS 2.1 chapter 10's normal flow,
+ * 9.5's floats and 9.6's positioning over the box tree. Written from CSS 2.1
+ * 8.3.1 (collapsing margins), 9.4.3 (relative positioning), 9.5 (floats and
+ * clearance), 10.3.3, 10.3.5 and 10.3.7 (block, float and absolute widths),
+ * 10.6.3, 10.6.4 and 10.6.7 (heights) and 10.4/10.7 (minimum and maximum
  * sizes); NetSurf's layout is not its model (the clean-room rule).
  *
  * The walk keeps an explicit stack, so a deep document does not recurse. A
  * float is laid out with its margin box at the origin, where its size does
- * not depend on anything around it, and then moved to its place. */
+ * not depend on anything around it, and then moved to its place. An
+ * absolute box waits for its containing block to end, and a box ends only
+ * once the absolute boxes it contains are laid out. */
 
 #include "webengine_box.h"
 #include "webengine_layout.h"
@@ -334,7 +337,7 @@ static void intrinsic_block(struct webengine_flow *flow, struct webengine_box *b
         webengine_inline_widths(flow, box, &min, &max);
     } else {
         for (struct webengine_box *child = box->first; child != NULL; child = child->next) {
-            if (child->type == WEBENGINE_BOX_BLOCK) {
+            if (child->type == WEBENGINE_BOX_BLOCK && !webengine_box_absolute(child)) {
                 int edges = webengine_intrinsic_edges(child);
                 min = child->min_content + edges > min ? child->min_content + edges : min;
                 max = child->max_content + edges > max ? child->max_content + edges : max;
@@ -413,11 +416,32 @@ struct frame {
     struct webengine_box *scan;
     /* A float, laid out at the origin: placed when it ends if it is a
      * block's child, by the line it is on if it is in inline content. */
-    bool is_float;
+    uint8_t kind;
     bool block_level;
+    /* Its own box is done; what is left is the absolute boxes for which it
+     * is the containing block. */
+    bool finished;
+    /* The frame of the nearest positioned box, itself included, 0 for the
+     * initial containing block; and the first absolute box met inside. */
+    size_t positioned;
+    size_t absolute_base;
+    /* ABSOLUTE: the containing block's height, the content height when
+     * top and bottom stretch it (or -1), and where its bottom margin edge
+     * goes when only bottom places it (or INT_MIN). */
+    int cb_height;
+    int stretch;
+    int anchor_bottom;
     /* The outside marker that waited outside the float. */
     struct webengine_box *outer_marker;
     int outer_marker_left;
+};
+
+enum frame_kind { FRAME_BLOCK, FRAME_FLOAT, FRAME_ABSOLUTE };
+
+/* An absolute box waiting for the frame of its containing block to end. */
+struct absolute {
+    struct webengine_box *box;
+    size_t containing;
 };
 
 struct layout {
@@ -425,6 +449,12 @@ struct layout {
     struct frame *frames;
     size_t depth;
     size_t capacity;
+    int viewport_height;
+    struct absolute *absolutes;
+    size_t absolute_count;
+    size_t absolute_capacity;
+    /* The lowest bottom of an absolute box, for the page's height. */
+    int extent;
     bool failed;
 };
 
@@ -435,7 +465,23 @@ static struct collapse *pending_of(struct layout *layout, size_t index) {
 /* A box that starts a block formatting context (9.4.1): its margins do not
  * collapse with its children's, and the floats inside it are its own. */
 static bool new_context(const struct webengine_box *box) {
-    return box->parent == NULL || box->style->overflow != CSS_OVERFLOW_VISIBLE || webengine_box_floats(box);
+    return box->parent == NULL || box->style->overflow != CSS_OVERFLOW_VISIBLE || webengine_box_floats(box) ||
+        webengine_box_absolute(box);
+}
+
+void webengine_relative_offset(const struct webengine_box *box, int width, int height, int *dx, int *dy) {
+    *dx = webengine_length_px(&box->style->offset[WEBENGINE_LEFT], width, 0);
+    *dy = webengine_length_px(&box->style->offset[WEBENGINE_TOP], height, 0);
+}
+
+/* Moves a position: relative box that has ended by its offsets (9.4.3). */
+static void offset_relative(struct layout *layout, struct webengine_box *box, int width, int height) {
+    if (box->style->position == CSS_POSITION_RELATIVE && box->parent != NULL) {
+        int dx = 0;
+        int dy = 0;
+        webengine_relative_offset(box, width, height, &dx, &dy);
+        webengine_translate(layout->flow.tree, box, dx, dy);
+    }
 }
 
 /* The box's top border edge is at `y`; so is that of every enclosing box
@@ -461,8 +507,28 @@ static bool push_frame(struct layout *layout) {
         layout->frames = frames;
         layout->capacity = capacity;
     }
-    memset(&layout->frames[layout->depth++], 0, sizeof(struct frame));
+    struct frame *frame = &layout->frames[layout->depth++];
+    memset(frame, 0, sizeof(*frame));
+    frame->absolute_base = layout->absolute_count;
     return true;
+}
+
+/* Puts an absolute box met at the top of the stack on its containing
+ * block's list: the nearest positioned box's, the viewport's for fixed. */
+static void meet_absolute(struct layout *layout, struct webengine_box *box) {
+    if (layout->absolute_count == layout->absolute_capacity) {
+        size_t capacity = layout->absolute_capacity == 0 ? 16 : layout->absolute_capacity * 2;
+        struct absolute *absolutes = realloc(layout->absolutes, capacity * sizeof(*absolutes));
+        if (absolutes == NULL) {
+            layout->failed = true;
+            return;
+        }
+        layout->absolutes = absolutes;
+        layout->absolute_capacity = capacity;
+    }
+    size_t containing = box->style->position == CSS_POSITION_FIXED ? 0
+        : layout->frames[layout->depth - 1].positioned;
+    layout->absolutes[layout->absolute_count++] = (struct absolute){ box, containing };
 }
 
 /* What every block does once its box is known: an outside marker waits for
@@ -479,9 +545,9 @@ static void start_content(struct layout *layout, struct frame *frame) {
     }
 }
 
-/* The next float in the inline content of `block` after `after` (NULL for
- * the first), in the order of the content. */
-static struct webengine_box *next_float(struct webengine_box *block, struct webengine_box *after) {
+/* The next float or absolute box in the inline content of `block` after
+ * `after` (NULL for the first), in the order of the content. */
+static struct webengine_box *next_out_of_flow(struct webengine_box *block, struct webengine_box *after) {
     struct webengine_box *box = after != NULL ? after : block->first;
     bool skip = after != NULL;
     while (box != NULL) {
@@ -573,6 +639,7 @@ static void enter_block(struct layout *layout, struct webengine_box *box) {
     frame->percent_base = specified >= 0 ? content_height(box, specified) : -1;
     bool context = new_context(box);
     frame->context = context ? layout->flow.float_count : parent->context;
+    frame->positioned = webengine_box_positioned(box) ? index : parent->positioned;
 
     struct collapse *pending = pending_of(layout, parent_index);
     struct collapse above = *pending;
@@ -609,6 +676,26 @@ static void enter_block(struct layout *layout, struct webengine_box *box) {
     start_content(layout, frame);
 }
 
+/* An auto width that shrinks to fit the content (10.3.5) in `available`. */
+static int shrink_to_fit(struct layout *layout, struct webengine_box *box, int available) {
+    intrinsic_widths(&layout->flow, box);
+    int width = box->max_content < available ? box->max_content : available;
+    return width > box->min_content ? width : box->min_content;
+}
+
+/* A width within min-width and max-width. */
+static int clamp_width(const struct webengine_box *box, int cb, int width) {
+    int max = webengine_length_px(&box->style->max_width, cb, -1);
+    if (max >= 0 && width > content_width(box, max)) {
+        width = content_width(box, max);
+    }
+    int min = webengine_length_px(&box->style->min_width, cb, 0);
+    if (min > 0 && width < content_width(box, min)) {
+        width = content_width(box, min);
+    }
+    return width;
+}
+
 /* A float (10.3.5): auto margins are zero, and an auto width shrinks to fit
  * its content. Its margin box starts at the origin. */
 static void enter_float(struct layout *layout, struct webengine_box *box, bool block_level) {
@@ -627,27 +714,14 @@ static void enter_float(struct layout *layout, struct webengine_box *box, bool b
     int edges = box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT] + box->padding[WEBENGINE_RIGHT] +
         box->border[WEBENGINE_RIGHT];
     int specified = webengine_length_px(&style->width, cb, -1);
-    int width;
-    if (specified >= 0) {
-        width = content_width(box, specified);
-    } else {
-        intrinsic_widths(&layout->flow, box);
-        int available = cb - box->margin[WEBENGINE_LEFT] - box->margin[WEBENGINE_RIGHT] - edges;
-        width = box->max_content < available ? box->max_content : available;
-        width = width > box->min_content ? width : box->min_content;
-    }
-    int max = webengine_length_px(&style->max_width, cb, -1);
-    if (max >= 0 && width > content_width(box, max)) {
-        width = content_width(box, max);
-    }
-    int min = webengine_length_px(&style->min_width, cb, 0);
-    if (min > 0 && width < content_width(box, min)) {
-        width = content_width(box, min);
-    }
+    int width = specified >= 0 ? content_width(box, specified)
+        : shrink_to_fit(layout, box, cb - box->margin[WEBENGINE_LEFT] - box->margin[WEBENGINE_RIGHT] - edges);
+    width = clamp_width(box, cb, width);
     frame->box = box;
     frame->child = box->first;
-    frame->is_float = true;
+    frame->kind = FRAME_FLOAT;
     frame->block_level = block_level;
+    frame->positioned = webengine_box_positioned(box) ? index : parent->positioned;
     frame->content_width = width;
     box->x = box->margin[WEBENGINE_LEFT];
     box->y = box->margin[WEBENGINE_TOP];
@@ -706,7 +780,9 @@ static int used_height(const struct webengine_box *box, int percent_base, int co
     return height > 0 ? height : 0;
 }
 
-static void leave_block(struct layout *layout) {
+/* A block's own box ends: its height, then the margins and cursor of the
+ * block around it, then its relative offset. */
+static void finish_block(struct layout *layout) {
     size_t index = layout->depth - 1;
     struct frame *frame = &layout->frames[index];
     struct frame *parent = &layout->frames[index - 1];
@@ -738,7 +814,7 @@ static void leave_block(struct layout *layout) {
             box->y = parent->cursor + collapse_value(outer);
             box->height = 0;
             collapse_add(outer, box->margin[WEBENGINE_BOTTOM]);
-            layout->depth--;
+            offset_relative(layout, box, parent->content_width, parent->percent_base);
             return;
         }
     }
@@ -766,10 +842,10 @@ static void leave_block(struct layout *layout) {
         *outer = *pending;
     }
     collapse_add(outer, box->margin[WEBENGINE_BOTTOM]);
-    layout->depth--;
+    offset_relative(layout, box, parent->content_width, parent->percent_base);
 }
 
-static void leave_float(struct layout *layout) {
+static void finish_float(struct layout *layout) {
     size_t index = layout->depth - 1;
     struct frame *frame = &layout->frames[index];
     struct frame *parent = &layout->frames[index - 1];
@@ -788,18 +864,191 @@ static void leave_float(struct layout *layout) {
         box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
     layout->flow.marker_item = frame->outer_marker;
     layout->flow.marker_left = frame->outer_marker_left;
-    bool block_level = frame->block_level;
-    layout->depth--;
-    if (block_level) {
+    if (frame->block_level) {
         /* A block's child goes where the next block would start. */
         layout->flow.context = parent->context;
         webengine_place_float(&layout->flow, box, parent->content_x, parent->content_x + parent->content_width,
                               parent->cursor + collapse_value(pending_of(layout, index - 1)));
     }
+    offset_relative(layout, box, parent->content_width, parent->percent_base);
 }
 
-int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *fonts, int width) {
-    struct layout layout = { .flow = { .fonts = fonts, .tree = tree } };
+/* An absolute box (10.3.7, 10.6.4), when its containing block, the frame
+ * at the top of the stack, has ended: its padding box, or the viewport.
+ * Its box records its static position, where it would have been in the
+ * flow, for the offsets that are auto. */
+static void enter_absolute(struct layout *layout, struct webengine_box *box) {
+    size_t containing = layout->depth - 1;
+    if (!push_frame(layout)) {
+        return;
+    }
+    size_t index = layout->depth - 1;
+    struct frame *frame = &layout->frames[index];
+    const struct webengine_box_style *style = box->style;
+    int cb_x = 0;
+    int cb_y = 0;
+    int cb_width = layout->frames[0].content_width;
+    int cb_height = layout->viewport_height;
+    box->containing = NULL;
+    if (containing > 0) {
+        const struct webengine_box *block = layout->frames[containing].box;
+        cb_x = block->x + block->border[WEBENGINE_LEFT];
+        cb_y = block->y + block->border[WEBENGINE_TOP];
+        cb_width = block->width - block->border[WEBENGINE_LEFT] - block->border[WEBENGINE_RIGHT];
+        cb_height = block->height - block->border[WEBENGINE_TOP] - block->border[WEBENGINE_BOTTOM];
+        box->containing = block;
+    }
+    int static_left = box->x - cb_x;
+    int static_top = box->y - cb_y;
+    block_edges(box, cb_width);
+
+    /* Horizontally: left + margins + borders + padding + width + right is
+     * the containing block's width; what is auto gives way. */
+    bool left_auto = is_auto(&style->offset[WEBENGINE_LEFT]);
+    bool right_auto = is_auto(&style->offset[WEBENGINE_RIGHT]);
+    int specified = webengine_length_px(&style->width, cb_width, -1);
+    bool width_auto = specified < 0;
+    int left = webengine_length_px(&style->offset[WEBENGINE_LEFT], cb_width, 0);
+    int right = webengine_length_px(&style->offset[WEBENGINE_RIGHT], cb_width, 0);
+    int margin_left = webengine_length_px(&style->margin[WEBENGINE_LEFT], cb_width, 0);
+    int margin_right = webengine_length_px(&style->margin[WEBENGINE_RIGHT], cb_width, 0);
+    int edges = box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT] + box->padding[WEBENGINE_RIGHT] +
+        box->border[WEBENGINE_RIGHT];
+    int width = width_auto ? 0 : content_width(box, specified);
+    if (left_auto && right_auto) {
+        left = static_left;
+        if (width_auto) {
+            width = shrink_to_fit(layout, box, cb_width - left - margin_left - margin_right - edges);
+        }
+    } else if (width_auto && (left_auto || right_auto)) {
+        width = shrink_to_fit(layout, box, cb_width - (left_auto ? right : left) - margin_left - margin_right - edges);
+    } else if (width_auto) {
+        width = cb_width - left - right - margin_left - margin_right - edges;
+        width = width > 0 ? width : 0;
+    } else if (!left_auto && !right_auto) {
+        int rest = cb_width - left - right - edges - width;
+        bool auto_left_margin = is_auto(&style->margin[WEBENGINE_LEFT]);
+        bool auto_right_margin = is_auto(&style->margin[WEBENGINE_RIGHT]);
+        if (auto_left_margin && auto_right_margin) {
+            margin_left = rest > 0 ? rest / 2 : 0;
+        } else if (auto_left_margin) {
+            margin_left = rest - margin_right;
+        }
+    }
+    width = clamp_width(box, cb_width, width);
+    if (left_auto && !right_auto) {
+        left = cb_width - right - margin_right - edges - width - margin_left;
+    }
+    box->margin[WEBENGINE_LEFT] = margin_left;
+    box->margin[WEBENGINE_RIGHT] = margin_right;
+    box->x = cb_x + left + margin_left;
+    box->width = edges + width;
+
+    /* Vertically the same, once the content's height is known; until
+     * then the box starts at its top offset or its static position. */
+    bool top_auto = is_auto(&style->offset[WEBENGINE_TOP]);
+    bool bottom_auto = is_auto(&style->offset[WEBENGINE_BOTTOM]);
+    int top = webengine_length_px(&style->offset[WEBENGINE_TOP], cb_height, 0);
+    int bottom = webengine_length_px(&style->offset[WEBENGINE_BOTTOM], cb_height, 0);
+    int edges_v = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + box->padding[WEBENGINE_BOTTOM] +
+        box->border[WEBENGINE_BOTTOM];
+    int height = webengine_length_px(&style->height, cb_height, -1);
+    frame->cb_height = cb_height;
+    frame->stretch = -1;
+    frame->anchor_bottom = INT_MIN;
+    if (!top_auto && !bottom_auto && height < 0) {
+        int stretch = cb_height - top - bottom - box->margin[WEBENGINE_TOP] - box->margin[WEBENGINE_BOTTOM] - edges_v;
+        frame->stretch = stretch > 0 ? stretch : 0;
+    } else if (top_auto && !bottom_auto) {
+        frame->anchor_bottom = cb_y + cb_height - bottom - box->margin[WEBENGINE_BOTTOM];
+    }
+    box->y = cb_y + (top_auto ? static_top : top) + box->margin[WEBENGINE_TOP];
+
+    frame->box = box;
+    frame->child = box->first;
+    frame->kind = FRAME_ABSOLUTE;
+    frame->positioned = index;
+    frame->content_width = width;
+    frame->content_x = box->x + box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT];
+    frame->percent_base = height >= 0 ? content_height(box, height) : frame->stretch;
+    frame->pending = index;
+    frame->resolved = true;
+    frame->content_top = box->y + box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP];
+    frame->cursor = frame->content_top;
+    frame->context = layout->flow.float_count;
+    frame->outer_marker = layout->flow.marker_item;
+    frame->outer_marker_left = layout->flow.marker_left;
+    layout->flow.marker_item = NULL;
+    start_content(layout, frame);
+}
+
+static void finish_absolute(struct layout *layout) {
+    size_t index = layout->depth - 1;
+    struct frame *frame = &layout->frames[index];
+    struct webengine_box *box = frame->box;
+    if (layout->flow.marker_item == box) {
+        webengine_place_marker(&layout->flow, frame->content_top);
+    }
+    int content_bottom = frame->cursor + collapse_value(&frame->own);
+    int floats = floats_bottom(&layout->flow, frame->context);
+    if (floats > content_bottom) {
+        content_bottom = floats;
+    }
+    layout->flow.float_count = frame->context;
+    int content = frame->stretch >= 0 ? frame->stretch : content_bottom - frame->content_top;
+    int height = used_height(box, frame->cb_height, content);
+    box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
+        box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
+    layout->flow.marker_item = frame->outer_marker;
+    layout->flow.marker_left = frame->outer_marker_left;
+    if (frame->anchor_bottom != INT_MIN) {
+        webengine_translate(layout->flow.tree, box, 0, frame->anchor_bottom - box->height - box->y);
+    }
+    if (box->style->position != CSS_POSITION_FIXED) {
+        int bottom = box->y + box->height + box->margin[WEBENGINE_BOTTOM];
+        layout->extent = bottom > layout->extent ? bottom : layout->extent;
+    }
+}
+
+/* Lays out the next absolute box whose containing block is the frame at
+ * the top of the stack, in the order they were met. False when none is
+ * left. */
+static bool take_absolute(struct layout *layout) {
+    size_t top = layout->depth - 1;
+    for (size_t i = layout->frames[top].absolute_base; i < layout->absolute_count; i++) {
+        if (layout->absolutes[i].containing == top) {
+            struct webengine_box *box = layout->absolutes[i].box;
+            memmove(&layout->absolutes[i], &layout->absolutes[i + 1],
+                    (layout->absolute_count - i - 1) * sizeof(*layout->absolutes));
+            layout->absolute_count--;
+            enter_absolute(layout, box);
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Forgets the line boxes of the last layout, so that moving a box that is
+ * not laid out yet moves none. */
+static void forget_lines(struct webengine_box *root) {
+    struct webengine_box *box = root;
+    while (box != NULL) {
+        box->line_count = 0;
+        if (box->first != NULL) {
+            box = box->first;
+            continue;
+        }
+        while (box != NULL && box->next == NULL) {
+            box = box->parent;
+        }
+        if (box != NULL) {
+            box = box->next;
+        }
+    }
+}
+
+int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *fonts, int width, int height) {
+    struct layout layout = { .flow = { .fonts = fonts, .tree = tree }, .viewport_height = height };
     tree->layout_width = width;
     tree->height = 0;
     tree->line_count = 0;
@@ -808,6 +1057,7 @@ int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *
     if (tree->root == NULL) {
         return 0;
     }
+    forget_lines(tree->root);
     /* The bottom of the stack is the initial containing block. */
     if (!push_frame(&layout)) {
         return -1;
@@ -816,43 +1066,69 @@ int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *
     layout.frames[0].percent_base = -1;
     layout.frames[0].resolved = true;
     enter_block(&layout, tree->root);
-    while (layout.depth > 1 && !layout.failed && !layout.flow.failed) {
+    while (!layout.failed && !layout.flow.failed) {
+        if (layout.depth == 1) {
+            /* The root has ended: the viewport's absolute boxes. */
+            if (!take_absolute(&layout)) {
+                break;
+            }
+            continue;
+        }
         struct frame *frame = &layout.frames[layout.depth - 1];
         if (frame->lines_pending) {
-            struct webengine_box *next = next_float(frame->box, frame->scan);
-            if (next != NULL) {
-                frame->scan = next;
-                enter_float(&layout, next, false);
-            } else {
+            struct webengine_box *next = next_out_of_flow(frame->box, frame->scan);
+            if (next == NULL) {
                 frame->lines_pending = false;
                 lay_out_inline(&layout);
+            } else {
+                frame->scan = next;
+                if (webengine_box_absolute(next)) {
+                    meet_absolute(&layout, next);
+                } else {
+                    enter_float(&layout, next, false);
+                }
             }
             continue;
         }
         struct webengine_box *child = frame->child;
         if (child == NULL) {
-            if (frame->is_float) {
-                leave_float(&layout);
-            } else {
-                leave_block(&layout);
+            if (!frame->finished) {
+                frame->finished = true;
+                if (frame->kind == FRAME_FLOAT) {
+                    finish_float(&layout);
+                } else if (frame->kind == FRAME_ABSOLUTE) {
+                    finish_absolute(&layout);
+                } else {
+                    finish_block(&layout);
+                }
+            } else if (!take_absolute(&layout)) {
+                layout.depth--;
             }
             continue;
         }
         frame->child = child->next;
-        if (child->type == WEBENGINE_BOX_BLOCK) {
-            if (webengine_box_floats(child)) {
-                enter_float(&layout, child, true);
-            } else {
-                enter_block(&layout, child);
-            }
+        if (child->type != WEBENGINE_BOX_BLOCK) {
+            continue;
+        }
+        if (webengine_box_absolute(child)) {
+            /* Its static position: where the next block would start. */
+            child->x = frame->content_x;
+            child->y = frame->cursor + collapse_value(pending_of(&layout, layout.depth - 1));
+            meet_absolute(&layout, child);
+        } else if (webengine_box_floats(child)) {
+            enter_float(&layout, child, true);
+        } else {
+            enter_block(&layout, child);
         }
     }
     layout.failed = layout.failed || layout.flow.failed;
     if (!layout.failed) {
         tree->height = layout.frames[0].cursor + collapse_value(&layout.frames[0].own);
+        tree->height = layout.extent > tree->height ? layout.extent : tree->height;
         layout.failed = webengine_paint_order(tree) != 0;
     }
     free(layout.frames);
+    free(layout.absolutes);
     webengine_flow_free(&layout.flow);
     return layout.failed ? -1 : 0;
 }

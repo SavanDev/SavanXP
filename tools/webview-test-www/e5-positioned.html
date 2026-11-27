@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>E5: positioning</title>
+<style>
+body { margin: 8px }
+div { background: #ddd }
+#moved { position: relative; top: 10px; left: 20px; height: 30px }
+#next { height: 20px }
+#frame { position: relative; width: 400px; height: 200px; border: 5px solid black; padding: 10px; margin-top: 15px }
+#corner { position: absolute; top: 0; left: 0; width: 50px; height: 40px }
+#opposite { position: absolute; right: 10px; bottom: 20px; width: 60px; height: 30px; border: 2px solid black }
+#stretch { position: absolute; left: 30px; right: 40px; top: 50px; bottom: 60px }
+#centred { position: absolute; left: 0; right: 0; width: 100px; height: 10px; margin: 0 auto; top: 5px }
+#percent { position: absolute; left: 10%; top: 25%; width: 50%; height: 10% }
+#static { height: 25px }
+#flowing { position: absolute; width: 30px; height: 30px }
+#shrink { position: absolute; right: 0; top: 100px; padding: 4px }
+#fixedwide { width: 70px; height: 12px }
+#up { position: absolute; bottom: 0; left: 200px; width: 20px }
+#content { height: 33px }
+#viewport { position: absolute; right: 0; bottom: 0; width: 80px; height: 40px }
+#pinned { position: fixed; top: 10px; left: 600px; width: 100px; height: 20px }
+#under { position: absolute; z-index: -1; left: 0; top: 0; width: 10px; height: 10px }
+#over { position: relative; z-index: 2; height: 10px }
+#plain { height: 10px }
+</style>
+</head>
+<body>
+<div id="moved"></div>
+<div id="next"></div>
+<div id="frame"><div id="corner"></div><div id="opposite"></div><div id="stretch"></div><div id="centred"></div><div id="percent"></div><div id="static"></div><div id="flowing"></div><div id="shrink"><div id="fixedwide"></div></div><div id="up"><div id="content"></div></div></div>
+<div id="viewport"></div>
+<div id="pinned"></div>
+<div id="over"></div>
+<div id="plain"><div id="under"></div></div>
+</body>
+</html>

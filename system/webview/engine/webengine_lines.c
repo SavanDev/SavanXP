@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum atom_kind { ATOM_WORD, ATOM_SPACE, ATOM_OPEN, ATOM_CLOSE, ATOM_BREAK, ATOM_MARKER, ATOM_FLOAT };
+enum atom_kind { ATOM_WORD, ATOM_SPACE, ATOM_OPEN, ATOM_CLOSE, ATOM_BREAK, ATOM_MARKER, ATOM_FLOAT, ATOM_ABSOLUTE };
 
 struct webengine_atom {
     uint8_t kind;
@@ -30,6 +30,8 @@ struct webengine_atom {
     bool dropped;
     /* FLOAT: placed already. */
     bool placed;
+    /* ABSOLUTE: where the line put it, before text-align. */
+    int x;
     struct webengine_box *box;
     size_t start;
     size_t length;
@@ -215,8 +217,11 @@ static size_t collect_atoms(struct webengine_flow *flow, struct webengine_box *b
                 .width = marker_width(flow, box) + marker_gap(flow, box) });
             break;
         case WEBENGINE_BOX_BLOCK:
-            /* A float, laid out already: its content is its own. */
-            (void)add_atom(flow, &count, (struct webengine_atom){ .kind = ATOM_FLOAT, .box = box });
+            /* A float, laid out already, or an absolute box, which only
+             * needs its static position (10.3.7): their content is their
+             * own. */
+            (void)add_atom(flow, &count, (struct webengine_atom){
+                .kind = webengine_box_floats(box) ? ATOM_FLOAT : ATOM_ABSOLUTE, .box = box });
             break;
         case WEBENGINE_BOX_INLINE:
             inline_edges(box, width);
@@ -535,6 +540,9 @@ static int build_line(struct webengine_flow *flow, struct webengine_box *block, 
             cursor += atom->width;
             break;
         }
+        case ATOM_ABSOLUTE:
+            atom->x = cursor;
+            break;
         case ATOM_MARKER:
             (void)add_fragment(flow, (struct webengine_fragment){
                 .type = WEBENGINE_FRAGMENT_MARKER, .box = box, .x = cursor,
@@ -557,6 +565,12 @@ static int build_line(struct webengine_flow *flow, struct webengine_box *block, 
     }
     int height = align_line(flow, count, y);
     int shift = text_align_shift(block->style->text_align, x + width - cursor);
+    for (size_t i = start; i < end; i++) {
+        if (flow->atoms[i].kind == ATOM_ABSOLUTE) {
+            flow->atoms[i].box->x = flow->atoms[i].x + shift;
+            flow->atoms[i].box->y = y;
+        }
+    }
     /* Each fragment's vertical place comes from the box it is in. */
     for (size_t f = first_fragment; f < tree->fragment_count; f++) {
         struct webengine_fragment *fragment = &tree->fragments[f];
@@ -564,23 +578,37 @@ static int build_line(struct webengine_flow *flow, struct webengine_box *block, 
         const struct webengine_box *owner = fragment->type == WEBENGINE_FRAGMENT_INLINE ? fragment->box
             : fragment->box->parent;
         const struct webengine_placed *placed = &flow->placed[placed_index(flow, count, owner)];
+        /* position: relative inlines move what is in them (9.4.3). */
+        int moved = 0;
+        for (const struct webengine_box *inline_box = owner; inline_box != block && inline_box != NULL;
+             inline_box = inline_box->parent) {
+            if (inline_box->style->position == CSS_POSITION_RELATIVE) {
+                int dx = 0;
+                int dy = 0;
+                webengine_relative_offset(inline_box, width, -1, &dx, &dy);
+                fragment->x += dx;
+                moved += dy;
+            }
+        }
         if (fragment->type == WEBENGINE_FRAGMENT_INLINE) {
             const struct webengine_box *box = fragment->box;
             fragment->baseline = placed->baseline;
             fragment->y = placed->baseline - placed->ascent - box->padding[WEBENGINE_TOP] - box->border[WEBENGINE_TOP];
             fragment->height = placed->ascent + placed->descent + box->padding[WEBENGINE_TOP] +
                 box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_TOP] + box->border[WEBENGINE_BOTTOM];
+            fragment->y += moved;
+            fragment->baseline += moved;
             continue;
         }
         struct webengine_placed own;
         metrics(flow, fragment->box->style, &own);
-        fragment->baseline = placed->baseline;
+        fragment->baseline = placed->baseline + moved;
         if (fragment->type == WEBENGINE_FRAGMENT_MARKER && fragment->box->text == NULL) {
             int size = fragment->width;
             fragment->height = size;
-            fragment->y = placed->baseline - own.ascent / 3 - size / 2 - 1;
+            fragment->y = placed->baseline - own.ascent / 3 - size / 2 - 1 + moved;
         } else {
-            fragment->y = placed->baseline - own.ascent;
+            fragment->y = placed->baseline - own.ascent + moved;
             fragment->height = own.ascent + own.descent;
         }
     }
@@ -659,6 +687,9 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
                 }
                 continue;
             }
+            if (atom->kind == ATOM_ABSOLUTE) {
+                continue;
+            }
             if (atom->kind == ATOM_BREAK) {
                 end = j + 1;
                 content = true;
@@ -711,7 +742,7 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
         for (size_t j = end; j > start; j--) {
             struct webengine_atom *atom = &flow->atoms[j - 1];
             if (atom->kind == ATOM_CLOSE || atom->kind == ATOM_OPEN || atom->kind == ATOM_BREAK ||
-                atom->kind == ATOM_FLOAT || atom->dropped) {
+                atom->kind == ATOM_FLOAT || atom->kind == ATOM_ABSOLUTE || atom->dropped) {
                 continue;
             }
             if (atom->kind != ATOM_SPACE || !(atom->collapsible || atom->hangs)) {
@@ -724,8 +755,13 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
             y += height;
             block->line_count++;
         } else {
-            /* No line box (9.4.2): only keep the inline boxes' nesting. */
+            /* No line box (9.4.2): only keep the inline boxes' nesting. An
+             * absolute box's static position is where the line would be. */
             for (size_t j = start; j < end; j++) {
+                if (flow->atoms[j].kind == ATOM_ABSOLUTE) {
+                    flow->atoms[j].box->x = left;
+                    flow->atoms[j].box->y = y;
+                }
                 if (flow->atoms[j].kind == ATOM_OPEN &&
                     grow((void **)&flow->open, &flow->open_capacity, open_count, sizeof(*flow->open))) {
                     flow->open[open_count++] = flow->atoms[j].box;
@@ -771,6 +807,8 @@ void webengine_inline_widths(struct webengine_flow *flow, struct webengine_box *
             word = 0;
             line = 0;
             line_start = true;
+            break;
+        case ATOM_ABSOLUTE:
             break;
         case ATOM_FLOAT: {
             int edges = webengine_intrinsic_edges(atom->box);

@@ -3819,7 +3819,8 @@ def webview_e3_styles(s, hostport):
 
 def webview_e5_floats(s, hostport):
     """Text around floats (docs/desktop/WEBVIEWER_ENGINE.md#floats): the text
-    inside a float and the text that wraps beside one are both painted."""
+    inside a float and the text that wraps beside one are both painted; then
+    positioned text (#positioning), a relative inline and an absolute box."""
     s.qmp.tap("tab", pause=1.0)
     s.qmp.chord("ctrl", "a")
     type_http_url(s, hostport, "/e5-float-text.html")
@@ -3828,6 +3829,14 @@ def webview_e5_floats(s, hostport):
     area = (0, 0, *page.size)
     expect_text(page, area, "hello world", TEXT, FIELD, "the text inside a float", solid_only=True)
     expect_text(page, area, "aaaa bbbb", TEXT, FIELD, "the text beside a float", solid_only=True)
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, "/e5-position-text.html")
+    s.qmp.tap("ret", pause=6.0)
+    page = s.shot("webview-e5-positioned")
+    expect_text(page, area, "bbbb", TEXT, FIELD, "a relative inline", solid_only=True)
+    expect_text(page, area, "hello", TEXT, FIELD, "an absolute box in its containing block's corner",
+                solid_only=True)
 
 
 def wait_for_text(s, name, text, label, timeout, colour=None, background=None):

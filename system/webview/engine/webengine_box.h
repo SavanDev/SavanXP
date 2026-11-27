@@ -66,6 +66,13 @@ struct webengine_box_style {
     /* float (CSS_FLOAT_*) and clear (CSS_CLEAR_*). */
     uint8_t float_side;
     uint8_t clear;
+    /* position (CSS_POSITION_*; sticky counts as static) and z-index. */
+    uint8_t position;
+    bool z_auto;
+    int32_t z_index;
+    /* top, right, bottom and left. For position: relative, libcss already
+     * resolved them (9.4.3): top and left are the offsets. */
+    struct webengine_len offset[4];
     struct webengine_len vertical_align_length;
     struct webengine_len line_height;
     struct webengine_len text_indent;
@@ -86,8 +93,9 @@ struct webengine_box_style {
 enum webengine_box_type {
     /* Block-level: an element's block, list item or table part (tables
      * stack until E6), or an anonymous block around inline content. A
-     * float is a block too, out of the flow: it stays where it appears,
-     * among inline content when that is where it is (CSS 2.1 9.5). */
+     * float or an absolutely positioned box is a block too, out of the
+     * flow: it stays where it appears, among inline content when that is
+     * where it is (CSS 2.1 9.5, 9.6). */
     WEBENGINE_BOX_BLOCK,
     /* An inline element; a block inside it splits it into pieces. */
     WEBENGINE_BOX_INLINE,
@@ -144,11 +152,27 @@ struct webengine_box {
      * 10.3.5): its content's minimum and preferred widths. */
     int min_content;
     int max_content;
+    /* An absolutely positioned BLOCK: the box whose padding box is its
+     * containing block, NULL for the viewport. */
+    const struct webengine_box *containing;
 };
 
 static inline bool webengine_box_floats(const struct webengine_box *box) {
     return box->type == WEBENGINE_BOX_BLOCK && box->parent != NULL &&
         (box->style->float_side == CSS_FLOAT_LEFT || box->style->float_side == CSS_FLOAT_RIGHT);
+}
+
+/* position: absolute or fixed, out of the flow (9.6). */
+static inline bool webengine_box_absolute(const struct webengine_box *box) {
+    return box->type == WEBENGINE_BOX_BLOCK && box->parent != NULL &&
+        (box->style->position == CSS_POSITION_ABSOLUTE || box->style->position == CSS_POSITION_FIXED);
+}
+
+/* Positioned: relative, absolute or fixed. The root is never moved. */
+static inline bool webengine_box_positioned(const struct webengine_box *box) {
+    return box->parent != NULL && (box->style->position == CSS_POSITION_RELATIVE ||
+                                   box->style->position == CSS_POSITION_ABSOLUTE ||
+                                   box->style->position == CSS_POSITION_FIXED);
 }
 
 /* A line box (CSS 2.1 9.4.2) and the fragments laid out on it. */
@@ -198,6 +222,9 @@ enum webengine_paint_kind {
 
 struct webengine_paint {
     uint8_t kind;
+    /* Inside a position: fixed box: it stays put on the screen while the
+     * page scrolls. */
+    bool fixed;
     /* The block; for MARKER, the marker box, laid out in its x, y, width
      * and height. */
     const struct webengine_box *box;
@@ -206,7 +233,7 @@ struct webengine_paint {
 struct webengine_tree {
     struct webengine_box *root;
     /* Set by webengine_layout: the width it laid out for, and the height of
-     * everything, the root's margins included. 0 before. */
+     * everything, the root's margins and absolute boxes included. 0 before. */
     int layout_width;
     int height;
     struct webengine_line *lines;
@@ -249,16 +276,18 @@ struct webengine_tree *webengine_tree_text(const char *text, size_t length, int 
 
 void webengine_tree_free(struct webengine_tree *tree);
 
-/* Lays the tree out in a viewport `width` CSS pixels wide (CSS 2.1 chapter
- * 10's normal flow, and 9.5's floats): every block's position and size, the
- * line boxes and fragments of inline content, and the painting order. 0,
- * or -1 when out of memory. Laying out again at another width replaces the
- * last layout. */
-int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *fonts, int width);
+/* Lays the tree out in a viewport `width` by `height` CSS pixels (CSS 2.1
+ * chapter 10's normal flow, 9.5's floats and 9.6's positioning): every
+ * block's position and size, the line boxes and fragments of inline
+ * content, and the painting order. The height is the containing block of
+ * fixed boxes and of absolute ones outside any positioned box. 0, or -1
+ * when out of memory. Laying out again replaces the last layout. */
+int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *fonts, int width, int height);
 
 /* The tree as text, a line per box, indented two spaces a level, for the
  * tests: "block p", "anonymous", "inline b", "text \"...\"", "break",
- * "marker 1", with "float left" or "float right" after a float's name.
+ * "marker 1", with "float left" or "float right" after a float's name and
+ * "relative", "absolute" or "fixed" after a positioned box's.
  * Once laid out, a block's line ends with its border box, "x y width
  * height", and a block with inline content lists its line boxes and their
  * fragments in place of its children, then the floats among them, a level

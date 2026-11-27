@@ -1,0 +1,59 @@
+# Positioning (E5, docs/desktop/WEBVIEWER_ENGINE.md#positioning), block
+# geometry only: a relative box that moves without moving the next one; in a
+# relative containing block (padding box 420x220), absolute boxes placed by
+# top and left, by right and bottom, stretched by all four, centred by auto
+# margins, sized in percentages, at their static position, shrunk to fit, and
+# sized by their content upwards from the bottom; an absolute box in the
+# viewport, a fixed one, and the painting order of z-index -1, auto and 2.
+# Laid out at 800 by 585, the room Chromium leaves under its horizontal
+# scroll bar here; every box matches its getBoundingClientRect.
+viewport 800 585
+paint
+block html 0 0 800 331
+  block body 8 8 784 315
+    block div relative 28 18 784 30
+    block div 8 38 784 20
+    block div relative 8 73 430 230
+      anonymous 23 88 400 0
+        block div absolute 13 78 50 40
+        block div absolute 359 244 64 34
+        block div absolute 43 128 350 110
+        block div absolute 173 83 100 10
+        block div absolute 55 133 210 22
+      block div 23 88 400 25
+      anonymous 23 113 400 0
+        block div absolute 23 113 30 30
+        block div absolute 355 178 78 20
+          block div 359 182 70 12
+        block div absolute 213 265 20 33
+          block div 213 265 20 33
+    anonymous 8 303 784 0
+      block div absolute 720 545 80 40
+      block div fixed 600 10 100 20
+    block div relative 8 303 784 10
+    block div 8 313 784 10
+      block div absolute 0 0 10 10
+paint block html 0 0
+paint block div 0 0
+paint block body 8 8
+paint block div 8 38
+paint block anonymous 8 303
+paint block div 8 313
+paint block div 28 18
+paint block div 8 73
+paint block anonymous 23 88
+paint block div 23 88
+paint block anonymous 23 113
+paint block div 13 78
+paint block div 359 244
+paint block div 43 128
+paint block div 173 83
+paint block div 55 133
+paint block div 23 113
+paint block div 355 178
+paint block div 359 182
+paint block div 213 265
+paint block div 213 265
+paint block div 720 545
+paint block div 600 10 fixed
+paint block div 8 303
