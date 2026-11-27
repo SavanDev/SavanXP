@@ -421,6 +421,10 @@ all its phases have landed; the links to it move with it.
 - [`VIRGL_ROADMAP.md`](roadmaps/open/VIRGL_ROADMAP.md) — a hardware backend for SxGL:
   virgl in `virtio_gpu`, per-process 3D ioctls on `/dev/gpu0`, an in-tree virgl
   encoder, readback into the window surface, and the `--gl` QEMU machine.
+- [`SXGL_VERSIONS_ROADMAP.md`](roadmaps/open/SXGL_VERSIONS_ROADMAP.md) — SxGL
+  from a documented subset to OpenGL's own versions: extensions as increments,
+  `GL_VERSION` raised only when a version is complete, `<GL/gl.h>` and a
+  shared `libsxgl`, and the steps from a complete 1.1 to 1.5.
 
 - [`TIMEZONE_ROADMAP.md`](roadmaps/open/TIMEZONE_ROADMAP.md) — local time: a POSIX `TZ`
   string owned by the kernel in `/system/time.cfg`, the RTC as `utc` or `local`
