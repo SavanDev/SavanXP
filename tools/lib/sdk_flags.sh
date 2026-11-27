@@ -75,8 +75,9 @@ savanxp_sdk_pie_compile_flags() {
 # hand the link to ld.lld. PT_INTERP names the loader's path, and the loader
 # itself is linked into the program (ldso.o in the sysroot), which crt0 runs.
 # A POSIX program exports its symbols, for dlopen and for the libraries that
-# resolve against it; a SUN program has no dlopen and does not, so
-# --gc-sections can drop what it does not call.
+# resolve against it. A SUN program does not, so --gc-sections can drop what
+# it does not call, unless it opens libraries at run time (sxn/sxnlibrary.h)
+# and asks for the exports with a second argument of 1.
 savanxp_sdk_pie_link_flags() {
     printf '%s\n' \
         -target x86_64-unknown-linux-gnu \
@@ -86,7 +87,7 @@ savanxp_sdk_pie_link_flags() {
         -Wl,-z,max-page-size=0x1000 \
         -Wl,--dynamic-linker,/lib/ld.so.0.4 \
         -Wl,--build-id=none
-    if (($1 == 0)); then
+    if (($1 == 0 || ${2:-0} == 1)); then
         printf '%s\n' -Wl,--export-dynamic
     fi
     printf '%s\n' \

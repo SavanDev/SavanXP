@@ -137,8 +137,8 @@ It does. `sdk/glsmoke` (`./build.sh smoke gl-smoke`) is that program: it
 draws one scene through the library and through the SxGL linked into it, and
 the two frames are equal. The library is opened without `RTLD_GLOBAL`, so its
 relocations find its own SxGL before the program's and the two copies keep
-separate contexts. `sunlibtest` maps `libsxgl` by `DT_NEEDED` from SUN, where
-there is no `dlopen`. The host test `sxgl-conformance-test` is the harness:
+separate contexts. `sunlibtest` maps `libsxgl` by `DT_NEEDED` from SUN, which had no run-time
+loading then; it has since ([sxn/sxnlibrary.h](../../kernel/SHARED_LIBRARIES.md#run-time-loading-in-sun)). The host test `sxgl-conformance-test` is the harness:
 each case names the section of the specification it checks, and its binding
 cases read `<GL/gl.h>` and require every declaration to resolve, so a
 function cannot be declared without being registered.

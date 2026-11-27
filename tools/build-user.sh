@@ -37,6 +37,7 @@ GUI=0
 AUDIO=0
 HEAP_MIB=0
 PIE=0
+EXPORT_DYNAMIC=0
 NEEDS=()
 OUTPUT_PATH=""
 DESTINATION=""
@@ -67,6 +68,8 @@ Options:
   --no-compact      pass --no-compact to SxFS installation
   --native          build a SUN program: stamp EI_OSABI as a native subsystem
                     binary and install it as NAME.sxe
+  --export-dynamic  with --native --pie, export the program's runtime, for
+                    the libraries it opens at run time (sxn/sxnlibrary.h)
   --output PATH     override the output ELF path
   --destination PATH install on the disk (default: /bin/NAME, or
                     /bin/NAME.sxe with --native)
@@ -86,6 +89,7 @@ while (($#)); do
         --no-install) NO_INSTALL=1; shift ;;
         --no-compact) NO_COMPACT=1; shift ;;
         --native) NATIVE=1; shift ;;
+        --export-dynamic) EXPORT_DYNAMIC=1; shift ;;
         --output) OUTPUT_PATH=${2:?--output requires a value}; shift 2 ;;
         --destination) DESTINATION=${2:?--destination requires a value}; shift 2 ;;
         -h|--help) usage; exit 0 ;;
@@ -95,6 +99,8 @@ done
 [[ -n "$SOURCE" ]] || { echo "build-user.sh: --source is required" >&2; exit 2; }
 [[ "$HEAP_MIB" =~ ^[0-9]+$ ]] || { echo "build-user.sh: --heap-mib takes a whole number of MiB" >&2; exit 2; }
 ((${#NEEDS[@]} == 0 || PIE)) || { echo "build-user.sh: --needs needs --pie: a static program maps no library" >&2; exit 2; }
+((EXPORT_DYNAMIC == 0 || (PIE && NATIVE))) || {
+    echo "build-user.sh: --export-dynamic is for --native --pie: a POSIX PIE always exports" >&2; exit 2; }
 # Every PIE program is SSE, as in the tree: the PIC runtime is built that way.
 ((PIE == 0)) || SSE=1
 SOURCE=$(realpath "$SOURCE")
@@ -267,6 +273,7 @@ RUNTIME_GROUPS=(core setjmp)
 # A PIE program carries the loader, and a POSIX one <dlfcn.h> over it.
 ((PIE)) && RUNTIME_GROUPS+=(loader)
 ((PIE && !NATIVE)) && RUNTIME_GROUPS+=(dlfcn)
+((PIE && NATIVE)) && RUNTIME_GROUPS+=(sun-loader)
 
 # The libraries named with --needs, and the runtime objects they replace: a
 # program that links a library must not carry its own copy, or the linker
@@ -312,7 +319,7 @@ if ((HEAP_MIB > 0)); then
 fi
 
 if ((PIE)); then
-    mapfile -t PIE_LINK_FLAGS < <(savanxp_sdk_pie_link_flags "$NATIVE")
+    mapfile -t PIE_LINK_FLAGS < <(savanxp_sdk_pie_link_flags "$NATIVE" "$EXPORT_DYNAMIC")
     "$LINK_CC" "${PIE_LINK_FLAGS[@]}" \
         -o "$RAW_OUTPUT" "${RUNTIME_OBJECTS[@]}" "${OBJECTS[@]}" "${NEEDED_FILES[@]}"
 else

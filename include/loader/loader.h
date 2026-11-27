@@ -6,7 +6,8 @@
  * What a program sees of it at startup -- ldso_start, ldso_missing and the rest
  * -- is <savanxp/ldso.h>. This header is the other side: what a subsystem builds
  * its own run-time loading interface on. POSIX builds <dlfcn.h> on it
- * (subsystems/posix/userland/dlfcn.c); SUN will name its own.
+ * (subsystems/posix/userland/dlfcn.c), SUN builds sxn/sxnlibrary.h
+ * (system/runtime/sxnlibrary.c).
  *
  * A handle is an image: the program, or a library. Paths are absolute -- the
  * loader opens files through SXN, which knows no working directory; turning a

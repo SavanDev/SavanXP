@@ -24,8 +24,9 @@
 #   --sx-profile=nosse|sse|pie   the runtime variant (default: sse, or
 #                                $SAVANXP_SDK_PROFILE)
 #   --sx-native                  a SUN program: links sxn_runtime.o and -lsxn, and the
-#                                pie profile neither exports symbols nor
-#                                carries <dlfcn.h>
+#                                pie profile carries sxn/sxnlibrary.h instead
+#                                of <dlfcn.h> and exports no symbols; pass
+#                                -Wl,--export-dynamic for libraries it opens
 #
 # It makes a bare ELF image. SXE resources and the native OSABI are stamped
 # afterwards by the tools next to it, as build-user.sh does.
@@ -100,7 +101,11 @@ RUNTIME_TAIL=()
 ((NATIVE == 0)) || RUNTIME_TAIL+=("$LIB/sxn_runtime.o")
 if ((PIE)); then
     RUNTIME_TAIL+=("$LIB/ldso.o")
-    ((NATIVE)) || RUNTIME_TAIL+=("$LIB/dlfcn.o")
+    if ((NATIVE)); then
+        RUNTIME_TAIL+=("$LIB/sxnlibrary.o")
+    else
+        RUNTIME_TAIL+=("$LIB/dlfcn.o")
+    fi
 fi
 RUNTIME_TAIL+=(-L "$LIB")
 ((NATIVE == 0)) || RUNTIME_TAIL+=(-lsxn)

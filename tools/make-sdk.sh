@@ -171,8 +171,10 @@ for variant_spec in "0 0" "1 0" "1 1"; do
     if ((pie)); then
         # The loader goes into every PIE program: crt0 runs it through the
         # weak sx_run_interpreter hook (docs/kernel/SHARED_LIBRARIES.md).
-        # <dlfcn.h> is POSIX's layer over it, for POSIX programs only.
-        for loader_unit in "loader system/loader/ldso.c" "dlfcn subsystems/posix/userland/dlfcn.c"; do
+        # <dlfcn.h> is POSIX's layer over it, for POSIX programs only, and
+        # sxn/sxnlibrary.h SUN's, for SUN programs only.
+        for loader_unit in "loader system/loader/ldso.c" "dlfcn subsystems/posix/userland/dlfcn.c" \
+            "sun-loader system/runtime/sxnlibrary.c"; do
             read -r group path <<<"$loader_unit"
             object="$lib/$(basename -- "$path" .c).o"
             "$CC" -c -x c "$ROOT/$path" -o "$object" "${flags[@]}" \

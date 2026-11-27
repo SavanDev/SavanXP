@@ -15,7 +15,9 @@ Two checks:
   ET_DYN with the loader's PT_INTERP and the DT_NEEDED) with its own
   share/sdk/build-user.sh; and sdk/glsmoke, which includes <GL/gl.h>, twice:
   --pie with SxGL linked in, and --pie --needs libsxgl.so.0.4, checked to
-  name the library.
+  name the library; and a SUN program that opens a library with
+  sxn/sxnlibrary.h, --native --pie with and without --export-dynamic,
+  checked to export its runtime only with it.
 - The same copy's sxcc builds static programs in one step and in two, in
   every profile, a SUN program and one linking -lsxgui; and CMake with its
   share/sdk/savanxp-toolchain.cmake builds sdk/cmakesmoke.
@@ -90,6 +92,8 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
     sources = scratch / "src"
     for name in ("hello", "gfxhello", "nativetest", "sungui", "piesmoke", "glsmoke", "cmakesmoke"):
         shutil.copytree(root / "sdk" / name, sources / name)
+    (sources / "sunlib").mkdir()
+    (sources / "sunlib" / "main.c").write_text(SUN_LIBRARY_PROGRAM)
     environment = os.environ.copy()
     environment["SAVANXP_CLANG"] = clang
     environment["SAVANXP_LD"] = linker
@@ -104,6 +108,8 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
         ("piesmoke", ["--source", str(sources / "piesmoke"), "--pie", "--needs", "libmath.so.0.4"]),
         ("glsmoke", ["--source", str(sources / "glsmoke"), "--pie"]),
         ("glsmoke-needs", ["--source", str(sources / "glsmoke"), "--pie", "--needs", "libsxgl.so.0.4"]),
+        ("sunlib", ["--source", str(sources / "sunlib"), "--native", "--pie"]),
+        ("sunlib-exports", ["--source", str(sources / "sunlib"), "--native", "--pie", "--export-dynamic"]),
     ]
     for name, arguments in builds:
         output = scratch / f"{name}.elf"
@@ -123,6 +129,33 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
     dump = run([readelf, "-d", str(scratch / "glsmoke-needs.elf")]).stdout
     if "Shared library: [libsxgl.so.0.4]" not in dump:
         raise SystemExit(f"glsmoke-needs: libsxgl.so.0.4 missing from its dynamic section:\n{dump}")
+    # A SUN PIE exports its runtime for the libraries it opens only when asked.
+    nm = shutil.which("llvm-nm") or "llvm-nm"
+    for name, exported in (("sunlib", False), ("sunlib-exports", True)):
+        dynamic = run([nm, "-D", "--defined-only", str(scratch / f"{name}.elf")]).stdout
+        defines = run([nm, "--defined-only", str(scratch / f"{name}.elf")]).stdout
+        if " sxn_library_open" not in defines:
+            raise SystemExit(f"{name}: sxn_library_open is not linked into a SUN PIE")
+        if (" calloc" in dynamic) != exported:
+            raise SystemExit(f"{name}: calloc {'not ' if exported else ''}exported:\n{dynamic}")
+
+
+# A SUN program that opens a library at run time (sxn/sxnlibrary.h). It is
+# only linked here, never run: sunlibtest runs the calls.
+SUN_LIBRARY_PROGRAM = """#include <sxn/sxn.h>
+#include <sxn/sxnlibrary.h>
+
+int main(void) {
+    struct sxn_library* library = 0;
+    char error[128];
+    void* symbol = 0;
+    if (sxn_library_open("libsxmidi.so.0.4", 0, &library, error, sizeof(error)) != 0) {
+        (void)sxn_log(error);
+        return 1;
+    }
+    return sxn_library_symbol(library, "sx_midi_song_create", &symbol) == 0 ? 0 : 1;
+}
+"""
 
 
 def check_toolchain(scratch: Path, clang: str, linker: str) -> None:
@@ -146,6 +179,10 @@ def check_toolchain(scratch: Path, clang: str, linker: str) -> None:
         env=environment)
     run([sxcc, "--sx-profile=pie", str(sources / "piesmoke" / "main.c"), "-o", str(out / "pie"),
          str(copy / "lib" / "shared" / "libmath.so.0.4")], env=environment)
+    run([sxcc, "--sx-native", "--sx-profile=pie", str(sources / "sunlib" / "main.c"), "-Wl,--export-dynamic",
+         "-o", str(out / "sunlib")], env=environment)
+    if " sxn_library_open" not in run([shutil.which("llvm-nm") or "llvm-nm", str(out / "sunlib")]).stdout:
+        raise SystemExit("sxcc --sx-native --sx-profile=pie did not link sxn/sxnlibrary.h")
     for name in ("nosse", "sse", "gui", "native"):
         if "EXEC (Executable file)" not in run([readelf, "-h", str(out / name)]).stdout:
             raise SystemExit(f"sxcc: {name} is not a static executable")
@@ -187,8 +224,8 @@ def main() -> int:
         count = check_headers(sysroot, clang, scratch)
         check_standalone(sysroot, root, clang, linker, scratch)
         check_toolchain(scratch, clang, linker)
-    print(f"sdk sysroot: {count} headers self-contained; a copy builds six programs with "
-          "build-user.sh, five with sxcc and one with CMake: PASS")
+    print(f"sdk sysroot: {count} headers self-contained; a copy builds ten programs with "
+          "build-user.sh, six with sxcc and one with CMake: PASS")
     return 0
 
 

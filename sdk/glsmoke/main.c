@@ -11,8 +11,10 @@
  * opened without RTLD_GLOBAL, so its relocations resolve its own SxGL before
  * the program's, and the two copies keep separate contexts.
  *
- * It is a POSIX program because dlopen is POSIX's (<dlfcn.h>); the SUN side,
- * a native program mapping libsxgl by DT_NEEDED, is sunlibtest.
+ * It is a POSIX program because it stands for an external program written for
+ * OpenGL, which is POSIX's case (<dlfcn.h>, the SDK's ports); the SUN side,
+ * mapping libsxgl by DT_NEEDED and opening libraries with sxn/sxnlibrary.h,
+ * is sunlibtest.
  *
  * Run headless from init: ./build.sh smoke gl-smoke. init prints
  * "GL SMOKE PASS" when it exits with 0.

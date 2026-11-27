@@ -229,7 +229,9 @@ and `diskmgmt` visual scenarios.
   a library opened at run time may ask the program for anything. A SUN PIE
   program is linked without it, so `--gc-sections` works; lld still exports what
   the libraries on its link line ask for
-  ([The toolkit, split](#the-toolkit-split-into-neutral-and-host)).
+  ([The toolkit, split](#the-toolkit-split-into-neutral-and-host)). A SUN PIE
+  that opens libraries at run time asks for it
+  ([Run-time loading in SUN](#run-time-loading-in-sun)).
 - **A non-PIE program cannot use a library.** An `ET_EXEC` has no `PT_DYNAMIC`, so
   it has nothing to declare a `DT_NEEDED` with. This is a property of the link
   model, not of the loader; a STATIC program that links the loader is told so at
@@ -1353,7 +1355,8 @@ What is missing, in order of weight:
    loader's notes reach the system log from a POSIX process too.) The loader returns a status
    and a message; each subsystem's `crt0` reports it and exits in its own
    terms. `dlopen` and `dlfcn.h` are a thin POSIX layer over the common core;
-   SUN names its own. **Done (2026-11-14):** the loader never ended the
+   SUN names its own, `sxn/sxnlibrary.h` since 2026-11-26
+   ([Run-time loading in SUN](#run-time-loading-in-sun)). **Done (2026-11-14):** the loader never ended the
    process, and still does not; what it had was `eprintf`, a POSIX write a
    native process would not have. Every line now goes to
    `sx_loader_report(text, length)`, a runtime hook like `sx_process_exit`:
@@ -1992,3 +1995,55 @@ section handle of a data segment after mapping it, but not of an executable one.
 view holds its own reference to its section, so the handle served nothing, and every
 process kept one descriptor per library — out of 64 — for its whole life. It is
 closed now, and a load that fails after mapping its segments unmaps them.
+
+## Run-time loading in SUN
+
+`dlopen` was POSIX's alone: a SUN program could map a library by `DT_NEEDED`
+and not open one by name, which left the parity gap
+[AGENTS.md](../../AGENTS.md#feature-parity-between-subsystems) asks to close.
+`include/sxn/sxnlibrary.h` closes it, as SUN's layer over the same loader
+interface (`include/loader/loader.h`) `<dlfcn.h>` uses, in
+`system/runtime/sxnlibrary.c`. It is compiled into every SUN PIE, next to the
+loader, as `dlfcn.c` is into every POSIX one.
+
+| `<dlfcn.h>` | SUN |
+| --- | --- |
+| `dlopen(name, RTLD_NOW)` | `sxn_library_open(name, 0, &library, error, size)` |
+| `RTLD_GLOBAL`, `RTLD_NOLOAD` | `SXN_LIBRARY_GLOBAL`, `SXN_LIBRARY_NOLOAD` |
+| `dlsym(handle, name)`, `dlsym(RTLD_DEFAULT, name)` | `sxn_library_symbol(library, name, &address)`, with library 0 |
+| `dlclose` | `sxn_library_close` |
+| `dladdr` | `sxn_library_address` |
+| `dlerror()` | the `error` buffer of `sxn_library_open`, and the status of each call |
+
+The semantics are the loader's and so the same on both sides: local scopes,
+strict loads that roll back, constructors run, nothing unmapped,
+[as for `dlopen`](#what-dlopen-deliberately-does-not-do). What differs is
+SUN's shape and SXN's limits:
+
+- **A status, not a null and a held message.** Every call returns 0 or a
+  negative status (`-SX_ENOEXEC` for a load that failed, `-SX_ENOENT` for
+  `NOLOAD` or a symbol not found, `-SX_EBADF` for a handle the loader never
+  gave out), and the reason a load failed is written into the caller's
+  buffer, so there is no state between calls.
+- **A bare name or an absolute path.** A bare name resolves in `/lib` as a
+  `DT_NEEDED` does; a relative path is refused with `-SX_EINVAL`, because SXN
+  has no working directory to join it with.
+- **No `dlopen(NULL)`.** The program's image stands for the global scope, and
+  `sxn_library_symbol(0, ...)` searches it.
+
+**The exports are opt-in.** A library opened at run time asks the program for
+its C library, and a SUN PIE exports only what the libraries on its link line
+ask for, so that `--gc-sections` keeps it small. A SUN program that opens
+libraries is linked with `--export-dynamic`: `DLOPEN` in `savanxp_program`
+(refused for anything but a NATIVE PIE), `--export-dynamic` with
+`tools/build-user.sh --native --pie`, `-Wl,--export-dynamic` with `sxcc`.
+Without it a load that needs one of those symbols fails and names it.
+
+`sunlibtest` (`./build.sh smoke sun-libtest`) runs the calls against
+`dltest`'s `libdlmod_*` and opens `libsxmidi`, which asks for `calloc` and
+`realloc` that nothing on its link line asks for: built without `DLOPEN` it
+fails with `libsxmidi.so.0.4 needs "calloc"`, which is how the case was
+checked. `nativetest` cannot carry these assertions: it is a STATIC program,
+and only a PIE has the loader. `sdk-sysroot-test` links a SUN program that
+uses the calls with `build-user.sh` and `sxcc`, and checks that it exports its
+runtime only when asked.

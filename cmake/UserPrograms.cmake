@@ -4,7 +4,9 @@ function(savanxp_program)
     # NATIVE: the program runs on the native (Sx) API, not POSIX -- EI_OSABI is
     # stamped after linking. STATIC or PIE alike: the shared-library loader
     # (system/loader/ldso.c) speaks SXN, which every subsystem has.
-    set(options TEST NATIVE)
+    # DLOPEN: a NATIVE PIE that opens libraries at run time (sxn/sxnlibrary.h)
+    # exports its runtime for them, as every POSIX PIE does.
+    set(options TEST NATIVE DLOPEN)
     set(oneValueArgs NAME INTERPRETER LINK_PROFILE)
     set(multiValueArgs SOURCES DEPENDS DEFINES)
     cmake_parse_arguments(P "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -13,6 +15,10 @@ function(savanxp_program)
     endif()
     if(P_TEST AND NOT SAVANXP_INCLUDE_TEST_APPS)
         return()
+    endif()
+    if(P_DLOPEN AND NOT (P_NATIVE AND P_LINK_PROFILE STREQUAL "PIE"))
+        message(FATAL_ERROR "savanxp_program(${P_NAME}): DLOPEN is for NATIVE PIE programs; "
+            "a POSIX PIE always exports its runtime and a STATIC one has no loader")
     endif()
     # Compared as a string: a plain if(NOT P_NAME) reads the program `false`
     # as a boolean.
@@ -98,9 +104,11 @@ function(savanxp_program)
         # the loader defines.
         #
         # The loader is the same for SUN and POSIX. <dlfcn.h> is POSIX's layer
-        # over it and goes only into POSIX programs; SUN names its own.
+        # over it and goes only into POSIX programs; sxn/sxnlibrary.h is SUN's.
         target_sources(${P_NAME} PRIVATE system/loader/ldso.c)
-        if(NOT P_NATIVE)
+        if(P_NATIVE)
+            target_sources(${P_NAME} PRIVATE system/runtime/sxnlibrary.c)
+        else()
             target_sources(${P_NAME} PRIVATE subsystems/posix/userland/dlfcn.c)
         endif()
         target_compile_options(${P_NAME} PRIVATE ${SAVANXP_USER_COMPILE_OPTIONS_PIC})
@@ -120,12 +128,13 @@ function(savanxp_program)
     # equivocada sin que nadie lo notara.
     if(P_LINK_PROFILE STREQUAL "PIE" AND DEFINED SAVANXP_USER_LINK_OPTIONS_PIE)
         set(pie_options ${SAVANXP_USER_LINK_OPTIONS_PIE})
-        if(P_NATIVE)
+        if(P_NATIVE AND NOT P_DLOPEN)
             # --export-dynamic exports every symbol, and an exported symbol is
             # never garbage: the program would carry the whole runtime, SxGL
             # included. lld exports on its own what a library on the link line
             # asks of the program (memcpy, the canary, sxgui_default_host);
-            # beyond that only dlopen would need exports, and SUN has none.
+            # beyond that only a library opened at run time needs exports, and
+            # a program that opens one says so with DLOPEN.
             list(REMOVE_ITEM pie_options -Wl,--export-dynamic)
         endif()
         target_link_options(${P_NAME} PRIVATE ${pie_options})
@@ -225,8 +234,10 @@ savanxp_program(NAME pietest TEST LINK_PROFILE PIE SOURCES subsystems/posix/user
 savanxp_program(NAME libtest DEPENDS libmath TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/libtest.c)
 # libtest's SUN twin: a native program that maps libmath through the shared
 # loader (docs/kernel/SHARED_LIBRARIES.md, "One loader over SXN"), and libsxgl,
-# SxGL as a library (docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md).
-savanxp_program(NAME sunlibtest TEST NATIVE DEPENDS libmath libsxgl LINK_PROFILE PIE
+# SxGL as a library (docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md). It also opens
+# libraries at run time through sxn/sxnlibrary.h, dltest's libdlmod_* among
+# them, so it exports its runtime (DLOPEN).
+savanxp_program(NAME sunlibtest TEST NATIVE DLOPEN DEPENDS libmath libsxgl LINK_PROFILE PIE
     SOURCES system/loader/sunlibtest.c)
 # The toolkit's clipboard formats from SUN, through the shared libsxgui
 # (docs/desktop/CLIPBOARD.md); the core smoke runs it.
