@@ -156,14 +156,27 @@ interpolated in screen space; colour and fog are interpolated linearly
 (Gouraud). Texture coordinates are perspective-correct, divided every 16
 pixels and interpolated linearly in between.
 
-**Lighting.** `GL_LIGHTING` with up to four lights (`GL_LIGHT0`..`GL_LIGHT3`):
-directional or positional, ambient and diffuse, constant/linear/quadratic
-attenuation, spot cutoff and exponent (`glLightf`, `glLightfv`).
-`glLightModelfv(GL_LIGHT_MODEL_AMBIENT)`. Materials: `glMaterialfv` with
-`GL_AMBIENT`, `GL_DIFFUSE`, `GL_AMBIENT_AND_DIFFUSE`, `GL_EMISSION`;
-`GL_COLOR_MATERIAL` and `glColorMaterial`. Per vertex. `glShadeModel(GL_FLAT)`
-uses the provoking vertex GL names (the last of a triangle, the first of a
-polygon).
+**Lighting.** OpenGL 1.1's, complete: `GL_LIGHTING` with eight lights
+(`GL_LIGHT0`..`GL_LIGHT7`), directional or positional, ambient, diffuse and
+specular, constant/linear/quadratic attenuation, spot cutoff and exponent
+(`glLight{f,i}{,v}`, `glGetLight{f,i}v`). The light model
+(`glLightModel{f,i}{,v}`): the global ambient, the local viewer and two-sided
+lighting. A front and a back material (`glMaterial{f,i}{,v}`,
+`glGetMaterial{f,i}v`) with ambient, diffuse, specular, emission, shininess and
+the colour indexes, which are kept and returned but drive nothing, there being
+no colour index mode. `GL_COLOR_MATERIAL` makes the parameters
+`glColorMaterial` names, on the faces it names, track the current colour: they
+take it when it changes, and keep the last one when tracking stops; a
+`glMaterial` of a tracked parameter meanwhile is ignored, as in Mesa. Integer
+colours map linearly to [-1, 1] and back. Normals are used as transformed, and
+rescaled to unit length only when `GL_NORMALIZE` is on, which it is not by
+default.
+
+Lighting runs per vertex on the CPU for both backends. With two-sided lighting
+each vertex is lit for both faces, and the triangle takes the colours of the
+face it shows, decided by the sign of the clip-space determinant before either
+backend sees it. `glShadeModel(GL_FLAT)` uses the provoking vertex GL names
+(the last of a triangle, the first of a polygon), of that face.
 
 **Per fragment, in order.** Depth test (`glDepthFunc`, all eight functions;
 `glDepthMask`), texturing, alpha test (`glAlphaFunc`, all eight), fog
@@ -181,8 +194,9 @@ GL 1.1 factors), and the scissor (`glScissor`, `GL_SCISSOR_TEST`). Culling:
 
 **Queries.** `glGetError`, `glGetString` (`GL_VERSION` is `"1.1 SxGL
 subset"`), `glGetIntegerv`/`glGetFloatv` for the viewport, the matrix mode, the
-two matrices, the stack depths, `GL_MAX_LIGHTS`, `GL_MAX_TEXTURE_SIZE` and the
-bound texture; `glIsEnabled`. `glFlush` and `glFinish` return at once, because
+two matrices, the stack depths, `GL_MAX_LIGHTS`, `GL_MAX_TEXTURE_SIZE`, the
+bound texture, the light model, the colour material face and parameter, and the
+shade model; `glIsEnabled`. `glFlush` and `glFinish` return at once, because
 every call has completed when it returns. `glHint` is accepted and ignored, as
 the specification allows.
 
@@ -190,8 +204,9 @@ the specification allows.
 
 Each of these was a decision, not an omission found later. Under the versions
 roadmap the ones that break conformance go, each in the step that brings the
-missing capability: no mipmaps, normals always normalized and one material
-for both faces fall with step 1. "What is absent is absent" stays for good.
+missing capability: no mipmaps falls with step 1, as normals always
+normalized and one material for both faces already did. "What is absent is
+absent" stays for good.
 
 - **What is absent is absent.** A capability, parameter or mode outside the
   subset raises `GL_INVALID_ENUM` (and says so in the debug sink). Nothing is
@@ -201,10 +216,6 @@ for both faces fall with step 1. "What is absent is absent" stays for good.
   `GL_LINEAR` for both filters, not GL's `GL_NEAREST_MIPMAP_LINEAR`, which would
   leave every texture incomplete. Minification versus magnification is decided
   per triangle, from the texel area it covers against its pixel area.
-- **Normals are always normalized**, as if `GL_NORMALIZE` were on. Enabling it
-  is accepted and changes nothing.
-- **One material for both faces.** There is no two-sided lighting:
-  `glMaterialfv(GL_BACK, ...)` alone is refused rather than applied to the front.
 - **Fog uses the eye-space depth** as its distance, which the specification
   permits and which keeps fog still while the view turns.
 - **No alpha in the colour buffer.** Destination alpha reads as 1, as on a GL

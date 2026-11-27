@@ -6,7 +6,8 @@
  * depth test and depth range, culling and front faces, smooth colour, fog,
  * blending, the alpha test, the scissor and a scissored clear; then textures
  * under each environment and filter, an update between two draws, and a
- * perspective textured quad under fog. The two
+ * perspective textured quad under fog; then OpenGL 1.1 lighting, which both
+ * backends take as lit vertex colours. The two
  * rasterizers do not agree on every edge pixel, so the check is a tolerance
  * per channel and a budget of pixels allowed past it.
  *
@@ -282,6 +283,110 @@ static void draw_textures(void)
     glDeleteTextures(2, names);
 }
 
+/* A grid of quads with one normal per vertex bent towards the edges, so that
+ * per-vertex lighting varies across it: x0..x1 by y0..y1 at depth z, wound
+ * clockwise when `clockwise`. */
+static void lit_grid(float x0, float y0, float x1, float y1, float z, int clockwise)
+{
+    const int cells = 6;
+    int row;
+    int column;
+
+    glBegin(GL_QUADS);
+    for (row = 0; row < cells; ++row) {
+        for (column = 0; column < cells; ++column) {
+            static const int corners[2][4][2] = {{{0, 0}, {1, 0}, {1, 1}, {0, 1}}, {{0, 0}, {0, 1}, {1, 1}, {1, 0}}};
+            int corner;
+            for (corner = 0; corner < 4; ++corner) {
+                float u = (float)(column + corners[clockwise][corner][0]) / (float)cells;
+                float v = (float)(row + corners[clockwise][corner][1]) / (float)cells;
+                glNormal3f((u - 0.5f) * 1.2f, (v - 0.5f) * 1.2f, 1.0f);
+                glVertex3f(x0 + (x1 - x0) * u, y0 + (y1 - y0) * v, z);
+            }
+        }
+    }
+    glEnd();
+}
+
+/* OpenGL 1.1 lighting, which SxGL computes per vertex before either backend
+ * sees a triangle: specular highlights, a local viewer, lights beyond the
+ * first four, two-sided lighting choosing the back material by the facing,
+ * and GL_NORMALIZE under a scaled modelview. */
+static void draw_lighting(void)
+{
+    static const float black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    static const float grey[4] = {0.1f, 0.1f, 0.1f, 1.0f};
+    static const float white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    static const float warm[4] = {0.9f, 0.6f, 0.3f, 1.0f};
+    static const float cool[4] = {0.2f, 0.4f, 0.9f, 1.0f};
+    static const float green[4] = {0.3f, 0.8f, 0.3f, 1.0f};
+    static const float back_red[4] = {0.8f, 0.2f, 0.2f, 1.0f};
+    static const float light0[4] = {0.5f, 0.5f, 1.0f, 0.0f};
+    static const float light5[4] = {-0.6f, 0.2f, 0.5f, 1.0f};
+    static const float light7[4] = {0.0f, -1.0f, 0.6f, 0.0f};
+    static const float light5_colour[4] = {0.2f, 0.6f, 0.2f, 1.0f};
+    static const float light7_colour[4] = {0.5f, 0.2f, 0.6f, 1.0f};
+
+    glViewport(0, 0, WIDTH, HEIGHT);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glFrustum(-0.4, 0.4, -0.3, 0.3, 1.0, 10.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, grey);
+    glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, GL_TRUE);
+    glLightfv(GL_LIGHT0, GL_POSITION, light0);
+    glLightfv(GL_LIGHT5, GL_POSITION, light5);
+    glLightfv(GL_LIGHT5, GL_DIFFUSE, light5_colour);
+    glLightfv(GL_LIGHT5, GL_SPECULAR, white);
+    glLightf(GL_LIGHT5, GL_LINEAR_ATTENUATION, 0.3f);
+    glLightfv(GL_LIGHT7, GL_POSITION, light7);
+    glLightfv(GL_LIGHT7, GL_DIFFUSE, light7_colour);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+    glEnable(GL_LIGHT5);
+    glEnable(GL_LIGHT7);
+
+    /* Left: a shiny warm surface. */
+    glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, warm);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, white);
+    glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 24.0f);
+    lit_grid(-1.1f, -0.2f, -0.2f, 0.8f, -3.0f, 0);
+
+    /* Right: wound clockwise, so it shows its back: two-sided lighting gives
+     * it the back material, lit with the normal reversed. */
+    glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE);
+    glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, green);
+    glMaterialfv(GL_BACK, GL_AMBIENT_AND_DIFFUSE, back_red);
+    glMaterialfv(GL_BACK, GL_EMISSION, grey);
+    lit_grid(0.2f, -0.2f, 1.1f, 0.8f, -3.0f, 1);
+    glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_FALSE);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, black);
+
+    /* Bottom: the same grid scaled up, with GL_NORMALIZE on and colour
+     * material feeding the diffuse colour. */
+    glEnable(GL_NORMALIZE);
+    glEnable(GL_COLOR_MATERIAL);
+    glColorMaterial(GL_FRONT, GL_DIFFUSE);
+    glColor3fv(cool);
+    glPushMatrix();
+    glTranslatef(0.0f, -0.65f, -3.0f);
+    glScalef(2.5f, 0.8f, 1.0f);
+    lit_grid(-0.4f, -0.4f, 0.4f, 0.4f, 0.0f, 0);
+    glPopMatrix();
+
+    glDisable(GL_COLOR_MATERIAL);
+    glDisable(GL_NORMALIZE);
+    glDisable(GL_LIGHT7);
+    glDisable(GL_LIGHT5);
+    glDisable(GL_LIGHT0);
+    glDisable(GL_LIGHTING);
+    glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, GL_FALSE);
+}
+
 static int channel_distance(uint32_t a, uint32_t b, int shift)
 {
     int left = (int)((a >> shift) & 0xffu);
@@ -385,6 +490,9 @@ int main(void)
         "the clockwise triangle is culled");
 
     compare_scene("textures", draw_textures, software_context, &software, gpu_context, &gpu);
+    compare_scene("lighting", draw_lighting, software_context, &software, gpu_context, &gpu);
+    check(pixel_at(&gpu, WIDTH / 4, HEIGHT / 3) != 0 && pixel_at(&gpu, 3 * WIDTH / 4, HEIGHT / 3) != 0,
+        "both lit surfaces are drawn");
     check(sxgl_context_backend(gpu_context) == SXGL_BACKEND_GPU ||
             sxgl_context_backend(software_context) == SXGL_BACKEND_SOFTWARE,
         "the backends are what they were");

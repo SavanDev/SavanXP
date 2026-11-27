@@ -14,6 +14,9 @@ changes not released yet; each released version has its own file in
 - **SUN programs open shared libraries at run time: `sxn_library_open`, `sxn_library_symbol`, `sxn_library_close`,
   `sxn_library_address` (SDK 2.0)**, `<dlfcn.h>`'s counterpart over the same loader. A program that uses them exports
   its runtime: `DLOPEN`, `build-user.sh --export-dynamic`. [Run-time loading in SUN](docs/kernel/SHARED_LIBRARIES.md#run-time-loading-in-sun).
+- **SxGL lights as OpenGL 1.1 specifies: specular, eight lights, the local viewer, two-sided lighting (SDK 2.0).** Every
+  `glLight`, `glLightModel`, `glMaterial` variant and `glGetLight`/`glGetMaterial`. A normal is rescaled only when
+  `GL_NORMALIZE` is on, no longer always. [SxGL versions](docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md#step-1--opengl-11-complete).
 - **Programs written for OpenGL reach SxGL: `<GL/gl.h>`, `<GL/glext.h>`, `libsxgl.so.0.4` and `sxgl_get_proc_address` (SDK 2.0).**
   Map SxGL by `DT_NEEDED` or `dlopen` and resolve each entry point by name; an unimplemented one is null. Scenario
   `gl-smoke`, host test `sxgl-conformance-test`. [SxGL versions](docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md).

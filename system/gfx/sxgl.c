@@ -32,7 +32,7 @@
 
 #define SXGL_MODELVIEW_DEPTH 32
 #define SXGL_PROJECTION_DEPTH 4
-#define SXGL_MAX_LIGHTS 4
+#define SXGL_MAX_LIGHTS 8
 #define SXGL_MAX_TEXTURE_SIZE 1024
 /* A triangle clipped by six planes has at most 3 + 6 vertices. */
 #define SXGL_CLIP_MAX_VERTICES 9
@@ -58,12 +58,26 @@ struct sxgl_light {
     int enabled;
     float ambient[4];
     float diffuse[4];
+    float specular[4];
     float position[4]; /* eye space, transformed when it was set */
     float spot_direction[3]; /* eye space */
     float spot_exponent;
     float spot_cutoff;
     float spot_cos_cutoff;
     float attenuation[3];
+};
+
+/* One face's material. GL keeps a front and a back one; the back one lights
+ * back faces when GL_LIGHT_MODEL_TWO_SIDE is on. */
+struct sxgl_material {
+    float ambient[4];
+    float diffuse[4];
+    float specular[4];
+    float emission[4];
+    float shininess;
+    /* Colour index mode only, which SxGL does not offer: kept and returned,
+     * never used. */
+    float colour_indexes[3];
 };
 
 struct sxgl_texture {
@@ -91,7 +105,8 @@ struct sxgl_array {
 /* A vertex after stage 1, in clip space. */
 struct sxgl_vertex {
     float clip[4];
-    float colour[4]; /* 0..1 */
+    float colour[4]; /* 0..1; the front face's when lit two-sided */
+    float back_colour[4]; /* the back face's, when lit two-sided */
     float tex[2];
     float fog; /* 1 = no fog, 0 = all fog colour */
 };
@@ -221,9 +236,10 @@ struct sxgl_context {
 
     struct sxgl_light lights[SXGL_MAX_LIGHTS];
     float light_model_ambient[4];
-    float material_ambient[4];
-    float material_diffuse[4];
-    float material_emission[4];
+    int light_model_local_viewer;
+    int light_model_two_side;
+    struct sxgl_material materials[2]; /* front, back */
+    GLenum colour_material_face;
     GLenum colour_material_mode;
 
     GLenum fog_mode;
@@ -545,8 +561,10 @@ struct sxgl_context* sxgl_context_create_ex(const struct sx_bitmap* colour, unsi
         sxgl_set4(light->ambient, 0.0f, 0.0f, 0.0f, 1.0f);
         if (index == 0) {
             sxgl_set4(light->diffuse, 1.0f, 1.0f, 1.0f, 1.0f);
+            sxgl_set4(light->specular, 1.0f, 1.0f, 1.0f, 1.0f);
         } else {
             sxgl_set4(light->diffuse, 0.0f, 0.0f, 0.0f, 1.0f);
+            sxgl_set4(light->specular, 0.0f, 0.0f, 0.0f, 1.0f);
         }
         sxgl_set4(light->position, 0.0f, 0.0f, 1.0f, 0.0f);
         light->spot_direction[0] = 0.0f;
@@ -557,9 +575,16 @@ struct sxgl_context* sxgl_context_create_ex(const struct sx_bitmap* colour, unsi
         light->attenuation[0] = 1.0f;
     }
     sxgl_set4(context->light_model_ambient, 0.2f, 0.2f, 0.2f, 1.0f);
-    sxgl_set4(context->material_ambient, 0.2f, 0.2f, 0.2f, 1.0f);
-    sxgl_set4(context->material_diffuse, 0.8f, 0.8f, 0.8f, 1.0f);
-    sxgl_set4(context->material_emission, 0.0f, 0.0f, 0.0f, 1.0f);
+    for (index = 0; index < 2; ++index) {
+        struct sxgl_material* material = &context->materials[index];
+        sxgl_set4(material->ambient, 0.2f, 0.2f, 0.2f, 1.0f);
+        sxgl_set4(material->diffuse, 0.8f, 0.8f, 0.8f, 1.0f);
+        sxgl_set4(material->specular, 0.0f, 0.0f, 0.0f, 1.0f);
+        sxgl_set4(material->emission, 0.0f, 0.0f, 0.0f, 1.0f);
+        material->colour_indexes[1] = 1.0f;
+        material->colour_indexes[2] = 1.0f;
+    }
+    context->colour_material_face = GL_FRONT_AND_BACK;
     context->colour_material_mode = GL_AMBIENT_AND_DIFFUSE;
 
     context->fog_mode = GL_EXP;
@@ -787,6 +812,41 @@ static int sxgl_get_matrix(struct sxgl_context* context, GLenum name, GLfloat* o
     return 1;
 }
 
+static GLint sxgl_colour_to_int(float value);
+
+/* The lighting state glGet returns, as floats; `colour` says whether glGetIntegerv
+ * maps them linearly. 0 for a name that is not lighting state. */
+static int sxgl_get_lighting(const struct sxgl_context* context, GLenum name, float out[4], int* colour)
+{
+    *colour = 0;
+    switch (name) {
+    case GL_LIGHT_MODEL_AMBIENT:
+        memcpy(out, context->light_model_ambient, sizeof(context->light_model_ambient));
+        *colour = 1;
+        return 4;
+    case GL_LIGHT_MODEL_LOCAL_VIEWER:
+        out[0] = (float)context->light_model_local_viewer;
+        return 1;
+    case GL_LIGHT_MODEL_TWO_SIDE:
+        out[0] = (float)context->light_model_two_side;
+        return 1;
+    case GL_COLOR_MATERIAL_FACE:
+        out[0] = (float)context->colour_material_face;
+        return 1;
+    case GL_COLOR_MATERIAL_PARAMETER:
+        out[0] = (float)context->colour_material_mode;
+        return 1;
+    case GL_SHADE_MODEL:
+        out[0] = (float)context->shade_model;
+        return 1;
+    case GL_MAX_LIGHTS:
+        out[0] = (float)SXGL_MAX_LIGHTS;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 void glGetIntegerv(GLenum name, GLint* out)
 {
     struct sxgl_context* context = sxgl_enter("glGetIntegerv");
@@ -813,15 +873,21 @@ void glGetIntegerv(GLenum name, GLint* out)
     case GL_MAX_PROJECTION_STACK_DEPTH:
         out[0] = SXGL_PROJECTION_DEPTH;
         return;
-    case GL_MAX_LIGHTS:
-        out[0] = SXGL_MAX_LIGHTS;
-        return;
     case GL_TEXTURE_BINDING_2D:
         out[0] = (GLint)context->bound_texture;
         return;
     default: {
         GLfloat matrix[16];
+        int colour;
+        int count;
         int index;
+        count = sxgl_get_lighting(context, name, matrix, &colour);
+        if (count != 0) {
+            for (index = 0; index < count; ++index) {
+                out[index] = colour ? sxgl_colour_to_int(matrix[index]) : (GLint)matrix[index];
+            }
+            return;
+        }
         if (sxgl_get_matrix(context, name, matrix)) {
             for (index = 0; index < 16; ++index) {
                 out[index] = (GLint)matrix[index];
@@ -843,6 +909,15 @@ void glGetFloatv(GLenum name, GLfloat* out)
     }
     if (sxgl_get_matrix(context, name, out)) {
         return;
+    }
+    {
+        float found[4];
+        int colour;
+        int count = sxgl_get_lighting(context, name, found, &colour);
+        if (count != 0) {
+            memcpy(out, found, (size_t)count * sizeof(float));
+            return;
+        }
     }
     if (name == GL_VIEWPORT) {
         out[0] = (GLfloat)context->viewport_x;
@@ -923,6 +998,8 @@ static int* sxgl_capability(struct sxgl_context* context, GLenum capability)
     }
 }
 
+static void sxgl_track_colour(struct sxgl_context* context);
+
 static void sxgl_set_capability(GLenum capability, int value, const char* call)
 {
     struct sxgl_context* context = sxgl_enter(call);
@@ -938,6 +1015,9 @@ static void sxgl_set_capability(GLenum capability, int value, const char* call)
     }
     *flag = value;
     context->pipeline_dirty = 1;
+    if (capability == GL_COLOR_MATERIAL) {
+        sxgl_track_colour(context);
+    }
 }
 
 void glEnable(GLenum capability)
@@ -1457,6 +1537,30 @@ void glBlendFunc(GLenum source_factor, GLenum destination_factor)
  * Lighting and fog state
  * ------------------------------------------------------------------------ */
 
+/* GL's linear mapping between an integer colour component and [-1, 1]
+ * (OpenGL 1.1, table 2.6, and section 6.1.2 for the way back). */
+static float sxgl_int_to_colour(GLint value)
+{
+    return (float)((2.0 * (double)value + 1.0) / 4294967295.0);
+}
+
+static GLint sxgl_colour_to_int(float value)
+{
+    double scaled = (4294967295.0 * (double)value - 1.0) / 2.0;
+    if (scaled >= 2147483647.0) {
+        return 2147483647;
+    }
+    if (scaled <= -2147483648.0) {
+        return (GLint)-2147483647 - 1;
+    }
+    return (GLint)(scaled < 0.0 ? scaled - 0.5 : scaled + 0.5);
+}
+
+static GLint sxgl_round_int(float value)
+{
+    return (GLint)(value < 0.0f ? value - 0.5f : value + 0.5f);
+}
+
 static struct sxgl_light* sxgl_light_for(struct sxgl_context* context, GLenum light, const char* call)
 {
     if (light < GL_LIGHT0 || light >= GL_LIGHT0 + SXGL_MAX_LIGHTS) {
@@ -1466,10 +1570,70 @@ static struct sxgl_light* sxgl_light_for(struct sxgl_context* context, GLenum li
     return &context->lights[light - GL_LIGHT0];
 }
 
-static void sxgl_light_scalar(struct sxgl_context* context, struct sxgl_light* target, GLenum name, float value,
+/* How many values a light parameter has, 0 for a name that is not one;
+ * `colour` says whether integers map linearly or convert directly. */
+static int sxgl_light_values(GLenum name, int* colour)
+{
+    *colour = 0;
+    switch (name) {
+    case GL_AMBIENT:
+    case GL_DIFFUSE:
+    case GL_SPECULAR:
+        *colour = 1;
+        return 4;
+    case GL_POSITION:
+        return 4;
+    case GL_SPOT_DIRECTION:
+        return 3;
+    case GL_SPOT_EXPONENT:
+    case GL_SPOT_CUTOFF:
+    case GL_CONSTANT_ATTENUATION:
+    case GL_LINEAR_ATTENUATION:
+    case GL_QUADRATIC_ATTENUATION:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static void sxgl_light_set(struct sxgl_context* context, GLenum light, GLenum name, const float* values, int count,
     const char* call)
 {
+    struct sxgl_light* target = sxgl_light_for(context, light, call);
+    const float* m = context->modelview[context->modelview_top].m;
+    int colour;
+    int needed;
+    float value;
+
+    if (target == 0) {
+        return;
+    }
+    needed = sxgl_light_values(name, &colour);
+    if (needed == 0 || needed > count) {
+        sxgl_raise(context, GL_INVALID_ENUM, call, needed == 0 ? "not a light parameter" : "a vector parameter");
+        return;
+    }
+    value = values[0];
     switch (name) {
+    case GL_AMBIENT:
+        memcpy(target->ambient, values, sizeof(target->ambient));
+        return;
+    case GL_DIFFUSE:
+        memcpy(target->diffuse, values, sizeof(target->diffuse));
+        return;
+    case GL_SPECULAR:
+        memcpy(target->specular, values, sizeof(target->specular));
+        return;
+    case GL_POSITION:
+        /* GL stores the position in eye space, transformed by the modelview
+         * current at the time of the call. */
+        sxgl_transform(&context->modelview[context->modelview_top], values, target->position);
+        return;
+    case GL_SPOT_DIRECTION:
+        target->spot_direction[0] = m[0] * values[0] + m[4] * values[1] + m[8] * values[2];
+        target->spot_direction[1] = m[1] * values[0] + m[5] * values[1] + m[9] * values[2];
+        target->spot_direction[2] = m[2] * values[0] + m[6] * values[1] + m[10] * values[2];
+        return;
     case GL_SPOT_EXPONENT:
         if (value < 0.0f || value > 128.0f) {
             sxgl_raise(context, GL_INVALID_VALUE, call, "spot exponent outside [0, 128]");
@@ -1485,122 +1649,416 @@ static void sxgl_light_scalar(struct sxgl_context* context, struct sxgl_light* t
         target->spot_cutoff = value;
         target->spot_cos_cutoff = value == 180.0f ? -1.0f : cosf(value * (3.14159265358979323846f / 180.0f));
         return;
-    case GL_CONSTANT_ATTENUATION:
-    case GL_LINEAR_ATTENUATION:
-    case GL_QUADRATIC_ATTENUATION:
+    default:
         if (value < 0.0f) {
             sxgl_raise(context, GL_INVALID_VALUE, call, "negative attenuation");
             return;
         }
         target->attenuation[name - GL_CONSTANT_ATTENUATION] = value;
         return;
-    default:
-        sxgl_raise(context, GL_INVALID_ENUM, call, "parameter not in the subset");
+    }
+}
+
+static void sxgl_light_set_int(GLenum light, GLenum name, const GLint* values, int count, const char* call)
+{
+    struct sxgl_context* context = sxgl_enter(call);
+    float converted[4];
+    int colour;
+    int needed;
+    int index;
+
+    if (context == 0 || values == 0) {
         return;
     }
+    needed = sxgl_light_values(name, &colour);
+    for (index = 0; index < needed && index < count; ++index) {
+        converted[index] = colour ? sxgl_int_to_colour(values[index]) : (float)values[index];
+    }
+    sxgl_light_set(context, light, name, converted, count, call);
 }
 
 void glLightf(GLenum light, GLenum name, GLfloat value)
 {
     struct sxgl_context* context = sxgl_enter("glLightf");
-    struct sxgl_light* target;
 
-    if (context == 0) {
-        return;
+    if (context != 0) {
+        sxgl_light_set(context, light, name, &value, 1, "glLightf");
     }
-    target = sxgl_light_for(context, light, "glLightf");
-    if (target != 0) {
-        sxgl_light_scalar(context, target, name, value, "glLightf");
-    }
+}
+
+void glLighti(GLenum light, GLenum name, GLint value)
+{
+    sxgl_light_set_int(light, name, &value, 1, "glLighti");
 }
 
 void glLightfv(GLenum light, GLenum name, const GLfloat* values)
 {
     struct sxgl_context* context = sxgl_enter("glLightfv");
-    struct sxgl_light* target;
-    const float* m;
+
+    if (context != 0 && values != 0) {
+        sxgl_light_set(context, light, name, values, 4, "glLightfv");
+    }
+}
+
+void glLightiv(GLenum light, GLenum name, const GLint* values)
+{
+    sxgl_light_set_int(light, name, values, 4, "glLightiv");
+}
+
+/* A light parameter as GL returns it: the position and spot direction in eye
+ * space, as stored. 0 values for a name that is not one. */
+static int sxgl_light_get(struct sxgl_context* context, GLenum light, GLenum name, float out[4], int* colour,
+    const char* call)
+{
+    const struct sxgl_light* source = sxgl_light_for(context, light, call);
+    int count;
+
+    if (source == 0) {
+        return 0;
+    }
+    count = sxgl_light_values(name, colour);
+    switch (name) {
+    case GL_AMBIENT:
+        memcpy(out, source->ambient, sizeof(source->ambient));
+        break;
+    case GL_DIFFUSE:
+        memcpy(out, source->diffuse, sizeof(source->diffuse));
+        break;
+    case GL_SPECULAR:
+        memcpy(out, source->specular, sizeof(source->specular));
+        break;
+    case GL_POSITION:
+        memcpy(out, source->position, sizeof(source->position));
+        break;
+    case GL_SPOT_DIRECTION:
+        memcpy(out, source->spot_direction, sizeof(source->spot_direction));
+        break;
+    case GL_SPOT_EXPONENT:
+        out[0] = source->spot_exponent;
+        break;
+    case GL_SPOT_CUTOFF:
+        out[0] = source->spot_cutoff;
+        break;
+    case GL_CONSTANT_ATTENUATION:
+    case GL_LINEAR_ATTENUATION:
+    case GL_QUADRATIC_ATTENUATION:
+        out[0] = source->attenuation[name - GL_CONSTANT_ATTENUATION];
+        break;
+    default:
+        sxgl_raise(context, GL_INVALID_ENUM, call, "not a light parameter");
+        return 0;
+    }
+    return count;
+}
+
+void glGetLightfv(GLenum light, GLenum name, GLfloat* values)
+{
+    struct sxgl_context* context = sxgl_enter("glGetLightfv");
+    float found[4];
+    int colour;
+    int count;
 
     if (context == 0 || values == 0) {
         return;
     }
-    target = sxgl_light_for(context, light, "glLightfv");
-    if (target == 0) {
+    count = sxgl_light_get(context, light, name, found, &colour, "glGetLightfv");
+    memcpy(values, found, (size_t)count * sizeof(float));
+}
+
+void glGetLightiv(GLenum light, GLenum name, GLint* values)
+{
+    struct sxgl_context* context = sxgl_enter("glGetLightiv");
+    float found[4];
+    int colour;
+    int count;
+    int index;
+
+    if (context == 0 || values == 0) {
         return;
     }
-    m = context->modelview[context->modelview_top].m;
+    count = sxgl_light_get(context, light, name, found, &colour, "glGetLightiv");
+    for (index = 0; index < count; ++index) {
+        values[index] = colour ? sxgl_colour_to_int(found[index]) : sxgl_round_int(found[index]);
+    }
+}
+
+static void sxgl_light_model_set(GLenum name, const float* values, int count, const char* call)
+{
+    struct sxgl_context* context = sxgl_enter(call);
+
+    if (context == 0 || values == 0) {
+        return;
+    }
     switch (name) {
-    case GL_AMBIENT:
-        memcpy(target->ambient, values, sizeof(target->ambient));
+    case GL_LIGHT_MODEL_AMBIENT:
+        if (count < 4) {
+            sxgl_raise(context, GL_INVALID_ENUM, call, "a vector parameter");
+            return;
+        }
+        memcpy(context->light_model_ambient, values, sizeof(context->light_model_ambient));
         return;
-    case GL_DIFFUSE:
-        memcpy(target->diffuse, values, sizeof(target->diffuse));
+    case GL_LIGHT_MODEL_LOCAL_VIEWER:
+        context->light_model_local_viewer = values[0] != 0.0f;
         return;
-    case GL_POSITION:
-        /* GL stores the position in eye space, transformed by the modelview
-         * current at the time of the call. */
-        sxgl_transform(&context->modelview[context->modelview_top], values, target->position);
-        return;
-    case GL_SPOT_DIRECTION:
-        target->spot_direction[0] = m[0] * values[0] + m[4] * values[1] + m[8] * values[2];
-        target->spot_direction[1] = m[1] * values[0] + m[5] * values[1] + m[9] * values[2];
-        target->spot_direction[2] = m[2] * values[0] + m[6] * values[1] + m[10] * values[2];
+    case GL_LIGHT_MODEL_TWO_SIDE:
+        context->light_model_two_side = values[0] != 0.0f;
         return;
     default:
-        sxgl_light_scalar(context, target, name, values[0], "glLightfv");
+        sxgl_raise(context, GL_INVALID_ENUM, call, "not a light model parameter");
         return;
     }
+}
+
+void glLightModelf(GLenum name, GLfloat value)
+{
+    sxgl_light_model_set(name, &value, 1, "glLightModelf");
+}
+
+void glLightModeli(GLenum name, GLint value)
+{
+    float converted = (float)value;
+    sxgl_light_model_set(name, &converted, 1, "glLightModeli");
 }
 
 void glLightModelfv(GLenum name, const GLfloat* values)
 {
-    struct sxgl_context* context = sxgl_enter("glLightModelfv");
-
-    if (context == 0 || values == 0) {
-        return;
-    }
-    if (name != GL_LIGHT_MODEL_AMBIENT) {
-        sxgl_raise(context, GL_INVALID_ENUM, "glLightModelfv", "only GL_LIGHT_MODEL_AMBIENT");
-        return;
-    }
-    memcpy(context->light_model_ambient, values, sizeof(context->light_model_ambient));
+    sxgl_light_model_set(name, values, 4, "glLightModelfv");
 }
 
-void glMaterialfv(GLenum face, GLenum name, const GLfloat* values)
+void glLightModeliv(GLenum name, const GLint* values)
+{
+    float converted[4];
+    int index;
+
+    if (values == 0) {
+        return;
+    }
+    if (name == GL_LIGHT_MODEL_AMBIENT) {
+        for (index = 0; index < 4; ++index) {
+            converted[index] = sxgl_int_to_colour(values[index]);
+        }
+    } else {
+        converted[0] = (float)values[0];
+    }
+    sxgl_light_model_set(name, converted, 4, "glLightModeliv");
+}
+
+/* The faces a face enum names, as bits: 1 front, 2 back. 0 if it names none. */
+static unsigned sxgl_faces(GLenum face)
+{
+    switch (face) {
+    case GL_FRONT:
+        return 1u;
+    case GL_BACK:
+        return 2u;
+    case GL_FRONT_AND_BACK:
+        return 3u;
+    default:
+        return 0u;
+    }
+}
+
+/* The parameters GL_COLOR_MATERIAL makes track the current colour, as the
+ * material names they cover. */
+static int sxgl_tracks(const struct sxgl_context* context, unsigned face_bit, GLenum name)
+{
+    if (!context->colour_material || (sxgl_faces(context->colour_material_face) & face_bit) == 0) {
+        return 0;
+    }
+    if (context->colour_material_mode == GL_AMBIENT_AND_DIFFUSE) {
+        return name == GL_AMBIENT || name == GL_DIFFUSE;
+    }
+    return name == context->colour_material_mode;
+}
+
+static float* sxgl_material_field(struct sxgl_material* material, GLenum name)
+{
+    switch (name) {
+    case GL_AMBIENT:
+        return material->ambient;
+    case GL_DIFFUSE:
+        return material->diffuse;
+    case GL_SPECULAR:
+        return material->specular;
+    case GL_EMISSION:
+        return material->emission;
+    case GL_SHININESS:
+        return &material->shininess;
+    case GL_COLOR_INDEXES:
+        return material->colour_indexes;
+    default:
+        return 0;
+    }
+}
+
+/* While GL_COLOR_MATERIAL is on, the parameters it names follow the current
+ * colour: they take it whenever it changes and when tracking starts, and
+ * keep the last one when it stops. */
+static void sxgl_track_colour(struct sxgl_context* context)
+{
+    static const GLenum names[] = {GL_AMBIENT, GL_DIFFUSE, GL_SPECULAR, GL_EMISSION};
+    unsigned face;
+    size_t index;
+
+    if (!context->colour_material) {
+        return;
+    }
+    for (face = 0; face < 2; ++face) {
+        for (index = 0; index < sizeof(names) / sizeof(names[0]); ++index) {
+            if (sxgl_tracks(context, 1u << face, names[index])) {
+                memcpy(sxgl_material_field(&context->materials[face], names[index]), context->current_colour,
+                    4 * sizeof(float));
+            }
+        }
+    }
+}
+
+/* How many values a material parameter takes in glMaterial; 0 if none. */
+static int sxgl_material_values(GLenum name, int* colour)
+{
+    *colour = 0;
+    switch (name) {
+    case GL_AMBIENT:
+    case GL_DIFFUSE:
+    case GL_SPECULAR:
+    case GL_EMISSION:
+    case GL_AMBIENT_AND_DIFFUSE:
+        *colour = 1;
+        return 4;
+    case GL_SHININESS:
+        return 1;
+    case GL_COLOR_INDEXES:
+        return 3;
+    default:
+        return 0;
+    }
+}
+
+static void sxgl_material_set(GLenum face, GLenum name, const float* values, int count, const char* call)
 {
     struct sxgl_context* context = g_sxgl_current;
+    unsigned faces = sxgl_faces(face);
+    unsigned bit;
+    int colour;
+    int needed;
 
     /* Legal between glBegin and glEnd, like glColor. */
     if (context == 0 || values == 0) {
         return;
     }
-    if (face != GL_FRONT && face != GL_BACK && face != GL_FRONT_AND_BACK) {
-        sxgl_raise(context, GL_INVALID_ENUM, "glMaterialfv", 0);
+    needed = sxgl_material_values(name, &colour);
+    if (faces == 0 || needed == 0 || needed > count) {
+        sxgl_raise(context, GL_INVALID_ENUM, call,
+            faces == 0 ? "not a face" : needed == 0 ? "not a material parameter" : "a vector parameter");
         return;
     }
-    /* One material for both faces: there is no two-sided lighting. A call for
-     * GL_BACK alone would change what the front faces show, so it is refused
-     * rather than applied. */
-    if (face == GL_BACK) {
-        sxgl_raise(context, GL_INVALID_ENUM, "glMaterialfv", "no two-sided lighting: GL_BACK alone");
+    if (name == GL_SHININESS && (values[0] < 0.0f || values[0] > 128.0f)) {
+        sxgl_raise(context, GL_INVALID_VALUE, call, "shininess outside [0, 128]");
         return;
     }
-    switch (name) {
-    case GL_AMBIENT:
-        memcpy(context->material_ambient, values, sizeof(context->material_ambient));
+    for (bit = 0; bit < 2; ++bit) {
+        struct sxgl_material* material = &context->materials[bit];
+        if ((faces & (1u << bit)) == 0) {
+            continue;
+        }
+        /* A parameter GL_COLOR_MATERIAL tracks belongs to the current colour
+         * while it does: setting it would last only until the next glColor. */
+        if (name == GL_AMBIENT_AND_DIFFUSE) {
+            if (!sxgl_tracks(context, 1u << bit, GL_AMBIENT)) {
+                memcpy(material->ambient, values, sizeof(material->ambient));
+            }
+            if (!sxgl_tracks(context, 1u << bit, GL_DIFFUSE)) {
+                memcpy(material->diffuse, values, sizeof(material->diffuse));
+            }
+        } else if (!sxgl_tracks(context, 1u << bit, name)) {
+            memcpy(sxgl_material_field(material, name), values, (size_t)needed * sizeof(float));
+        }
+    }
+}
+
+static void sxgl_material_set_int(GLenum face, GLenum name, const GLint* values, int count, const char* call)
+{
+    float converted[4];
+    int colour;
+    int needed;
+    int index;
+
+    if (values == 0) {
         return;
-    case GL_DIFFUSE:
-        memcpy(context->material_diffuse, values, sizeof(context->material_diffuse));
+    }
+    needed = sxgl_material_values(name, &colour);
+    for (index = 0; index < needed && index < count; ++index) {
+        converted[index] = colour ? sxgl_int_to_colour(values[index]) : (float)values[index];
+    }
+    sxgl_material_set(face, name, converted, count, call);
+}
+
+void glMaterialf(GLenum face, GLenum name, GLfloat value)
+{
+    sxgl_material_set(face, name, &value, 1, "glMaterialf");
+}
+
+void glMateriali(GLenum face, GLenum name, GLint value)
+{
+    sxgl_material_set_int(face, name, &value, 1, "glMateriali");
+}
+
+void glMaterialfv(GLenum face, GLenum name, const GLfloat* values)
+{
+    sxgl_material_set(face, name, values, 4, "glMaterialfv");
+}
+
+void glMaterialiv(GLenum face, GLenum name, const GLint* values)
+{
+    sxgl_material_set_int(face, name, values, 4, "glMaterialiv");
+}
+
+/* glGetMaterial names one face, and GL_AMBIENT_AND_DIFFUSE is not a query. */
+static int sxgl_material_get(GLenum face, GLenum name, float out[4], int* colour, const char* call)
+{
+    struct sxgl_context* context = sxgl_enter(call);
+    const float* field;
+    int count;
+
+    if (context == 0) {
+        return 0;
+    }
+    count = sxgl_material_values(name, colour);
+    if ((face != GL_FRONT && face != GL_BACK) || count == 0 || name == GL_AMBIENT_AND_DIFFUSE) {
+        sxgl_raise(context, GL_INVALID_ENUM, call, face != GL_FRONT && face != GL_BACK ? "not one face" : 0);
+        return 0;
+    }
+    field = sxgl_material_field(&context->materials[face == GL_BACK], name);
+    memcpy(out, field, (size_t)count * sizeof(float));
+    return count;
+}
+
+void glGetMaterialfv(GLenum face, GLenum name, GLfloat* values)
+{
+    float found[4];
+    int colour;
+    int count;
+
+    if (values == 0) {
         return;
-    case GL_AMBIENT_AND_DIFFUSE:
-        memcpy(context->material_ambient, values, sizeof(context->material_ambient));
-        memcpy(context->material_diffuse, values, sizeof(context->material_diffuse));
+    }
+    count = sxgl_material_get(face, name, found, &colour, "glGetMaterialfv");
+    memcpy(values, found, (size_t)count * sizeof(float));
+}
+
+void glGetMaterialiv(GLenum face, GLenum name, GLint* values)
+{
+    float found[4];
+    int colour;
+    int count;
+    int index;
+
+    if (values == 0) {
         return;
-    case GL_EMISSION:
-        memcpy(context->material_emission, values, sizeof(context->material_emission));
-        return;
-    default:
-        sxgl_raise(context, GL_INVALID_ENUM, "glMaterialfv", "parameter not in the subset");
-        return;
+    }
+    count = sxgl_material_get(face, name, found, &colour, "glGetMaterialiv");
+    for (index = 0; index < count; ++index) {
+        values[index] = colour ? sxgl_colour_to_int(found[index]) : sxgl_round_int(found[index]);
     }
 }
 
@@ -1611,15 +2069,18 @@ void glColorMaterial(GLenum face, GLenum mode)
     if (context == 0) {
         return;
     }
-    if (face != GL_FRONT && face != GL_FRONT_AND_BACK) {
-        sxgl_raise(context, GL_INVALID_ENUM, "glColorMaterial", "no two-sided lighting");
+    if (sxgl_faces(face) == 0) {
+        sxgl_raise(context, GL_INVALID_ENUM, "glColorMaterial", "not a face");
         return;
     }
-    if (mode != GL_AMBIENT && mode != GL_DIFFUSE && mode != GL_AMBIENT_AND_DIFFUSE && mode != GL_EMISSION) {
+    if (mode != GL_AMBIENT && mode != GL_DIFFUSE && mode != GL_SPECULAR && mode != GL_AMBIENT_AND_DIFFUSE &&
+        mode != GL_EMISSION) {
         sxgl_raise(context, GL_INVALID_ENUM, "glColorMaterial", 0);
         return;
     }
+    context->colour_material_face = face;
     context->colour_material_mode = mode;
+    sxgl_track_colour(context);
 }
 
 static void sxgl_fog_scalar(struct sxgl_context* context, GLenum name, float value, const char* call)
@@ -2981,6 +3442,26 @@ static int sxgl_gpu_draw(struct sxgl_context* context, const struct sxgl_vertex*
     return 0;
 }
 
+/* Whether the triangle shows its back face, in GL's terms: front faces are
+ * the ones wound as glFrontFace says once in the window, which with a
+ * viewport of positive size is the orientation of the clip-space
+ * determinant. A degenerate triangle counts as front. */
+static int sxgl_shows_back(const struct sxgl_context* context, const struct sxgl_vertex* a,
+    const struct sxgl_vertex* b, const struct sxgl_vertex* c)
+{
+    const float* p = a->clip;
+    const float* q = b->clip;
+    const float* r = c->clip;
+    float determinant = p[0] * (q[1] * r[3] - r[1] * q[3]) - q[0] * (p[1] * r[3] - r[1] * p[3]) +
+        r[0] * (p[1] * q[3] - q[1] * p[3]);
+    int counter_clockwise = determinant > 0.0f;
+
+    if (determinant == 0.0f) {
+        return 0;
+    }
+    return counter_clockwise != (context->front_face == GL_CCW);
+}
+
 static void sxgl_draw_triangle(struct sxgl_context* context, const struct sxgl_vertex* a, const struct sxgl_vertex* b,
     const struct sxgl_vertex* c, const struct sxgl_vertex* provoking)
 {
@@ -2999,7 +3480,21 @@ static void sxgl_draw_triangle(struct sxgl_context* context, const struct sxgl_v
     buffers[0][0] = *a;
     buffers[0][1] = *b;
     buffers[0][2] = *c;
-    if (context->shade_model == GL_FLAT && provoking != 0) {
+    /* Two-sided lighting lit every vertex for both faces; the triangle takes
+     * the colours of the face it shows. The facing is the sign of the
+     * determinant of the clip-space x, y and w (homogeneous rasterization):
+     * it is the facing of the visible part even before clipping, and both
+     * backends need it here, before the GPU sees the triangle. */
+    if (context->lighting && context->light_model_two_side && sxgl_shows_back(context, a, b, c)) {
+        for (index = 0; index < 3; ++index) {
+            memcpy(buffers[0][index].colour, buffers[0][index].back_colour, sizeof(buffers[0][index].colour));
+        }
+        if (context->shade_model == GL_FLAT && provoking != 0) {
+            for (index = 0; index < 3; ++index) {
+                memcpy(buffers[0][index].colour, provoking->back_colour, sizeof(provoking->back_colour));
+            }
+        }
+    } else if (context->shade_model == GL_FLAT && provoking != 0) {
         for (index = 0; index < 3; ++index) {
             memcpy(buffers[0][index].colour, provoking->colour, sizeof(provoking->colour));
         }
@@ -3069,55 +3564,33 @@ static void sxgl_draw_triangle(struct sxgl_context* context, const struct sxgl_v
  * 1. Vertices
  * ------------------------------------------------------------------------ */
 
-static void sxgl_light_vertex(struct sxgl_context* context, const float eye[4], float out[4])
+/* OpenGL 1.1's lighting equation (section 2.13.1) for one face: its
+ * material, and the normal as that face sees it. The result is clamped to
+ * [0, 1], as GL clamps a lit colour. */
+static void sxgl_light_face(const struct sxgl_context* context, const struct sxgl_material* material,
+    const float normal[3], const float eye[4], float out[4])
 {
-    const float* ambient = context->material_ambient;
-    const float* diffuse = context->material_diffuse;
-    const float* emission = context->material_emission;
-    float normal[3];
+    float viewer[3] = {0.0f, 0.0f, 1.0f};
     float length;
     int index;
     int light_index;
 
-    if (context->colour_material) {
-        switch (context->colour_material_mode) {
-        case GL_AMBIENT:
-            ambient = context->current_colour;
-            break;
-        case GL_DIFFUSE:
-            diffuse = context->current_colour;
-            break;
-        case GL_EMISSION:
-            emission = context->current_colour;
-            break;
-        default:
-            ambient = context->current_colour;
-            diffuse = context->current_colour;
-            break;
+    if (context->light_model_local_viewer) {
+        float w = eye[3] != 0.0f ? eye[3] : 1.0f;
+        viewer[0] = -eye[0] / w;
+        viewer[1] = -eye[1] / w;
+        viewer[2] = -eye[2] / w;
+        length = sqrtf(viewer[0] * viewer[0] + viewer[1] * viewer[1] + viewer[2] * viewer[2]);
+        if (length > 1e-12f) {
+            viewer[0] /= length;
+            viewer[1] /= length;
+            viewer[2] /= length;
         }
-    }
-    if (context->normal_matrix_dirty) {
-        sxgl_update_normal_matrix(context);
-    }
-    for (index = 0; index < 3; ++index) {
-        normal[index] = context->normal_matrix[index * 3 + 0] * context->current_normal[0] +
-            context->normal_matrix[index * 3 + 1] * context->current_normal[1] +
-            context->normal_matrix[index * 3 + 2] * context->current_normal[2];
-    }
-    /* Always normalized, as if GL_NORMALIZE were on: with the inverse
-     * transpose above, a scaled modelview would otherwise shade too dark or
-     * too bright, and nobody wants that answer. */
-    length = sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
-    if (length > 1e-12f) {
-        normal[0] /= length;
-        normal[1] /= length;
-        normal[2] /= length;
     }
 
     for (index = 0; index < 3; ++index) {
-        out[index] = emission[index] + ambient[index] * context->light_model_ambient[index];
+        out[index] = material->emission[index] + material->ambient[index] * context->light_model_ambient[index];
     }
-    out[3] = diffuse[3];
 
     for (light_index = 0; light_index < SXGL_MAX_LIGHTS; ++light_index) {
         const struct sxgl_light* light = &context->lights[light_index];
@@ -3125,6 +3598,7 @@ static void sxgl_light_vertex(struct sxgl_context* context, const float eye[4], 
         float attenuation = 1.0f;
         float spot = 1.0f;
         float n_dot_l;
+        float specular = 0.0f;
 
         if (!light->enabled) {
             continue;
@@ -3135,10 +3609,11 @@ static void sxgl_light_vertex(struct sxgl_context* context, const float eye[4], 
             direction[2] = light->position[2];
             length = sqrtf(direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]);
         } else {
+            float w = eye[3] != 0.0f ? eye[3] : 1.0f;
             float distance;
-            direction[0] = light->position[0] / light->position[3] - eye[0];
-            direction[1] = light->position[1] / light->position[3] - eye[1];
-            direction[2] = light->position[2] / light->position[3] - eye[2];
+            direction[0] = light->position[0] / light->position[3] - eye[0] / w;
+            direction[1] = light->position[1] / light->position[3] - eye[1] / w;
+            direction[2] = light->position[2] / light->position[3] - eye[2] / w;
             distance = sqrtf(direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]);
             length = distance;
             attenuation = light->attenuation[0] + light->attenuation[1] * distance +
@@ -3169,10 +3644,67 @@ static void sxgl_light_vertex(struct sxgl_context* context, const float eye[4], 
         if (n_dot_l < 0.0f) {
             n_dot_l = 0.0f;
         }
+        /* The specular term exists only where the diffuse one does (f_i). */
+        if (n_dot_l > 0.0f) {
+            float half[3];
+            float n_dot_h;
+            half[0] = direction[0] + viewer[0];
+            half[1] = direction[1] + viewer[1];
+            half[2] = direction[2] + viewer[2];
+            length = sqrtf(half[0] * half[0] + half[1] * half[1] + half[2] * half[2]);
+            n_dot_h = length > 1e-12f ? (normal[0] * half[0] + normal[1] * half[1] + normal[2] * half[2]) / length
+                                      : 0.0f;
+            if (n_dot_h > 0.0f) {
+                specular = material->shininess == 0.0f ? 1.0f : powf(n_dot_h, material->shininess);
+            } else {
+                specular = material->shininess == 0.0f ? 1.0f : 0.0f;
+            }
+        }
         for (index = 0; index < 3; ++index) {
             out[index] += attenuation * spot *
-                (light->ambient[index] * ambient[index] + n_dot_l * light->diffuse[index] * diffuse[index]);
+                (light->ambient[index] * material->ambient[index] +
+                    n_dot_l * light->diffuse[index] * material->diffuse[index] +
+                    specular * light->specular[index] * material->specular[index]);
         }
+    }
+    for (index = 0; index < 3; ++index) {
+        out[index] = sxgl_clamp01(out[index]);
+    }
+    out[3] = sxgl_clamp01(material->diffuse[3]);
+}
+
+/* Lights a vertex: the front face's colour into `front`, and the back face's
+ * into `back` when the light model is two-sided. */
+static void sxgl_light_vertex(struct sxgl_context* context, const float eye[4], float front[4], float back[4])
+{
+    float normal[3];
+    int index;
+
+    if (context->normal_matrix_dirty) {
+        sxgl_update_normal_matrix(context);
+    }
+    for (index = 0; index < 3; ++index) {
+        normal[index] = context->normal_matrix[index * 3 + 0] * context->current_normal[0] +
+            context->normal_matrix[index * 3 + 1] * context->current_normal[1] +
+            context->normal_matrix[index * 3 + 2] * context->current_normal[2];
+    }
+    /* The normal as transformed, rescaled to unit length only when
+     * GL_NORMALIZE asks: a program that scales its modelview and leaves it
+     * off gets the lighting any other implementation would give it. */
+    if (context->normalize) {
+        float length = sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+        if (length > 1e-12f) {
+            normal[0] /= length;
+            normal[1] /= length;
+            normal[2] /= length;
+        }
+    }
+    sxgl_light_face(context, &context->materials[0], normal, eye, front);
+    if (context->light_model_two_side) {
+        normal[0] = -normal[0];
+        normal[1] = -normal[1];
+        normal[2] = -normal[2];
+        sxgl_light_face(context, &context->materials[1], normal, eye, back);
     }
 }
 
@@ -3213,7 +3745,7 @@ static void sxgl_vertex4(struct sxgl_context* context, float x, float y, float z
     sxgl_transform(&context->modelview[context->modelview_top], object, eye);
     sxgl_transform(&context->projection[context->projection_top], eye, vertex.clip);
     if (context->lighting) {
-        sxgl_light_vertex(context, eye, vertex.colour);
+        sxgl_light_vertex(context, eye, vertex.colour, vertex.back_colour);
     } else {
         memcpy(vertex.colour, context->current_colour, sizeof(vertex.colour));
     }
@@ -3376,6 +3908,7 @@ void glColor4f(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha)
         return;
     }
     sxgl_set4(context->current_colour, red, green, blue, alpha);
+    sxgl_track_colour(context);
 }
 
 void glColor3f(GLfloat red, GLfloat green, GLfloat blue)
@@ -3590,6 +4123,7 @@ static void sxgl_array_element(struct sxgl_context* context, GLint index)
             sxgl_set4(context->current_colour, (float)c[0] / 255.0f, (float)c[1] / 255.0f, (float)c[2] / 255.0f,
                 context->colour_array.size == 4 ? (float)c[3] / 255.0f : 1.0f);
         }
+        sxgl_track_colour(context);
     }
     if (context->normal_array.enabled && context->normal_array.pointer != 0) {
         const float* n = (const float*)sxgl_element(&context->normal_array, index, (int)sizeof(float));

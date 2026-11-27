@@ -112,6 +112,10 @@ typedef double GLclampd;
 #define GL_LIGHT1 0x4001
 #define GL_LIGHT2 0x4002
 #define GL_LIGHT3 0x4003
+#define GL_LIGHT4 0x4004
+#define GL_LIGHT5 0x4005
+#define GL_LIGHT6 0x4006
+#define GL_LIGHT7 0x4007
 
 /* Queries (glGetIntegerv/glGetFloatv) */
 #define GL_VIEWPORT 0x0BA2
@@ -123,6 +127,9 @@ typedef double GLclampd;
 #define GL_MAX_PROJECTION_STACK_DEPTH 0x0D38
 #define GL_MAX_LIGHTS 0x0D31
 #define GL_TEXTURE_BINDING_2D 0x8069
+#define GL_SHADE_MODEL 0x0B54
+#define GL_COLOR_MATERIAL_FACE 0x0B55
+#define GL_COLOR_MATERIAL_PARAMETER 0x0B56
 
 /* glGetString */
 #define GL_VENDOR 0x1F00
@@ -141,6 +148,7 @@ typedef double GLclampd;
 /* Lights and materials */
 #define GL_AMBIENT 0x1200
 #define GL_DIFFUSE 0x1201
+#define GL_SPECULAR 0x1202
 #define GL_POSITION 0x1203
 #define GL_SPOT_DIRECTION 0x1204
 #define GL_SPOT_EXPONENT 0x1205
@@ -149,7 +157,11 @@ typedef double GLclampd;
 #define GL_LINEAR_ATTENUATION 0x1208
 #define GL_QUADRATIC_ATTENUATION 0x1209
 #define GL_EMISSION 0x1600
+#define GL_SHININESS 0x1601
 #define GL_AMBIENT_AND_DIFFUSE 0x1602
+#define GL_COLOR_INDEXES 0x1603
+#define GL_LIGHT_MODEL_LOCAL_VIEWER 0x0B51
+#define GL_LIGHT_MODEL_TWO_SIDE 0x0B52
 #define GL_LIGHT_MODEL_AMBIENT 0x0B53
 
 /* Fog */
@@ -246,9 +258,21 @@ GLAPI void APIENTRY glAlphaFunc(GLenum function, GLclampf reference);
 GLAPI void APIENTRY glBlendFunc(GLenum source_factor, GLenum destination_factor);
 
 GLAPI void APIENTRY glLightf(GLenum light, GLenum name, GLfloat value);
+GLAPI void APIENTRY glLighti(GLenum light, GLenum name, GLint value);
 GLAPI void APIENTRY glLightfv(GLenum light, GLenum name, const GLfloat* values);
+GLAPI void APIENTRY glLightiv(GLenum light, GLenum name, const GLint* values);
+GLAPI void APIENTRY glGetLightfv(GLenum light, GLenum name, GLfloat* values);
+GLAPI void APIENTRY glGetLightiv(GLenum light, GLenum name, GLint* values);
+GLAPI void APIENTRY glLightModelf(GLenum name, GLfloat value);
+GLAPI void APIENTRY glLightModeli(GLenum name, GLint value);
 GLAPI void APIENTRY glLightModelfv(GLenum name, const GLfloat* values);
+GLAPI void APIENTRY glLightModeliv(GLenum name, const GLint* values);
+GLAPI void APIENTRY glMaterialf(GLenum face, GLenum name, GLfloat value);
+GLAPI void APIENTRY glMateriali(GLenum face, GLenum name, GLint value);
 GLAPI void APIENTRY glMaterialfv(GLenum face, GLenum name, const GLfloat* values);
+GLAPI void APIENTRY glMaterialiv(GLenum face, GLenum name, const GLint* values);
+GLAPI void APIENTRY glGetMaterialfv(GLenum face, GLenum name, GLfloat* values);
+GLAPI void APIENTRY glGetMaterialiv(GLenum face, GLenum name, GLint* values);
 GLAPI void APIENTRY glColorMaterial(GLenum face, GLenum mode);
 
 GLAPI void APIENTRY glFogf(GLenum name, GLfloat value);

@@ -8,8 +8,10 @@
 // what it promises.
 //
 // Step 0 adds the binding: <GL/gl.h> and sxgl_get_proc_address agree, and
-// GL_EXTENSIONS is what <GL/glext.h> says.
+// GL_EXTENSIONS is what <GL/glext.h> says. Step 1 adds OpenGL 1.1 a part at a
+// time, each with the cases of its section.
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -222,6 +224,353 @@ SXGL_CASE("state queries: glGetString", extensions_are_the_ones_glext_h_declares
     declared.insert("GL_EXT_bgra");
 #endif
     check(advertised == declared, "GL_EXTENSIONS matches <GL/glext.h>");
+}
+
+
+// --- Lighting --------------------------------------------------------------
+
+// The colour of pixel (x, y) from the top, as 0xRRGGBB.
+uint32_t pixel(const Context& context, int x, int y)
+{
+    return context.pixels[(size_t)y * context.bitmap.info.width + (size_t)x] & 0x00ffffffu;
+}
+
+int channel(uint32_t colour, int shift)
+{
+    return (int)((colour >> shift) & 0xffu);
+}
+
+bool near(int got, double expected, int tolerance = 2)
+{
+    const int want = (int)(expected * 255.0 + 0.5);
+    return got >= want - tolerance && got <= want + tolerance;
+}
+
+std::string rgb(uint32_t colour)
+{
+    char text[16];
+    std::snprintf(text, sizeof(text), "#%06x", colour);
+    return text;
+}
+
+// A square over the whole 8x8 viewport, at eye depth -1, facing the viewer
+// (normal +z), wound counter-clockwise unless `clockwise`.
+void lit_square(bool clockwise = false)
+{
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 10.0);
+    glMatrixMode(GL_MODELVIEW);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glNormal3f(0.0f, 0.0f, 1.0f);
+    glBegin(GL_QUADS);
+    if (clockwise) {
+        glVertex3f(-1.0f, -1.0f, -1.0f);
+        glVertex3f(-1.0f, 1.0f, -1.0f);
+        glVertex3f(1.0f, 1.0f, -1.0f);
+        glVertex3f(1.0f, -1.0f, -1.0f);
+    } else {
+        glVertex3f(-1.0f, -1.0f, -1.0f);
+        glVertex3f(1.0f, -1.0f, -1.0f);
+        glVertex3f(1.0f, 1.0f, -1.0f);
+        glVertex3f(-1.0f, 1.0f, -1.0f);
+    }
+    glEnd();
+    glFinish();
+}
+
+// Lighting with nothing but what the case sets: no global ambient, a black
+// material, light 0 directional along +z.
+void dark_scene()
+{
+    const GLfloat black[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    const GLfloat along_z[4] = {0.0f, 0.0f, 1.0f, 0.0f};
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, black);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, black);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, black);
+    glLightfv(GL_LIGHT0, GL_POSITION, along_z);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_LIGHT0);
+}
+
+bool equal4(const GLfloat* got, float a, float b, float c, float d)
+{
+    return got[0] == a && got[1] == b && got[2] == c && got[3] == d;
+}
+
+SXGL_CASE("lighting", initial_state_is_the_specified_one)
+{
+    Context context(8, 8);
+    GLfloat v[4] = {};
+    GLint i[4] = {};
+    glGetIntegerv(GL_MAX_LIGHTS, i);
+    check(i[0] >= 8, "GL_MAX_LIGHTS is at least 8 (" + std::to_string(i[0]) + ")");
+    glGetLightfv(GL_LIGHT0, GL_DIFFUSE, v);
+    check(equal4(v, 1, 1, 1, 1), "light 0 diffuse is (1, 1, 1, 1)");
+    glGetLightfv(GL_LIGHT0, GL_SPECULAR, v);
+    check(equal4(v, 1, 1, 1, 1), "light 0 specular is (1, 1, 1, 1)");
+    glGetLightfv(GL_LIGHT7, GL_DIFFUSE, v);
+    check(equal4(v, 0, 0, 0, 1), "light 7 diffuse is (0, 0, 0, 1)");
+    glGetLightfv(GL_LIGHT7, GL_SPECULAR, v);
+    check(equal4(v, 0, 0, 0, 1), "light 7 specular is (0, 0, 0, 1)");
+    glGetLightfv(GL_LIGHT3, GL_POSITION, v);
+    check(equal4(v, 0, 0, 1, 0), "a light's position is (0, 0, 1, 0)");
+    glGetLightfv(GL_LIGHT3, GL_SPOT_DIRECTION, v);
+    check(v[0] == 0 && v[1] == 0 && v[2] == -1, "its spot direction is (0, 0, -1)");
+    glGetLightfv(GL_LIGHT3, GL_SPOT_CUTOFF, v);
+    check(v[0] == 180.0f, "its spot cutoff is 180");
+    glGetLightfv(GL_LIGHT3, GL_CONSTANT_ATTENUATION, v);
+    check(v[0] == 1.0f, "its constant attenuation is 1");
+    glGetMaterialfv(GL_FRONT, GL_AMBIENT, v);
+    check(equal4(v, 0.2f, 0.2f, 0.2f, 1), "material ambient is (0.2, 0.2, 0.2, 1)");
+    glGetMaterialfv(GL_BACK, GL_DIFFUSE, v);
+    check(equal4(v, 0.8f, 0.8f, 0.8f, 1), "back material diffuse is (0.8, 0.8, 0.8, 1)");
+    glGetMaterialfv(GL_FRONT, GL_SPECULAR, v);
+    check(equal4(v, 0, 0, 0, 1), "material specular is (0, 0, 0, 1)");
+    glGetMaterialfv(GL_FRONT, GL_SHININESS, v);
+    check(v[0] == 0.0f, "material shininess is 0");
+    glGetMaterialfv(GL_FRONT, GL_COLOR_INDEXES, v);
+    check(v[0] == 0 && v[1] == 1 && v[2] == 1, "material colour indexes are (0, 1, 1)");
+    glGetFloatv(GL_LIGHT_MODEL_AMBIENT, v);
+    check(equal4(v, 0.2f, 0.2f, 0.2f, 1), "the light model ambient is (0.2, 0.2, 0.2, 1)");
+    glGetIntegerv(GL_LIGHT_MODEL_LOCAL_VIEWER, i);
+    check(i[0] == 0, "the viewer is infinite");
+    glGetIntegerv(GL_LIGHT_MODEL_TWO_SIDE, i);
+    check(i[0] == 0, "lighting is one-sided");
+    glGetIntegerv(GL_COLOR_MATERIAL_FACE, i);
+    check(i[0] == GL_FRONT_AND_BACK, "GL_COLOR_MATERIAL_FACE is GL_FRONT_AND_BACK");
+    glGetIntegerv(GL_COLOR_MATERIAL_PARAMETER, i);
+    check(i[0] == GL_AMBIENT_AND_DIFFUSE, "GL_COLOR_MATERIAL_PARAMETER is GL_AMBIENT_AND_DIFFUSE");
+    check(glIsEnabled(GL_NORMALIZE) == GL_FALSE, "GL_NORMALIZE is off");
+    check(glIsEnabled(GL_LIGHT7) == GL_FALSE, "light 7 is off");
+    check(glGetError() == GL_NO_ERROR, "no query raised an error");
+}
+
+SXGL_CASE("lighting", parameters_and_their_errors)
+{
+    Context context(8, 8);
+    GLfloat v[4] = {};
+    GLint i[4] = {};
+
+    glEnable(GL_LIGHT7);
+    check(glIsEnabled(GL_LIGHT7) == GL_TRUE && glGetError() == GL_NO_ERROR, "GL_LIGHT7 is a capability");
+    glEnable(GL_LIGHT0 + 8);
+    check(glGetError() == GL_INVALID_ENUM, "GL_LIGHT0 + GL_MAX_LIGHTS is not");
+
+    // The position is stored in eye coordinates: the modelview of the call.
+    const GLfloat position[4] = {1.0f, 2.0f, 3.0f, 1.0f};
+    glTranslatef(10.0f, 0.0f, 0.0f);
+    glLightfv(GL_LIGHT1, GL_POSITION, position);
+    glLoadIdentity();
+    glGetLightfv(GL_LIGHT1, GL_POSITION, v);
+    check(equal4(v, 11, 2, 3, 1), "glLightfv(GL_POSITION) is transformed by the modelview of the call");
+
+    // Integer colours map linearly: the largest integer is 1.0, and back.
+    const GLint full[4] = {2147483647, 0, -2147483647 - 1, 2147483647};
+    glLightiv(GL_LIGHT2, GL_SPECULAR, full);
+    glGetLightfv(GL_LIGHT2, GL_SPECULAR, v);
+    check(v[0] == 1.0f && std::fabs(v[1]) < 1e-6f && v[2] == -1.0f, "glLightiv maps colour integers to [-1, 1]");
+    glGetLightiv(GL_LIGHT2, GL_SPECULAR, i);
+    check(i[0] == 2147483647 && i[2] == -2147483647 - 1, "glGetLightiv maps them back");
+    glLighti(GL_LIGHT2, GL_SPOT_EXPONENT, 7);
+    glGetLightiv(GL_LIGHT2, GL_SPOT_EXPONENT, i);
+    check(i[0] == 7, "a scalar converts directly");
+    check(glGetError() == GL_NO_ERROR, "no error so far");
+
+    glLightf(GL_LIGHT0, GL_DIFFUSE, 1.0f);
+    check(glGetError() == GL_INVALID_ENUM, "glLightf with a vector parameter is GL_INVALID_ENUM");
+    glLightf(GL_LIGHT0, GL_SPOT_EXPONENT, 129.0f);
+    check(glGetError() == GL_INVALID_VALUE, "a spot exponent above 128 is GL_INVALID_VALUE");
+    glLightModelf(GL_LIGHT_MODEL_AMBIENT, 1.0f);
+    check(glGetError() == GL_INVALID_ENUM, "glLightModelf with the ambient vector is GL_INVALID_ENUM");
+    glMaterialf(GL_FRONT, GL_AMBIENT, 1.0f);
+    check(glGetError() == GL_INVALID_ENUM, "glMaterialf takes only GL_SHININESS");
+    glMaterialf(GL_FRONT, GL_SHININESS, 128.5f);
+    check(glGetError() == GL_INVALID_VALUE, "a shininess above 128 is GL_INVALID_VALUE");
+    glGetMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, v);
+    check(glGetError() == GL_INVALID_ENUM, "glGetMaterial names one face");
+    glGetMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, v);
+    check(glGetError() == GL_INVALID_ENUM, "GL_AMBIENT_AND_DIFFUSE is not a query");
+
+    glMateriali(GL_BACK, GL_SHININESS, 64);
+    glGetMaterialiv(GL_BACK, GL_SHININESS, i);
+    glGetMaterialfv(GL_FRONT, GL_SHININESS, v);
+    check(i[0] == 64 && v[0] == 0.0f, "GL_BACK sets the back material alone");
+    glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, 1);
+    glGetIntegerv(GL_LIGHT_MODEL_TWO_SIDE, i);
+    check(i[0] == 1, "glLightModeli sets two-sided lighting");
+    glColorMaterial(GL_BACK, GL_SPECULAR);
+    glGetIntegerv(GL_COLOR_MATERIAL_FACE, i);
+    check(i[0] == GL_BACK && glGetError() == GL_NO_ERROR, "glColorMaterial takes GL_BACK and GL_SPECULAR");
+
+    // Inside glBegin/glEnd, glMaterial is legal and glLight is not.
+    const GLfloat red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    glBegin(GL_TRIANGLES);
+    glMaterialfv(GL_FRONT, GL_EMISSION, red);
+    const GLenum material_error = glGetError();
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, red);
+    const GLenum light_error = glGetError();
+    glEnd();
+    check(material_error == GL_NO_ERROR, "glMaterial between glBegin and glEnd is legal");
+    check(light_error == GL_INVALID_OPERATION, "glLight between glBegin and glEnd is GL_INVALID_OPERATION");
+}
+
+SXGL_CASE("lighting", specular_follows_the_half_vector)
+{
+    // Light 0 at 60 degrees from the normal, infinite viewer: the half
+    // vector is 30 degrees off it, so the specular term is cos(30)^10.
+    Context context(8, 8);
+    dark_scene();
+    const GLfloat slanted[4] = {0.0f, std::sqrt(3.0f) / 2.0f, 0.5f, 0.0f};
+    const GLfloat red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    glLightfv(GL_LIGHT0, GL_POSITION, slanted);
+    glMaterialfv(GL_FRONT, GL_SPECULAR, red);
+    glMaterialf(GL_FRONT, GL_SHININESS, 10.0f);
+    lit_square();
+    const double expected = std::pow(std::cos(3.14159265358979 / 6.0), 10.0);
+    const uint32_t got = pixel(context, 4, 4);
+    check(near(channel(got, 16), expected) && channel(got, 8) == 0 && channel(got, 0) == 0,
+        "the highlight is cos(30)^10 of red: " + rgb(got));
+
+    // No specular light where there is no diffuse light, even at shininess 0.
+    const GLfloat behind[4] = {0.0f, 0.0f, -1.0f, 0.0f};
+    glLightfv(GL_LIGHT0, GL_POSITION, behind);
+    glMaterialf(GL_FRONT, GL_SHININESS, 0.0f);
+    lit_square();
+    check(pixel(context, 4, 4) == 0, "a light behind the surface adds no highlight: " + rgb(pixel(context, 4, 4)));
+}
+
+SXGL_CASE("lighting", a_local_viewer_moves_the_highlight)
+{
+    // Light along +z onto a square at depth -1 whose corners are at
+    // (+-1, +-1). Infinite viewer: n.h = 1, the full highlight. Local viewer:
+    // every corner sees the eye along (-+1, -+1, 1)/sqrt(3), so n.h is
+    // (1 + 1/sqrt(3)) / |(1/sqrt(3), 1/sqrt(3), 1 + 1/sqrt(3))| at each.
+    Context context(8, 8);
+    dark_scene();
+    const GLfloat white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    glMaterialfv(GL_FRONT, GL_SPECULAR, white);
+    glMaterialf(GL_FRONT, GL_SHININESS, 20.0f);
+    lit_square();
+    check(pixel(context, 4, 4) == 0xffffffu, "infinite viewer: the full highlight, " + rgb(pixel(context, 4, 4)));
+    glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, GL_TRUE);
+    lit_square();
+    const double k = 1.0 / std::sqrt(3.0);
+    const double n_dot_h = (1.0 + k) / std::sqrt(2.0 * k * k + (1.0 + k) * (1.0 + k));
+    const uint32_t got = pixel(context, 4, 4);
+    check(near(channel(got, 0), std::pow(n_dot_h, 20.0)), "local viewer: (n.h)^20, " + rgb(got));
+}
+
+SXGL_CASE("lighting", two_sided_lighting_lights_the_back_with_its_own_material)
+{
+    // The front material is diffuse green, the back one emits red and is
+    // diffuse blue. The square is wound clockwise, so it shows its back.
+    Context context(8, 8);
+    dark_scene();
+    const GLfloat green[4] = {0.0f, 1.0f, 0.0f, 1.0f};
+    const GLfloat red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    const GLfloat blue[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, green);
+    glMaterialfv(GL_BACK, GL_EMISSION, red);
+    glMaterialfv(GL_BACK, GL_DIFFUSE, blue);
+    lit_square(true);
+    check(pixel(context, 4, 4) == 0x00ff00u, "one-sided: a back face shows the front material, " +
+            rgb(pixel(context, 4, 4)));
+    glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE);
+    lit_square(true);
+    // The back face's normal is reversed, so the light along +z is behind it
+    // and the blue diffuse adds nothing.
+    check(pixel(context, 4, 4) == 0xff0000u, "two-sided: the back material, with the normal reversed, " +
+            rgb(pixel(context, 4, 4)));
+    lit_square(false);
+    check(pixel(context, 4, 4) == 0x00ff00u, "two-sided: a front face keeps the front material, " +
+            rgb(pixel(context, 4, 4)));
+    glFrontFace(GL_CW);
+    lit_square(true);
+    check(pixel(context, 4, 4) == 0x00ff00u, "glFrontFace(GL_CW) decides which face that is, " +
+            rgb(pixel(context, 4, 4)));
+}
+
+SXGL_CASE("lighting", normals_are_normalized_only_when_asked)
+{
+    // glScalef(2) shrinks the transformed normal to length 1/2.
+    Context context(8, 8);
+    dark_scene();
+    const GLfloat grey[4] = {0.5f, 0.5f, 0.5f, 1.0f};
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, grey);
+    glScalef(2.0f, 2.0f, 2.0f);
+    // The square is drawn at half size so it still covers the viewport.
+    auto draw = [&]() {
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(-1.0, 1.0, -1.0, 1.0, 0.5, 10.0);
+        glMatrixMode(GL_MODELVIEW);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glNormal3f(0.0f, 0.0f, 1.0f);
+        glBegin(GL_QUADS);
+        glVertex3f(-0.5f, -0.5f, -0.5f);
+        glVertex3f(0.5f, -0.5f, -0.5f);
+        glVertex3f(0.5f, 0.5f, -0.5f);
+        glVertex3f(-0.5f, 0.5f, -0.5f);
+        glEnd();
+        glFinish();
+    };
+    draw();
+    uint32_t got = pixel(context, 4, 4);
+    check(near(channel(got, 8), 0.25), "GL_NORMALIZE off: the scaled normal halves the diffuse, " + rgb(got));
+    glEnable(GL_NORMALIZE);
+    draw();
+    got = pixel(context, 4, 4);
+    check(near(channel(got, 8), 0.5), "GL_NORMALIZE on: unit length again, " + rgb(got));
+}
+
+SXGL_CASE("lighting", eight_lights_each_contribute)
+{
+    Context context(8, 8);
+    dark_scene();
+    const GLfloat white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    const GLfloat tenth[4] = {0.1f, 0.1f, 0.1f, 1.0f};
+    const GLfloat along_z[4] = {0.0f, 0.0f, 1.0f, 0.0f};
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, white);
+    for (GLenum light = GL_LIGHT0; light <= GL_LIGHT7; ++light) {
+        glLightfv(light, GL_DIFFUSE, tenth);
+        glLightfv(light, GL_POSITION, along_z);
+        glEnable(light);
+    }
+    lit_square();
+    uint32_t got = pixel(context, 4, 4);
+    check(near(channel(got, 16), 0.8), "eight lights of 0.1 add to 0.8, " + rgb(got));
+    glDisable(GL_LIGHT7);
+    lit_square();
+    got = pixel(context, 4, 4);
+    check(near(channel(got, 16), 0.7), "light 7 off takes its 0.1 away, " + rgb(got));
+}
+
+SXGL_CASE("lighting", colour_material_tracks_the_current_colour)
+{
+    Context context(8, 8);
+    GLfloat v[4] = {};
+    glColor4f(0.1f, 0.2f, 0.3f, 0.4f);
+    glEnable(GL_COLOR_MATERIAL);
+    glGetMaterialfv(GL_BACK, GL_DIFFUSE, v);
+    check(equal4(v, 0.1f, 0.2f, 0.3f, 0.4f), "enabling it copies the current colour into the material");
+    glColor4f(0.5f, 0.6f, 0.7f, 0.8f);
+    glGetMaterialfv(GL_FRONT, GL_AMBIENT, v);
+    check(equal4(v, 0.5f, 0.6f, 0.7f, 0.8f), "a new colour reaches the tracked parameters");
+    glGetMaterialfv(GL_FRONT, GL_SPECULAR, v);
+    check(equal4(v, 0, 0, 0, 1), "an untracked one keeps its value");
+    glDisable(GL_COLOR_MATERIAL);
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    glGetMaterialfv(GL_FRONT, GL_DIFFUSE, v);
+    check(equal4(v, 0.5f, 0.6f, 0.7f, 0.8f), "disabled, the material keeps the last tracked colour");
+    glColorMaterial(GL_FRONT, GL_EMISSION);
+    glEnable(GL_COLOR_MATERIAL);
+    glColor4f(0.25f, 0.5f, 0.75f, 1.0f);
+    glGetMaterialfv(GL_FRONT, GL_EMISSION, v);
+    GLfloat back[4] = {};
+    glGetMaterialfv(GL_BACK, GL_EMISSION, back);
+    check(equal4(v, 0.25f, 0.5f, 0.75f, 1.0f) && equal4(back, 0, 0, 0, 1),
+        "glColorMaterial(GL_FRONT, GL_EMISSION) tracks the front emission alone");
 }
 
 } // namespace
