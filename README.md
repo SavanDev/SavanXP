@@ -1,367 +1,119 @@
 <p align="center">
-  <img src="assets/brand/logo.png" alt="SavanXP" width="160">
+  <img src="assets/brand/logo.png" alt="SavanXP logo" width="140">
 </p>
 
-# SavanXP
+<h1 align="center">SavanXP</h1>
 
-SavanXP is an experimental operating system for `x86_64`, booting on UEFI or
-legacy BIOS firmware through the `Limine` bootloader, with its own kernel in
-`C/C++` and a native Bash/CMake workflow.
+<p align="center">
+  <b>A hobby operating system with the soul of a late-90s desktop.</b><br>
+  Its own kernel, its own windows, its own apps — and Doom, of course.
+</p>
 
-It boots to a working graphical session with its own window manager, a userland
-shell, a persistent volume mounted at `/`, a minimal POSIX base, built-in
-apps, and support for external apps compiled against the SDK in this repo.
+<p align="center">
+  <a href="https://github.com/SavanDev/SavanXP/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/SavanDev/SavanXP?label=release&color=0a246a"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/SavanDev/SavanXP?color=3a6ea5"></a>
+  <img alt="x86_64" src="https://img.shields.io/badge/arch-x86__64-808080">
+  <img alt="UEFI and BIOS" src="https://img.shields.io/badge/boots-UEFI%20%7C%20BIOS-808080">
+  <img alt="Written in C and C++" src="https://img.shields.io/badge/written%20in-C%20%2F%20C%2B%2B-00599c">
+  <a href="https://github.com/SavanDev/SavanXP/commits/master"><img alt="Last commit" src="https://img.shields.io/github/last-commit/SavanDev/SavanXP?color=008080"></a>
+</p>
 
-![The SavanXP desktop: Program Manager, the About window and Doom running in
-a window, over the window manager's own compositor](docs/images/desktop.png)
+<p align="center">
+  <img src="docs/images/desktop.png" alt="The SavanXP desktop with System Properties, Minesweeper and Doom open" width="880"><br>
+  <sub>System Properties, Minesweeper and Doom (with Freedoom) on the SavanXP desktop.</sub>
+</p>
 
-Current version: `v0.4.3` &middot; [Changelog](CHANGELOG.md) &middot;
-[MIT license](LICENSE)
+## What is this?
 
-## Quick start
+SavanXP is an operating system written from scratch for 64-bit PCs. It is not
+Linux and not Windows underneath: the kernel, the window manager, the file
+system and the apps are all built here. It boots into a desktop that looks
+like the computers of around the year 2000 — grey 3D buttons, a Start menu,
+a taskbar with a clock — and it runs in a virtual machine or on a real PC
+from a USB stick.
 
-On Linux, from a clean checkout:
+It is an experiment and a labour of love, built in the open with AI
+assistance. It is not meant to replace your OS; it is meant to be fun to
+boot, poke at and build on.
 
-```bash
-./build.sh build       # configure, compile, stage SxFS and EFI artifacts
-./build.sh run         # boot the staged image in QEMU
-./build.sh smoke smoke # run the core QEMU smoke scenario
-```
+## What you can do in it
 
-The native path uses tools from `PATH` (or CMake cache overrides); see
-[Building with Bash and CMake](docs/build/BUILD_CMAKE.md). The versioned ports are
-built independently with `./ports/doomgeneric/build.sh`,
-`./ports/ffmpeg/build.sh` and `./ports/ccleste/build.sh`.
+- 🪟 **Use a real desktop.** Windows that move and overlap, a Start menu,
+  Alt+Tab, a taskbar, right-click menus, a Task Manager with live graphs.
+- 🗂️ **Work with files.** A file manager, Notepad, Paint, a calculator, a
+  Command Prompt and a small web browser of its own.
+- 🎮 **Play.** Minesweeper, *Nightwood* (a 3D night walk through a forest),
+  and ports of Doom, Celeste Classic and the Half-Life engine.
+- 💾 **Keep your stuff.** Files saved inside SavanXP survive a reboot.
+- 🔌 **Run it on metal.** Boots on real PCs, with USB keyboards, mice and
+  sticks, SATA and NVMe disks, and sound.
+- 🛠️ **Write programs for it.** Savan BASIC, a Visual Basic-style
+  environment, runs inside the system; an SDK compiles your own C apps on
+  Linux and installs them straight into it.
 
-## What works today
+## Screenshots
 
-- `x86_64` kernel booting over UEFI or legacy BIOS via Limine: the ISO is
-  hybrid, and `./build.sh run` boots the development tree with UEFI (OVMF).
-- **It runs on real hardware**: the ISO, written to a USB stick, boots a
-  desktop PC and is driven by its USB keyboard and mouse
-  ([Running on real hardware](#running-on-real-hardware)).
-- Framebuffer console and early serial output.
-- Userland with `ELF64` processes, syscalls and a preemptive scheduler.
-- Shell with `pipes`, redirections and basic builtins.
-- NT-style graphical session, started and kept alive by a native session
-  manager (`sessiond`): its own window manager (`windowd`) with an
-  Alt+Tab switcher, and the shell as clients of it: one `desktop` process
-  (wallpaper, a taskbar listing the open windows, the Start menu on Ctrl+Esc,
-  and volume, clock and ES/EN keyboard layout popups) plus Program Manager.
-- Built-in apps: Files, Notepad, Paint, Calculator, a Command Prompt in the
-  style of Windows 2000 ([docs/desktop/CONSOLE.md](docs/desktop/CONSOLE.md),
-  Ctrl+Alt+T), Web Viewer (an in-tree browser prototype), Add/Remove Programs,
-  System Properties, Disk Management
-  ([docs/userland/DISK_MANAGEMENT.md](docs/userland/DISK_MANAGEMENT.md)) and a
-  Task Manager with live CPU and memory per process
-  ([how it measures](docs/userland/SYSTEM_MONITORING.md)). Games: Minesweeper and
-  Nightwood, a 3D forest ([docs/userland/NIGHTWOOD.md](docs/userland/NIGHTWOOD.md)).
-  Media Player is an optional port
-  ([docs/media/MEDIA_PLAYER.md](docs/media/MEDIA_PLAYER.md)).
-- Persistent `SxFS` volume mounted at `/`; FAT volumes (the boot volume at
-  `/boot`, and disks or USB sticks Disk Management mounts under `/mnt`).
-- POSIX base and SDK 2.0 for compiling external applications.
-- `sxgfx` 2D graphics layer for surfaces, painter and rect sets.
-- USB: xHCI controllers, keyboards, mice and tablets next to the PS/2 and
-  virtio ones, USB sticks as disks, hubs, and devices plugged in or pulled
-  out while running ([docs/roadmaps/done/USB_ROADMAP.md](docs/roadmaps/done/USB_ROADMAP.md)).
-- Drivers for network (rtl8139, virtio-net), audio (AC'97, virtio-sound),
-  display (the firmware framebuffer, virtio-gpu) and storage (AHCI, IDE,
-  virtio-blk, USB, NVMe). NVMe disks are read-only unless the boot entry
-  carries `nvme-rw` ([docs/kernel/NVME.md](docs/kernel/NVME.md)).
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/startmenu.png" alt="The Start menu"><br><sub><b>The Start menu</b> and the programs it opens.</sub></td>
+    <td width="50%"><img src="docs/images/apps.png" alt="Built-in apps"><br><sub><b>Built-in apps:</b> Files, Paint, Task Manager and more.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/nightwood.png" alt="Nightwood"><br><sub><b>Nightwood</b>, a 3D game drawn by SavanXP's own OpenGL-style renderer.</sub></td>
+    <td><img src="docs/images/celeste.png" alt="Celeste Classic"><br><sub><b>Celeste Classic</b>, the PICO-8 original, through the ccleste port.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/halflife.png" alt="Half-Life on the Xash3D engine"><br><sub><b>Half-Life</b> on the Xash3D engine (game data not included).</sub></td>
+    <td><img src="docs/images/basic.png" alt="Savan BASIC"><br><sub><b>Savan BASIC</b>: design a window, write the code, press Start.</sub></td>
+  </tr>
+</table>
 
-## Requirements
+## Try it
 
-On Linux, install Clang/LLVM, CMake, Ninja, GNU Make, Python 3 with Pillow,
-Perl, gperf, Git, QEMU, OVMF and xorriso, plus Meson and `pkg-config` for the
-FFmpeg port. Perl and gperf generate parts of Web Viewer's engine libraries,
-and Perl also builds the OpenSSL port, which Web Viewer needs (`./ports/openssl/build.sh` before
-`./build.sh build`). The `https-smoke` scenario and Web Viewer's visual check
-make their test certificates with the host's `openssl` command, 3.4 or newer
-(`SAVANXP_HOST_OPENSSL` overrides it). `build.sh` resolves these tools from `PATH` and
-fetches the pinned Limine checkout when needed. Distribution package names and
-QEMU backend details are in [Building on Linux](docs/build/BUILD_LINUX.md).
+**The quick way:** download the ISO from the
+[latest release](https://github.com/SavanDev/SavanXP/releases/latest) and
+boot it in a virtual machine such as QEMU or VirtualBox, with 1 GB of RAM or
+more. It works with either UEFI or classic BIOS.
 
-Python (with `Pillow`) is used on every build to convert checked-in PNG assets
-into C headers and SXE resources. It never redraws the icons: the checked-in
-PNGs are the source of the art.
+**On a real PC:** write the ISO to a USB stick with
+[Rufus](https://rufus.ie) (DD mode) or `dd`, turn Secure Boot off and boot
+from the stick. It runs from memory and does not touch your disks unless you
+ask it to. The details, and what hardware is known to work, are in
+[Running on real hardware](docs/build/DEVELOPING.md#running-on-real-hardware).
 
-CMake tool locations can be overridden in the cache or with the corresponding
-`SAVANXP_*` environment variables.
-
-## Building
+**From source** (Linux):
 
 ```bash
-./build.sh build
+git clone https://github.com/SavanDev/SavanXP.git
+cd SavanXP
+./build.sh build   # compile everything
+./build.sh run     # boot it in QEMU
 ```
 
-That command:
+The tools it needs are listed in the [developer guide](docs/build/DEVELOPING.md#requirements).
 
-- compiles the kernel and the internal userland
-- generates the `initramfs`
-- prepares the EFI boot image
-- creates `build/disk.img` if it does not exist yet
-- syncs the internal contents onto the persistent volume
+## Under the hood
 
-Important: a normal build must not recreate `build/disk.img` unconditionally.
-The native build applies changes to a validated sibling candidate and installs
-it atomically. The persistent image is kept across builds except on real
-corruption or a format incompatibility.
+For the curious, in one breath: a 64-bit kernel in C/C++ booted by
+[Limine](https://limine-bootloader.org), preemptive multitasking on several
+CPU cores, its own journaling file system (SxFS), a compositing window
+manager, a native API called SUN alongside a POSIX layer, early Win32 and
+Linux binary compatibility, a software OpenGL-style 3D renderer with GPU
+acceleration under QEMU, and drivers for USB, SATA, NVMe, audio and
+networking.
 
-To build without the test and diagnostic apps (keytest, gfxdemo, smoke, ...),
-use `--no-test-apps`: those binaries stay out of the rootfs and the desktop menu
-is built without their entries. The automation commands (`smoke`,
-`windowd-smoke`, ...) always include them, because their harnesses depend on
-them.
+## Learn more
 
-```bash
-./build.sh build --no-test-apps
-```
+- 📖 [Developer guide](docs/build/DEVELOPING.md) — building, running, the
+  QEMU machines, writing apps, the layout of the tree.
+- 🗺️ [Design documents](docs/README.md) — how each part of the system
+  works and why.
+- 📝 [Changelog](CHANGELOG.md) — what is new since the last release.
+- 🤝 [`AGENTS.md`](AGENTS.md) — the working rules for contributing.
 
-Generating a bootable ISO:
+## License
 
-```bash
-./build.sh iso
-```
-
-The ISO lands in `build/SavanXP.iso`. That command requires `xorriso` from
-`PATH` (or `SAVANXP_XORRISO`) and uses the EFI tree the build already prepared.
-It is a hybrid image: it boots on UEFI and on legacy BIOS (VirtualBox with EFI
-off, SeaBIOS in QEMU), and `tools/iso_boot_test.py --iso build/SavanXP.iso`
-boots it both ways in QEMU.
-To keep the disk's data when booting under VirtualBox or another hypervisor,
-attach `build/disk.img` as an extra disk as well.
-
-### Running on real hardware
-
-The ISO boots a real PC from a USB stick. First reached on 2026-11-06 on an
-AMD desktop (Zen, 400-series chipset, UEFI): the system came up from the
-stick and its USB keyboard and mouse drove the desktop. The machine needs an
-`x86_64` CPU with NX, and Secure Boot turned off (Limine is not signed).
-
-On Linux, write the ISO to the whole stick, not to a partition (this erases
-it; check the device name with `lsblk` first):
-
-```bash
-sudo dd if=build/SavanXP.iso of=/dev/sdX bs=4M conv=fsync oflag=direct status=progress
-```
-
-On Windows, Rufus does the same in its DD image mode. Then boot the stick
-from the firmware's boot menu. The Limine menu waits 3 seconds and offers two
-more entries: **boot log on screen** shows the kernel log instead of the
-splash, the only way to see where a boot stops on a machine without a serial
-port, and **no USB** leaves the USB controllers to the firmware.
-
-The live system runs from memory and keeps nothing across reboots. It does
-see the machine's SATA, NVMe and USB disks (NVMe ones read-only). At boot it only
-reads them, with one exception: a disk holding an SxFS volume is mounted as
-`/` instead of the live system, and mounting replays its journal. After that,
-only Disk Management writes to a disk, and only when asked to. What a
-machine needs, and what is known about each hardware target, is in
-[docs/hardware/REAL_HARDWARE.md](docs/hardware/REAL_HARDWARE.md).
-
-## Running
-
-```bash
-./build.sh run
-./build.sh run --accel kvm
-```
-
-The native launcher uses TCG by default and KVM when requested.
-
-To keep a personal SxFS copy on a USB drive, copy `build/disk.img` to a file
-on the drive and run `./build.sh run --disk-image /path/to/personal.img`.
-An existing raw SxFS volume can also be attached with `--disk-device`.
-See [Personal volumes in QEMU](docs/build/BUILD_CMAKE.md#personal-volumes-in-qemu).
-
-`./build.sh prepare-disk` can make a fresh UEFI disk image or prepare a
-dedicated USB drive. See [Preparing an installed disk](docs/build/BUILD_CMAKE.md#preparing-an-installed-disk)
-for the device and port installation commands.
-
-The QEMU machine is assembled with "base" hardware by default: standard VGA,
-PS/2 mouse and keyboard, AC'97 audio, an AHCI (SATA) disk and an rtl8139 NIC —
-the same set VirtualBox emulates. This way the kernel exercises the fallback
-backends (`fb_gpu`, `ps2`, `ac97`, `ahci`, `rtl8139`) without leaving QEMU.
-`SAVANXP_DISK_BUS=ide` puts the disk on legacy IDE instead, for the `ata` driver, and
-`SAVANXP_DISK_BUS=nvme` on an NVMe controller, for the `nvme` driver. Bringing the
-machine up with paravirtualized devices (virtio-vga, virtio-tablet,
-virtio-keyboard, virtio-sound, virtio-blk, virtio-net) has to be asked for
-explicitly:
-
-```bash
-./build.sh run --virtio
-```
-
-The switch applies to every command that launches QEMU (`run`, `debug`, the
-smokes and `gpu-soak`). The audio harnesses that measure one specific driver
-(`ac97-count`, `virtio-count`, ...) force their device and ignore it.
-
-`--gl` (or `SAVANXP_GL=ON`) is the virtio machine with `virtio-vga-gl`, which
-offers virgl to the guest. It needs a QEMU built with virglrenderer and a GL
-display (`egl-headless` for the smokes). The kernel logs `virtio-gpu: virgl
-capset=...` when it gets one; 3D work is tracked in
-[VIRGL_ROADMAP.md](docs/roadmaps/open/VIRGL_ROADMAP.md).
-
-`--usb` (or `SAVANXP_USB=ON`) adds an xHCI controller with a USB keyboard and
-tablet, on either machine. The `usb-*-smoke` scenarios drive the USB stack
-against it, with a machine that has no PS/2 controller at all
-([`USB_ROADMAP.md`](docs/roadmaps/done/USB_ROADMAP.md)).
-
-`--iommu amd|intel` (or `SAVANXP_IOMMU`) adds QEMU's emulated IOMMU, and
-`--boot-options "..."` (or `SAVANXP_BOOT_OPTIONS`) appends kernel boot options
-to the development image's command line. `--iommu amd --boot-options iommu`
-boots with AMD-Vi translating ([IOMMU.md](docs/kernel/IOMMU.md)); with a smoke
-scenario, both apply on top of what the scenario asks for.
-
-Other available targets:
-
-```bash
-./build.sh debug
-./build.sh smoke
-./build.sh windowd-smoke
-./build.sh gpu-soak
-./build.sh clean
-```
-
-- `run` starts QEMU with a graphical session and serial output on the terminal.
-- `debug` keeps the boot flow oriented towards debugging.
-- `smoke` runs an automated headless test and leaves logs in `build/`.
-- `windowd-smoke` exercises the graphical compositor.
-- `gpu-soak` stresses the GPU presentation path.
-- `clean` removes generated build outputs while preserving the persistent disk
-  image and external artifacts.
-- `tools/shoot.sh --scenario desktop` performs the native visual/QMP check on a
-  disposable image copy.
-
-## First boot
-
-The system enters `init` and then `sh` as the main shell. To see the base state
-of the system from inside the guest:
-
-```text
-sysinfo
-df
-ls /
-```
-
-Useful commands in the current userland:
-
-- `sh`
-- `sysinfo`
-- `df`
-- `windowd`
-- `keytest`
-- `mousetest`
-- `gputest`
-- `ping`
-- `netinfo`
-- `beep`
-- `audiotest`
-
-The basic file utilities are small in-tree programs too
-(`subsystems/posix/userland/coreutils`): `ls`, `cat`, `echo`, `mkdir [-p]`,
-`rm [-rf]`, `mv`, `cp [-r]`, `ps`, `true`, `false` and `sleep`.
-
-## External apps
-
-The recommended flow for testing your own programs does not require rebuilding
-the `initramfs`. External apps are compiled against the SDK and installed
-straight into `build/disk.img`, normally under `/bin`.
-
-```bash
-./build.sh build
-./tools/build-user.sh --source sdk/hello/main.c --name hello
-./build.sh run
-```
-
-Use `--destination /bin/NAME` (or another path below `/`) when the
-program should not use the default `/bin/NAME` location. A SUN program,
-built with `--native`, installs as `/bin/NAME.sxe`; the shell runs it as
-`NAME` too ([`docs/userland/SXE_FORMAT.md`](docs/userland/SXE_FORMAT.md#sun-programs-are-named-sxe)).
-
-Inside SavanXP:
-
-```text
-which hello
-hello
-```
-
-There is also a wrapper that compiles, installs and boots the system in one
-step:
-
-```bash
-./tools/run-user.sh --source sdk/hello/main.c --name hello
-```
-
-Included examples:
-
-- `sdk/hello`
-- `sdk/fsdemo`
-- `sdk/gfxhello`
-- `ports/doomgeneric`
-
-## Persistence
-
-SavanXP uses a persistent disk image at `build/disk.img`, mounted as `/`
-inside the system through `SxFS`.
-
-This makes it possible to:
-
-- keep files across reboots
-- install external binaries in `/bin`
-- store assets and persistent data under `/`
-
-Inside the guest:
-
-```text
-echo hello > /notes.txt
-sync
-cat /notes.txt
-```
-
-The repo workflow protects this persistence: `./build.sh build` must not
-delete external applications that are already installed, nor persistent assets
-such as the ones `doomgeneric` uses.
-
-## Repository layout
-
-- `arch/`: architecture-specific code
-- `kernel/`: kernel and base subsystems
-- `subsystems/posix/`: POSIX layer, SDK and main userland
-- `system/`: native (SUN) programs: the platform services (`compositord`,
-  `windowd`, `sessiond`, `elevationd`), the Command Prompt, Disk Management,
-  Task Manager and Nightwood
-- `libsxfs/`: portable core of the `SxFS` filesystem and `sxfs-cli`, the host
-  tool that does all disk image writing
-- `rootfs/`: contents of the `initramfs`, the rescue system published under
-  `/rescue`
-- `diskfs/`: initial contents of the persistent volume
-- `sdk/`: SDK examples
-- `ports/`: versioned official third-party ports with independent build flows
-- `tools/`: host-side scripts and development utilities
-- `vendor/`: third-party dependencies
-
-## Documentation
-
-- [`docs/README.md`](docs/README.md) — index of every design document
-- [`docs/build/BUILD_CMAKE.md`](docs/build/BUILD_CMAKE.md) — native build graph and commands
-- [`docs/build/BUILD_LINUX.md`](docs/build/BUILD_LINUX.md) — native host requirements and QEMU setup
-- [`docs/userland/SYSTEM_LAYERING.md`](docs/userland/SYSTEM_LAYERING.md) — which layer is written
-  in which language, and why
-- [`AGENTS.md`](AGENTS.md) — working rules for this repository (changelog
-  format, persistence guarantees, minimum verification)
-
-## Project status
-
-SavanXP is well past the minimal-boot stage. Today it offers a coherent base to
-keep building on:
-
-- its own kernel and userland
-- a usable initial desktop
-- a graphics path under a compositor
-- real persistence over `/`
-- support for ports and external applications
-- a first boot on real hardware, with its own USB stack
-
-It is still an experimental system, with APIs and subsystems in flux, but it is
-already aiming to be a consistent, demonstrable working base.
+SavanXP is released under the [MIT license](LICENSE). Third-party components
+keep their own licenses, listed in
+[THIRD_PARTY_PROVENANCE.md](docs/third-party/THIRD_PARTY_PROVENANCE.md).
+Games and their data (Doom WADs, Half-Life) are not part of the repository.

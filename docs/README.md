@@ -9,6 +9,9 @@ changelog entry. See the rules in [`AGENTS.md`](../AGENTS.md).
 
 ## Build — `build/`
 
+- [`DEVELOPING.md`](build/DEVELOPING.md) — the developer guide that used to be
+  the root README: requirements, `build.sh` commands, the QEMU machines, booting
+  a USB stick, external apps, persistence and the layout of the tree.
 - [`BUILD_CMAKE.md`](build/BUILD_CMAKE.md) — the native Bash/CMake build graph, tools,
   targets, external applications, version and build number, and persistent-image rules.
 - [`BUILD_LINUX.md`](build/BUILD_LINUX.md) — host packages, QEMU setup, official

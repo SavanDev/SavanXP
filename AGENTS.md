@@ -19,7 +19,7 @@ imports it, so Claude Code loads the rules when it works in the area.
 ./tools/build-user.sh --source path/to/app --name app
 ```
 
-`README.md` has the full list and the requirements;
+[`docs/build/DEVELOPING.md`](docs/build/DEVELOPING.md) has the full list and the requirements;
 [`docs/build/BUILD_CMAKE.md`](docs/build/BUILD_CMAKE.md) covers the build.
 
 ## Toolchain
