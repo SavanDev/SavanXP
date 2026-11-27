@@ -224,8 +224,9 @@ savanxp_program(NAME pietest TEST LINK_PROFILE PIE SOURCES subsystems/posix/user
 # el cargador a mano; este usa sqrt como funcion normal y no busca su direccion.
 savanxp_program(NAME libtest DEPENDS libmath TEST LINK_PROFILE PIE SOURCES subsystems/posix/userland/libtest.c)
 # libtest's SUN twin: a native program that maps libmath through the shared
-# loader (docs/kernel/SHARED_LIBRARIES.md, "One loader over SXN").
-savanxp_program(NAME sunlibtest TEST NATIVE DEPENDS libmath LINK_PROFILE PIE
+# loader (docs/kernel/SHARED_LIBRARIES.md, "One loader over SXN"), and libsxgl,
+# SxGL as a library (docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md).
+savanxp_program(NAME sunlibtest TEST NATIVE DEPENDS libmath libsxgl LINK_PROFILE PIE
     SOURCES system/loader/sunlibtest.c)
 # The toolkit's clipboard formats from SUN, through the shared libsxgui
 # (docs/desktop/CLIPBOARD.md); the core smoke runs it.
@@ -414,6 +415,13 @@ savanxp_library(NAME libsxfont SONAME libsxfont.so.0.4 DEPENDS freetype_sun
     SOURCES system/font/sxfont.c)
 target_link_options(libsxfont PRIVATE "-Wl,--exclude-libs,ALL")
 add_dependencies(libsxfont freetype_symbols)
+# SxGL as a library (docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md, step 0):
+# what a program written for OpenGL maps, by DT_NEEDED or with dlopen, and
+# resolves through sxgl_get_proc_address. It asks the program for its C
+# library and libm; the GPU backend's device calls are inline system calls.
+# A program that does not depend on it keeps SxGL from the static runtime.
+savanxp_library(NAME libsxgl SONAME libsxgl.so.0.4
+    SOURCES ${SAVANXP_LIBRARY_REPLACES_libsxgl})
 # The toolkit is split by subsystem (docs/kernel/SHARED_LIBRARIES.md, "The
 # toolkit, split into neutral and host"). What draws is neutral and shared by
 # SUN and POSIX programs alike; what talks to the window system is each

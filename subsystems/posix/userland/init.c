@@ -51,6 +51,9 @@ static const char* automation_label_for_spec(const char* spec) {
     if (spec != 0 && text_contains(spec, "piesmoke")) {
         return "PIE SMOKE";
     }
+    if (spec != 0 && text_contains(spec, "glsmoke")) {
+        return "GL SMOKE";
+    }
     if (spec != 0 && text_contains(spec, "cmakesmoke")) {
         return "CMAKE SMOKE";
     }
@@ -270,6 +273,8 @@ static int run_automation_spec(const char* spec) {
     const char* floatsmoke_argv[] = {"/bin/floatsmoke", 0};
     /* An external PIE program from the SDK (sdk/piesmoke). */
     const char* piesmoke_argv[] = {"/bin/piesmoke", 0};
+    /* An SDK program that maps libsxgl with dlopen (sdk/glsmoke). */
+    const char* glsmoke_argv[] = {"/bin/glsmoke", 0};
     /* A program built with CMake and the SDK's toolchain file (sdk/cmakesmoke). */
     const char* cmakesmoke_argv[] = {"/bin/cmakesmoke", 0};
     /* The SxBASIC console sample against the output it must print (docs/userland/SXBASIC.md). */
@@ -484,6 +489,10 @@ static int run_automation_spec(const char* spec) {
         } else if (strcmp(spec, "piesmoke") == 0) {
             path = "/bin/piesmoke";
             argv = piesmoke_argv;
+            argc = 1;
+        } else if (strcmp(spec, "glsmoke") == 0) {
+            path = "/bin/glsmoke";
+            argv = glsmoke_argv;
             argc = 1;
         } else if (strcmp(spec, "cmakesmoke") == 0) {
             path = "/bin/cmakesmoke";

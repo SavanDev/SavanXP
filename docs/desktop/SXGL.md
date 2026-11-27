@@ -1,16 +1,21 @@
-# SxGL — the subset, call by call
+# SxGL — what it implements, call by call
 
-SxGL is the platform's 3D rasterizer: a software implementation of a
-documented subset of OpenGL 1.1 fixed-function. Why it exists, why it sits
-beside SxGFX and not on top of it, and how it was built are in
-[SXGL_ROADMAP.md](../roadmaps/done/SXGL_ROADMAP.md). This document is the reference: what is
-in, what is not, and where SxGL deliberately differs from the specification.
+SxGL is the platform's 3D rasterizer: an implementation of OpenGL
+fixed-function, in software and on the GPU. Why it exists, why it sits beside
+SxGFX and not on top of it, and how it was built are in
+[SXGL_ROADMAP.md](../roadmaps/done/SXGL_ROADMAP.md). It was built as a subset
+of OpenGL 1.1 shaped by its consumers; its target now is OpenGL's own
+versions, 1.1 complete first, and the order of that work is
+[SXGL_VERSIONS_ROADMAP.md](../roadmaps/open/SXGL_VERSIONS_ROADMAP.md). This
+document is the reference: what is in today, what is not, and where SxGL still
+differs from the specification.
 
 | | |
 |---|---|
-| Header | `include/sxgfx/sxgl.h` |
-| Source | `system/gfx/sxgl.c` (runtime group `gl` in `units.txt`) |
-| Host test | `tests/host/sxgl_test.cpp`, `./build.sh smoke sxgl-test` |
+| Headers | `include/GL/gl.h` and `include/GL/glext.h` (OpenGL), `include/sxgfx/sxgl.h` (the context) |
+| Source | `system/gfx/sxgl.c`, `sxgl_procs.c` (runtime group `gl` in `units.txt`) |
+| Library | `/lib/libsxgl.so.0.4` |
+| Host tests | `tests/host/sxgl_test.cpp`, `./build.sh smoke sxgl-test`; `tests/host/sxgl_conformance_test.cpp` |
 | Consumers | `/bin/gears` (POSIX), `/system/nightwood.sxe` (SUN), `/system/sxgldiag.sxe` (SUN, [SXGL_DIAG.md](SXGL_DIAG.md)) |
 
 ## Where it lives and who presents
@@ -28,6 +33,21 @@ in-tree program can call it. The userland links with `--gc-sections`, so a
 program that never calls `gl*` carries none of it. An external program built
 with `tools/build-user.sh --sse` gets it too; without `--sse` it does not,
 because the rasterizer is floating point.
+
+It is also a library, `libsxgl.so.0.4`, for SUN and POSIX alike: an in-tree
+program maps it with `DEPENDS libsxgl` (its runtime then leaves the `gl` units
+out), an external one with `--pie --needs libsxgl.so.0.4` or with `dlopen`. It
+asks the program for its C library and libm and nothing else; the GPU
+backend's device calls are inline system calls.
+
+A program written for OpenGL includes `<GL/gl.h>`, which declares exactly the
+entry points implemented, and resolves them by name with
+`sxgl_get_proc_address`, as `ref_gl` and most renderers do. One table,
+`system/gfx/sxgl_procs.c`, answers that lookup and builds `GL_EXTENSIONS`, so
+an extension cannot be advertised without its entry points. `GL_VERSION_1_1`
+is not defined until 1.1 is complete. `sdk/glsmoke` (`./build.sh smoke
+gl-smoke`) maps the library with `dlopen` and draws the same frame as SxGL
+linked into the program; `sunlibtest` maps it from SUN.
 
 **SxGL never presents.** `sxgl_swap_buffers` returns the rectangle written
 since the previous swap and starts a new frame; the program presents that
@@ -59,6 +79,7 @@ construction: SxGL has no way to reach the compositor.
 | `sxgl_swap_buffers(ctx, &damage)` | See above. |
 | `sxgl_set_debug_sink(ctx, fn, user)` | The debug layer: every error is reported at the call, by name and with the reason (`glTexImage2D: GL_INVALID_VALUE (size is not a power of two up to 1024)`). `glGetError` keeps GL's sticky semantics either way. Programs route it to the serial line (POSIX) or `sxn_log` (SUN). |
 | `sxgl_get_stats`, `sxgl_reset_stats` | Triangles submitted and rasterized, fragments written: the numbers behind triangles per second. |
+| `sxgl_get_proc_address(name)` | An OpenGL entry point by name, as `wglGetProcAddress` returns one: every function `<GL/gl.h>` declares and those of each advertised extension; NULL for anything SxGL does not implement. Needs no current context. |
 
 ### The GPU backend
 
@@ -106,7 +127,11 @@ The answers to the roadmap's open questions:
   next frame at the new size. The rule for the program is the one DXGI's
   `ResizeBuffers` has: never resize with a frame half drawn.
 
-## The subset
+## What is implemented
+
+Everything below is in `<GL/gl.h>`; the gaps against a complete 1.1 are
+inventoried in step 1 of
+[SXGL_VERSIONS_ROADMAP.md](../roadmaps/open/SXGL_VERSIONS_ROADMAP.md#step-1--opengl-11-complete).
 
 **Geometry.** `glBegin`/`glEnd` with `GL_TRIANGLES`, `GL_TRIANGLE_STRIP`,
 `GL_TRIANGLE_FAN`, `GL_QUADS`, `GL_QUAD_STRIP`, `GL_POLYGON`; `glVertex2f`,
@@ -149,7 +174,7 @@ GL 1.1 factors), and the scissor (`glScissor`, `GL_SCISSOR_TEST`). Culling:
 **Textures.** `glGenTextures`, `glDeleteTextures`, `glBindTexture`,
 `glTexImage2D` and `glTexSubImage2D` in `GL_RGBA`, `GL_RGB`, `GL_BGRA`,
 `GL_LUMINANCE` and `GL_ALPHA`, unsigned bytes only, powers of two up to 1024.
-`GL_BGRA` (`GL_EXT_bgra`, the only advertised extension) is what an
+`GL_BGRA` (`GL_EXT_bgra`, the only advertised extension, in `<GL/glext.h>`) is what an
 `sx_bitmap` already is, so uploading one is a copy. `glTexParameteri` with
 `GL_NEAREST`/`GL_LINEAR` filters and `GL_REPEAT`/`GL_CLAMP`/`GL_CLAMP_TO_EDGE`.
 `glTexEnvi` with `GL_MODULATE`, `GL_REPLACE` and `GL_DECAL`. One texture unit.
@@ -161,9 +186,12 @@ bound texture; `glIsEnabled`. `glFlush` and `glFinish` return at once, because
 every call has completed when it returns. `glHint` is accepted and ignored, as
 the specification allows.
 
-## Where it differs from GL 1.1, on purpose
+## Where it differs from GL 1.1
 
-Each of these is a decision, not an omission found later:
+Each of these was a decision, not an omission found later. Under the versions
+roadmap the ones that break conformance go, each in the step that brings the
+missing capability: no mipmaps, normals always normalized and one material
+for both faces fall with step 1. "What is absent is absent" stays for good.
 
 - **What is absent is absent.** A capability, parameter or mode outside the
   subset raises `GL_INVALID_ENUM` (and says so in the debug sink). Nothing is

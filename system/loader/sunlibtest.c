@@ -7,6 +7,11 @@
  * it. If the loader still needed POSIX, a native process would reach main with
  * an empty GOT and the first sqrt would jump nowhere.
  *
+ * It also depends on libsxgl, SxGL as a library
+ * (docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md, step 0): a SUN program reaches
+ * OpenGL by name through sxgl_get_proc_address, from /lib/libsxgl.so.0.4 and
+ * not from a copy of its own. The POSIX side, with dlopen, is sdk/glsmoke.
+ *
  * Each case is a line of the system log; "SUN LIBRARY TEST PASS" or "SUN
  * LIBRARY TEST FAIL" ends it, and the exit status says the same. */
 
@@ -15,6 +20,7 @@
 #include <savanxp/ldso.h>
 
 #include "math.h"
+#include "sxgfx/sxgl.h"
 #include "sxn/sxn.h"
 
 static int g_failures = 0;
@@ -59,6 +65,12 @@ int main(void) {
     check(ldso_symbol_is_shared("sqrt"), "sqrt did not come from a shared library");
     /* Where the loader says sqrt is, the GOT went: otherwise 12 was luck. */
     check((const void*)ldso_lookup("sqrt") == (const void*)sqrt, "the loader and the GOT disagree on sqrt");
+
+    check(ldso_symbol_is_shared("sxgl_get_proc_address"), "sxgl_get_proc_address did not come from libsxgl");
+    check(ldso_symbol_is_shared("glClear"), "glClear did not come from a shared library");
+    check(sxgl_get_proc_address("glClear") == (sxgl_proc)ldso_lookup("glClear"),
+          "sxgl_get_proc_address and the loader disagree on glClear");
+    check(sxgl_get_proc_address("glPointSize") == 0, "glPointSize resolves, and SxGL does not implement it");
 
     (void)sxn_log(g_failures == 0 ? "SUN LIBRARY TEST PASS" : "SUN LIBRARY TEST FAIL");
     return g_failures == 0 ? 0 : 1;

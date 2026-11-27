@@ -1,10 +1,11 @@
 # SxGL versions — from a subset to OpenGL, one version at a time
 
-> **Status: draft. Nothing in it has started.** It replaces the rule SxGL grew
-> under — "the subset grows only when a consumer asks" — with a target: the
-> versions of OpenGL itself, 1.1 first. Until step 0 lands,
-> [SXGL.md](../../desktop/SXGL.md) still describes the subset as it is, and
-> step 3 of [XASH3D_ROADMAP.md](XASH3D_ROADMAP.md) still reads as written.
+> **Status: step 0 done (2026-11-26); step 1 is next.** It replaces the rule
+> SxGL grew under — "the subset grows only when a consumer asks" — with a
+> target: the versions of OpenGL itself, 1.1 first. `<GL/gl.h>`,
+> `libsxgl.so.0.4` and `sxgl_get_proc_address` exist;
+> [SXGL.md](../../desktop/SXGL.md) points here for the target, and step 3 of
+> [XASH3D_ROADMAP.md](XASH3D_ROADMAP.md) consumes this roadmap.
 
 SxGL was built as a documented subset of OpenGL 1.1 fixed-function
 ([SXGL_ROADMAP.md](../done/SXGL_ROADMAP.md)), and each batch was paid for by a
@@ -111,7 +112,7 @@ first.
 
 Each step names its acceptance condition. A step without one is a wish.
 
-### Step 0 — the binding, before any new capability
+### Step 0 — the binding, before any new capability — **done**
 
 - `<GL/gl.h>` (and `<GL/glext.h>` for the extension tokens), in the SDK, for
   POSIX and SUN alike. `<sxgfx/sxgl.h>` stays for the context calls.
@@ -131,6 +132,16 @@ Each step names its acceptance condition. A step without one is a wish.
 `sxgl_get_proc_address`, and renders the same frame as a statically linked
 twin; and a name SxGL does not implement resolves to null. Both are a
 `nativetest` or smoke assertion.
+
+It does. `sdk/glsmoke` (`./build.sh smoke gl-smoke`) is that program: it
+draws one scene through the library and through the SxGL linked into it, and
+the two frames are equal. The library is opened without `RTLD_GLOBAL`, so its
+relocations find its own SxGL before the program's and the two copies keep
+separate contexts. `sunlibtest` maps `libsxgl` by `DT_NEEDED` from SUN, where
+there is no `dlopen`. The host test `sxgl-conformance-test` is the harness:
+each case names the section of the specification it checks, and its binding
+cases read `<GL/gl.h>` and require every declaration to resolve, so a
+function cannot be declared without being registered.
 
 ### Step 1 — OpenGL 1.1, complete
 

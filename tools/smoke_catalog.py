@@ -972,6 +972,17 @@ SCENARIOS: dict[str, Scenario] = {
             "./tools/build-user.sh --source sdk/piesmoke --name piesmoke --pie --needs libmath.so.0.4",
         ),
     ),
+    # SxGL as a library (docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md, step 0):
+    # <GL/gl.h>, dlopen and sxgl_get_proc_address, against the linked twin.
+    "gl-smoke": _qemu_scenario(
+        "glsmoke",
+        "GL SMOKE PASS",
+        "GL SMOKE FAIL",
+        "An SDK program maps libsxgl with dlopen and draws the linked twin's frame",
+        prepare=(
+            "./tools/build-user.sh --source sdk/glsmoke --name glsmoke --pie",
+        ),
+    ),
     "cmake-smoke": _qemu_scenario(
         "cmakesmoke",
         "CMAKE SMOKE PASS",
@@ -1357,7 +1368,7 @@ SCENARIOS: dict[str, Scenario] = {
         "sunlibtest",
         "SUN LIBRARY TEST PASS",
         "SUN LIBRARY TEST FAIL",
-        "A SUN program maps libmath.so through the shared loader",
+        "A SUN program maps libmath.so and libsxgl.so through the shared loader",
         180.0,
     ),
     # How a DT_NEEDED resolves (docs/kernel/SHARED_LIBRARIES.md, "DT_SONAME

@@ -13,7 +13,9 @@ Two checks:
   sdk/sungui (--native --gui, on SUN's application frame), a --heap-mib
   program and sdk/piesmoke (--pie --needs libmath.so.0.4, checked to be
   ET_DYN with the loader's PT_INTERP and the DT_NEEDED) with its own
-  share/sdk/build-user.sh.
+  share/sdk/build-user.sh; and sdk/glsmoke, which includes <GL/gl.h>, twice:
+  --pie with SxGL linked in, and --pie --needs libsxgl.so.0.4, checked to
+  name the library.
 - The same copy's sxcc builds static programs in one step and in two, in
   every profile, a SUN program and one linking -lsxgui; and CMake with its
   share/sdk/savanxp-toolchain.cmake builds sdk/cmakesmoke.
@@ -86,7 +88,7 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
     copy = scratch / "sdk"
     shutil.copytree(sysroot, copy)
     sources = scratch / "src"
-    for name in ("hello", "gfxhello", "nativetest", "sungui", "piesmoke", "cmakesmoke"):
+    for name in ("hello", "gfxhello", "nativetest", "sungui", "piesmoke", "glsmoke", "cmakesmoke"):
         shutil.copytree(root / "sdk" / name, sources / name)
     environment = os.environ.copy()
     environment["SAVANXP_CLANG"] = clang
@@ -100,6 +102,8 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
         ("sungui", ["--source", str(sources / "sungui"), "--native", "--gui"]),
         ("hello-heap", ["--source", str(sources / "hello"), "--heap-mib", "2"]),
         ("piesmoke", ["--source", str(sources / "piesmoke"), "--pie", "--needs", "libmath.so.0.4"]),
+        ("glsmoke", ["--source", str(sources / "glsmoke"), "--pie"]),
+        ("glsmoke-needs", ["--source", str(sources / "glsmoke"), "--pie", "--needs", "libsxgl.so.0.4"]),
     ]
     for name, arguments in builds:
         output = scratch / f"{name}.elf"
@@ -114,6 +118,11 @@ def check_standalone(sysroot: Path, root: Path, clang: str, linker: str, scratch
                      "Shared library: [libmath.so.0.4]"):
         if expected not in dump:
             raise SystemExit(f"piesmoke: '{expected}' missing from its headers:\n{dump}")
+    # SxGL as a library: with --needs the gl units leave the program and the
+    # library is a DT_NEEDED.
+    dump = run([readelf, "-d", str(scratch / "glsmoke-needs.elf")]).stdout
+    if "Shared library: [libsxgl.so.0.4]" not in dump:
+        raise SystemExit(f"glsmoke-needs: libsxgl.so.0.4 missing from its dynamic section:\n{dump}")
 
 
 def check_toolchain(scratch: Path, clang: str, linker: str) -> None:

@@ -8,6 +8,9 @@ changes not released yet; each released version has its own file in
 
 ### Added
 
+- **Programs written for OpenGL reach SxGL: `<GL/gl.h>`, `<GL/glext.h>`, `libsxgl.so.0.4` and `sxgl_get_proc_address` (SDK 2.0).**
+  Map SxGL by `DT_NEEDED` or `dlopen` and resolve each entry point by name; an unimplemented one is null. Scenario
+  `gl-smoke`, host test `sxgl-conformance-test`. [SxGL versions](docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md).
 - **SUN programs can start a child in a directory: `SXN_SPAWN_FLAG_DIRECTORY`, `sxn_spawn_ex_in` (SDK 2.0).**
   `CreateProcess`'s `lpCurrentDirectory`; a POSIX child starts there and `getcwd` answers it
   ([Slice 32](docs/kernel/KERNEL_NATIVE_API.md#slice-32-spawning-in-a-directory)).

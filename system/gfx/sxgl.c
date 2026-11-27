@@ -24,6 +24,7 @@
 #include "sxgfx/sxgl.h"
 
 #include "sxgl_gpu.h"
+#include "sxgl_procs.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -764,7 +765,7 @@ const GLubyte* glGetString(GLenum name)
          * are not here. */
         return (const GLubyte*)"1.1 SxGL subset";
     case GL_EXTENSIONS:
-        return (const GLubyte*)"GL_EXT_bgra";
+        return (const GLubyte*)sxgl_extension_string();
     default:
         sxgl_raise(context, GL_INVALID_ENUM, "glGetString", 0);
         return 0;

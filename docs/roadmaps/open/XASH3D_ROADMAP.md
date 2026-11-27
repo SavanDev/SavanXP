@@ -11,7 +11,9 @@
 > threads ([THREADS_ROADMAP.md](../done/THREADS_ROADMAP.md), with `pthread.h`)
 > and a GPU backend for SxGL ([VIRGL_ROADMAP.md](VIRGL_ROADMAP.md)) have all
 > landed, with consumers of their own. Step 3 no longer builds SxGL, it
-> consumes it, and step 4 is down to SDL.
+> consumes it, and step 4 is down to SDL. Since 2026-11-26 what SxGL grows
+> is set by [SXGL_VERSIONS_ROADMAP.md](SXGL_VERSIONS_ROADMAP.md), and step 3
+> consumes it.
 
 [Xash3D FWGS](https://github.com/FWGS/xash3d-fwgs) is a GoldSrc-compatible engine:
 it runs Half-Life and its mods. It is worth porting for the game, and worth more
@@ -160,23 +162,23 @@ and thumbnail headers on disk.
 
 ### Step 3 — `ref_gl` on SxGL
 
-SxGL exists ([SXGL.md](../../desktop/SXGL.md)): batches 0–4 of
-[SXGL_ROADMAP.md](../done/SXGL_ROADMAP.md) landed with `/bin/gears` and Nightwood
-as consumers, and texturing, blending, alpha test and fog — what `ref_gl` was
-expected to need — are in. `ref_gl` speaks fixed-function GL 1.x, the subset SxGL
-chose. What remains is what a renderer written elsewhere asks of it, measured
-against the reference rather than assumed:
+SxGL exists ([SXGL.md](../../desktop/SXGL.md)), and what it grows is no longer
+decided here. Its target is OpenGL's own versions, in the order of
+[SXGL_VERSIONS_ROADMAP.md](SXGL_VERSIONS_ROADMAP.md): extensions as the
+increments, `GL_VERSION` raised only when a version is complete. `ref_gl`
+consumes those steps; it is their first renderer written elsewhere, not the
+reason a capability exists. What it needs early it pulls forward inside them:
 
-- **Lookup by name.** `ref_gl` is itself a `dlopen`ed module and resolves every GL
-  entry point through the engine (`GL_GetProcAddress`). SxGL is part of the
-  static user runtime today, so it needs either a shared `libsxgl` or a
-  name-to-function table the backend can answer from.
-- **The gaps the subset documents.** No points and no lines, one texture unit,
-  no texture matrix, textures in powers of two up to 1024. `ref_gl` has fallbacks
-  for most of them (two-pass lightmaps without multitexture, resampling of
-  non-power-of-two textures); each one it cannot avoid is a batch of SxGL with
-  `ref_gl` as its consumer, with the same rule as before: the port asks, SxGL
-  grows.
+- **Lookup by name: done.** `ref_gl` is a `dlopen`ed module and resolves every
+  GL entry point through the engine (`GL_GetProcAddress`). The backend answers
+  from `libsxgl.so.0.4` and `sxgl_get_proc_address`, which returns null for
+  what SxGL does not implement (versions roadmap, step 0).
+- **What it cannot avoid.** Mipmaps are GL 1.0 core and part of the versions
+  roadmap's step 1; multitexture, which `ref_gl` prefers for lightmaps, is
+  `GL_ARB_multitexture` from its step 3, and the two-pass fallback works
+  without it. Points and lines are step 1. Non-power-of-two textures stay out
+  of 1.x, and `ref_gl` resamples them. Each item `ref_gl` turns out to need is
+  pulled forward in that roadmap with `ref_gl` as its consumer.
 - **Two backends.** SxGL draws on the GPU under virgl and in software elsewhere.
   The comparison against `ref_soft` is made with `SXGL_CONTEXT_SOFTWARE` first,
   so it does not depend on the host GPU; the GPU backend is checked afterwards

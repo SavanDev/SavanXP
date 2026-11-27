@@ -896,6 +896,7 @@ add_test(NAME sxgui-design-test COMMAND savanxp-sxgui-design-test)
 add_executable(savanxp-sxgl-test
     system/gfx/sxgl.c
     system/gfx/sxgl_gpu.c
+    system/gfx/sxgl_procs.c
     tests/host/sxgl_gpu_device_stub.c
     tests/host/sxgl_test.cpp)
 target_include_directories(savanxp-sxgl-test PRIVATE "${CMAKE_SOURCE_DIR}/include" "${CMAKE_SOURCE_DIR}/system/gfx")
@@ -903,6 +904,21 @@ set_target_properties(savanxp-sxgl-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_
 find_library(SAVANXP_HOST_LIBM m)
 if(SAVANXP_HOST_LIBM)
     target_link_libraries(savanxp-sxgl-test PRIVATE ${SAVANXP_HOST_LIBM})
+endif()
+# SxGL against the specification (docs/roadmaps/open/SXGL_VERSIONS_ROADMAP.md):
+# the conformance cases each version adds, starting with the binding.
+add_executable(savanxp-sxgl-conformance-test
+    system/gfx/sxgl.c
+    system/gfx/sxgl_gpu.c
+    system/gfx/sxgl_procs.c
+    tests/host/sxgl_gpu_device_stub.c
+    tests/host/sxgl_conformance_test.cpp)
+target_include_directories(savanxp-sxgl-conformance-test PRIVATE "${CMAKE_SOURCE_DIR}/include" "${CMAKE_SOURCE_DIR}/system/gfx")
+target_compile_definitions(savanxp-sxgl-conformance-test PRIVATE
+    "SXGL_GL_HEADER=\"${CMAKE_SOURCE_DIR}/include/GL/gl.h\"")
+set_target_properties(savanxp-sxgl-conformance-test PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED YES)
+if(SAVANXP_HOST_LIBM)
+    target_link_libraries(savanxp-sxgl-conformance-test PRIVATE ${SAVANXP_HOST_LIBM})
 endif()
 
 add_executable(savanxp-audio-test
@@ -1424,10 +1440,11 @@ target_link_options(savanxp-compositor-effects-test PRIVATE -Wl,--gc-sections)
 add_test(NAME compositor-effects-test COMMAND savanxp-compositor-effects-test)
 
 add_custom_target(savanxp_tests
-    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-iconview-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-webengine-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-device-inventory-test savanxp-lifecycle-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test savanxp-sxfont-test savanxp-pixels-text-test savanxp-ui-face-files-test savanxp-sxfont-ui-test
+    DEPENDS savanxp-sxgui-menu-test savanxp-sxgui-textedit-test savanxp-sxgui-propgrid-test savanxp-sxgui-iconview-test savanxp-sxgui-design-test savanxp-imgview-test savanxp-sxndns-message-test savanxp-sxnhttp-message-test savanxp-webengine-test savanxp-sxbasic-test savanxp-sxjpeg-test savanxp-compositor-effects-test savanxp-cursor-cur-test savanxp-audio-preference-io-test savanxp-kernel-memory-compare-test savanxp-random-crypto-test savanxp-pointer-motion-test savanxp-region-list-test savanxp-framebuffer-layout-test savanxp-device-inventory-test savanxp-lifecycle-test savanxp-audio-preferences-test savanxp-audio-peak-meter-test savanxp-audio-devices-test savanxp-azalia-capture-test savanxp-jack-policy-test savanxp-sxmidi-fm-test savanxp-azalia-test savanxp-gfx2d-test savanxp-sxgl-test savanxp-sxgl-conformance-test savanxp-audio-test savanxp-partition-test savanxp-acpi-tables-test savanxp-iommu-tables-test savanxp-amd-vi-tables-test savanxp-sxdisk-test savanxp-block-writeback-test savanxp-sxfs-volume-test savanxp-sxfs-namespace-test savanxp-sxfs-vfs-test savanxp-sxfs-recovery-test savanxp-fs-registry-test savanxp-fat-volume-test savanxp-fat-vfs-test savanxp-kernel-audio-gain-test savanxp-ccleste-wav-test savanxp-sxmidi-test savanxp-doom-mus-test savanxp-sximg-test savanxp-sxfont-test savanxp-pixels-text-test savanxp-ui-face-files-test savanxp-sxfont-ui-test
     COMMENT "Building SavanXP host tests")
 add_test(NAME gfx2d-test COMMAND savanxp-gfx2d-test)
 add_test(NAME sxgl-test COMMAND savanxp-sxgl-test)
+add_test(NAME sxgl-conformance-test COMMAND savanxp-sxgl-conformance-test)
 add_test(NAME audio-test COMMAND savanxp-audio-test)
 add_test(NAME kernel-audio-gain-test COMMAND savanxp-kernel-audio-gain-test)
 add_test(NAME ccleste-wav-test COMMAND savanxp-ccleste-wav-test)

@@ -142,6 +142,7 @@ strictly downward: nothing depends on anything above it.
 | `libgfx2d.so.0.4` | 132 KB | — | neutral |
 | `libsxgui.so.0.4` | 154 KB | `libgfx2d` | neutral |
 | `libsxgfx.so.0.4` | 68 KB | `libgfx2d` | POSIX |
+| `libsxgl.so.0.4` | 249 KB | — | neutral; added 2026-11-26, Debug build |
 
 `libcrypto.so.0.4` and `libssl.so.0.4` are not in it either: `ports/openssl`
 links them, neutral, asking the program only for C functions both runtimes
@@ -180,6 +181,7 @@ What each library asks of the program:
 | `libgfx2d` | `malloc` `free` `memcpy` `memset` |
 | `libsxgui` | `malloc` `realloc` `free` `memcpy` `memmove` `memset` `strlen`, and `sxgui_default_host`, weakly |
 | `libsxgfx` | POSIX calls and libc |
+| `libsxgl` | libc and libm; its GPU backend's device calls are inline system calls |
 
 All of those live in the runtime, not in the application, and only `libsxgfx`'s
 are a single subsystem's.

@@ -13,6 +13,8 @@
 # virgl_protocol.h is the payload of GPU_IOC_3D_SUBMIT, an ioctl of the public
 # ABI; sdk/nativetest builds its command buffers with it.
 
+GL/gl.h
+GL/glext.h
 abi/savanxp_abi.h
 abi/savanxp_native_abi.h
 audio/audiod_protocol.h
