@@ -1,0 +1,117 @@
+# Tables (E6, docs/desktop/WEBVIEWER_ENGINE.md#tables), block geometry only: a
+# table with a border, padding, border-spacing, captions above and below, a
+# column with a width and a cell spanning two columns; width="" shared out
+# by preferred widths; a cell spanning two rows growing them in proportion;
+# vertical-align top, middle and bottom in a table with a height; the footer
+# group laid out last and the header group first; a table in a cell;
+# align="right", align="center" beside that float and a table in <center>;
+# a percentage column; and cells with no table around them. Laid out at 800
+# by 600; every box but the anonymous ones matches Chromium's
+# getBoundingClientRect at the same size.
+viewport 800
+block html 0 0 800 480
+  block body 8 8 784 464
+    block table 8 8 330 105
+      block caption 8 8 330 15
+        block div 8 8 330 15
+      block tbody 20 35 306 51
+        block tr 20 35 306 36
+          block td 20 35 106 36
+          block td 130 35 196 36
+            block div 133 38 50 30
+        block tr 20 75 306 11
+          block td 20 75 306 11
+            block div 23 78 300 5
+      block caption 8 98 330 15
+        block div 8 98 330 10
+    block table 8 113 400 5
+      block tbody 8 113 400 5
+        block tr 8 113 400 5
+          block td 8 113 75 5
+            block div 8 113 30 5
+          block td 83 113 225 5
+            block div 83 113 90 5
+          block td 308 113 100 5
+            block div 308 113 10 5
+    block table 8 118 126 78
+      block tbody 10 120 122 74
+        block tr 10 120 122 40
+          block td 10 120 20 62
+            block div 10 120 20 62
+          block td 32 120 49 40
+            block div 32 135 40 10
+          block td 83 120 49 40
+            block div 83 130 40 20
+        block tr 10 162 122 20
+          block td 32 162 100 20
+            block div 32 167 100 10
+        block tr 10 184 122 10
+          block td 10 184 122 10
+            block div 10 184 10 10
+    block table 8 196 60 140
+      block tbody 8 196 60 140
+        block tr 8 196 60 60
+          block td 8 196 20 60
+            block div 8 196 20 10
+          block td 28 196 20 60
+            block div 28 216 20 20
+          block td 48 196 20 60
+            block div 48 226 20 30
+        block tr 8 256 60 80
+          block td 8 256 60 80
+            block div 8 276 60 40
+    block table 8 336 30 21
+      block tfoot 8 352 30 5
+        block tr 8 352 30 5
+          block td 8 352 30 5
+            block div 8 352 30 5
+      block tbody 8 345 30 7
+        block tr 8 345 30 7
+          block td 8 345 30 7
+            block div 8 345 30 7
+      block thead 8 336 30 9
+        block tr 8 336 30 9
+          block td 8 336 30 9
+            block div 8 336 30 9
+    block table 8 357 92 34
+      block tbody 8 357 92 34
+        block tr 8 357 92 34
+          block td 8 357 64 34
+            block table 12 361 56 26
+              block tbody 15 364 50 20
+                block tr 15 364 50 20
+                  block td 15 364 50 20
+                    block div 20 369 40 10
+          block td 72 357 28 34
+            block div 76 364 20 20
+    anonymous 8 391 784 0
+      block table float right 740 391 52 22
+        block tbody 740 391 52 22
+          block tr 740 391 52 22
+            block td 740 391 52 22
+              block div 741 392 50 20
+    block table 348 391 52 22
+      block tbody 348 391 52 22
+        block tr 348 391 52 22
+          block td 348 391 52 22
+            block div 349 392 50 20
+    block center 8 413 784 12
+      block table 379 413 42 12
+        block tbody 379 413 42 12
+          block tr 379 413 42 12
+            block td 379 413 42 12
+              block div 380 414 40 10
+    block table 8 425 406 9
+      block tbody 10 427 402 5
+        block tr 10 427 402 5
+          block td 10 427 100 5
+            block div 10 427 10 5
+          block td 112 427 300 5
+            block div 112 427 10 5
+    block div 8 444 784 28
+      anonymous table 8 444 76 28
+        anonymous row 8 444 76 28
+          block div 8 444 38 28
+            block div 12 458 30 10
+          block div 46 444 38 28
+            block div 50 448 30 20

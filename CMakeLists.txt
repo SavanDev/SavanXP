@@ -1078,6 +1078,7 @@ add_executable(savanxp-webengine-layout-test
     system/webview/engine/webengine_layout.c
     system/webview/engine/webengine_lines.c
     system/webview/engine/webengine_paint.c
+    system/webview/engine/webengine_table.c
     system/webview/engine/webengine_select.c
     tests/host/webengine_layout_test.c)
 target_include_directories(savanxp-webengine-layout-test PRIVATE "${CMAKE_SOURCE_DIR}/system/webview/engine")

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>E6: tables</title>
+<style>
+body { margin: 8px }
+.box { background: #ddd }
+#framed { border: 3px solid black; padding: 5px; border-spacing: 4px }
+#framed td { padding: 2px; border: 1px solid gray }
+#framed caption { height: 15px }
+.w100 { width: 100px }
+#spans td { padding: 0 }
+#aligned { height: 140px }
+#aligned td { padding: 0 }
+#anonymous { margin-top: 10px }
+#anonymous .cell { display: table-cell; padding: 3px; border: 1px solid black }
+#percent td { padding: 0 }
+#nested { border-spacing: 0 }
+#nested td { padding: 4px }
+</style>
+</head>
+<body>
+<table id="framed">
+<caption id="top-caption"><div class="box" style="height:15px"></div></caption>
+<tr id="framed-row"><td id="fixed" class="w100"></td><td id="auto"><div class="box" style="width:50px;height:30px"></div></td></tr>
+<tr><td id="wide" colspan="2"><div class="box" style="width:300px;height:5px"></div></td></tr>
+<caption id="bottom-caption" style="caption-side:bottom"><div class="box" style="height:10px"></div></caption>
+</table>
+<table id="share" width="400" cellspacing="0" cellpadding="0">
+<tr><td id="narrow"><div class="box" style="width:30px;height:5px"></div></td><td id="broad"><div class="box" style="width:90px;height:5px"></div></td><td id="given" width="100"><div class="box" style="width:10px;height:5px"></div></td></tr>
+</table>
+<table id="spans" cellspacing="2">
+<tr id="spans-1"><td id="tall" rowspan="2"><div class="box" style="width:20px;height:62px"></div></td><td id="s1"><div class="box" style="width:40px;height:10px"></div></td><td id="s2"><div class="box" style="width:40px;height:20px"></div></td></tr>
+<tr id="spans-2"><td id="s3" colspan="2"><div class="box" style="width:100px;height:10px"></div></td></tr>
+<tr id="spans-3"><td id="s4" colspan="3"><div class="box" style="width:10px;height:10px"></div></td></tr>
+</table>
+<table id="aligned" cellspacing="0">
+<tr><td id="at-top" style="vertical-align:top"><div class="box" style="width:20px;height:10px"></div></td><td id="at-middle"><div class="box" style="width:20px;height:20px"></div></td><td id="at-bottom" valign="bottom"><div class="box" style="width:20px;height:30px"></div></td></tr>
+<tr><td id="filler" colspan="3"><div class="box" style="width:60px;height:40px"></div></td></tr>
+</table>
+<table id="groups" cellspacing="0" cellpadding="0">
+<tfoot id="foot"><tr><td><div class="box" style="width:30px;height:5px"></div></td></tr></tfoot>
+<tbody id="body"><tr><td><div class="box" style="width:30px;height:7px"></div></td></tr></tbody>
+<thead id="head"><tr><td><div class="box" style="width:30px;height:9px"></div></td></tr></thead>
+</table>
+<table id="nested">
+<tr><td id="outer"><table id="inner" border="1"><tr><td id="inner-cell"><div class="box" style="width:40px;height:10px"></div></td></tr></table></td><td id="beside"><div class="box" style="width:20px;height:20px"></div></td></tr>
+</table>
+<table id="right" align="right" cellspacing="0"><tr><td id="right-cell"><div class="box" style="width:50px;height:20px"></div></td></tr></table>
+<table id="centred" align="center" cellspacing="0"><tr><td id="centred-cell"><div class="box" style="width:50px;height:20px"></div></td></tr></table>
+<center><table id="in-center" cellspacing="0"><tr><td><div class="box" style="width:40px;height:10px"></div></td></tr></table></center>
+<table id="percent" width="406" cellspacing="2" style="clear:both">
+<tr><td id="quarter" width="25%"><div class="box" style="width:10px;height:5px"></div></td><td id="rest"><div class="box" style="width:10px;height:5px"></div></td></tr>
+</table>
+<div id="anonymous"><div class="cell" id="cell-a"><div class="box" style="width:30px;height:10px"></div></div><div class="cell" id="cell-b"><div class="box" style="width:30px;height:20px"></div></div></div>
+</body>
+</html>

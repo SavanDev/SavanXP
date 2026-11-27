@@ -197,7 +197,7 @@ screen at 800×600 CSS pixels. Alternate stylesheets, `@import`, the
 interactive states (`:hover`, `:visited`, `:active`, `:focus`, `:target`)
 and quirks mode are deferred.
 
-## Layout and paint (E4, E5)
+## Layout and paint (E4, E5, E6)
 
 Web Viewer lays pages out with the engine's box tree and normal flow
 ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#the-box-tree)): blocks with
@@ -209,7 +209,12 @@ flow and wrap the text beside them, and `position`
 ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#positioning)) moves boxes relative to
 it or out of it. `overflow` other than `visible`
 ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#overflow)) clips a box's content,
-and on the root or `body` keeps the page from scrolling when `hidden`. The user-agent sheet is the engine's
+and on the root or `body` keeps the page from scrolling when `hidden`.
+Tables ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#tables)) lay their cells
+out in rows and columns, with HTML's table attributes (`border`,
+`cellspacing`, `cellpadding`, `width`, `height`, `bgcolor`, `align`,
+`valign`, `nowrap`, `colspan`, `rowspan`) and `align=""` on blocks and
+`<center>` aligning the blocks inside. The user-agent sheet is the engine's
 `webengine_ua_css`, CSS 2.1's Appendix D with HTML's heading sizes, so
 `body` has its 8 pixels of margin and paragraphs and headings their em
 margins.
@@ -227,7 +232,11 @@ margins.
   14.2). Then the engine's painting order (`webengine_tree.paint`): each
   block's background and borders in tree order, the floats whole, then the
   line fragments, then positioned boxes by `z-index`
-  ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#painting-order)). Fixed boxes
+  ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#painting-order)). A table
+  paints its background and borders around its rows, not its captions; a
+  row's or row group's background shows under each of its cells, not in
+  the spacing between them, and `empty-cells: hide` leaves an empty cell
+  unpainted. Fixed boxes
   are painted where they are on the screen, whatever the scroll. The line
   fragments are: an inline's background and borders on each line it
   spans, text, its underline, overline or line-through, and markers. Disc,
@@ -262,10 +271,10 @@ server empties the window's DNS cache.
 
 ## What it is not (yet)
 
-Tables stack
-their cells as blocks and images are an `[image]` placeholder until E6.
+Images are an `[image]` placeholder until the rest of E6.
 `inline-block` and the other inline-level displays are laid out as inline
-boxes. `overflow: auto` and `scroll` clip without scroll bars of their own.
+boxes, and `inline-table` as a table at block level. `border-collapse:
+collapse` lays out as `separate`, and `table-layout: fixed` as `auto`. `overflow: auto` and `scroll` clip without scroll bars of their own.
 Fragments reload the page top. A word wider than the page is cut
 rather than overflowing (the engine's emergency break), and there is no
 horizontal scroll.
@@ -312,7 +321,9 @@ styled link, checks the rendered page after View Source, and stops a
 navigation waiting for a stylesheet. The E5 step opens `e5-float-text.html`
 and asserts the text inside a float and the text wrapping beside one, then
 `e5-position-text.html` for a relative inline and an absolute box, and
-`e5-overflow.html`, whose clipped lines must not show.
+`e5-overflow.html`, whose clipped lines must not show. The E6 step opens
+`e6-table-cells.html` and asserts text on a cell's background, on a row's
+background under its cell, and in a cell spanning two columns.
 The SUN socket contract is checked by `smoke native-network` and
 `smoke native-network-offline`, including pending ARP, cancellation,
 initialization without a NIC, route timeout and TCP refusal/reset/retry errors.

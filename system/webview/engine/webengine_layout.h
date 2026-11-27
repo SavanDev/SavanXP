@@ -96,5 +96,77 @@ void webengine_translate(struct webengine_tree *tree, struct webengine_box *box,
  * containing block `width` wide and `height` high (or none, when < 0). */
 void webengine_relative_offset(const struct webengine_box *box, int width, int height, int *dx, int *dy);
 
+/* --- Tables (webengine_table.c) --------------------------------------------- */
+
+/* A cell in the grid: its first row and column and how many it spans, and
+ * once laid out its height before the row stretches it and its baseline,
+ * from its top border edge. */
+struct webengine_table_cell {
+    struct webengine_box *box;
+    int row;
+    int column;
+    int rows;
+    int columns;
+    int height;
+    int baseline;
+};
+
+/* A column: its minimum and preferred widths (border boxes of its cells),
+ * a width in pixels (-1 none) or a percentage (-1 none), and once
+ * distributed its width and its left edge from the table's content edge. */
+struct webengine_table_column {
+    int min;
+    int max;
+    int fixed;
+    css_fixed percent;
+    int width;
+    int x;
+};
+
+struct webengine_table_row {
+    struct webengine_box *box;
+    struct webengine_box *group;
+    int y;
+    int height;
+};
+
+struct webengine_table {
+    struct webengine_box *box;
+    /* In grid order: row by row, left to right. */
+    struct webengine_table_cell *cells;
+    size_t cell_count;
+    struct webengine_table_column *columns;
+    size_t column_count;
+    struct webengine_table_row *rows;
+    size_t row_count;
+    /* row_first[r]: the first cell starting in row r or later. */
+    size_t *row_first;
+    struct webengine_box **captions;
+    size_t caption_count;
+    /* Some cell spans more than one row. */
+    bool spans;
+    /* border-spacing across and down. */
+    int spacing[2];
+    /* The table's minimum and preferred content widths: the columns and
+     * the spacing around them. */
+    int min;
+    int max;
+    int *scratch;
+};
+
+/* The grid of the table `box` (17.5, HTML's table model): its captions, its
+ * columns, its rows with the header group first and the footer group last,
+ * and its cells. 0, or -1 when out of memory. */
+int webengine_table_grid(struct webengine_table *table, struct webengine_box *box);
+
+/* The columns' minimum and preferred widths and the table's, once the
+ * cells' min_content and max_content are known. 0, or -1. */
+int webengine_table_columns(struct webengine_table *table);
+
+/* Distributes a table content `width` over the columns (17.5.2.2). */
+void webengine_table_widths(struct webengine_table *table, int width);
+
+void webengine_table_free(struct webengine_table *table);
+
 /* The tree's painting order, from its layout. 0, or -1 when out of memory. */
 int webengine_paint_order(struct webengine_tree *tree);

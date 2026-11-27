@@ -89,6 +89,18 @@ static int solve_width(struct webengine_box *box, int cb, int width) {
         if (left + edges + width + right > cb) {
             left_auto = right_auto = false;
         }
+        /* HTML's align="" and <center> align blocks too, through libcss'
+         * -libcss- values of the parent's text-align, when neither margin
+         * is auto. */
+        uint8_t align = box->parent != NULL ? box->parent->style->text_align : CSS_TEXT_ALIGN_DEFAULT;
+        if (!left_auto && !right_auto && left + edges + width + right <= cb) {
+            if (align == CSS_TEXT_ALIGN_LIBCSS_CENTER) {
+                left_auto = right_auto = true;
+                left = right = 0;
+            } else if (align == CSS_TEXT_ALIGN_LIBCSS_RIGHT) {
+                left_auto = true;
+            }
+        }
         int rest = cb - edges - width;
         if (left_auto && right_auto) {
             left = rest / 2;
@@ -279,6 +291,7 @@ void webengine_translate(struct webengine_tree *tree, struct webengine_box *top,
                 struct webengine_line *line = &tree->lines[l];
                 line->x += dx;
                 line->y += dy;
+                line->baseline += dy;
                 for (size_t f = line->first_fragment; f < line->first_fragment + line->fragment_count; f++) {
                     tree->fragments[f].x += dx;
                     tree->fragments[f].y += dy;
@@ -329,10 +342,39 @@ static int intrinsic_size(const struct webengine_box *box, const struct webengin
     return size > 0 ? size : 0;
 }
 
+/* A table's minimum and preferred content widths, from its grid (17.5.2.2);
+ * a width in pixels, which counts its borders and padding, as a floor. */
+static void intrinsic_table(struct webengine_flow *flow, struct webengine_box *box) {
+    struct webengine_table table;
+    if (webengine_table_grid(&table, box) != 0 || webengine_table_columns(&table) != 0) {
+        webengine_table_free(&table);
+        flow->failed = true;
+        box->min_content = box->max_content = 0;
+        return;
+    }
+    int min = table.min;
+    int max = table.max;
+    webengine_table_free(&table);
+    const struct webengine_box_style *style = box->style;
+    if (style->width.kind == WEBENGINE_LEN_PX) {
+        int edges = style->border_width[WEBENGINE_LEFT] + style->border_width[WEBENGINE_RIGHT] +
+            px_or_zero(&style->padding[WEBENGINE_LEFT]) + px_or_zero(&style->padding[WEBENGINE_RIGHT]);
+        int width = fixed_round(style->width.value) - edges;
+        min = width > min ? width : min;
+        max = min;
+    }
+    box->min_content = min;
+    box->max_content = max > min ? max : min;
+}
+
 /* The minimum and preferred widths of a block whose children's are known. */
 static void intrinsic_block(struct webengine_flow *flow, struct webengine_box *box) {
     int min = 0;
     int max = 0;
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        intrinsic_table(flow, box);
+        return;
+    }
     if (box->inline_content) {
         webengine_inline_widths(flow, box, &min, &max);
     } else {
@@ -344,7 +386,8 @@ static void intrinsic_block(struct webengine_flow *flow, struct webengine_box *b
             }
         }
     }
-    int width = intrinsic_size(box, &box->style->width);
+    /* A cell's width is its column's (webengine_table_columns). */
+    int width = box->table_role == WEBENGINE_TABLE_CELL ? -1 : intrinsic_size(box, &box->style->width);
     if (width >= 0) {
         min = max = width;
     }
@@ -434,9 +477,32 @@ struct frame {
     /* The outside marker that waited outside the float. */
     struct webengine_box *outer_marker;
     int outer_marker_left;
+    /* A table: its state, layout.tables[table - 1], and whether its parts
+     * are all laid out. A cell: grid.cells[cell - 1] of the table below. */
+    size_t table;
+    bool table_done;
+    size_t cell;
 };
 
-enum frame_kind { FRAME_BLOCK, FRAME_FLOAT, FRAME_ABSOLUTE };
+enum frame_kind { FRAME_BLOCK, FRAME_FLOAT, FRAME_ABSOLUTE, FRAME_CELL };
+
+/* A table being laid out (CSS 2.1 17.5): its parts in order, top captions,
+ * the rows and their cells, then bottom captions. */
+enum table_phase { TABLE_TOP_CAPTIONS, TABLE_ROWS, TABLE_BOTTOM_CAPTIONS };
+
+struct table_layout {
+    struct webengine_table grid;
+    uint8_t phase;
+    /* The next caption or cell, and the row being laid out. */
+    size_t next;
+    size_t row;
+    /* The table box's top border edge, and its content box's left edge,
+     * width and top. */
+    int table_y;
+    int content_x;
+    int content_width;
+    int content_top;
+};
 
 /* An absolute box waiting for the frame of its containing block to end. */
 struct absolute {
@@ -455,6 +521,10 @@ struct layout {
     size_t absolute_capacity;
     /* The lowest bottom of an absolute box, for the page's height. */
     int extent;
+    /* The tables open, innermost last. */
+    struct table_layout *tables;
+    size_t table_count;
+    size_t table_capacity;
     bool failed;
 };
 
@@ -466,7 +536,8 @@ static struct collapse *pending_of(struct layout *layout, size_t index) {
  * collapse with its children's, and the floats inside it are its own. */
 static bool new_context(const struct webengine_box *box) {
     return box->parent == NULL || box->style->overflow != CSS_OVERFLOW_VISIBLE || webengine_box_floats(box) ||
-        webengine_box_absolute(box);
+        webengine_box_absolute(box) || box->table_role == WEBENGINE_TABLE_TABLE ||
+        box->table_role == WEBENGINE_TABLE_CELL || box->table_role == WEBENGINE_TABLE_CAPTION;
 }
 
 void webengine_relative_offset(const struct webengine_box *box, int width, int height, int *dx, int *dy) {
@@ -583,7 +654,8 @@ static void avoid_floats(struct layout *layout, size_t index) {
     int margin_left = webengine_length_px(&style->margin[WEBENGINE_LEFT], cb, 0);
     int margin_right = webengine_length_px(&style->margin[WEBENGINE_RIGHT], cb, 0);
     int edges = box->width - frame->content_width;
-    bool auto_width = webengine_length_px(&style->width, cb, -1) < 0;
+    /* A table keeps the width its columns gave it. */
+    bool auto_width = webengine_length_px(&style->width, cb, -1) < 0 && box->table_role != WEBENGINE_TABLE_TABLE;
     int specified = webengine_length_px(&style->height, parent->percent_base, -1);
     int rows = specified >= 0 ? content_height(box, specified) + box->border[WEBENGINE_TOP] +
         box->padding[WEBENGINE_TOP] + box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM] : 1;
@@ -604,6 +676,14 @@ static void avoid_floats(struct layout *layout, size_t index) {
                 frame->content_width = width > 0 ? width : 0;
                 box->width = frame->content_width + edges;
             }
+            /* Auto margins centre it, or push it right, in the room. */
+            bool auto_left = is_auto(&style->margin[WEBENGINE_LEFT]);
+            bool auto_right = is_auto(&style->margin[WEBENGINE_RIGHT]);
+            if (!auto_width && auto_left && auto_right) {
+                border_left += (border_right - border_left - box->width) / 2;
+            } else if (!auto_width && auto_left) {
+                border_left = border_right - box->width;
+            }
             int shift = border_left - box->x;
             box->x += shift;
             frame->content_x += shift;
@@ -618,6 +698,20 @@ static void avoid_floats(struct layout *layout, size_t index) {
     }
 }
 
+static int table_open(struct layout *layout, struct webengine_box *box, int cb, int available);
+static void table_start(struct layout *layout, size_t index);
+
+/* The margins of `box` in pixels, auto counting as nothing. */
+static int horizontal_margins(const struct webengine_box *box, int cb) {
+    return webengine_length_px(&box->style->margin[WEBENGINE_LEFT], cb, 0) +
+        webengine_length_px(&box->style->margin[WEBENGINE_RIGHT], cb, 0);
+}
+
+static int horizontal_edges(const struct webengine_box *box) {
+    return box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT] + box->padding[WEBENGINE_RIGHT] +
+        box->border[WEBENGINE_RIGHT];
+}
+
 static void enter_block(struct layout *layout, struct webengine_box *box) {
     size_t parent_index = layout->depth - 1;
     if (!push_frame(layout)) {
@@ -630,7 +724,14 @@ static void enter_block(struct layout *layout, struct webengine_box *box) {
     block_edges(box, cb);
     frame->box = box;
     frame->child = box->first;
-    frame->content_width = block_width(box, cb);
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        /* A table's width comes from its columns (17.5.2.2); its margins
+         * are solved around it. */
+        int width = table_open(layout, box, cb, cb - horizontal_margins(box, cb)) - horizontal_edges(box);
+        frame->content_width = solve_width(box, cb, width > 0 ? width : 0);
+    } else {
+        frame->content_width = block_width(box, cb);
+    }
     box->x = parent->content_x + box->margin[WEBENGINE_LEFT];
     box->width = box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT] + frame->content_width +
         box->padding[WEBENGINE_RIGHT] + box->border[WEBENGINE_RIGHT];
@@ -674,6 +775,9 @@ static void enter_block(struct layout *layout, struct webengine_box *box) {
         avoid_floats(layout, index);
     }
     start_content(layout, frame);
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        table_start(layout, index);
+    }
 }
 
 /* An auto width that shrinks to fit the content (10.3.5) in `available`. */
@@ -714,9 +818,15 @@ static void enter_float(struct layout *layout, struct webengine_box *box, bool b
     int edges = box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT] + box->padding[WEBENGINE_RIGHT] +
         box->border[WEBENGINE_RIGHT];
     int specified = webengine_length_px(&style->width, cb, -1);
-    int width = specified >= 0 ? content_width(box, specified)
-        : shrink_to_fit(layout, box, cb - box->margin[WEBENGINE_LEFT] - box->margin[WEBENGINE_RIGHT] - edges);
-    width = clamp_width(box, cb, width);
+    int width = 0;
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        width = table_open(layout, box, cb, cb - box->margin[WEBENGINE_LEFT] - box->margin[WEBENGINE_RIGHT]) - edges;
+        width = width > 0 ? width : 0;
+    } else {
+        width = specified >= 0 ? content_width(box, specified)
+            : shrink_to_fit(layout, box, cb - box->margin[WEBENGINE_LEFT] - box->margin[WEBENGINE_RIGHT] - edges);
+        width = clamp_width(box, cb, width);
+    }
     frame->box = box;
     frame->child = box->first;
     frame->kind = FRAME_FLOAT;
@@ -738,6 +848,9 @@ static void enter_float(struct layout *layout, struct webengine_box *box, bool b
     frame->outer_marker_left = layout->flow.marker_left;
     layout->flow.marker_item = NULL;
     start_content(layout, frame);
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        table_start(layout, index);
+    }
 }
 
 /* Lays out the line boxes of the block at the top of the stack, once its
@@ -833,9 +946,14 @@ static void finish_block(struct layout *layout) {
         }
         layout->flow.float_count = frame->context;
     }
-    int height = used_height(box, parent->percent_base, content_bottom - frame->content_top);
-    box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
-        box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        /* The wrapper: the table box and its captions. */
+        box->height = content_bottom - box->y;
+    } else {
+        int height = used_height(box, parent->percent_base, content_bottom - frame->content_top);
+        box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
+            box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
+    }
     parent->cursor = box->y + box->height;
     if (pending != outer) {
         /* What collapses through the bottom joins the margins after it. */
@@ -859,9 +977,13 @@ static void finish_float(struct layout *layout) {
         content_bottom = floats;
     }
     layout->flow.float_count = frame->context;
-    int height = used_height(box, parent->percent_base, content_bottom - frame->content_top);
-    box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
-        box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        box->height = content_bottom - box->y;
+    } else {
+        int height = used_height(box, parent->percent_base, content_bottom - frame->content_top);
+        box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
+            box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
+    }
     layout->flow.marker_item = frame->outer_marker;
     layout->flow.marker_left = frame->outer_marker_left;
     if (frame->block_level) {
@@ -936,6 +1058,12 @@ static void enter_absolute(struct layout *layout, struct webengine_box *box) {
         }
     }
     width = clamp_width(box, cb_width, width);
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        int available = cb_width - margin_left - margin_right -
+            (left_auto && right_auto ? static_left : (left_auto ? 0 : left) + (right_auto ? 0 : right));
+        width = table_open(layout, box, cb_width, available) - edges;
+        width = width > 0 ? width : 0;
+    }
     if (left_auto && !right_auto) {
         left = cb_width - right - margin_right - edges - width - margin_left;
     }
@@ -980,6 +1108,9 @@ static void enter_absolute(struct layout *layout, struct webengine_box *box) {
     frame->outer_marker_left = layout->flow.marker_left;
     layout->flow.marker_item = NULL;
     start_content(layout, frame);
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        table_start(layout, index);
+    }
 }
 
 static void finish_absolute(struct layout *layout) {
@@ -995,10 +1126,14 @@ static void finish_absolute(struct layout *layout) {
         content_bottom = floats;
     }
     layout->flow.float_count = frame->context;
-    int content = frame->stretch >= 0 ? frame->stretch : content_bottom - frame->content_top;
-    int height = used_height(box, frame->cb_height, content);
-    box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
-        box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
+    if (box->table_role == WEBENGINE_TABLE_TABLE) {
+        box->height = content_bottom - box->y;
+    } else {
+        int content = frame->stretch >= 0 ? frame->stretch : content_bottom - frame->content_top;
+        int height = used_height(box, frame->cb_height, content);
+        box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
+            box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
+    }
     layout->flow.marker_item = frame->outer_marker;
     layout->flow.marker_left = frame->outer_marker_left;
     if (frame->anchor_bottom != INT_MIN) {
@@ -1026,6 +1161,377 @@ static bool take_absolute(struct layout *layout) {
         }
     }
     return false;
+}
+
+/* --- Tables (CSS 2.1 17.5) ------------------------------------------------------------ */
+
+/* Opens the table `box`, whose edges are known: its grid and its columns'
+ * widths. Its border box's width: a width in pixels counts borders and
+ * padding, as browsers have it, and no table is narrower than its columns'
+ * minimum; an auto width takes `available` up to the preferred width. */
+static int table_open(struct layout *layout, struct webengine_box *box, int cb, int available) {
+    if (layout->table_count == layout->table_capacity) {
+        size_t capacity = layout->table_capacity == 0 ? 8 : layout->table_capacity * 2;
+        struct table_layout *tables = realloc(layout->tables, capacity * sizeof(*tables));
+        if (tables == NULL) {
+            layout->failed = true;
+            return 0;
+        }
+        layout->tables = tables;
+        layout->table_capacity = capacity;
+    }
+    struct table_layout *table = &layout->tables[layout->table_count];
+    memset(table, 0, sizeof(*table));
+    intrinsic_widths(&layout->flow, box);
+    if (webengine_table_grid(&table->grid, box) != 0 || webengine_table_columns(&table->grid) != 0) {
+        webengine_table_free(&table->grid);
+        layout->failed = true;
+        return 0;
+    }
+    layout->table_count++;
+    int edges = horizontal_edges(box);
+    int specified = webengine_length_px(&box->style->width, cb, -1);
+    int min = table->grid.min + edges;
+    int max = table->grid.max + edges;
+    int width = specified >= 0 ? specified : available < max ? available : max;
+    width = width > min ? width : min;
+    /* Nor narrower than its captions' minimum (17.4). */
+    for (size_t i = 0; i < table->grid.caption_count; i++) {
+        const struct webengine_box *caption = table->grid.captions[i];
+        int wide = caption->min_content + webengine_intrinsic_edges(caption);
+        width = wide > width ? wide : width;
+    }
+    table->content_width = width - edges;
+    webengine_table_widths(&table->grid, table->content_width);
+    return width;
+}
+
+/* The table just opened belongs to the frame `index`, whose box is placed:
+ * its parts are laid out from here, the captions across the whole wrapper. */
+static void table_start(struct layout *layout, size_t index) {
+    if (layout->failed || layout->table_count == 0) {
+        return;
+    }
+    struct frame *frame = &layout->frames[index];
+    struct webengine_box *box = frame->box;
+    struct table_layout *table = &layout->tables[layout->table_count - 1];
+    frame->table = layout->table_count;
+    frame->child = NULL;
+    frame->content_x = box->x;
+    frame->content_width = box->width;
+    frame->content_top = box->y;
+    frame->cursor = box->y;
+    frame->pending = index;
+    frame->own = (struct collapse){ 0, 0 };
+    frame->percent_base = -1;
+    table->content_x = box->x + box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT];
+}
+
+/* Moves what is inside `box`, not the box. */
+static void move_content(struct webengine_tree *tree, struct webengine_box *box, int dy) {
+    if (dy != 0) {
+        webengine_translate(tree, box, 0, dy);
+        box->y -= dy;
+    }
+}
+
+/* Lays out cell `index` of the table below the top of the stack in its
+ * slot: a block formatting context the width of its columns, at its row's
+ * top. Cells have no margins. */
+static void enter_cell(struct layout *layout, size_t index) {
+    size_t parent_index = layout->depth - 1;
+    struct table_layout *table = &layout->tables[layout->frames[parent_index].table - 1];
+    struct webengine_table_cell *cell = &table->grid.cells[index];
+    struct webengine_box *box = cell->box;
+    const struct webengine_table_column *first = &table->grid.columns[cell->column];
+    const struct webengine_table_column *last = &table->grid.columns[cell->column + cell->columns - 1];
+    int x = table->content_x + first->x;
+    int y = table->grid.rows[cell->row].y;
+    int width = last->x + last->width - first->x;
+    if (!push_frame(layout)) {
+        return;
+    }
+    size_t frame_index = layout->depth - 1;
+    struct frame *parent = &layout->frames[parent_index];
+    struct frame *frame = &layout->frames[frame_index];
+    block_edges(box, table->content_width);
+    for (int side = 0; side < 4; side++) {
+        box->margin[side] = 0;
+    }
+    box->x = x;
+    box->y = y;
+    box->width = width;
+    int content = width - horizontal_edges(box);
+    frame->box = box;
+    frame->child = box->first;
+    frame->kind = FRAME_CELL;
+    frame->cell = index + 1;
+    frame->positioned = webengine_box_positioned(box) ? frame_index : parent->positioned;
+    frame->content_width = content > 0 ? content : 0;
+    frame->content_x = x + box->border[WEBENGINE_LEFT] + box->padding[WEBENGINE_LEFT];
+    frame->percent_base = -1;
+    frame->pending = frame_index;
+    frame->resolved = true;
+    frame->content_top = y + box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP];
+    frame->cursor = frame->content_top;
+    frame->context = layout->flow.float_count;
+    frame->outer_marker = layout->flow.marker_item;
+    frame->outer_marker_left = layout->flow.marker_left;
+    layout->flow.marker_item = NULL;
+    start_content(layout, frame);
+}
+
+/* A cell's baseline (17.5.3): its first line box in the flow, else the
+ * bottom of its content box. From its top border edge. */
+static int cell_baseline(const struct webengine_tree *tree, const struct webengine_box *cell) {
+    const struct webengine_box *box = cell->first;
+    while (box != NULL) {
+        bool out = webengine_box_floats(box) || webengine_box_absolute(box);
+        if (!out && box->type == WEBENGINE_BOX_BLOCK && box->inline_content && box->line_count > 0) {
+            return tree->lines[box->first_line].baseline - cell->y;
+        }
+        if (!out && box->first != NULL && box->type == WEBENGINE_BOX_BLOCK) {
+            box = box->first;
+            continue;
+        }
+        while (box != cell && box->next == NULL) {
+            box = box->parent;
+        }
+        box = box == cell ? NULL : box->next;
+    }
+    if (cell->inline_content && cell->line_count > 0) {
+        return tree->lines[cell->first_line].baseline - cell->y;
+    }
+    return cell->height - cell->border[WEBENGINE_BOTTOM] - cell->padding[WEBENGINE_BOTTOM];
+}
+
+static void finish_cell(struct layout *layout) {
+    size_t index = layout->depth - 1;
+    struct frame *frame = &layout->frames[index];
+    struct table_layout *table = &layout->tables[layout->frames[index - 1].table - 1];
+    struct webengine_table_cell *cell = &table->grid.cells[frame->cell - 1];
+    struct webengine_box *box = frame->box;
+    if (layout->flow.marker_item == box) {
+        webengine_place_marker(&layout->flow, frame->content_top);
+    }
+    int content_bottom = frame->cursor + collapse_value(&frame->own);
+    int floats = floats_bottom(&layout->flow, frame->context);
+    if (floats > content_bottom) {
+        content_bottom = floats;
+    }
+    layout->flow.float_count = frame->context;
+    /* A cell's height is a minimum: the row grows to its content. */
+    int content = content_bottom - frame->content_top;
+    int height = used_height(box, -1, content);
+    height = height > content ? height : content;
+    box->height = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + height +
+        box->padding[WEBENGINE_BOTTOM] + box->border[WEBENGINE_BOTTOM];
+    layout->flow.marker_item = frame->outer_marker;
+    layout->flow.marker_left = frame->outer_marker_left;
+    cell->height = box->height;
+    cell->baseline = cell_baseline(layout->flow.tree, box);
+}
+
+/* Moves row `row` down to `y`, with the cells that start in it. */
+static void move_row(struct layout *layout, struct table_layout *table, size_t row, int y) {
+    struct webengine_table_row *line = &table->grid.rows[row];
+    int dy = y - line->y;
+    if (dy == 0) {
+        return;
+    }
+    line->y = y;
+    for (size_t c = table->grid.row_first[row]; c < table->grid.row_first[row + 1]; c++) {
+        webengine_translate(layout->flow.tree, table->grid.cells[c].box, 0, dy);
+    }
+}
+
+/* Spreads `extra` height over rows [first, last], laid out already, in
+ * proportion to their heights, and moves the rows after the first. */
+static void grow_rows(struct layout *layout, struct table_layout *table, size_t first, size_t last, int extra) {
+    struct webengine_table_row *rows = table->grid.rows;
+    int64_t total = 0;
+    for (size_t r = first; r <= last; r++) {
+        total += rows[r].height;
+    }
+    int64_t sum = 0;
+    int given = 0;
+    for (size_t r = first; r <= last; r++) {
+        sum += rows[r].height;
+        int upto = r == last ? extra : total > 0 ? (int)(((int64_t)extra * sum) / total) : 0;
+        rows[r].height += upto - given;
+        given = upto;
+        if (r > first) {
+            move_row(layout, table, r, rows[r - 1].y + rows[r - 1].height + table->grid.spacing[1]);
+        }
+    }
+}
+
+static bool baseline_aligned(const struct webengine_box *cell) {
+    uint8_t align = cell->style->vertical_align;
+    return align != CSS_VERTICAL_ALIGN_TOP && align != CSS_VERTICAL_ALIGN_MIDDLE && align != CSS_VERTICAL_ALIGN_BOTTOM;
+}
+
+/* Row `row` has its cells: their baselines line up, it takes the height of
+ * the tallest cell in it alone, and the cells spanning down to it make the
+ * rows they span tall enough (17.5.3). */
+static void finish_row(struct layout *layout, struct table_layout *table, size_t row) {
+    struct webengine_table_row *line = &table->grid.rows[row];
+    struct webengine_table_cell *cells = table->grid.cells;
+    size_t first = table->grid.row_first[row];
+    size_t end = table->grid.row_first[row + 1];
+    int specified = webengine_length_px(&line->box->style->height, -1, -1);
+    line->height = specified > 0 ? specified : 0;
+    int baseline = INT_MIN;
+    for (size_t c = first; c < end; c++) {
+        if (baseline_aligned(cells[c].box) && cells[c].baseline > baseline) {
+            baseline = cells[c].baseline;
+        }
+    }
+    for (size_t c = first; c < end; c++) {
+        if (baseline_aligned(cells[c].box) && cells[c].baseline < baseline) {
+            int shift = baseline - cells[c].baseline;
+            move_content(layout->flow.tree, cells[c].box, shift);
+            cells[c].height += shift;
+            cells[c].baseline = baseline;
+        }
+        if (cells[c].rows == 1 && cells[c].height > line->height) {
+            line->height = cells[c].height;
+        }
+    }
+    for (size_t c = 0; c < end && table->grid.spans; c++) {
+        if (cells[c].rows > 1 && (size_t)(cells[c].row + cells[c].rows - 1) == row) {
+            const struct webengine_table_row *top = &table->grid.rows[cells[c].row];
+            int have = line->y + line->height - top->y;
+            if (cells[c].height > have) {
+                grow_rows(layout, table, (size_t)cells[c].row, row, cells[c].height - have);
+            }
+        }
+    }
+}
+
+/* Every row is laid out: the table's height, then each cell stretched to
+ * the rows it spans with its content aligned in it, and the boxes of the
+ * rows and row groups. */
+static void finish_grid(struct layout *layout, size_t index) {
+    struct frame *frame = &layout->frames[index];
+    struct table_layout *table = &layout->tables[frame->table - 1];
+    struct webengine_box *box = frame->box;
+    struct webengine_table *grid = &table->grid;
+    size_t rows = grid->row_count;
+    int bottom = rows > 0 ? grid->rows[rows - 1].y + grid->rows[rows - 1].height + grid->spacing[1]
+                          : table->content_top;
+    int content = bottom - table->content_top;
+    int edges = box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP] + box->padding[WEBENGINE_BOTTOM] +
+        box->border[WEBENGINE_BOTTOM];
+    /* A height counts borders and padding, as the width does. */
+    int specified = webengine_length_px(&box->style->height, layout->frames[index - 1].percent_base, -1) - edges;
+    if (specified > content && rows > 0) {
+        grow_rows(layout, table, 0, rows - 1, specified - content);
+    }
+    content = specified > content ? specified : content;
+    for (size_t c = 0; c < grid->cell_count; c++) {
+        struct webengine_table_cell *cell = &grid->cells[c];
+        const struct webengine_table_row *top = &grid->rows[cell->row];
+        const struct webengine_table_row *last = &grid->rows[cell->row + cell->rows - 1];
+        int height = last->y + last->height - top->y;
+        uint8_t align = cell->box->style->vertical_align;
+        int room = height - cell->height;
+        int dy = align == CSS_VERTICAL_ALIGN_BOTTOM ? room : align == CSS_VERTICAL_ALIGN_MIDDLE ? room / 2 : 0;
+        move_content(layout->flow.tree, cell->box, dy);
+        cell->box->height = height;
+    }
+    int left = table->content_x;
+    int width = 0;
+    if (grid->column_count > 0) {
+        const struct webengine_table_column *last = &grid->columns[grid->column_count - 1];
+        left += grid->columns[0].x;
+        width = last->x + last->width - grid->columns[0].x;
+    }
+    for (struct webengine_box *child = box->first; child != NULL; child = child->next) {
+        if (child->table_role != WEBENGINE_TABLE_CAPTION) {
+            child->x = left;
+            child->y = table->content_top;
+            child->width = child->table_role == WEBENGINE_TABLE_COLUMN ||
+                child->table_role == WEBENGINE_TABLE_COLUMN_GROUP ? 0 : width;
+            child->height = 0;
+        }
+    }
+    for (size_t r = 0; r < rows; r++) {
+        struct webengine_table_row *row = &grid->rows[r];
+        row->box->x = left;
+        row->box->y = row->y;
+        row->box->width = width;
+        row->box->height = row->height;
+        struct webengine_box *group = row->group;
+        if (group != NULL) {
+            if (group->height == 0 && group->y == table->content_top) {
+                group->y = row->y;
+            }
+            group->height = row->y + row->height - group->y;
+        }
+    }
+    box->table_y = table->table_y;
+    box->table_height = table->content_top - table->table_y + content + box->padding[WEBENGINE_BOTTOM] +
+        box->border[WEBENGINE_BOTTOM];
+    frame->cursor = box->table_y + box->table_height;
+}
+
+/* The next step of the table at the top of the stack. */
+static void table_step(struct layout *layout) {
+    size_t index = layout->depth - 1;
+    struct frame *frame = &layout->frames[index];
+    struct table_layout *table = &layout->tables[frame->table - 1];
+    struct webengine_table *grid = &table->grid;
+    struct webengine_box *box = frame->box;
+    switch (table->phase) {
+    case TABLE_TOP_CAPTIONS:
+        while (table->next < grid->caption_count) {
+            struct webengine_box *caption = grid->captions[table->next++];
+            if (caption->style->caption_side != CSS_CAPTION_SIDE_BOTTOM) {
+                enter_block(layout, caption);
+                return;
+            }
+        }
+        table->table_y = frame->cursor + collapse_value(&frame->own);
+        frame->own = (struct collapse){ 0, 0 };
+        table->content_top = table->table_y + box->border[WEBENGINE_TOP] + box->padding[WEBENGINE_TOP];
+        if (grid->row_count > 0) {
+            grid->rows[0].y = table->content_top + grid->spacing[1];
+        }
+        table->phase = TABLE_ROWS;
+        table->next = 0;
+        return;
+    case TABLE_ROWS:
+        if (table->row < grid->row_count) {
+            if (table->next < grid->cell_count && grid->cells[table->next].row == (int)table->row) {
+                enter_cell(layout, table->next++);
+                return;
+            }
+            finish_row(layout, table, table->row);
+            table->row++;
+            if (table->row < grid->row_count) {
+                const struct webengine_table_row *above = &grid->rows[table->row - 1];
+                grid->rows[table->row].y = above->y + above->height + grid->spacing[1];
+            }
+            return;
+        }
+        finish_grid(layout, index);
+        table->phase = TABLE_BOTTOM_CAPTIONS;
+        table->next = 0;
+        return;
+    default:
+        while (table->next < grid->caption_count) {
+            struct webengine_box *caption = grid->captions[table->next++];
+            if (caption->style->caption_side == CSS_CAPTION_SIDE_BOTTOM) {
+                enter_block(layout, caption);
+                return;
+            }
+        }
+        frame->table_done = true;
+        webengine_table_free(grid);
+        layout->table_count--;
+        return;
+    }
 }
 
 /* Forgets the line boxes of the last layout, so that moving a box that is
@@ -1090,6 +1596,10 @@ int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *
             }
             continue;
         }
+        if (frame->table != 0 && !frame->table_done) {
+            table_step(&layout);
+            continue;
+        }
         struct webengine_box *child = frame->child;
         if (child == NULL) {
             if (!frame->finished) {
@@ -1098,6 +1608,8 @@ int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *
                     finish_float(&layout);
                 } else if (frame->kind == FRAME_ABSOLUTE) {
                     finish_absolute(&layout);
+                } else if (frame->kind == FRAME_CELL) {
+                    finish_cell(&layout);
                 } else {
                     finish_block(&layout);
                 }
@@ -1127,6 +1639,10 @@ int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *
         tree->height = layout.extent > tree->height ? layout.extent : tree->height;
         layout.failed = webengine_paint_order(tree) != 0;
     }
+    for (size_t i = 0; i < layout.table_count; i++) {
+        webengine_table_free(&layout.tables[i].grid);
+    }
+    free(layout.tables);
     free(layout.frames);
     free(layout.absolutes);
     webengine_flow_free(&layout.flow);

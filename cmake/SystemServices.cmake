@@ -222,7 +222,7 @@ if(SAVANXP_HAVE_OPENSSL)
     savanxp_system_service(NAME webview LINK_PROFILE PIE DEPENDS ${SAVANXP_SUN_TOOLKIT} libssl libcrypto netsurf_css netsurf_dom
         SOURCES webview.c download.c favorites.c engine/webengine_html.c engine/webengine.c engine/webengine_select.c
                 engine/webengine_box.c engine/webengine_layout.c engine/webengine_lines.c
-                engine/webengine_paint.c
+                engine/webengine_paint.c engine/webengine_table.c
         SHARED_SOURCES system/runtime/sxnhttp_tls.c)
     add_dependencies(webview netsurf_symbols)
 endif()

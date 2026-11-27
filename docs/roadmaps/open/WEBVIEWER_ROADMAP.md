@@ -7,7 +7,8 @@
 > own. It reads HTML through libhubbub and libdom
 > ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md)) and builds its
 > boxes from the DOM using computed CSS and lays them out in the normal
-> flow, with floats, positioning and overflow. The next engine stage is E6.
+> flow, with floats, positioning, overflow and tables. E6 is under way:
+> tables are in, images are next.
 
 ## Direction
 
@@ -259,6 +260,11 @@ they add formats, replacing the `[image]` marker and taking part in layout.
 **Done when:** a table-based page with images matches its expectation, and
 images arrive over HTTP and HTTPS without blocking the window.
 
+**Tables landed 2026-11-27**: the grid, automatic column widths, rows with
+spanning cells and vertical alignment, captions, anonymous table parts and
+HTML's table attributes ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md#tables)).
+Images are next.
+
 ### E7 — scripting
 
 A JavaScript engine in C under the MIT license -- QuickJS, or the QuickJS-ng
@@ -361,7 +367,7 @@ rather than where the breaking first met them.
 
 **E4 is complete.** The details are in
 [WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md#the-box-tree) and
-[WEBVIEWER.md](../../desktop/WEBVIEWER.md#layout-and-paint-e4-e5).
+[WEBVIEWER.md](../../desktop/WEBVIEWER.md#layout-and-paint-e4-e5-e6).
 
 - **The box tree** (`webengine_box.c`): blocks, inlines, anonymous blocks,
   a block splitting an inline, white space across the inline formatting

@@ -1900,21 +1900,75 @@ static int webview_visible(const struct webengine_box_style *style)
     return style->visibility != CSS_VISIBILITY_HIDDEN && style->visibility != CSS_VISIBILITY_COLLAPSE;
 }
 
-/* A block's background, then its borders. */
+/* A cell with nothing in it, for empty-cells: hide (CSS 2.1 17.6.1.1). */
+static int webview_cell_empty(const struct webengine_box *box)
+{
+    for (const struct webengine_box *child = box->first; child != NULL; child = child->next)
+    {
+        if (child->type != WEBENGINE_BOX_BLOCK || webengine_box_floats(child) || child->first != NULL ||
+            child->line_count > 0)
+        {
+            return 0;
+        }
+    }
+    return box->line_count == 0;
+}
+
+/* A block's background, then its borders. A table paints them around its
+ * table box, not its captions; a row and a row group paint their
+ * backgrounds under each of their cells, not in the spacing between them
+ * (CSS 2.1 17.5.1), and no borders. */
 static void webview_paint_block(struct sx_painter *painter, const struct webengine_box *box, int top, int bottom)
 {
     int y = g_page_y + box->y;
+    int height = box->height;
+    uint32_t backdrop;
 
-    if (!webview_visible(box->style) || y >= bottom || y + box->height <= top)
+    if (box->table_role == WEBENGINE_TABLE_ROW || box->table_role == WEBENGINE_TABLE_ROW_GROUP ||
+        box->table_role == WEBENGINE_TABLE_HEADER_GROUP || box->table_role == WEBENGINE_TABLE_FOOTER_GROUP)
     {
         return;
     }
+    if (box->table_role == WEBENGINE_TABLE_TABLE)
+    {
+        y = g_page_y + box->table_y;
+        height = box->table_height;
+    }
+    if (!webview_visible(box->style) || y >= bottom || y + height <= top)
+    {
+        return;
+    }
+    if (box->table_role == WEBENGINE_TABLE_CELL && box->style->empty_cells == CSS_EMPTY_CELLS_HIDE &&
+        webview_cell_empty(box))
+    {
+        return;
+    }
+    backdrop = webview_backdrop(box->parent);
+    if (box->table_role == WEBENGINE_TABLE_CELL)
+    {
+        /* The row group's background, then the row's, under the cell. */
+        const struct webengine_box *row = box->parent;
+        const struct webengine_box *group = row != NULL ? row->parent : NULL;
+        const struct webengine_box *layers[2] = { group, row };
+
+        for (int i = 0; i < 2; ++i)
+        {
+            const struct webengine_box *layer = layers[i];
+
+            if (layer != NULL && layer->table_role != WEBENGINE_TABLE_TABLE && webview_visible(layer->style) &&
+                (layer->style->background >> 24) != 0)
+            {
+                sx_painter_fill_rect(painter, sx_rect_make(g_page_x + box->x, y, box->width, height),
+                    webview_color_over(layer->style->background, webview_backdrop(layer->parent)));
+            }
+        }
+    }
     if ((box->style->background >> 24) != 0 && box != g_tree->canvas_source)
     {
-        sx_painter_fill_rect(painter, sx_rect_make(g_page_x + box->x, y, box->width, box->height),
-            webview_color_over(box->style->background, webview_backdrop(box->parent)));
+        sx_painter_fill_rect(painter, sx_rect_make(g_page_x + box->x, y, box->width, height),
+            webview_color_over(box->style->background, backdrop));
     }
-    webview_paint_borders(painter, box->style, g_page_x + box->x, y, box->width, box->height, 1, 1,
+    webview_paint_borders(painter, box->style, g_page_x + box->x, y, box->width, height, 1, 1,
         webview_backdrop(box));
 }
 

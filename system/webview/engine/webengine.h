@@ -19,8 +19,10 @@
 #include <libcss/libcss.h>
 
 /* The handler libcss calls back to read and walk a libdom document. The
- * selection call supplies storage for the element's presentational hints. */
+ * selection call supplies storage for the element's presentational hints,
+ * WEBENGINE_HINTS_MAX of them. */
 extern css_select_handler webengine_select_handler;
+#define WEBENGINE_HINTS_MAX 32
 
 /* Once before anything else, and once after the last document is gone.
  * webengine_init: 0, or -1 out of memory. */

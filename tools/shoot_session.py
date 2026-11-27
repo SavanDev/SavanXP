@@ -3761,6 +3761,7 @@ def scenario_webview_http(s):
                     "the last link navigated", which="title", solid_only=True)
         webview_e3_styles(s, hostport)
         webview_e5_floats(s, hostport)
+        webview_e6_tables(s, hostport)
         check_downloads_on_disk()
     finally:
         if tls is not None:
@@ -3846,6 +3847,21 @@ def webview_e5_floats(s, hostport):
     expect_text(page, area, "a link", TEXT, (221, 221, 221), "the first line of a clipped box", solid_only=True)
     if find_text(page, area, "than fit", TEXT, (221, 221, 221), solid_only=True)[0] is not None:
         raise Failure("overflow: hidden did not clip the lines past its box")
+
+
+def webview_e6_tables(s, hostport):
+    """Tables (docs/desktop/WEBVIEWER_ENGINE.md#tables): text in cells with
+    a background of their own, in cells over a row's background, and in a
+    cell that spans both columns."""
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, "/e6-table-cells.html")
+    s.qmp.tap("ret", pause=6.0)
+    page = s.shot("webview-e6-tables")
+    area = (0, 0, *page.size)
+    expect_text(page, area, "north", TEXT, (255, 255, 204), "a cell's own background", solid_only=True)
+    expect_text(page, area, "east", TEXT, (204, 255, 204), "a row's background under its cell", solid_only=True)
+    expect_text(page, area, "wide cell", TEXT, FIELD, "a cell spanning two columns", solid_only=True)
 
 
 def wait_for_text(s, name, text, label, timeout, colour=None, background=None):

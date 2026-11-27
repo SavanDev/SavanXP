@@ -1,0 +1,35 @@
+# Text in tables (E6, docs/desktop/WEBVIEWER_ENGINE.md#tables), worked out by
+# hand with the test's fixed fonts at 300 pixels: cells aligned on their
+# first baselines across two font sizes (17 down: the 20px face's half
+# leading over its 16px ascent), a two-line cell in the middle by default,
+# align="center" on a cell, and nowrap keeping a cell's text on one line in
+# a table narrower than it would wrap to.
+viewport 300
+block html 0 0 300 72
+  block body 0 0 300 72
+    block table 0 0 48 36
+      block tbody 0 0 48 36
+        block tr 0 0 48 36
+          block td 0 0 14 36
+            line 0 4 14 18
+              text "aa" 0 5 14 16
+          block td 14 0 20 36
+            line 14 0 20 23
+              text "bb" 14 1 20 20
+          block td 34 0 14 36
+            line 34 0 14 18
+              text "cc" 34 1 14 16
+            line 34 18 14 18
+              text "dd" 34 19 14 16
+    block table 0 36 200 18
+      block tbody 0 36 200 18
+        block tr 0 36 200 18
+          block td 0 36 200 18
+            line 0 36 200 18
+              text "xx" 93 37 14 16
+    block table 0 54 100 18
+      block tbody 0 54 100 18
+        block tr 0 54 100 18
+          block td 0 54 100 18
+            line 0 54 100 18
+              text "aaaa bbbb cccc" 0 55 98 16

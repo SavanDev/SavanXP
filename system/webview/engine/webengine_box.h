@@ -73,6 +73,11 @@ struct webengine_box_style {
     /* top, right, bottom and left. For position: relative, libcss already
      * resolved them (9.4.3): top and left are the offsets. */
     struct webengine_len offset[4];
+    /* Tables (CSS 2.1 17): border-spacing across and down, in pixels,
+     * caption-side and empty-cells (CSS_CAPTION_SIDE_*, CSS_EMPTY_CELLS_*). */
+    int border_spacing[2];
+    uint8_t caption_side;
+    uint8_t empty_cells;
     struct webengine_len vertical_align_length;
     struct webengine_len line_height;
     struct webengine_len text_indent;
@@ -91,8 +96,8 @@ struct webengine_box_style {
 };
 
 enum webengine_box_type {
-    /* Block-level: an element's block, list item or table part (tables
-     * stack until E6), or an anonymous block around inline content. A
+    /* Block-level: an element's block, list item or table part (its
+     * `table_role`), or an anonymous block around inline content. A
      * float or an absolutely positioned box is a block too, out of the
      * flow: it stays where it appears, among inline content when that is
      * where it is (CSS 2.1 9.5, 9.6). */
@@ -106,6 +111,25 @@ enum webengine_box_type {
     /* A list item's marker: in the item's inline content when
      * list-style-position is inside, otherwise its `marker`. */
     WEBENGINE_BOX_MARKER,
+};
+
+/* What a block is in a table (CSS 2.1 17.2), from its display or, for an
+ * anonymous box, from what it wraps. */
+enum webengine_table_role {
+    WEBENGINE_TABLE_NONE,
+    /* The table wrapper box and the table box in one: x, y, width and
+     * height are the wrapper's, captions included; table_y and
+     * table_height are the table box's. */
+    WEBENGINE_TABLE_TABLE,
+    WEBENGINE_TABLE_CAPTION,
+    WEBENGINE_TABLE_ROW_GROUP,
+    WEBENGINE_TABLE_HEADER_GROUP,
+    WEBENGINE_TABLE_FOOTER_GROUP,
+    WEBENGINE_TABLE_ROW,
+    WEBENGINE_TABLE_CELL,
+    /* A column or a column group: no boxes inside, only widths. */
+    WEBENGINE_TABLE_COLUMN,
+    WEBENGINE_TABLE_COLUMN_GROUP,
 };
 
 /* A clip rectangle in canvas pixels, when `on`. */
@@ -143,6 +167,12 @@ struct webengine_box {
     bool last_piece;
     /* BLOCK of a list item with an outside marker. */
     struct webengine_box *marker;
+    /* BLOCK: its role in a table, and for a cell the columns and rows it
+     * spans (colspan, rowspan; 0 rows is to the end of its row group), for a
+     * column its span. */
+    uint8_t table_role;
+    int col_span;
+    int row_span;
 
     /* Set by webengine_layout. BLOCK: the border box in canvas pixels and
      * the used widths of its edges. */
@@ -161,6 +191,10 @@ struct webengine_box {
      * 10.3.5): its content's minimum and preferred widths. */
     int min_content;
     int max_content;
+    /* TABLE: the table box's top border edge and height, below its top
+     * captions and above its bottom ones. */
+    int table_y;
+    int table_height;
     /* An absolutely positioned BLOCK: the box whose padding box is its
      * containing block, NULL for the viewport. */
     const struct webengine_box *containing;
@@ -194,6 +228,8 @@ struct webengine_line {
     int y;
     int width;
     int height;
+    /* The block's own baseline on the line. */
+    int baseline;
     size_t first_fragment;
     size_t fragment_count;
 };
@@ -305,7 +341,9 @@ int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *
 /* The tree as text, a line per box, indented two spaces a level, for the
  * tests: "block p", "anonymous", "inline b", "text \"...\"", "break",
  * "marker 1", with "float left" or "float right" after a float's name and
- * "relative", "absolute" or "fixed" after a positioned box's.
+ * "relative", "absolute" or "fixed" after a positioned box's. An anonymous
+ * table part names its role: "anonymous table", "anonymous row",
+ * "anonymous cell".
  * Once laid out, a block's line ends with its border box, "x y width
  * height", and a block with inline content lists its line boxes and their
  * fragments in place of its children, then the floats among them, a level

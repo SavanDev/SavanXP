@@ -620,8 +620,8 @@ static int build_line(struct webengine_flow *flow, struct webengine_box *block, 
         return 0;
     }
     tree->lines[tree->line_count++] = (struct webengine_line){
-        .x = x, .y = y, .width = width, .height = height, .first_fragment = first_fragment,
-        .fragment_count = tree->fragment_count - first_fragment };
+        .x = x, .y = y, .width = width, .height = height, .baseline = flow->placed[0].baseline,
+        .first_fragment = first_fragment, .fragment_count = tree->fragment_count - first_fragment };
     return height;
 }
 

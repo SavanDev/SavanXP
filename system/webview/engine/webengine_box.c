@@ -17,11 +17,14 @@ const char webengine_ua_css[] =
     " header, hgroup, main, nav, section, summary {display:block}"
     "head, script, style, title, link, meta, base, template, noscript {display:none}"
     "li {display:list-item}"
-    "table {display:table} tr {display:table-row} thead {display:table-header-group}"
+    "table {display:table; border-spacing:2px; border-collapse:separate; text-indent:0}"
+    "tr {display:table-row} thead {display:table-header-group}"
     "tbody {display:table-row-group} tfoot {display:table-footer-group}"
     "col {display:table-column} colgroup {display:table-column-group}"
     "td, th {display:table-cell} caption {display:table-caption; text-align:center}"
-    "th {font-weight:bolder; text-align:center} td, th {padding:1px}"
+    "thead, tbody, tfoot, tr {vertical-align:middle; border-color:inherit}"
+    "table, td, th {border-color:gray}"
+    "th {font-weight:bolder; text-align:center} td, th {padding:1px; vertical-align:inherit}"
     "body {margin:8px}"
     "h1 {font-size:2em; margin:0.67em 0} h2 {font-size:1.5em; margin:0.83em 0}"
     "h3 {font-size:1.17em; margin:1em 0} h4 {margin:1.33em 0}"
@@ -37,7 +40,7 @@ const char webengine_ua_css[] =
     "pre, listing, xmp, plaintext {white-space:pre}"
     "big {font-size:1.17em} small, sub, sup {font-size:0.83em}"
     "sub {vertical-align:sub} sup {vertical-align:super}"
-    "center {text-align:center}"
+    "center {text-align:-libcss-center}"
     "u, ins {text-decoration:underline} s, strike, del {text-decoration:line-through}"
     "hr {color:gray; border-style:inset; border-width:1px; margin:0.5em auto}"
     "a:link {color:blue; text-decoration:underline}";
@@ -335,6 +338,18 @@ static const struct webengine_box_style *element_style(struct builder *b, const 
     box->z_auto = css_computed_z_index(style, &z_index) != CSS_Z_INDEX_SET;
     box->z_index = box->z_auto ? 0 : z_index;
     offset_lengths(style, units, box);
+    css_fixed across = 0;
+    css_fixed down = 0;
+    css_unit across_unit = CSS_UNIT_PX;
+    css_unit down_unit = CSS_UNIT_PX;
+    (void)css_computed_border_spacing(style, &across, &across_unit, &down, &down_unit);
+    box->border_spacing[0] = fixed_round(css_unit_len2css_px(style, units, across, across_unit));
+    box->border_spacing[1] = fixed_round(css_unit_len2css_px(style, units, down, down_unit));
+    for (int i = 0; i < 2; i++) {
+        box->border_spacing[i] = box->border_spacing[i] > 0 ? box->border_spacing[i] : 0;
+    }
+    box->caption_side = css_computed_caption_side(style);
+    box->empty_cells = css_computed_empty_cells(style);
     box->vertical_align = css_computed_vertical_align(style, &value, &unit);
     box->vertical_align_length = box->vertical_align == CSS_VERTICAL_ALIGN_SET
         ? length(style, units, value, unit) : (struct webengine_len){ WEBENGINE_LEN_PX, 0 };
@@ -380,6 +395,10 @@ static const struct webengine_box_style *anonymous_style(struct builder *b,
     box->visibility = parent->visibility;
     box->line_height = parent->line_height;
     box->text_indent = parent->text_indent;
+    box->border_spacing[0] = parent->border_spacing[0];
+    box->border_spacing[1] = parent->border_spacing[1];
+    box->caption_side = parent->caption_side;
+    box->empty_cells = parent->empty_cells;
     box->box_sizing = CSS_BOX_SIZING_CONTENT_BOX;
     box->overflow = CSS_OVERFLOW_VISIBLE;
     box->float_side = CSS_FLOAT_NONE;
@@ -425,10 +444,87 @@ static void wrap_inline_content(struct builder *b, struct webengine_box *block) 
     append(block, anonymous);
 }
 
+/* --- Table parts (CSS 2.1 17.2.1) ---------------------------------------------------- */
+
+static bool table_internal(uint8_t role) {
+    return role != WEBENGINE_TABLE_NONE && role != WEBENGINE_TABLE_TABLE;
+}
+
+/* The anonymous table part that has to go between `parent` and a child box
+ * of `role`, or NONE when the child fits as it is. What is in a column is
+ * never laid out, so anything fits there. */
+static uint8_t missing_part(const struct webengine_box *parent, uint8_t role) {
+    switch (parent->table_role) {
+    case WEBENGINE_TABLE_TABLE:
+        return role == WEBENGINE_TABLE_CAPTION || role == WEBENGINE_TABLE_ROW_GROUP ||
+                role == WEBENGINE_TABLE_HEADER_GROUP || role == WEBENGINE_TABLE_FOOTER_GROUP ||
+                role == WEBENGINE_TABLE_ROW || role == WEBENGINE_TABLE_COLUMN ||
+                role == WEBENGINE_TABLE_COLUMN_GROUP
+            ? WEBENGINE_TABLE_NONE : WEBENGINE_TABLE_ROW;
+    case WEBENGINE_TABLE_ROW_GROUP:
+    case WEBENGINE_TABLE_HEADER_GROUP:
+    case WEBENGINE_TABLE_FOOTER_GROUP:
+        return role == WEBENGINE_TABLE_ROW ? WEBENGINE_TABLE_NONE : WEBENGINE_TABLE_ROW;
+    case WEBENGINE_TABLE_ROW:
+        return role == WEBENGINE_TABLE_CELL ? WEBENGINE_TABLE_NONE : WEBENGINE_TABLE_CELL;
+    case WEBENGINE_TABLE_COLUMN:
+    case WEBENGINE_TABLE_COLUMN_GROUP:
+        return WEBENGINE_TABLE_NONE;
+    default:
+        return table_internal(role) ? WEBENGINE_TABLE_TABLE : WEBENGINE_TABLE_NONE;
+    }
+}
+
+/* The box a child of `role` goes into inside `parent`: `parent`, or the
+ * anonymous table, row or cell that wraps it, the last one when the child
+ * follows it (17.2.1, rule 3). */
+static struct webengine_box *table_part(struct builder *b, struct webengine_box *parent, uint8_t role) {
+    uint8_t part;
+    while (parent != NULL && (part = missing_part(parent, role)) != WEBENGINE_TABLE_NONE) {
+        struct webengine_box *last = parent->last;
+        if (last != NULL && last->type == WEBENGINE_BOX_BLOCK && last->tag[0] == '\0' && last->table_role == part) {
+            parent = last;
+            continue;
+        }
+        struct webengine_box *anonymous = new_box(b, WEBENGINE_BOX_BLOCK, anonymous_style(b, parent->style), "");
+        if (anonymous == NULL) {
+            return NULL;
+        }
+        anonymous->table_role = part;
+        anonymous->col_span = 1;
+        anonymous->row_span = 1;
+        append(parent, anonymous);
+        parent = anonymous;
+    }
+    return parent;
+}
+
+/* White space directly in a table, a row group, a row or a column is not
+ * content (17.2.1, rule 1). */
+static bool table_space(const struct webengine_box *box, const char *text, size_t length) {
+    uint8_t role = box->type == WEBENGINE_BOX_BLOCK ? box->table_role : WEBENGINE_TABLE_NONE;
+    if (role == WEBENGINE_TABLE_NONE || role == WEBENGINE_TABLE_CELL || role == WEBENGINE_TABLE_CAPTION) {
+        return false;
+    }
+    for (size_t i = 0; i < length; i++) {
+        if (text[i] != ' ' && text[i] != '\t' && text[i] != '\n' && text[i] != '\r' && text[i] != '\f') {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Where inline content of `box` goes: `box` itself when it is an inline or
  * a block holding inline content, else the anonymous block after its last
- * child block. White space was already reset where that block ended. */
+ * child block, or in a table part the anonymous cell. White space was
+ * already reset where that block ended. */
 static struct webengine_box *inline_container(struct builder *b, struct webengine_box *box) {
+    if (box->type == WEBENGINE_BOX_BLOCK && missing_part(box, WEBENGINE_TABLE_NONE) != WEBENGINE_TABLE_NONE) {
+        box = table_part(b, box, WEBENGINE_TABLE_NONE);
+        if (box == NULL) {
+            return NULL;
+        }
+    }
     if (box->type != WEBENGINE_BOX_BLOCK || box->inline_content) {
         return box;
     }
@@ -436,7 +532,8 @@ static struct webengine_box *inline_container(struct builder *b, struct webengin
         box->inline_content = true;
         return box;
     }
-    if (box->last->type == WEBENGINE_BOX_BLOCK && box->last->tag[0] == '\0' && box->last->inline_content) {
+    if (box->last->type == WEBENGINE_BOX_BLOCK && box->last->tag[0] == '\0' && box->last->inline_content &&
+        box->last->table_role == WEBENGINE_TABLE_NONE) {
         return box->last;
     }
     struct webengine_box *anonymous = new_box(b, WEBENGINE_BOX_BLOCK, anonymous_style(b, box->style), "");
@@ -611,6 +708,9 @@ static void add_text_box(struct builder *b, const char *text, size_t length, boo
 }
 
 static void add_text(struct builder *b, const char *text, size_t length) {
+    if (table_space(b->stack[b->depth - 1].box, text, length)) {
+        return;
+    }
     size_t used = process_white_space(b, b->stack[b->depth - 1].box_style->white_space, text, length);
     if (used > 0) {
         add_text_box(b, b->text, used, false);
@@ -726,6 +826,32 @@ static void lower_name(dom_node *node, char *name, size_t capacity) {
     dom_string_unref(value);
 }
 
+static uint8_t table_role(uint8_t display) {
+    switch (display) {
+    case CSS_DISPLAY_TABLE:
+    case CSS_DISPLAY_INLINE_TABLE:
+        return WEBENGINE_TABLE_TABLE;
+    case CSS_DISPLAY_TABLE_CAPTION:
+        return WEBENGINE_TABLE_CAPTION;
+    case CSS_DISPLAY_TABLE_ROW_GROUP:
+        return WEBENGINE_TABLE_ROW_GROUP;
+    case CSS_DISPLAY_TABLE_HEADER_GROUP:
+        return WEBENGINE_TABLE_HEADER_GROUP;
+    case CSS_DISPLAY_TABLE_FOOTER_GROUP:
+        return WEBENGINE_TABLE_FOOTER_GROUP;
+    case CSS_DISPLAY_TABLE_ROW:
+        return WEBENGINE_TABLE_ROW;
+    case CSS_DISPLAY_TABLE_CELL:
+        return WEBENGINE_TABLE_CELL;
+    case CSS_DISPLAY_TABLE_COLUMN:
+        return WEBENGINE_TABLE_COLUMN;
+    case CSS_DISPLAY_TABLE_COLUMN_GROUP:
+        return WEBENGINE_TABLE_COLUMN_GROUP;
+    default:
+        return WEBENGINE_TABLE_NONE;
+    }
+}
+
 /* Makes the element's boxes. True when its children are to be walked. */
 static bool enter_element(struct builder *b, struct frame *frame) {
     char name[12];
@@ -779,9 +905,10 @@ static bool enter_element(struct builder *b, struct frame *frame) {
         b->space = false;
         return false;
     }
+    /* inline-table is laid out as a table at block level, until inline
+     * blocks have formatting contexts of their own. */
     bool block = display != CSS_DISPLAY_INLINE && display != CSS_DISPLAY_INLINE_BLOCK &&
-        display != CSS_DISPLAY_INLINE_TABLE && display != CSS_DISPLAY_INLINE_FLEX &&
-        display != CSS_DISPLAY_INLINE_GRID;
+        display != CSS_DISPLAY_INLINE_FLEX && display != CSS_DISPLAY_INLINE_GRID;
     if (!block) {
         struct webengine_box *box = new_box(b, WEBENGINE_BOX_INLINE, frame->box_style, name);
         if (box != NULL) {
@@ -797,6 +924,19 @@ static bool enter_element(struct builder *b, struct frame *frame) {
     struct webengine_box *box = new_box(b, WEBENGINE_BOX_BLOCK, frame->box_style, name);
     if (box == NULL) {
         return false;
+    }
+    box->table_role = table_role(display);
+    if (box->table_role == WEBENGINE_TABLE_CELL) {
+        box->col_span = 1;
+        box->row_span = 1;
+        (void)integer_attribute(frame->node, "colspan", &box->col_span);
+        (void)integer_attribute(frame->node, "rowspan", &box->row_span);
+        box->col_span = box->col_span < 1 ? 1 : box->col_span > 1000 ? 1000 : box->col_span;
+        box->row_span = box->row_span < 0 ? 1 : box->row_span > 65534 ? 65534 : box->row_span;
+    } else if (box->table_role == WEBENGINE_TABLE_COLUMN || box->table_role == WEBENGINE_TABLE_COLUMN_GROUP) {
+        box->col_span = 1;
+        (void)integer_attribute(frame->node, "span", &box->col_span);
+        box->col_span = box->col_span < 1 ? 1 : box->col_span > 1000 ? 1000 : box->col_span;
     }
     if (frame->box_style->float_side == CSS_FLOAT_LEFT || frame->box_style->float_side == CSS_FLOAT_RIGHT ||
         frame->box_style->position == CSS_POSITION_ABSOLUTE || frame->box_style->position == CSS_POSITION_FIXED) {
@@ -820,8 +960,13 @@ static bool enter_element(struct builder *b, struct frame *frame) {
         b->column = 0;
     } else {
         b->depth--;
-        struct webengine_box *container = block_target(b);
+        struct webengine_box *container = table_part(b, block_target(b), box->table_role);
         b->depth++;
+        if (container == NULL) {
+            free(box);
+            b->failed = true;
+            return false;
+        }
         append(container, box);
     }
     frame->box = box;
@@ -1103,8 +1248,11 @@ static void dump_box(const struct webengine_box *box, unsigned depth, bool laid_
         const char *position = !webengine_box_positioned(box) ? ""
             : box->style->position == CSS_POSITION_RELATIVE ? " relative"
             : box->style->position == CSS_POSITION_ABSOLUTE ? " absolute" : " fixed";
+        static const char *const k_roles[] = { "", " table", " caption", " row group", " header group",
+                                               " footer group", " row", " cell", " column", " column group" };
         int used = box->tag[0] == '\0'
-            ? snprintf(out + indent, sizeof(out) - indent, "anonymous")
+            ? snprintf(out + indent, sizeof(out) - indent, "anonymous%s",
+                       box->table_role < sizeof(k_roles) / sizeof(k_roles[0]) ? k_roles[box->table_role] : "")
             : snprintf(out + indent, sizeof(out) - indent, "block %s%s%s", box->tag, side, position);
         if (laid_out && used > 0) {
             snprintf(out + indent + used, sizeof(out) - indent - (size_t)used, " %d %d %d %d",

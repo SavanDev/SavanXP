@@ -292,7 +292,7 @@ css_computed_style *webengine_style_element(struct webengine_styles *styles, dom
     }
     dom_string_unref(value);
 
-    css_hint hints[2];
+    css_hint hints[WEBENGINE_HINTS_MAX];
     css_select_results *results = NULL;
     css_error error = css_select_style(styles->select, element, styles->units, &media,
         inline_sheet != NULL ? inline_sheet : styles->empty_inline,

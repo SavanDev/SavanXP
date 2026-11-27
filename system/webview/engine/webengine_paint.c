@@ -106,6 +106,15 @@ static void set_clips(struct webengine_box *root) {
 
 static void emit(struct order *order, uint8_t kind, const struct webengine_box *box) {
     struct webengine_tree *tree = order->tree;
+    /* Columns paint nothing of their own, and what is in them is not laid
+     * out. */
+    const struct webengine_box *column = box;
+    for (int level = 0; level < 2 && column != NULL; level++, column = column->parent) {
+        if (column->type == WEBENGINE_BOX_BLOCK && (column->table_role == WEBENGINE_TABLE_COLUMN ||
+                                                    column->table_role == WEBENGINE_TABLE_COLUMN_GROUP)) {
+            return;
+        }
+    }
     if (tree->paint_count == tree->paint_capacity) {
         size_t capacity = tree->paint_capacity == 0 ? 64 : tree->paint_capacity * 2;
         struct webengine_paint *paint = realloc(tree->paint, capacity * sizeof(*paint));

@@ -154,8 +154,17 @@ library, so the same source builds into SUN programs and the host test.
   The engine has no history, pointer or focus yet.
 - **User-agent defaults:** black text, sans-serif, no quotes.
 
-The handler supplies legacy HTML color hints for the body, links and
-`<font>` at the presentational-hint cascade level. The linked-sheet loader
+The handler supplies HTML's presentational hints at their cascade level,
+below every author rule: the colors of the body, links and `<font>`;
+`align=""` on `div`, `caption`, paragraphs and headings (libcss'
+`-libcss-` values on blocks, which align the blocks inside too); and the
+table attributes: on `table`, `width`, `height`, `bgcolor`, `cellspacing`
+(`border-spacing`), `border` (an outset border, and a 1px inset one on its
+cells) and `align` (`left` and `right` float it, `center` gives it auto
+margins); on rows, row groups and cells, `bgcolor`, `align` and `valign`,
+and `height` on rows; on cells, `width`, `height`, `nowrap` and their
+table's `cellpadding`; on `col` and `colgroup`, `width`. Up to
+`WEBENGINE_HINTS_MAX` hints apply to one element. The linked-sheet loader
 and the UA stylesheet live in Web Viewer. Interactive selector state and
 quirks mode remain deferred.
 
@@ -168,15 +177,23 @@ CSS 2.1 chapters 9, 12 and 16, not from NetSurf's box construction (the
 clean-room rule). `webengine_tree_build` walks the DOM, styles each element
 with `webengine_style_element` and makes:
 
-- **Block boxes** for `block`, `list-item`, the table displays (tables
-  stack until E6), `flex`, `grid` and `run-in`. libcss' `css_computed_display`
+- **Block boxes** for `block`, `list-item`, the table displays, `flex`,
+  `grid` and `run-in`. A table part carries its role (`table_role`): table,
+  caption, row group (header and footer groups apart), row, cell, column
+  or column group, and a cell its `colspan` and `rowspan`. libcss' `css_computed_display`
   already turns floated and absolutely positioned elements into blocks. A
   float or an absolute box stays where it is: among inline content it is a
   block child of the inline content's container, splitting nothing, and
   white space collapses across it as if it were not there. The root is a
   block whatever its display.
 - **Inline boxes** for `inline` and, until they get layouts of their own,
-  `inline-block`, `inline-table`, `inline-flex` and `inline-grid`.
+  `inline-block`, `inline-flex` and `inline-grid`. `inline-table` makes a
+  table at block level.
+- **Anonymous table parts** (17.2.1). A cell outside a row gets an
+  anonymous row, a row outside a table or row group an anonymous table,
+  and content that is not a table part inside a table, row group or row an
+  anonymous cell (and row); consecutive boxes share the anonymous part.
+  White space directly in a table, row group, row or column is dropped.
 - **Anonymous blocks** (9.2.1.1). A block whose children mix blocks and
   inline content wraps each run of the inline content in one. A block
   inside an inline splits it: the inline's boxes up to the block end, and
@@ -417,6 +434,63 @@ there are no scroll bars inside a page.
 margin collapsing with its child's included, and the clips of nested,
 escaping and trapped boxes and of line boxes through the painting order.
 
+## Tables
+
+E6 ([roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md#e6--tables-and-images))
+adds CSS 2.1 17's tables in the separated borders model, with automatic
+table layout (`webengine_table.c` for the grid and the columns, the walk in
+`webengine_layout.c`).
+
+- **The grid** (17.5, HTML's table model). Captions are set apart; the
+  first header group goes first and the first footer group last, other
+  groups and the rows directly in the table in between. Cells take the
+  next slot a cell from above does not take; a `rowspan` stops at the end
+  of its row group, and 0 means that end. Columns come from the cells and
+  from `col` and `colgroup`, whose widths they keep.
+- **Column widths** (17.5.2.2). Each cell's minimum and preferred widths
+  come from the same walk as shrink-to-fit floats', plus its borders and
+  padding; a cell's `width` is its column's, as pixels or a percentage. A
+  cell spanning columns grows them to its minimum, first up to their
+  preferred widths, then the rest to the columns without a width, in
+  proportion to their preferred widths. A table's width counts its borders
+  and padding, as browsers have it: a `width` is the border box, never
+  narrower than the columns' minimum or a caption's; `auto` takes the room
+  up to the preferred width. The columns then start at their minimum and
+  grow: percentage columns to their share of the room inside the spacing,
+  columns with a width to it, the others to their preferred width, each
+  step as far as the room goes, in proportion to what each still wants.
+  What is left goes to the columns without a width by their preferred
+  widths, else to those in pixels.
+- **Rows.** A cell is a block formatting context its columns wide, laid out
+  at its row's top; a cell's `height` is a minimum. A row is as tall as
+  its tallest cell that does not span, after the cells aligned on the
+  baseline move down to the lowest first baseline among them (a cell
+  without a line box has the bottom of its content box as its baseline). A
+  cell spanning rows grows them in proportion to their heights when it is
+  taller than they are, and so does a table `height` taller than its rows.
+  Then each cell takes its rows' height, its content at the top, the
+  middle or the bottom (`vertical-align`); `middle` is the HTML default.
+- **Boxes.** The table box is the wrapper too: its `x`, `y`, `width` and
+  `height` take in its captions, above or below by `caption-side`, as
+  Chromium's `getBoundingClientRect` does, and `table_y` and `table_height`
+  are the table box inside, where its borders go. Rows and row groups span
+  the columns, not the spacing around them. A table is a block formatting
+  context root next to floats, keeping its width; auto margins centre it
+  in the room the floats leave, as they do in Chromium.
+
+Not done: `border-collapse: collapse` (laid out as `separate`), `table-layout:
+fixed` (laid out as `auto`), `visibility: collapse` on rows and columns,
+column and column group backgrounds, and a percentage column making the
+table wider than its other columns' preferred widths.
+
+`e6-tables` checks block geometry at 800 by 600, box for box against
+Chromium: borders, padding, spacing and both captions, `width=""` shared
+out, cells spanning rows and columns, vertical alignment in a table with a
+height, header and footer groups, a table in a cell, `align` and
+`<center>`, a percentage column, and anonymous table parts. `e6-table-text`
+is worked out by hand: baselines across font sizes, the middle default,
+`align` and `nowrap`.
+
 ## Painting order
 
 Layout ends with `webengine_tree.paint` (`webengine_paint.c`), the order of
@@ -454,7 +528,9 @@ and hit tests links on it backwards, topmost first.
 - **Floats inside floats.** Each float with an `auto` width walks its content
   for its widths, and each one placed moves its content. Floats nested `n`
   deep therefore cost `n²`: 3000 of them nested take about a second on the
-  host under AddressSanitizer.
+  host under AddressSanitizer. Tables nested `n` deep cost the same way,
+  each one walking its content for its columns: 300 of them take 0.2 s
+  there, and a table of 3000 rows 0.6 s.
 
 ## Tests
 

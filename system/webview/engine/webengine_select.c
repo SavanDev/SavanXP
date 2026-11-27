@@ -603,26 +603,277 @@ static bool color_hint(dom_node *node, const char *name, uint32_t property, css_
     return found;
 }
 
+/* The hints of one element, at most WEBENGINE_HINTS_MAX. */
+struct hints {
+    css_hint *values;
+    uint32_t count;
+};
+
+static void add_hint(struct hints *hints, css_hint hint) {
+    if (hints->count < WEBENGINE_HINTS_MAX) {
+        hints->values[hints->count++] = hint;
+    }
+}
+
+static void add_color(struct hints *hints, dom_node *node, const char *name, uint32_t property) {
+    css_hint hint;
+    if (hints->count < WEBENGINE_HINTS_MAX && color_hint(node, name, property, &hint)) {
+        add_hint(hints, hint);
+    }
+}
+
+/* HTML's rules for parsing dimension values: digits, an optional fraction,
+ * then `%` for a percentage. Pixels otherwise; `zero` says whether 0 is a
+ * value (it is not for width and height). */
+static bool dimension(dom_node *node, const char *name, bool zero, css_hint_length *out) {
+    dom_string *value = attribute(node, name, strlen(name));
+    if (value == NULL) {
+        return false;
+    }
+    const char *text = dom_string_data(value);
+    const char *end = text + dom_string_byte_length(value);
+    while (text < end && is_space(*text)) {
+        text++;
+    }
+    int64_t whole = 0;
+    int64_t fraction = 0;
+    int64_t scale = 1;
+    bool digits = false;
+    while (text < end && *text >= '0' && *text <= '9') {
+        whole = whole < 1000000 ? whole * 10 + (*text - '0') : whole;
+        digits = true;
+        text++;
+    }
+    if (text < end && *text == '.') {
+        text++;
+        while (text < end && *text >= '0' && *text <= '9') {
+            if (scale < 10000) {
+                fraction = fraction * 10 + (*text - '0');
+                scale *= 10;
+            }
+            digits = true;
+            text++;
+        }
+    }
+    bool percent = text < end && *text == '%';
+    dom_string_unref(value);
+    if (!digits || (!zero && whole == 0 && fraction == 0)) {
+        return false;
+    }
+    out->value = (css_fixed)(whole * (1 << CSS_RADIX_POINT) + fraction * (1 << CSS_RADIX_POINT) / scale);
+    out->unit = percent ? CSS_UNIT_PCT : CSS_UNIT_PX;
+    return true;
+}
+
+/* A non-negative integer attribute, or -1 when absent or not a number. An
+ * attribute that is there and empty counts as `empty`. */
+static int integer(dom_node *node, const char *name, int empty) {
+    dom_string *value = attribute(node, name, strlen(name));
+    if (value == NULL) {
+        return -1;
+    }
+    const char *text = dom_string_data(value);
+    const char *end = text + dom_string_byte_length(value);
+    while (text < end && is_space(*text)) {
+        text++;
+    }
+    int result = text == end ? empty : -1;
+    if (text < end && *text >= '0' && *text <= '9') {
+        result = 0;
+        while (text < end && *text >= '0' && *text <= '9') {
+            result = result < 100000 ? result * 10 + (*text - '0') : result;
+            text++;
+        }
+    }
+    dom_string_unref(value);
+    return result;
+}
+
+static bool attribute_is(dom_node *node, const char *name, const char *wanted) {
+    dom_string *value = attribute(node, name, strlen(name));
+    if (value == NULL) {
+        return false;
+    }
+    size_t length = strlen(wanted);
+    bool match = dom_string_byte_length(value) == length &&
+        bytes_equal(dom_string_data(value), wanted, length, true);
+    dom_string_unref(value);
+    return match;
+}
+
+static void add_length(struct hints *hints, uint32_t property, uint8_t status, css_hint_length length) {
+    add_hint(hints, (css_hint){ .prop = property, .status = status, .data.length = length });
+}
+
+static void add_size(struct hints *hints, dom_node *node) {
+    css_hint_length length;
+    if (dimension(node, "width", false, &length)) {
+        add_length(hints, CSS_PROP_WIDTH, CSS_WIDTH_SET, length);
+    }
+    if (dimension(node, "height", false, &length)) {
+        add_length(hints, CSS_PROP_HEIGHT, CSS_HEIGHT_SET, length);
+    }
+}
+
+/* Four sides of a border, `width` pixels in `style`. */
+static void add_border(struct hints *hints, int width, uint8_t style) {
+    for (uint32_t side = 0; side < 4; side++) {
+        add_length(hints, CSS_PROP_BORDER_TOP_WIDTH + side, CSS_BORDER_WIDTH_WIDTH,
+                   (css_hint_length){ INTTOFIX(width), CSS_UNIT_PX });
+        add_hint(hints, (css_hint){ .prop = CSS_PROP_BORDER_TOP_STYLE + side, .status = style });
+    }
+}
+
+/* align="" as text-align. On a block that holds blocks it also aligns them
+ * (HTML's rendering section): libcss' -libcss- values. */
+static void add_align(struct hints *hints, dom_node *node, bool blocks) {
+    static const struct {
+        const char *name;
+        uint8_t text;
+        uint8_t block;
+    } k_aligns[] = {
+        { "left", CSS_TEXT_ALIGN_LEFT, CSS_TEXT_ALIGN_LIBCSS_LEFT },
+        { "right", CSS_TEXT_ALIGN_RIGHT, CSS_TEXT_ALIGN_LIBCSS_RIGHT },
+        { "center", CSS_TEXT_ALIGN_CENTER, CSS_TEXT_ALIGN_LIBCSS_CENTER },
+        { "middle", CSS_TEXT_ALIGN_CENTER, CSS_TEXT_ALIGN_LIBCSS_CENTER },
+        { "justify", CSS_TEXT_ALIGN_JUSTIFY, CSS_TEXT_ALIGN_JUSTIFY },
+    };
+    for (size_t i = 0; i < sizeof(k_aligns) / sizeof(k_aligns[0]); i++) {
+        if (attribute_is(node, "align", k_aligns[i].name)) {
+            add_hint(hints, (css_hint){ .prop = CSS_PROP_TEXT_ALIGN,
+                                        .status = blocks ? k_aligns[i].block : k_aligns[i].text });
+            return;
+        }
+    }
+}
+
+static void add_valign(struct hints *hints, dom_node *node) {
+    static const struct {
+        const char *name;
+        uint8_t value;
+    } k_valigns[] = {
+        { "top", CSS_VERTICAL_ALIGN_TOP },
+        { "middle", CSS_VERTICAL_ALIGN_MIDDLE },
+        { "center", CSS_VERTICAL_ALIGN_MIDDLE },
+        { "bottom", CSS_VERTICAL_ALIGN_BOTTOM },
+        { "baseline", CSS_VERTICAL_ALIGN_BASELINE },
+    };
+    for (size_t i = 0; i < sizeof(k_valigns) / sizeof(k_valigns[0]); i++) {
+        if (attribute_is(node, "valign", k_valigns[i].name)) {
+            add_hint(hints, (css_hint){ .prop = CSS_PROP_VERTICAL_ALIGN, .status = k_valigns[i].value,
+                                        .data.length = { 0, CSS_UNIT_PX } });
+            return;
+        }
+    }
+}
+
+/* The table a cell, row or row group is in. */
+static dom_node *table_of(dom_node *node) {
+    for (dom_node *parent = element_parent(node); parent != NULL; parent = element_parent(parent)) {
+        if (has_name_text(parent, "table")) {
+            return parent;
+        }
+    }
+    return NULL;
+}
+
+/* HTML's rendering section for tables: the attributes of table, its rows
+ * and its cells, mapped as browsers map them. */
+static void table_hints(struct hints *hints, dom_node *node) {
+    if (has_name_text(node, "table")) {
+        add_size(hints, node);
+        add_color(hints, node, "bgcolor", CSS_PROP_BACKGROUND_COLOR);
+        css_hint_length spacing;
+        if (dimension(node, "cellspacing", true, &spacing) && spacing.unit == CSS_UNIT_PX) {
+            add_hint(hints, (css_hint){ .prop = CSS_PROP_BORDER_SPACING, .status = CSS_BORDER_SPACING_SET,
+                                        .data.position = { spacing, spacing } });
+        }
+        int border = integer(node, "border", 1);
+        if (border > 0) {
+            add_border(hints, border, CSS_BORDER_STYLE_OUTSET);
+        }
+        if (attribute_is(node, "align", "left") || attribute_is(node, "align", "right")) {
+            add_hint(hints, (css_hint){ .prop = CSS_PROP_FLOAT, .status = attribute_is(node, "align", "left")
+                                        ? CSS_FLOAT_LEFT : CSS_FLOAT_RIGHT });
+        } else if (attribute_is(node, "align", "center")) {
+            add_hint(hints, (css_hint){ .prop = CSS_PROP_MARGIN_LEFT, .status = CSS_MARGIN_AUTO });
+            add_hint(hints, (css_hint){ .prop = CSS_PROP_MARGIN_RIGHT, .status = CSS_MARGIN_AUTO });
+        }
+        return;
+    }
+    if (has_name_text(node, "col") || has_name_text(node, "colgroup")) {
+        css_hint_length width;
+        if (dimension(node, "width", false, &width)) {
+            add_length(hints, CSS_PROP_WIDTH, CSS_WIDTH_SET, width);
+        }
+        return;
+    }
+    bool cell = has_name_text(node, "td") || has_name_text(node, "th");
+    bool row = has_name_text(node, "tr");
+    bool group = has_name_text(node, "thead") || has_name_text(node, "tbody") || has_name_text(node, "tfoot");
+    if (!cell && !row && !group) {
+        return;
+    }
+    add_color(hints, node, "bgcolor", CSS_PROP_BACKGROUND_COLOR);
+    add_align(hints, node, true);
+    add_valign(hints, node);
+    if (row) {
+        css_hint_length height;
+        if (dimension(node, "height", false, &height)) {
+            add_length(hints, CSS_PROP_HEIGHT, CSS_HEIGHT_SET, height);
+        }
+    }
+    if (!cell) {
+        return;
+    }
+    add_size(hints, node);
+    if (has_attribute_text(node, "nowrap")) {
+        add_hint(hints, (css_hint){ .prop = CSS_PROP_WHITE_SPACE, .status = CSS_WHITE_SPACE_NOWRAP });
+    }
+    dom_node *table = table_of(node);
+    if (table == NULL) {
+        return;
+    }
+    css_hint_length padding;
+    if (dimension(table, "cellpadding", true, &padding) && padding.unit == CSS_UNIT_PX) {
+        for (uint32_t side = 0; side < 4; side++) {
+            add_length(hints, CSS_PROP_PADDING_TOP + side, CSS_PADDING_SET, padding);
+        }
+    }
+    if (integer(table, "border", 1) > 0) {
+        add_border(hints, 1, CSS_BORDER_STYLE_INSET);
+    }
+}
+
 static css_error node_presentational_hint(void *pw, void *node, uint32_t *nhints, css_hint **hints) {
-    css_hint *values = pw;
+    struct hints out = { .values = pw };
     *nhints = 0;
-    *hints = values;
-    if (values == NULL) {
+    *hints = pw;
+    if (out.values == NULL) {
         return CSS_OK;
     }
     if (has_name_text(node, "body")) {
-        *nhints += color_hint(node, "bgcolor", CSS_PROP_BACKGROUND_COLOR, &values[*nhints]);
-        *nhints += color_hint(node, "text", CSS_PROP_COLOR, &values[*nhints]);
+        add_color(&out, node, "bgcolor", CSS_PROP_BACKGROUND_COLOR);
+        add_color(&out, node, "text", CSS_PROP_COLOR);
     } else if (has_name_text(node, "font")) {
-        *nhints += color_hint(node, "color", CSS_PROP_COLOR, values);
+        add_color(&out, node, "color", CSS_PROP_COLOR);
     } else if (has_name_text(node, "a") && has_attribute_text(node, "href")) {
         for (dom_node *parent = element_parent(node); parent != NULL; parent = element_parent(parent)) {
             if (has_name_text(parent, "body")) {
-                *nhints += color_hint(parent, "link", CSS_PROP_COLOR, values);
+                add_color(&out, parent, "link", CSS_PROP_COLOR);
                 break;
             }
         }
+    } else if (has_name_text(node, "div") || has_name_text(node, "caption")) {
+        add_align(&out, node, true);
+    } else if (has_name_text(node, "p") || has_name_text(node, "h1") || has_name_text(node, "h2") ||
+               has_name_text(node, "h3") || has_name_text(node, "h4") || has_name_text(node, "h5") ||
+               has_name_text(node, "h6")) {
+        add_align(&out, node, false);
+    } else {
+        table_hints(&out, node);
     }
+    *nhints = out.count;
     return CSS_OK;
 }
 
