@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>E5: overflow</title>
+<style>
+body { margin: 8px; overflow: hidden }
+div { background: #ddd }
+#box { overflow: hidden; width: 200px; height: 50px; border: 3px solid black; padding: 5px; margin-top: 20px }
+#tall { height: 100px; background: #9cf }
+#inner { overflow: hidden; width: 100px; height: 30px; margin-left: 150px; background: #fc9 }
+#deep { height: 60px; background: #c9f }
+#outside { position: relative; height: 40px }
+#cut { overflow: auto; height: 20px }
+#escape { position: absolute; top: 30px; left: 300px; width: 20px; height: 20px }
+#frame { position: relative; overflow: hidden; width: 100px; height: 40px }
+#trapped { position: absolute; top: 30px; left: 50px; width: 80px; height: 20px }
+#text { overflow: hidden; width: 60px; height: 20px; font: 12px sans-serif }
+</style>
+</head>
+<body>
+<div id="box"><div id="tall"></div><div id="inner"><div id="deep"></div></div></div>
+<div id="outside"><div id="cut"><div id="escape"></div></div></div>
+<div id="frame"><div id="trapped"></div></div>
+<div id="text">a link and more words than fit</div>
+</body>
+</html>

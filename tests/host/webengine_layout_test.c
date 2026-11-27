@@ -7,7 +7,8 @@
  * size first (600 pixels high unless it says), so the dump carries their
  * geometry. One that reads "paint" adds the painting order after the boxes,
  * a line per item: "paint block TAG X Y", "paint lines TAG X Y" or "paint
- * marker", with "fixed" after an item that does not scroll.
+ * marker", with "fixed" after an item that does not scroll and "clip X Y
+ * WIDTH HEIGHT" after one that overflow clips.
  *
  * The fonts are fixed, so the expectations do not depend on the system's:
  * face 0 (under 18px) is 7px a character, face 1 (18px and over) 10px,
@@ -94,13 +95,18 @@ static void free_lines(struct lines *lines) {
 static void dump_paint(const struct webengine_tree *tree, struct lines *out) {
     for (size_t i = 0; i < tree->paint_count; i++) {
         const struct webengine_paint *item = &tree->paint[i];
-        char line[128];
+        char line[160];
+        char clip[64] = "";
+        if (item->clip.on) {
+            snprintf(clip, sizeof(clip), " clip %d %d %d %d", item->clip.x, item->clip.y, item->clip.width,
+                     item->clip.height);
+        }
         if (item->kind == WEBENGINE_PAINT_MARKER) {
-            snprintf(line, sizeof(line), "paint marker%s", item->fixed ? " fixed" : "");
+            snprintf(line, sizeof(line), "paint marker%s%s", item->fixed ? " fixed" : "", clip);
         } else {
-            snprintf(line, sizeof(line), "paint %s %s %d %d%s", item->kind == WEBENGINE_PAINT_BLOCK ? "block" : "lines",
+            snprintf(line, sizeof(line), "paint %s %s %d %d%s%s", item->kind == WEBENGINE_PAINT_BLOCK ? "block" : "lines",
                      item->box->tag[0] != '\0' ? item->box->tag : "anonymous", item->box->x, item->box->y,
-                     item->fixed ? " fixed" : "");
+                     item->fixed ? " fixed" : "", clip);
         }
         collect(out, line);
     }

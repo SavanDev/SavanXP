@@ -1,0 +1,43 @@
+# Overflow (E5, docs/desktop/WEBVIEWER_ENGINE.md#overflow): body's overflow
+# goes to the viewport, so body neither clips nor starts a context and its
+# margin collapses with its child's; a hidden box clips its children to its
+# padding box, a nested one within it (to nothing here); an absolute box
+# whose containing block is outside an auto box escapes its clip, one inside
+# a hidden positioned box does not; line boxes clip to their block. The
+# boxes match Chromium's getBoundingClientRect at 800 by 600; the lines use
+# the test's fixed fonts, and the clips follow from the boxes.
+viewport 800 600
+paint
+block html 0 0 800 194
+  block body 8 20 784 166
+    block div 8 20 216 66
+      block div 16 28 200 100
+      block div 166 128 100 30
+        block div 166 128 100 60
+    block div relative 8 86 784 40
+      block div 8 86 784 20
+        block div absolute 308 116 20 20
+    block div relative 8 126 100 40
+      block div absolute 58 156 80 20
+    block div 8 166 60 20
+      line 8 166 60 18
+        text "a link" 8 167 42 16
+      line 8 184 60 18
+        text "and more" 8 185 56 16
+      line 8 202 60 18
+        text "words" 8 203 35 16
+      line 8 220 60 18
+        text "than fit" 8 221 56 16
+paint block html 0 0
+paint block body 8 20
+paint block div 8 20
+paint block div 16 28 clip 11 23 210 60
+paint block div 166 128 clip 11 23 210 60
+paint block div 166 128 clip 166 128 55 0
+paint block div 8 166
+paint lines div 8 166 clip 8 166 60 20
+paint block div 8 86
+paint block div 8 86
+paint block div 308 116
+paint block div 8 126
+paint block div 58 156 clip 8 126 100 40

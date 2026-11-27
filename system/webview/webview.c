@@ -1709,6 +1709,13 @@ static int webview_scroll_max(void)
 {
     int max = g_total_height - webview_page_height();
 
+    /* overflow: hidden on the viewport: the page does not scroll (CSS 2.1
+     * 11.1.1). */
+    if (g_tree != NULL && g_tree->viewport_overflow == CSS_OVERFLOW_HIDDEN)
+    {
+        return 0;
+    }
+
     return max > 0 ? max : 0;
 }
 
@@ -2023,7 +2030,8 @@ static int webview_link_at(int x, int y, char *target, size_t capacity)
         int px = x - g_page_x;
         int py = y - (item->fixed ? g_page_area.y : g_page_area.y - WEBVIEW_SCROLL->value);
 
-        if (item->kind != WEBENGINE_PAINT_LINES)
+        if (item->kind != WEBENGINE_PAINT_LINES || (item->clip.on && (px < item->clip.x ||
+            px >= item->clip.x + item->clip.width || py < item->clip.y || py >= item->clip.y + item->clip.height)))
         {
             continue;
         }
@@ -2102,6 +2110,11 @@ static void on_paint(struct sxngui_app *app)
 
         /* Fixed boxes stay where they are while the page scrolls. */
         g_page_y = item->fixed ? interior.y : interior.y - WEBVIEW_SCROLL->value;
+        if (item->clip.on && !sx_painter_push_clip(painter, sx_rect_make(g_page_x + item->clip.x,
+            g_page_y + item->clip.y, item->clip.width, item->clip.height)))
+        {
+            continue;
+        }
         if (item->kind == WEBENGINE_PAINT_BLOCK)
         {
             webview_paint_block(painter, box, top, bottom);
@@ -2134,6 +2147,10 @@ static void on_paint(struct sxngui_app *app)
                     webview_paint_fragment(painter, &g_tree->fragments[f]);
                 }
             }
+        }
+        if (item->clip.on)
+        {
+            sx_painter_pop_clip(painter);
         }
     }
     g_page_y = interior.y - WEBVIEW_SCROLL->value;

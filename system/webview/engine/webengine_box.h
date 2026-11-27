@@ -108,6 +108,15 @@ enum webengine_box_type {
     WEBENGINE_BOX_MARKER,
 };
 
+/* A clip rectangle in canvas pixels, when `on`. */
+struct webengine_clip {
+    bool on;
+    int x;
+    int y;
+    int width;
+    int height;
+};
+
 struct webengine_box {
     enum webengine_box_type type;
     struct webengine_box *parent;
@@ -155,6 +164,10 @@ struct webengine_box {
     /* An absolutely positioned BLOCK: the box whose padding box is its
      * containing block, NULL for the viewport. */
     const struct webengine_box *containing;
+    /* Set with the painting order: what clips the box's content, its own
+     * padding box when its overflow is not visible (CSS 2.1 11.1.1)
+     * within what clips the box itself. */
+    struct webengine_clip clip;
 };
 
 static inline bool webengine_box_floats(const struct webengine_box *box) {
@@ -225,6 +238,8 @@ struct webengine_paint {
     /* Inside a position: fixed box: it stays put on the screen while the
      * page scrolls. */
     bool fixed;
+    /* What overflow clips the item to. */
+    struct webengine_clip clip;
     /* The block; for MARKER, the marker box, laid out in its x, y, width
      * and height. */
     const struct webengine_box *box;
@@ -246,6 +261,9 @@ struct webengine_tree {
      * (CSS 2.1 14.2); the box it came from does not paint it again. */
     css_color canvas;
     const struct webengine_box *canvas_source;
+    /* The viewport's overflow (CSS_OVERFLOW_*): the root's, or body's when
+     * the root's is visible (11.1.1). The box it came from does not clip. */
+    uint8_t viewport_overflow;
     /* Set by webengine_layout: the painting order. */
     struct webengine_paint *paint;
     size_t paint_count;

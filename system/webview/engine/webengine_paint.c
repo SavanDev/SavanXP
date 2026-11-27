@@ -6,8 +6,11 @@
  * markers, then its positioned layers with z-index auto or 0 in tree order
  * and those with a positive one, lowest first. Each layer inside is painted
  * whole where it comes. Every positioned box is treated as a stacking
- * context of its own, z-index auto included. Written from the
- * specification; NetSurf's redraw is not its model (the clean-room rule).
+ * context of its own, z-index auto included. Each item carries the clip
+ * of overflow (11.1.1): a box whose overflow is not visible clips what is
+ * inside it to its padding box, and an absolute box escapes the clips
+ * between it and its containing block. Written from the specification;
+ * NetSurf's redraw is not its model (the clean-room rule).
  *
  * The layers wait on an explicit stack of tasks, so nesting does not
  * recurse. */
@@ -50,6 +53,57 @@ static bool is_layer(const struct webengine_box *box) {
     return webengine_box_floats(box) || webengine_box_positioned(box);
 }
 
+/* What clips the painting of `box` itself: the clip of the box it is
+ * inside, its containing block for an absolute box, nothing for a fixed one
+ * or one in the viewport. */
+static struct webengine_clip outer_clip(const struct webengine_box *box) {
+    const struct webengine_box *from = box->parent;
+    if (webengine_box_absolute(box)) {
+        from = box->style->position == CSS_POSITION_FIXED ? NULL : box->containing;
+    }
+    return from != NULL ? from->clip : (struct webengine_clip){ 0 };
+}
+
+static struct webengine_clip intersect(struct webengine_clip a, struct webengine_clip b) {
+    if (!a.on) {
+        return b;
+    }
+    if (!b.on) {
+        return a;
+    }
+    int left = a.x > b.x ? a.x : b.x;
+    int top = a.y > b.y ? a.y : b.y;
+    int right = a.x + a.width < b.x + b.width ? a.x + a.width : b.x + b.width;
+    int bottom = a.y + a.height < b.y + b.height ? a.y + a.height : b.y + b.height;
+    return (struct webengine_clip){ true, left, top, right > left ? right - left : 0,
+                                    bottom > top ? bottom - top : 0 };
+}
+
+/* Every box's clip, parents and containing blocks first: tree order. */
+static void set_clips(struct webengine_box *root) {
+    struct webengine_box *box = root;
+    while (box != NULL) {
+        box->clip = outer_clip(box);
+        if (box->type == WEBENGINE_BOX_BLOCK && box->style->overflow != CSS_OVERFLOW_VISIBLE) {
+            struct webengine_clip padding = {
+                true, box->x + box->border[WEBENGINE_LEFT], box->y + box->border[WEBENGINE_TOP],
+                box->width - box->border[WEBENGINE_LEFT] - box->border[WEBENGINE_RIGHT],
+                box->height - box->border[WEBENGINE_TOP] - box->border[WEBENGINE_BOTTOM] };
+            box->clip = intersect(box->clip, padding);
+        }
+        if (box->first != NULL) {
+            box = box->first;
+            continue;
+        }
+        while (box != NULL && box->next == NULL) {
+            box = box->parent;
+        }
+        if (box != NULL) {
+            box = box->next;
+        }
+    }
+}
+
 static void emit(struct order *order, uint8_t kind, const struct webengine_box *box) {
     struct webengine_tree *tree = order->tree;
     if (tree->paint_count == tree->paint_capacity) {
@@ -62,7 +116,11 @@ static void emit(struct order *order, uint8_t kind, const struct webengine_box *
         tree->paint = paint;
         tree->paint_capacity = capacity;
     }
-    tree->paint[tree->paint_count++] = (struct webengine_paint){ kind, order->fixed, box };
+    /* Lines are inside their block; a block and a marker are painted by
+     * what they are in. */
+    struct webengine_clip clip = kind == WEBENGINE_PAINT_LINES ? box->clip
+        : kind == WEBENGINE_PAINT_MARKER ? outer_clip(box->parent) : outer_clip(box);
+    tree->paint[tree->paint_count++] = (struct webengine_paint){ kind, order->fixed, clip, box };
 }
 
 static void push(struct order *order, uint8_t kind, bool fixed, const struct webengine_box *box) {
@@ -191,6 +249,7 @@ int webengine_paint_order(struct webengine_tree *tree) {
     if (tree->root == NULL) {
         return 0;
     }
+    set_clips(tree->root);
     push(&order, TASK_LAYER, false, tree->root);
     while (order.count > 0 && !order.failed) {
         struct task task = order.tasks[--order.count];

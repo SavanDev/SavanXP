@@ -7,7 +7,7 @@ later, scripting go on top. This is stage E1 of
 Since E2, Web Viewer walks the document libhubbub and libdom produce, and
 E3 computes its styles with libcss. Since E4 the engine makes the document's
 CSS boxes and lays them out, and Web Viewer paints them; E5 adds
-[floats](#floats) and [positioning](#positioning).
+[floats](#floats), [positioning](#positioning) and [overflow](#overflow).
 
 ## What is vendored
 
@@ -393,6 +393,29 @@ nearest positioned block instead of the inline's fragments.
 Chromium, box for box, and the painting order of `z-index`. `e5-position-text`
 is worked out by hand: a relative inline, static positions on a line, and an
 absolute box in a corner.
+
+## Overflow
+
+The last part of E5 is CSS 2.1 11.1.1. A block whose `overflow` is not
+`visible` starts a formatting context (see the block flow) and clips what
+is inside it to its padding box. `auto` and `scroll` clip as `hidden` does;
+there are no scroll bars inside a page.
+
+- **Clips** are set with the painting order. Each box's `clip` is what
+  clips its content: the clip of the box it is in, within its own padding
+  box when it clips. Each painting item carries the clip that applies to
+  it. A block and an outside marker take the clip of what they are in, and
+  line boxes take their block's. An absolute box takes its containing
+  block's clip instead of its parent's, so it escapes the boxes between the
+  two; a fixed box takes none.
+- **The viewport** takes the root's `overflow`, or body's when the root's is
+  `visible` (`webengine_tree.viewport_overflow`). The element it came from is
+  then `visible`: it neither clips nor starts a context. Web Viewer does not
+  scroll a page whose viewport is `hidden`.
+
+`e5-overflow` checks the boxes against Chromium at 800 by 600, body's
+margin collapsing with its child's included, and the clips of nested,
+escaping and trapped boxes and of line boxes through the painting order.
 
 ## Painting order
 

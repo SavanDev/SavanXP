@@ -870,6 +870,37 @@ static void pop(struct builder *b) {
     dom_node_unref(frame->node);
 }
 
+/* The viewport takes the root's overflow, or body's when the root's is
+ * visible, and the element it came from is left visible (CSS 2.1 11.1.1).
+ * Styles are the tree's own, so the value can change here. */
+static void propagate_overflow(struct webengine_tree *tree) {
+    struct webengine_box *root = tree->root;
+    tree->viewport_overflow = CSS_OVERFLOW_VISIBLE;
+    if (root == NULL) {
+        return;
+    }
+    struct webengine_box *source = root;
+    if (root->style->overflow == CSS_OVERFLOW_VISIBLE) {
+        source = NULL;
+        for (struct webengine_box *child = root->first; child != NULL; child = child->next) {
+            if (strcmp(child->tag, "body") == 0) {
+                source = child;
+                break;
+            }
+        }
+    }
+    if (source == NULL || source->style->overflow == CSS_OVERFLOW_VISIBLE) {
+        return;
+    }
+    tree->viewport_overflow = source->style->overflow;
+    for (size_t i = 0; i < tree->style_count; i++) {
+        if (tree->styles[i] == source->style) {
+            tree->styles[i]->overflow = CSS_OVERFLOW_VISIBLE;
+            break;
+        }
+    }
+}
+
 /* The canvas takes the root's background, or body's (CSS 2.1 14.2). */
 static void find_canvas(struct webengine_tree *tree) {
     const struct webengine_box *root = tree->root;
@@ -983,6 +1014,7 @@ struct webengine_tree *webengine_tree_build(dom_document *document, struct weben
         return NULL;
     }
     find_canvas(b.tree);
+    propagate_overflow(b.tree);
     return b.tree;
 }
 

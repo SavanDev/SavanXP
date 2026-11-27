@@ -207,7 +207,9 @@ with wrapping, `white-space`, `line-height`, `vertical-align`, `text-align`,
 ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#floats)) take boxes out of that
 flow and wrap the text beside them, and `position`
 ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#positioning)) moves boxes relative to
-it or out of it. The user-agent sheet is the engine's
+it or out of it. `overflow` other than `visible`
+([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#overflow)) clips a box's content,
+and on the root or `body` keeps the page from scrolling when `hidden`. The user-agent sheet is the engine's
 `webengine_ua_css`, CSS 2.1's Appendix D with HTML's heading sizes, so
 `body` has its 8 pixels of margin and paragraphs and headings their em
 margins.
@@ -235,7 +237,8 @@ margins.
   channel blend over the backgrounds behind them. `visibility: hidden`
   keeps the space and paints nothing.
 - **Links.** A link is the text and inline boxes of an `<a href>`, hit
-  tested against the last paint's fragments, topmost first.
+  tested against the last paint's fragments, topmost first; a link clipped
+  away by overflow cannot be clicked.
 - **View Source and text/plain** are the engine's plain-text tree
   (`webengine_tree_text`): the bytes as they came, newlines kept, tabs to the
   next eighth column, wrapped at spaces, with 8 pixels of padding.
@@ -262,7 +265,8 @@ server empties the window's DNS cache.
 Tables stack
 their cells as blocks and images are an `[image]` placeholder until E6.
 `inline-block` and the other inline-level displays are laid out as inline
-boxes. Fragments reload the page top. A word wider than the page is cut
+boxes. `overflow: auto` and `scroll` clip without scroll bars of their own.
+Fragments reload the page top. A word wider than the page is cut
 rather than overflowing (the engine's emergency break), and there is no
 horizontal scroll.
 
@@ -307,7 +311,8 @@ cascade order, media and inline declarations. The scenario follows a
 styled link, checks the rendered page after View Source, and stops a
 navigation waiting for a stylesheet. The E5 step opens `e5-float-text.html`
 and asserts the text inside a float and the text wrapping beside one, then
-`e5-position-text.html` for a relative inline and an absolute box.
+`e5-position-text.html` for a relative inline and an absolute box, and
+`e5-overflow.html`, whose clipped lines must not show.
 The SUN socket contract is checked by `smoke native-network` and
 `smoke native-network-offline`, including pending ARP, cancellation,
 initialization without a NIC, route timeout and TCP refusal/reset/retry errors.

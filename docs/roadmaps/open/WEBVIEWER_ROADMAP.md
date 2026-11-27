@@ -1,13 +1,13 @@
 # Web Viewer: the native browser
 
-> **Status as of 2026-11-27: N1–N5, D1 and E1–E4 are implemented.** Web Viewer runs as
+> **Status as of 2026-11-27: N1–N5, D1 and E1–E5 are implemented.** Web Viewer runs as
 > `/system/webview.sxe`, resolves through SUN's `sxndns`, loads on a
 > per-window network worker through SUN's `sxnhttp`, opens validated
 > `https://`, and saves what it does not show in a download window of its
 > own. It reads HTML through libhubbub and libdom
 > ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md)) and builds its
 > boxes from the DOM using computed CSS and lays them out in the normal
-> flow. The next engine stage is E5.
+> flow, with floats, positioning and overflow. The next engine stage is E6.
 
 ## Direction
 
@@ -246,6 +246,10 @@ on blocks.
 **Done when:** a float-based two-column page and a page of absolutely
 positioned boxes match their expectations.
 
+**Implemented 2026-11-27.** Floats and clearance, relative, absolute and
+fixed positioning with `z-index`, and `overflow` clipping, with a painting
+order from the engine. The checkpoint below has the details.
+
 ### E6 — tables and images
 
 Automatic table layout, replacing "tables degrade to stacked lines". Images
@@ -317,6 +321,41 @@ corpus run; security fixes in the parsers are taken when published.
 
 The stages as they landed, newest first. Their "next step" lists and
 mentions of the Ladybird plan are history; the stages above are current.
+
+## E5 implementation checkpoint — 2026-11-27
+
+**E5 is complete.** The details are in
+[WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md#floats) and the
+sections after it.
+
+- **Floats** (`webengine_layout.c`, `webengine_lines.c`): shrink-to-fit
+  widths, placement in each block formatting context's list of floats,
+  line boxes beside floats, clearance, contexts' heights taking in their
+  floats, and context roots in the flow going beside floats. A float is laid
+  out at the origin and moved into place, so the walk still keeps an explicit
+  stack.
+- **Positioning:** relative blocks and inlines; absolute boxes laid out
+  when their containing block ends, from their static position, with the
+  constraints of 10.3.7 and 10.6.4; fixed boxes in the viewport, which
+  `webengine_layout` now takes the height of.
+- **Overflow:** clips to the padding box, absolute boxes escaping the clips
+  between them and their containing block, and the root's or body's value
+  going to the viewport.
+- **Painting order** (`webengine_paint.c`): CSS 2.1 Appendix E as a list,
+  with floats and positioned boxes as layers ordered by `z-index`, and each
+  item's clip. Web Viewer paints it, keeps fixed items still while the page
+  scrolls, and hit tests links on it topmost first.
+- **Evidence:** `webengine-layout-test` checks `e5-floats`, `e5-positioned`
+  and `e5-overflow` box for box against Chromium (the latter two with their
+  painting order), and `e5-float-text` and `e5-position-text`, worked out by
+  hand. The `webview` scenario asserts text inside and beside floats, a
+  relative inline, an absolute box, and lines clipped away.
+
+Left for later stages: tables and images (E6), `inline-block` as its own
+formatting context, scroll bars inside a page, stacking contexts exactly as
+CSS has them (every positioned box is one here), an absolute box's containing
+block formed by an inline, and floats on the line where the line breaks
+rather than where the breaking first met them.
 
 ## E4 implementation checkpoint — 2026-11-27
 

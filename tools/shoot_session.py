@@ -3820,7 +3820,8 @@ def webview_e3_styles(s, hostport):
 def webview_e5_floats(s, hostport):
     """Text around floats (docs/desktop/WEBVIEWER_ENGINE.md#floats): the text
     inside a float and the text that wraps beside one are both painted; then
-    positioned text (#positioning), a relative inline and an absolute box."""
+    positioned text (#positioning), a relative inline and an absolute box;
+    then a box whose overflow clips the lines past its bottom (#overflow)."""
     s.qmp.tap("tab", pause=1.0)
     s.qmp.chord("ctrl", "a")
     type_http_url(s, hostport, "/e5-float-text.html")
@@ -3837,6 +3838,14 @@ def webview_e5_floats(s, hostport):
     expect_text(page, area, "bbbb", TEXT, FIELD, "a relative inline", solid_only=True)
     expect_text(page, area, "hello", TEXT, FIELD, "an absolute box in its containing block's corner",
                 solid_only=True)
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, "/e5-overflow.html")
+    s.qmp.tap("ret", pause=6.0)
+    page = s.shot("webview-e5-overflow")
+    expect_text(page, area, "a link", TEXT, (221, 221, 221), "the first line of a clipped box", solid_only=True)
+    if find_text(page, area, "than fit", TEXT, (221, 221, 221), solid_only=True)[0] is not None:
+        raise Failure("overflow: hidden did not clip the lines past its box")
 
 
 def wait_for_text(s, name, text, label, timeout, colour=None, background=None):
