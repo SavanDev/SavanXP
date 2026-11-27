@@ -14,14 +14,14 @@
 static const unsigned char kExecProbe[] = { 0xb8, 0x3c, 0x00, 0x00, 0x00, 0xc3 };
 #define kExecProbeResult 60L
 
-/* Hijos que saturan la tabla global de secciones a la vez. Cada uno topa con su
- * propio limite de vistas (64), asi que 8 piden hasta 512 y la tabla se llena
- * antes de que el ultimo termine. */
+/* Children that fill the global section table at once. Each one stops at its
+ * own view limit (256), so 8 ask for up to 2048 and the table fills before
+ * the last one ends. */
 #define kFillerChildren 8
 
-/* Views held at once by one process: above the old per-process limit of 64,
- * below today's 128 with room for the arenas and views already held. */
-#define kHeldViews 100
+/* Views held at once by one process: above the old per-process limit of 128,
+ * below today's 256 with room for the arenas and views already held. */
+#define kHeldViews 200
 
 /* The global section table's size before it was raised for the Win32
  * subsystem; the fillers must get past it. */
@@ -611,7 +611,7 @@ int main(void) {
     /* Mapping and unmapping in a loop must not exhaust the view slots: if
      * unmap_view did not free its slot, the last map_view would fail. Nor
      * holding many at once -- kHeldViews at a time is more than the old limit
-     * of 64, so this block fails if kMaxSectionViews drops back to it. */
+     * of 128, so this block fails if kMaxSectionViews drops back to it. */
     void* held_views[kHeldViews];
     for (int round = 0; round < kHeldViews; ++round) {
         /* RW, not R+X: the point here is the view limit, and an R+X view
@@ -721,7 +721,7 @@ int main(void) {
     /* --- the global section table, filled by several processes ------------
      *
      * One process alone never reaches that table: its sections live while it
-     * has them mapped, so it stops at its view limit (128). The table fills
+     * has them mapped, so it stops at its view limit (256). The table fills
      * across processes, which is how it fills for real -- each brings its
      * arenas and libraries.
      *

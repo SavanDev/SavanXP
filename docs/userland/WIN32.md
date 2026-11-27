@@ -1312,9 +1312,11 @@ every section and file; if not, `winhost` exits with 124.
 It is the same loader as the harness over a different platform:
 
 - **Memory.** Each region is its own section, granted read, write and execute
-  and viewed at its address with `SXN_SYS_MAP_VIEW_AT`. An image run is
-  filled through a read-write view, then unmapped and mapped again read-only
-  or read-execute. No view is ever writable and executable.
+  and viewed at its address with `SXN_SYS_MAP_VIEW_AT`; the section's handle
+  is closed right after, since the view keeps the section. An image run is
+  filled through the read-write view, then made read-only or read-execute
+  with `SXN_SYS_PROTECT_VIEW`. No view is ever writable and executable, and
+  a region costs a view (`kMaxSectionViews`, 256) but no descriptor.
 - **Files.** `sxn_query_path`, `sxn_open_file` and `sxn_read`, the whole file
   read into the native heap and freed once the load ends.
 - **The gate.** The 32-bit code segment is `0x2b`, 64-bit code `0x23`, data
@@ -1531,12 +1533,15 @@ Since WP7a the DLL is there, and loads in any program, but not yet in
 WordPad's process: the loader keeps at most 64 mapped regions
 (`SXW_MAX_REGIONS`), one per protection run of each image plus stacks and
 heaps, and WordPad and MFC have used them all by then, so `LoadLibraryW`
-fails with `ERROR_NOT_ENOUGH_MEMORY` and WordPad shows the same box. With
-more regions the control loads and WordPad goes on to `wsprintfW` and
-`LoadBitmapW`, both only declared, and a missing delay-loaded export. On
-SavanXP each region is a section handle of `winhost`'s, and the kernel gives
-a process 64 handles (`kMaxFileHandles`) and 128 views
-(`kMaxSectionViews`), so the limit cannot simply be raised.
+fails with `ERROR_NOT_ENOUGH_MEMORY` and WordPad shows the same box. It
+holds 104 regions once the control is in. With more regions the control
+loads and WordPad goes on to `wsprintfW` and `LoadBitmapW`, both only
+declared, and then exits with `0xc06d007f` on its delay-loaded
+`comdlg32!PrintDlgW` (WP8) before any window. Nothing on SavanXP stands in
+the way of more regions any longer: `winhost` keeps no handle per region
+(`SXN_SYS_PROTECT_VIEW`) and a process has 256 views. The loader's table
+stays at 64 until WordPad reaches a window again with it raised, since
+`win32-wordpad-test` checks that it does.
 
 What the run reaches and is only declared is on the debug output; since WP5
 the start-up up to that first window reaches none (MFC's message-filter

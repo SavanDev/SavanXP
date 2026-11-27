@@ -97,6 +97,10 @@ count) and the session smokes.
 
 1. **Kernel tables**: `kMaxFileHandles` 128, `kMaxPipeCount` 128,
    `kMaxEventObjects` 256. Measure the kernel's memory before and after.
+   Decided on 2026-11-27: `kMaxFileHandles` rises with SxFS v3 (V3-B of
+   [SXFS_ROADMAP.md](SXFS_ROADMAP.md)), whose larger trees and files open
+   more at once. Win32 regions no longer need it: `winhost` closes each
+   region's handle after the map (`SXN_SYS_PROTECT_VIEW`).
 2. **Compositor**: `SAVANXP_COMPOSITOR_MAX_SURFACES` 64 and
    `SAVANXP_COMPOSITOR_MAX_LAYERS` 96.
 3. **Owned windows**: `SAVANXP_WM_MAX_OWNED_WINDOWS` 8. This is enough for

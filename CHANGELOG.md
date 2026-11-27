@@ -329,6 +329,8 @@ changes not released yet; each released version has its own file in
 
 ### Changed
 
+- **A process can hold 256 section views (`kMaxSectionViews`, was 128)**, and `winhost` no longer keeps a handle per
+  loaded region, so a Win32 program's images no longer use its 64 descriptors. WordPad with MFC holds 104 views.
 - **The desktop is a SUN program**, `/system/desktop.sxe` from `system/desktop`; `/bin/desktop` is retired. Background,
   taskbar, Start menu and popups behave as before; programs it starts still begin in the profile or a shortcut's
   `workdir`. The calendar and the layout popup now read in English. SUN gains `mime_icon_load` (SDK 2.0), POSIX's

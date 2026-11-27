@@ -173,10 +173,13 @@ static void say_hex(const char *before, uint32_t value) {
 
 /* ---- Platform ------------------------------------------------------------ */
 
+/* A view winhost mapped. Its section's handle is closed once the view is in
+ * place: the view keeps the section, and SXN_SYS_PROTECT_VIEW changes its
+ * access by address, so a region costs no descriptor. */
 typedef struct mapping {
     uint32_t base;
     uint32_t size;
-    long section;
+    int used;
 } mapping;
 
 /* One per loader region, plus the trampoline. */
@@ -187,7 +190,7 @@ static char g_exe_dir[256];
 
 static mapping *find_mapping(uint32_t base, uint32_t size) {
     for (uint32_t i = 0; i < SXW_MAX_REGIONS + 1u; ++i) {
-        if (g_mappings[i].section > 0 && g_mappings[i].base == base &&
+        if (g_mappings[i].used && g_mappings[i].base == base &&
             (size == 0u || g_mappings[i].size == size)) {
             return &g_mappings[i];
         }
@@ -195,13 +198,13 @@ static mapping *find_mapping(uint32_t base, uint32_t size) {
     return 0;
 }
 
-/* A section of its own, granted read, write and execute so that the same
- * pages can later be viewed read-execute; the view itself is never both
- * writable and executable. */
+/* A section of its own, granted read, write and execute so that the view can
+ * later be made read-execute; the view itself is never both writable and
+ * executable. */
 static int map_section_at(uint32_t base, uint32_t size) {
     mapping *slot = 0;
     for (uint32_t i = 0; i < SXW_MAX_REGIONS + 1u && slot == 0; ++i) {
-        if (g_mappings[i].section <= 0) {
+        if (!g_mappings[i].used) {
             slot = &g_mappings[i];
         }
     }
@@ -212,21 +215,19 @@ static int map_section_at(uint32_t base, uint32_t size) {
     if (section < 0) {
         return 1;
     }
-    if (sxn_map_view_at(section, base, SXN_SECTION_READ | SXN_SECTION_WRITE) != (long)base) {
-        (void)sxn_close(section);
+    const long view = sxn_map_view_at(section, base, SXN_SECTION_READ | SXN_SECTION_WRITE);
+    (void)sxn_close(section);
+    if (view != (long)base) {
         return 1;
     }
     slot->base = base;
     slot->size = size;
-    slot->section = section;
+    slot->used = 1;
     return 0;
 }
 
-static int remap(mapping *m, unsigned flags) {
-    if (sxn_unmap_view(m->base) != 0) {
-        return 1;
-    }
-    return sxn_map_view_at(m->section, m->base, flags) == (long)m->base ? 0 : 1;
+static int protect(const mapping *m, unsigned flags) {
+    return m != 0 && sxn_protect_view(m->base, flags) == 0 ? 0 : 1;
 }
 
 static int platform_map(void *context, uint32_t base, uint32_t size) {
@@ -243,7 +244,7 @@ static int platform_protect(void *context, uint32_t base, uint32_t size, pe_prot
     unsigned flags = protection == PE_PROT_RX   ? SXN_SECTION_READ | SXN_SECTION_EXEC
                      : protection == PE_PROT_RW ? SXN_SECTION_READ | SXN_SECTION_WRITE
                                                 : SXN_SECTION_READ;
-    return protection == PE_PROT_RW ? 0 : remap(m, flags);
+    return protection == PE_PROT_RW ? 0 : protect(m, flags);
 }
 
 static void platform_unmap(void *context, uint32_t base, uint32_t size) {
@@ -251,8 +252,7 @@ static void platform_unmap(void *context, uint32_t base, uint32_t size) {
     mapping *m = find_mapping(base, size);
     if (m != 0) {
         (void)sxn_unmap_view(m->base);
-        (void)sxn_close(m->section);
-        m->section = 0;
+        m->used = 0;
     }
 }
 
@@ -362,11 +362,11 @@ static void platform_close(void *context, void *handle) {
     --g_open_files;
 }
 
-/* Sections still held besides the trampoline's. */
+/* Views still mapped besides the trampoline's. */
 static uint32_t live_sections(void) {
     uint32_t count = 0;
     for (uint32_t i = 0; i < SXW_MAX_REGIONS + 1u; ++i) {
-        if (g_mappings[i].section > 0 && g_mappings[i].base != TRAMPOLINE) {
+        if (g_mappings[i].used && g_mappings[i].base != TRAMPOLINE) {
             ++count;
         }
     }
@@ -1306,7 +1306,7 @@ static int build_trampoline(void) {
     t[TRAMPOLINE_SVC_RET32 + 1] = 0x08;
     t[TRAMPOLINE_SVC_RET32 + 2] = 0x00;
     sxw_svc_ret32 = TRAMPOLINE + TRAMPOLINE_SVC_RET32;
-    return remap(find_mapping(TRAMPOLINE, PE_PAGE_SIZE), SXN_SECTION_READ | SXN_SECTION_EXEC);
+    return protect(find_mapping(TRAMPOLINE, PE_PAGE_SIZE), SXN_SECTION_READ | SXN_SECTION_EXEC);
 }
 
 /* Selectors before the FS base: loading FS resets it. */

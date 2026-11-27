@@ -61,17 +61,17 @@ constexpr uint32_t kMaxRegions = 4096;
  *
  * The array is inline in VmSpace, which is a member of Process, so each slot
  * costs sizeof(SectionView) = 32 bytes in every one of the kMaxProcesses
- * processes: 128 views x 32 bytes x 64 processes is 256 KiB of kernel BSS.
+ * processes: 256 views x 32 bytes x 64 processes is 512 KiB of kernel BSS.
  *
  * The budget it covers (docs/kernel/SECTIONS.md#the-budget):
  *   - a POSIX or SUN program: up to SX_ARENA_CAPACITY (8) heap arenas, up to
  *     3 views per library, and a handful of mmaps and GPU surfaces; ~40 in
  *     the realistic worst case;
  *   - winhost: one view per protection run of each PE image, about 5 per
- *     image, so ~50 for Solitaire's ten images, plus the stack, the TEB and
- *     two per window surface from W3 on.
- * 64 covered the first and not the second. */
-constexpr size_t kMaxSectionViews = 128;
+ *     image, plus the stacks, the TEB, the heaps and two per window surface.
+ *     Solitaire takes about 50; WordPad holds 104 before its first window.
+ * 128 covered Solitaire and not WordPad. */
+constexpr size_t kMaxSectionViews = 256;
 
 enum PageFlags : uint64_t {
     kPagePresent = 1ULL << 0,

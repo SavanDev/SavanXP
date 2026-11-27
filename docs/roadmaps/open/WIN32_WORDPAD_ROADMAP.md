@@ -487,10 +487,12 @@ Size XL, in parts, each its own commits.
   [WIN32.md](../../userland/WIN32.md#richedit), "RichEdit".
 
   Inside WordPad's process the DLL does not load yet: WordPad and MFC have
-  used the loader's 64 regions by then (`SXW_MAX_REGIONS`), and on SavanXP
-  each region is one of `winhost`'s section handles, which the kernel
-  bounds at 64 per process. That limit has to move before WP9's "WordPad
-  starts" can be met ([WIN32.md](../../userland/WIN32.md#wordpad)).
+  used the loader's 64 regions by then (`SXW_MAX_REGIONS`); with the
+  control WordPad holds 104. The kernel no longer bounds them: since
+  `SXN_SYS_PROTECT_VIEW` a region costs `winhost` a view and no handle, and
+  a process has 256 views. Raised, the table lets WordPad go on to WP8's
+  `comdlg32!PrintDlgW`, which it delay-loads and exits on before any window
+  ([WIN32.md](../../userland/WIN32.md#wordpad)).
 - **7b, formats.** `CHARFORMAT2` (face, size, bold, italic, underline,
   colour, charset) and `PARAFORMAT2` (alignment, indents, tab stops,
   bullets), set and read by range; the word-wrap modes WordPad's Options

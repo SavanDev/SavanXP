@@ -228,34 +228,38 @@ expensive.
 | Library images (projected) | ~3 per library (file-backed text/rodata, private data, bss) |
 | Explicit anonymous `mmap`, GPU surfaces | a handful |
 | `winhost`, per PE image | one per protection run, about 5 ([WIN32.md](../userland/WIN32.md#winhost--subsystemswin32host)) |
-| `winhost`, per process | the stack, the TEB block, the gate's trampoline; two per window surface from W3 |
+| `winhost`, per process | the stacks, the TEB block, the heaps, the gate's trampoline; two per window surface from W3 |
 
 A POSIX or SUN program needs ~40 in the realistic worst case. `winhost`
-needs 14 for `hello.exe` and about 50 for Solitaire's ten images before its
-surfaces, so the limit is 128 (it was 64 until the Win32 subsystem). The
-array is inline in `VmSpace`, which is inline in `Process`, so the views cost
-32 bytes each across `kMaxProcesses` = 64 processes: 256 KiB of kernel BSS,
-used or not.
+needs 14 for `hello.exe`, about 50 for Solitaire's ten images before its
+surfaces, and WordPad with MFC holds 104 before its first window, so the
+limit is 256 (it was 64 until the Win32 subsystem, then 128 until WordPad).
+The array is inline in `VmSpace`, which is inline in `Process`, so the views
+cost 32 bytes each across `kMaxProcesses` = 64 processes: 512 KiB of kernel
+BSS, used or not.
 
 `kMaxSectionObjects` (system-wide) has two consumers. The heap: a real
 desktop session runs 8–12 processes, so 12 × 8 + ~10 libraries + surfaces lands
 near 115. And `winhost`, which makes one section per view, so each Win32
 program brings its whole view count. The limit is 512 (it was 256). Each entry
-is 80 bytes, so the table is 40 KiB.
+is 80 bytes, so the table is 40 KiB. One WordPad brings about 105, so a
+session with it and a few other Win32 programs is where this table fills
+next.
 
 Both arrays are searched linearly when a view is mapped or unmapped; at
 these sizes that is not measurable next to the page-table work.
 
 Exhausting either is a clean `ENOMEM`, never a corruption. `sectiontest` proves
-both claims rather than asserting them: it holds 100 views at once in one
-process, more than the old limit of 64, and forks eight children behind a
+both claims rather than asserting them: it holds 200 views at once in one
+process, more than the old limit of 128, and forks eight children behind a
 barrier until the global table is full, which requires every child to have
 stopped on a clean errno and their total to pass the old 256.
 
 Note that views do **not** consume descriptors: `map_section_view` takes its own
 reference, so `map_view` followed by `close` is the normal pattern and is what
-`sx_arena_acquire` does. `kMaxFileHandles` (64) is therefore not what bounds a
-process's view count.
+`sx_arena_acquire` does, and since `protect_view` what `winhost` does for
+every region. `kMaxFileHandles` (64) is therefore not what bounds a process's
+view count.
 
 ## Where a library image belongs
 

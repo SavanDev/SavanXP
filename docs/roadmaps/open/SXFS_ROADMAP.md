@@ -232,6 +232,11 @@ the format. Carry forward v2's reliability gates. Finish VFS/VM support for
 on-demand objects, mapping coherence, file identity and reclamation; filesystem
 capacity must not outgrow what the VFS can mount and manipulate.
 
+Raise the descriptors per process, `kMaxFileHandles` (64), with it: decided
+on 2026-11-27, as step 1 of
+[SYSTEM_LIMITS_ROADMAP.md](SYSTEM_LIMITS_ROADMAP.md#order) describes, with its
+cost measured there.
+
 **Done when:** kernel and host tools agree on new volumes, and operations across
 allocation groups, indirect extents, directory splits, sparse files and metadata
 extensions survive failures and recovery. Exercise files beyond 4 GiB, volumes
