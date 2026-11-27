@@ -7,7 +7,7 @@
  * blending, the alpha test, the scissor and a scissored clear; then textures
  * under each environment and filter, an update between two draws, and a
  * perspective textured quad under fog; then OpenGL 1.1 lighting, which both
- * backends take as lit vertex colours. The two
+ * backends take as lit vertex colours, and mipmaps. The two
  * rasterizers do not agree on every edge pixel, so the check is a tolerance
  * per channel and a budget of pixels allowed past it.
  *
@@ -387,6 +387,94 @@ static void draw_lighting(void)
     glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, GL_FALSE);
 }
 
+/* A 64x64 texture and its whole chain down to 1x1, level i in one colour of
+ * its own, so the level a square samples shows in its colour. */
+static void upload_solid_chain(void)
+{
+    static const uint32_t colours[7] = {0xff0000u, 0x00ff00u, 0x0000ffu, 0xffff00u, 0x00ffffu, 0xff00ffu, 0xffffffu};
+    static unsigned char texels[64 * 64 * 4];
+    int size = 64;
+    int level;
+    int index;
+
+    for (level = 0; level < 7; ++level, size /= 2) {
+        for (index = 0; index < size * size; ++index) {
+            texels[index * 4 + 0] = (unsigned char)(colours[level] >> 16);
+            texels[index * 4 + 1] = (unsigned char)(colours[level] >> 8);
+            texels[index * 4 + 2] = (unsigned char)colours[level];
+            texels[index * 4 + 3] = 255;
+        }
+        glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, texels);
+    }
+}
+
+/* A rectangle of pixel_width by pixel_height pixels centred at (x, y) in the
+ * -1..1 orthographic view, s from 0 to s_repeat and t from 0 to t_repeat:
+ * rho is 64 * s_repeat / pixel_width along x and 64 * t_repeat /
+ * pixel_height along y. */
+static void rectangle_pixels(float x, float y, int pixel_width, int pixel_height, float s_repeat, float t_repeat)
+{
+    float half_width = (float)pixel_width / (float)WIDTH;
+    float half_height = (float)pixel_height / (float)HEIGHT;
+
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex3f(x - half_width, y - half_height, 0.0f);
+    glTexCoord2f(s_repeat, 0.0f);
+    glVertex3f(x + half_width, y - half_height, 0.0f);
+    glTexCoord2f(s_repeat, t_repeat);
+    glVertex3f(x + half_width, y + half_height, 0.0f);
+    glTexCoord2f(0.0f, t_repeat);
+    glVertex3f(x - half_width, y + half_height, 0.0f);
+    glEnd();
+}
+
+/* Mipmaps on the GPU: the levels reach it, its sampler mipmaps and the last
+ * level ends the chain. Every rectangle is aligned with the screen, so the
+ * texture coordinates change along one axis each and every way of computing
+ * rho the specification allows gives the same lambda: the two backends must
+ * agree exactly. (Under perspective lambda is the implementation's own within
+ * those bounds; the host test checks SxGL's there.) No rectangle has lambda
+ * between 0 and 0.5, where SxGL switches to minification at c as the
+ * specification says and a GPU may switch at 0. */
+static void draw_mipmaps(void)
+{
+    GLuint name;
+
+    glViewport(0, 0, WIDTH, HEIGHT);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glEnable(GL_TEXTURE_2D);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+    glGenTextures(1, &name);
+    glBindTexture(GL_TEXTURE_2D, name);
+    upload_solid_chain();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    /* Top right: lambda 2, the nearest level: level 2. */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+    rectangle_pixels(0.5f, 0.45f, 32, 32, 2.0f, 2.0f);
+    /* Bottom right: lambda 1.5, levels 1 and 2 half and half. */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    rectangle_pixels(0.5f, -0.45f, 32, 32, 1.41421356f, 1.41421356f);
+    /* Top left: minified 8 times along x and twice along y; rho is the
+     * larger: lambda 3, level 3. */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+    rectangle_pixels(-0.5f, 0.45f, 32, 16, 4.0f, 0.5f);
+    /* Bottom left: lambda 0.8 rounds to level 1. */
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+    rectangle_pixels(-0.5f, -0.45f, 32, 32, 0.87055056f, 0.87055056f);
+
+    glDisable(GL_TEXTURE_2D);
+    glDeleteTextures(1, &name);
+}
+
 static int channel_distance(uint32_t a, uint32_t b, int shift)
 {
     int left = (int)((a >> shift) & 0xffu);
@@ -493,6 +581,15 @@ int main(void)
     compare_scene("lighting", draw_lighting, software_context, &software, gpu_context, &gpu);
     check(pixel_at(&gpu, WIDTH / 4, HEIGHT / 3) != 0 && pixel_at(&gpu, 3 * WIDTH / 4, HEIGHT / 3) != 0,
         "both lit surfaces are drawn");
+    compare_scene("mipmaps", draw_mipmaps, software_context, &software, gpu_context, &gpu);
+    /* Spot checks of the GPU's choice of level, at each rectangle's centre. */
+    check(pixel_at(&gpu, 3 * WIDTH / 4, HEIGHT / 2 - 27) == 0x0000ffu, "lambda 2 samples level 2 alone");
+    check(channel_distance(pixel_at(&gpu, 3 * WIDTH / 4, HEIGHT / 2 + 27), 0x008080u, 0) <= 3 &&
+            channel_distance(pixel_at(&gpu, 3 * WIDTH / 4, HEIGHT / 2 + 27), 0x008080u, 8) <= 3 &&
+            channel_distance(pixel_at(&gpu, 3 * WIDTH / 4, HEIGHT / 2 + 27), 0x008080u, 16) <= 3,
+        "lambda 1.5 blends levels 1 and 2");
+    check(pixel_at(&gpu, WIDTH / 4, HEIGHT / 2 - 27) == 0xffff00u, "rho is the larger direction's: level 3");
+    check(pixel_at(&gpu, WIDTH / 4, HEIGHT / 2 + 27) == 0x00ff00u, "lambda 0.8 rounds to level 1");
     check(sxgl_context_backend(gpu_context) == SXGL_BACKEND_GPU ||
             sxgl_context_backend(software_context) == SXGL_BACKEND_SOFTWARE,
         "the backends are what they were");

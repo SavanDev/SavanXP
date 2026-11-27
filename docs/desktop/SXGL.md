@@ -97,18 +97,29 @@ and the order of work are in
 
 - **The two backends agree to the edge pixel.** The shaders interpolate colour
   and fog linearly in screen space, as the software spans do. `sxgltest`
-  (`./build.sh smoke sxgl-gpu-test --gl`) draws two scenes with both, one of
-  state and one of textures, and allows 0.5% of the pixels past a tolerance of
-  6 per channel; today 2 and 20 of 19200 differ. Where a texel edge falls
-  exactly on a pixel centre the two may pick different texels.
+  (`./build.sh smoke sxgl-gpu-test --gl`) draws four scenes with both (state,
+  textures, lighting and mipmaps) and allows 0.5% of the pixels past a
+  tolerance of 6 per channel; today 2, 20, 0 and 0 of 19200 differ. Where a
+  texel edge falls exactly on a pixel centre the two may pick different texels.
 - **Without a 3D device, or when the GPU refuses a call later, the context
   rasterizes in software.** A failure mid-frame loses what that frame drew on
   the GPU.
 - **Textures are uploaded when they change.** Each texture object gets a host
   copy the first time a draw uses it, sent again after `glTexImage2D` or
   `glTexSubImage2D` (after the draws queued before it, which still see the old
-  texels). The GPU picks the minifying or magnifying filter per pixel; the
-  software spans pick per triangle.
+  texels). A mipmapped texture is one host resource holding its whole chain,
+  each level sent by its own transfer, and sampled through a mipmapping
+  sampler whose last level is the chain's.
+- **The level of detail is each backend's own.** The specification fixes
+  lambda only within bounds. SxGL's software spans compute the exact rho per
+  pixel; a GPU approximates it per 2x2 pixels its own way, so under
+  perspective the two choose slightly different levels where lambda changes
+  fast. On surfaces whose texture coordinates follow the screen's axes every
+  approximation agrees, and that is what the GPU comparison checks. A GPU
+  may also switch to minification at lambda 0 where SxGL switches at the
+  specification's c of 0.5. For a filter that does not mipmap, the GPU picks
+  minification or magnification per pixel and the software spans per
+  triangle.
 - **The counters change meaning.** `triangles_rasterized` counts triangles
   handed to the GPU (it culls and clips them), and `fragments_written` stays 0.
 - **The damage is coarse.** Each draw damages the viewport within the write
@@ -190,6 +201,20 @@ GL 1.1 factors), and the scissor (`glScissor`, `GL_SCISSOR_TEST`). Culling:
 `GL_BGRA` (`GL_EXT_bgra`, the only advertised extension, in `<GL/glext.h>`) is what an
 `sx_bitmap` already is, so uploading one is a copy. `glTexParameteri` with
 `GL_NEAREST`/`GL_LINEAR` filters and `GL_REPEAT`/`GL_CLAMP`/`GL_CLAMP_TO_EDGE`.
+
+**Mipmaps.** `glTexImage2D` and `glTexSubImage2D` take levels 0 to 10, and
+the minification filter takes the four mipmapping ones
+(`GL_NEAREST_MIPMAP_NEAREST`, `GL_LINEAR_MIPMAP_NEAREST`,
+`GL_NEAREST_MIPMAP_LINEAR`, `GL_LINEAR_MIPMAP_LINEAR`). As in GL a new texture
+starts with `GL_NEAREST_MIPMAP_LINEAR`, so one given level 0 alone must set
+another minification filter or define the chain: until then it is
+incomplete, and an incomplete texture textures as if texturing were off. A
+chain is complete down to 1x1, each level half the one before in each
+dimension (never below 1), all of one internal format. lambda is computed
+per pixel from the exact rho, the switch to minification is at c = 0.5 when
+the magnification filter is `GL_LINEAR` and the minification one
+`GL_NEAREST_MIPMAP_*`, and 0 otherwise (OpenGL 1.1, section 3.8). Building
+the levels is the program's: their automatic generation is OpenGL 1.4's.
 `glTexEnvi` with `GL_MODULATE`, `GL_REPLACE` and `GL_DECAL`. One texture unit.
 
 **Queries.** `glGetError`, `glGetString` (`GL_VERSION` is `"1.1 SxGL
@@ -204,18 +229,18 @@ the specification allows.
 
 Each of these was a decision, not an omission found later. Under the versions
 roadmap the ones that break conformance go, each in the step that brings the
-missing capability: no mipmaps falls with step 1, as normals always
-normalized and one material for both faces already did. "What is absent is
-absent" stays for good.
+missing capability, as no mipmaps, normals always normalized and one material
+for both faces already did in step 1. "What is absent is absent" stays for
+good.
 
 - **What is absent is absent.** A capability, parameter or mode outside the
   subset raises `GL_INVALID_ENUM` (and says so in the debug sink). Nothing is
   accepted and silently ignored except hints.
-- **No mipmaps.** `glTexImage2D` takes level 0 only, and the mipmap
-  minification filters are refused. For that reason a new texture starts with
-  `GL_LINEAR` for both filters, not GL's `GL_NEAREST_MIPMAP_LINEAR`, which would
-  leave every texture incomplete. Minification versus magnification is decided
-  per triangle, from the texel area it covers against its pixel area.
+- **Minification versus magnification without mipmaps is per triangle.** For
+  a minification filter that does not mipmap, the specialized spans keep one
+  filter for a whole triangle, chosen from the texel area it covers against
+  its pixel area, rather than lambda per pixel. A mipmapping filter decides
+  per pixel.
 - **Fog uses the eye-space depth** as its distance, which the specification
   permits and which keeps fog still while the view turns.
 - **No alpha in the colour buffer.** Destination alpha reads as 1, as on a GL

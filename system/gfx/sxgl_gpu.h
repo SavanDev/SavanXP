@@ -17,6 +17,9 @@
 #include "sxgfx/gfx2d.h"
 #include "sxgfx/sxgl.h"
 
+/* A texture's levels, 0 (1024x1024) to 10 (1x1). */
+#define SXGL_GPU_MAX_LEVELS 11
+
 struct sxgl_gpu;
 /* A texture's copy on the host, owned by the backend; SxGL keeps a pointer to
  * it in each texture object and the backend clears that pointer when it lets
@@ -58,8 +61,11 @@ struct sxgl_gpu_state {
      * object's slot for its host copy; the texels are uploaded again whenever
      * `texture_generation` moves. */
     struct sxgl_gpu_texture** texture;
-    const uint32_t* texels; /* 0xAARRGGBB, row 0 is t = 0 */
-    int texture_width;
+    /* Level i is level 0 halved i times in each dimension, never below 1;
+     * `texture_levels` is 1 unless the minification filter mipmaps. */
+    const uint32_t* texels[SXGL_GPU_MAX_LEVELS]; /* 0xAARRGGBB, row 0 is t = 0 */
+    int texture_levels;
+    int texture_width; /* of level 0 */
     int texture_height;
     uint32_t texture_generation;
     GLenum texture_env;

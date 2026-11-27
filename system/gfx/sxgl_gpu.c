@@ -142,8 +142,9 @@ struct sxgl_gpu_texture {
     uint32_t* texels;
     uint32_t resource;
     uint32_t view;
-    int width;
+    int width; /* of level 0 */
     int height;
+    int levels;
     uint32_t generation;
     int uploaded;
 };
@@ -173,6 +174,7 @@ struct sxgl_gpu {
     uint32_t vertex_elements;
     uint32_t sampler;
     GLenum sampler_params[4]; /* min, mag, wrap s, wrap t of `sampler` */
+    int sampler_levels; /* its max lod is this less one */
     uint32_t bound_view;
     struct sxgl_gpu_texture* textures;
     uint32_t blend;
@@ -528,17 +530,39 @@ static uint32_t sxgl_gpu_env(const struct sxgl_gpu_state* state)
 }
 
 static uint32_t sxgl_gpu_resource(struct sxgl_gpu* gpu, uint32_t target, uint32_t format, uint32_t bind,
-    uint32_t width, uint32_t height, long section, uint32_t bytes);
+    uint32_t width, uint32_t height, uint32_t last_level, long section, uint32_t bytes);
 
-/* The host copy of the texture `state` names, made or remade at its size. */
+/* Level `level`'s size, for a level 0 of width by height. */
+static int sxgl_gpu_level_size(int size, int level)
+{
+    size >>= level;
+    return size > 0 ? size : 1;
+}
+
+/* The bytes of levels 0 to levels - 1, one after another, as the backing
+ * holds them. */
+static uint32_t sxgl_gpu_level_offset(int width, int height, int levels)
+{
+    uint32_t bytes = 0;
+    int level;
+
+    for (level = 0; level < levels; ++level) {
+        bytes += (uint32_t)sxgl_gpu_level_size(width, level) * (uint32_t)sxgl_gpu_level_size(height, level) * 4u;
+    }
+    return bytes;
+}
+
+/* The host copy of the texture `state` names, made or remade at its size and
+ * number of levels. */
 static struct sxgl_gpu_texture* sxgl_gpu_texture_for(struct sxgl_gpu* gpu, const struct sxgl_gpu_state* state)
 {
     struct sxgl_gpu_texture* texture = *state->texture;
-    uint32_t bytes = (uint32_t)state->texture_width * (uint32_t)state->texture_height * 4u;
+    uint32_t bytes = sxgl_gpu_level_offset(state->texture_width, state->texture_height, state->texture_levels);
     void* view = 0;
     uint32_t* out;
 
-    if (texture != 0 && texture->width == state->texture_width && texture->height == state->texture_height) {
+    if (texture != 0 && texture->width == state->texture_width && texture->height == state->texture_height &&
+        texture->levels == state->texture_levels) {
         return texture;
     }
     if (texture != 0) {
@@ -554,13 +578,15 @@ static struct sxgl_gpu_texture* sxgl_gpu_texture_for(struct sxgl_gpu* gpu, const
     texture->texels = (uint32_t*)view;
     texture->width = state->texture_width;
     texture->height = state->texture_height;
+    texture->levels = state->texture_levels;
     if (texture->section < 0) {
         free(texture);
         gpu->failed = 1;
         return 0;
     }
     texture->resource = sxgl_gpu_resource(gpu, PIPE_TEXTURE_2D, VIRGL_FORMAT_B8G8R8A8_UNORM,
-        VIRGL_BIND_SAMPLER_VIEW, (uint32_t)texture->width, (uint32_t)texture->height, texture->section, bytes);
+        VIRGL_BIND_SAMPLER_VIEW, (uint32_t)texture->width, (uint32_t)texture->height,
+        (uint32_t)(texture->levels - 1), texture->section, bytes);
     texture->view = sxgl_gpu_handle(gpu);
     out = sxgl_gpu_reserve(gpu, 1u + VIRGL_OBJ_SAMPLER_VIEW_SIZE);
     if (out != 0) {
@@ -569,7 +595,7 @@ static struct sxgl_gpu_texture* sxgl_gpu_texture_for(struct sxgl_gpu* gpu, const
         out[2] = texture->resource;
         out[3] = VIRGL_FORMAT_B8G8R8A8_UNORM | (PIPE_TEXTURE_2D << 24);
         out[4] = 0u;
-        out[5] = 0u;
+        out[5] = (uint32_t)(texture->levels - 1) << 8;
         out[6] = VIRGL_OBJ_SAMPLER_VIEW_SWIZZLE_IDENTITY;
     }
     texture->owner = state->texture;
@@ -584,9 +610,27 @@ static uint32_t sxgl_gpu_wrap(GLenum wrap)
     return wrap == GL_REPEAT ? PIPE_TEX_WRAP_REPEAT : PIPE_TEX_WRAP_CLAMP_TO_EDGE;
 }
 
+/* The filter within a level: a mipmapping filter names it first. */
 static uint32_t sxgl_gpu_filter(GLenum filter)
 {
-    return filter == GL_LINEAR ? PIPE_TEX_FILTER_LINEAR : PIPE_TEX_FILTER_NEAREST;
+    return filter == GL_LINEAR || filter == GL_LINEAR_MIPMAP_NEAREST || filter == GL_LINEAR_MIPMAP_LINEAR
+        ? PIPE_TEX_FILTER_LINEAR
+        : PIPE_TEX_FILTER_NEAREST;
+}
+
+/* The filter between levels. */
+static uint32_t sxgl_gpu_mip_filter(GLenum filter)
+{
+    switch (filter) {
+    case GL_NEAREST_MIPMAP_NEAREST:
+    case GL_LINEAR_MIPMAP_NEAREST:
+        return PIPE_TEX_MIPFILTER_NEAREST;
+    case GL_NEAREST_MIPMAP_LINEAR:
+    case GL_LINEAR_MIPMAP_LINEAR:
+        return PIPE_TEX_MIPFILTER_LINEAR;
+    default:
+        return PIPE_TEX_MIPFILTER_NONE;
+    }
 }
 
 /* Uploads the texels when they changed, binds the view, and replaces the
@@ -600,24 +644,33 @@ static void sxgl_gpu_apply_texture(struct sxgl_gpu* gpu, const struct sxgl_gpu_s
         return;
     }
     if (!texture->uploaded || texture->generation != state->texture_generation) {
-        struct savanxp_gpu_3d_transfer transfer;
-        uint32_t bytes = (uint32_t)texture->width * (uint32_t)texture->height * 4u;
+        int level;
 
         /* Queued draws may still sample the old texels: send them first. */
         if (sxgl_gpu_flush(gpu) != 0) {
             return;
         }
-        memcpy(texture->texels, state->texels, bytes);
-        memset(&transfer, 0, sizeof(transfer));
-        transfer.context_id = gpu->context;
-        transfer.resource_id = texture->resource;
-        transfer.direction = SAVANXP_GPU_3D_TRANSFER_TO_HOST;
-        transfer.width = (uint32_t)texture->width;
-        transfer.height = (uint32_t)texture->height;
-        transfer.depth = 1u;
-        transfer.stride = (uint32_t)texture->width * 4u;
-        if (sxgl_gpu_control(gpu, GPU_IOC_3D_TRANSFER, &transfer) != 0) {
-            return;
+        for (level = 0; level < texture->levels; ++level) {
+            struct savanxp_gpu_3d_transfer transfer;
+            int width = sxgl_gpu_level_size(texture->width, level);
+            int height = sxgl_gpu_level_size(texture->height, level);
+            uint32_t offset = sxgl_gpu_level_offset(texture->width, texture->height, level);
+
+            memcpy((unsigned char*)texture->texels + offset, state->texels[level],
+                (size_t)width * (size_t)height * 4u);
+            memset(&transfer, 0, sizeof(transfer));
+            transfer.context_id = gpu->context;
+            transfer.resource_id = texture->resource;
+            transfer.direction = SAVANXP_GPU_3D_TRANSFER_TO_HOST;
+            transfer.level = (uint32_t)level;
+            transfer.width = (uint32_t)width;
+            transfer.height = (uint32_t)height;
+            transfer.depth = 1u;
+            transfer.stride = (uint32_t)width * 4u;
+            transfer.offset = offset;
+            if (sxgl_gpu_control(gpu, GPU_IOC_3D_TRANSFER, &transfer) != 0) {
+                return;
+            }
         }
         texture->generation = state->texture_generation;
         texture->uploaded = 1;
@@ -634,7 +687,8 @@ static void sxgl_gpu_apply_texture(struct sxgl_gpu* gpu, const struct sxgl_gpu_s
     }
     if (gpu->sampler == 0u || gpu->sampler_params[0] != state->min_filter ||
         gpu->sampler_params[1] != state->mag_filter || gpu->sampler_params[2] != state->wrap_s ||
-        gpu->sampler_params[3] != state->wrap_t) {
+        gpu->sampler_params[3] != state->wrap_t || gpu->sampler_levels != texture->levels) {
+        float max_lod = (float)(texture->levels - 1);
         uint32_t handle = sxgl_gpu_handle(gpu);
         out = sxgl_gpu_reserve(gpu, 1u + VIRGL_OBJ_SAMPLER_STATE_SIZE);
         if (out == 0) {
@@ -647,8 +701,10 @@ static void sxgl_gpu_apply_texture(struct sxgl_gpu* gpu, const struct sxgl_gpu_s
             VIRGL_OBJ_SAMPLER_STATE_S0_WRAP_T(sxgl_gpu_wrap(state->wrap_t)) |
             VIRGL_OBJ_SAMPLER_STATE_S0_WRAP_R(PIPE_TEX_WRAP_CLAMP_TO_EDGE) |
             VIRGL_OBJ_SAMPLER_STATE_S0_MIN_IMG_FILTER(sxgl_gpu_filter(state->min_filter)) |
-            VIRGL_OBJ_SAMPLER_STATE_S0_MIN_MIP_FILTER(PIPE_TEX_MIPFILTER_NONE) |
+            VIRGL_OBJ_SAMPLER_STATE_S0_MIN_MIP_FILTER(sxgl_gpu_mip_filter(state->min_filter)) |
             VIRGL_OBJ_SAMPLER_STATE_S0_MAG_IMG_FILTER(sxgl_gpu_filter(state->mag_filter));
+        /* lod bias and min lod stay 0; the max lod is the last level. */
+        memcpy(&out[5], &max_lod, sizeof(max_lod));
         out = sxgl_gpu_reserve(gpu, 1u + VIRGL_BIND_SAMPLER_STATES_SIZE(1u));
         if (out != 0) {
             out[0] = VIRGL_CMD_HEADER(VIRGL_CCMD_BIND_SAMPLER_STATES, 0, VIRGL_BIND_SAMPLER_STATES_SIZE(1u));
@@ -662,6 +718,7 @@ static void sxgl_gpu_apply_texture(struct sxgl_gpu* gpu, const struct sxgl_gpu_s
         gpu->sampler_params[1] = state->mag_filter;
         gpu->sampler_params[2] = state->wrap_s;
         gpu->sampler_params[3] = state->wrap_t;
+        gpu->sampler_levels = texture->levels;
     }
 }
 
@@ -780,7 +837,7 @@ static void sxgl_gpu_apply(struct sxgl_gpu* gpu, const struct sxgl_gpu_state* st
  * ------------------------------------------------------------------------ */
 
 static uint32_t sxgl_gpu_resource(struct sxgl_gpu* gpu, uint32_t target, uint32_t format, uint32_t bind,
-    uint32_t width, uint32_t height, long section, uint32_t bytes)
+    uint32_t width, uint32_t height, uint32_t last_level, long section, uint32_t bytes)
 {
     struct savanxp_gpu_3d_resource request;
 
@@ -793,6 +850,7 @@ static uint32_t sxgl_gpu_resource(struct sxgl_gpu* gpu, uint32_t target, uint32_
     request.height = height;
     request.depth = 1u;
     request.array_size = 1u;
+    request.last_level = last_level;
     request.section_handle = (int32_t)section;
     request.backing_size = bytes;
     if (sxgl_gpu_control(gpu, GPU_IOC_3D_CREATE_RESOURCE, &request) != 0) {
@@ -829,9 +887,9 @@ static int sxgl_gpu_make_targets(struct sxgl_gpu* gpu)
     }
     gpu->colour_pixels = (uint32_t*)view;
     gpu->colour_resource = sxgl_gpu_resource(gpu, PIPE_TEXTURE_2D, VIRGL_FORMAT_B8G8R8A8_UNORM,
-        VIRGL_BIND_RENDER_TARGET, (uint32_t)gpu->width, (uint32_t)gpu->height, gpu->colour_section, bytes);
+        VIRGL_BIND_RENDER_TARGET, (uint32_t)gpu->width, (uint32_t)gpu->height, 0u, gpu->colour_section, bytes);
     gpu->depth_resource = sxgl_gpu_resource(gpu, PIPE_TEXTURE_2D, gpu->depth_format,
-        VIRGL_BIND_DEPTH_STENCIL, (uint32_t)gpu->width, (uint32_t)gpu->height, -1, 0u);
+        VIRGL_BIND_DEPTH_STENCIL, (uint32_t)gpu->width, (uint32_t)gpu->height, 0u, -1, 0u);
     if (gpu->failed) {
         return -1;
     }
@@ -959,7 +1017,7 @@ struct sxgl_gpu* sxgl_gpu_create(int width, int height)
         return 0;
     }
     gpu->vertex_resource = sxgl_gpu_resource(gpu, PIPE_BUFFER, VIRGL_FORMAT_R8_UNORM, VIRGL_BIND_VERTEX_BUFFER,
-        SXGL_GPU_VERTEX_BUFFER_BYTES, 1u, gpu->vertex_section, SXGL_GPU_VERTEX_BUFFER_BYTES);
+        SXGL_GPU_VERTEX_BUFFER_BYTES, 1u, 0u, gpu->vertex_section, SXGL_GPU_VERTEX_BUFFER_BYTES);
 
     gpu->vertex_shader =
         sxgl_gpu_create_shader(gpu, PIPE_SHADER_VERTEX, k_vertex_shader, (uint32_t)sizeof(k_vertex_shader));

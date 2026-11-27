@@ -34,6 +34,8 @@
 #define SXGL_PROJECTION_DEPTH 4
 #define SXGL_MAX_LIGHTS 8
 #define SXGL_MAX_TEXTURE_SIZE 1024
+/* Levels 0 (1024) to 10 (1x1); the GPU backend takes as many. */
+#define SXGL_MAX_TEXTURE_LEVELS SXGL_GPU_MAX_LEVELS
 /* A triangle clipped by six planes has at most 3 + 6 vertices. */
 #define SXGL_CLIP_MAX_VERTICES 9
 /* Perspective-correct texturing divides once per this many pixels and
@@ -80,10 +82,16 @@ struct sxgl_material {
     float colour_indexes[3];
 };
 
-struct sxgl_texture {
+/* One mipmap level; texels NULL while the level is not defined. */
+struct sxgl_texture_level {
     uint32_t* texels; /* 0xAARRGGBB, row 0 is t = 0 */
     int width;
     int height;
+    GLenum base_format; /* the internal format, 1..4 named by their base format */
+};
+
+struct sxgl_texture {
+    struct sxgl_texture_level levels[SXGL_MAX_TEXTURE_LEVELS];
     GLenum min_filter;
     GLenum mag_filter;
     GLenum wrap_s;
@@ -131,6 +139,8 @@ struct sxgl_window_vertex {
 #define SXGL_F_TEX 0x0010u
 #define SXGL_F_TEX_LINEAR 0x0020u
 #define SXGL_F_TEX_REPLACE 0x0040u
+/* The minification filter mipmaps; generic routine only, for now. */
+#define SXGL_F_TEX_MIPMAP 0x4000u
 #define SXGL_F_ALPHA_TEST 0x0080u
 #define SXGL_F_BLEND 0x0100u
 #define SXGL_F_BLEND_ADD 0x0200u
@@ -152,6 +162,8 @@ struct sxgl_span {
     float q, dq;
     float sq, dsq;
     float tq, dtq;
+    /* The same along y, for the level of detail of a mipmapped texture. */
+    float dq_dy, dsq_dy, dtq_dy;
 };
 
 struct sxgl_pipeline;
@@ -167,6 +179,10 @@ struct sxgl_pipeline {
     GLenum blend_destination;
     GLenum texture_env;
     const struct sxgl_texture* texture;
+    int texture_levels; /* that sampling uses: 1, or the whole chain when it mipmaps */
+    /* How many times level i halves level 0's width and height: shifting
+     * level-0 coordinates by these gives level i's. */
+    int level_shift[SXGL_MAX_TEXTURE_LEVELS][2];
     int fog_red;
     int fog_green;
     int fog_blue;
@@ -516,6 +532,67 @@ static void sxgl_set4(float out[4], float a, float b, float c, float d)
     out[3] = d;
 }
 
+static void sxgl_texture_free_levels(struct sxgl_texture* texture)
+{
+    int level;
+
+    for (level = 0; level < SXGL_MAX_TEXTURE_LEVELS; ++level) {
+        free(texture->levels[level].texels);
+        texture->levels[level].texels = 0;
+    }
+}
+
+/* A new texture object, in GL's initial state. Its minification filter is
+ * GL_NEAREST_MIPMAP_LINEAR, so a texture with level 0 alone is incomplete
+ * until the filter changes or the other levels arrive, as in GL. */
+static void sxgl_texture_init(struct sxgl_texture* texture)
+{
+    memset(texture, 0, sizeof(*texture));
+    texture->min_filter = GL_NEAREST_MIPMAP_LINEAR;
+    texture->mag_filter = GL_LINEAR;
+    texture->wrap_s = GL_REPEAT;
+    texture->wrap_t = GL_REPEAT;
+}
+
+static int sxgl_is_mipmap_filter(GLenum filter)
+{
+    return filter == GL_NEAREST_MIPMAP_NEAREST || filter == GL_LINEAR_MIPMAP_NEAREST ||
+        filter == GL_NEAREST_MIPMAP_LINEAR || filter == GL_LINEAR_MIPMAP_LINEAR;
+}
+
+/* How many levels sampling uses, from level 0: 1 with a filter that does not
+ * mipmap, the whole chain down to 1x1 with one that does, and 0 when the
+ * texture is incomplete for its filter, in which case GL textures as if
+ * texturing were off. A chain is complete when every level has the size the
+ * one before halves to (never below 1) and the same internal format. */
+static int sxgl_texture_levels(const struct sxgl_texture* texture)
+{
+    const struct sxgl_texture_level* base;
+    int width;
+    int height;
+    int level;
+
+    if (texture == 0 || texture->levels[0].texels == 0) {
+        return 0;
+    }
+    base = &texture->levels[0];
+    if (!sxgl_is_mipmap_filter(texture->min_filter)) {
+        return 1;
+    }
+    width = base->width;
+    height = base->height;
+    for (level = 1; width > 1 || height > 1; ++level) {
+        const struct sxgl_texture_level* next = &texture->levels[level];
+        width = width > 1 ? width / 2 : 1;
+        height = height > 1 ? height / 2 : 1;
+        if (next->texels == 0 || next->width != width || next->height != height ||
+            next->base_format != base->base_format) {
+            return 0;
+        }
+    }
+    return level;
+}
+
 struct sxgl_context* sxgl_context_create(const struct sx_bitmap* colour)
 {
     return sxgl_context_create_ex(colour, 0u);
@@ -654,7 +731,7 @@ void sxgl_context_destroy(struct sxgl_context* context)
     context->gpu = 0;
     for (index = 0; index < context->texture_capacity; ++index) {
         if (context->textures[index] != 0) {
-            free(context->textures[index]->texels);
+            sxgl_texture_free_levels(context->textures[index]);
             free(context->textures[index]);
         }
     }
@@ -2222,11 +2299,7 @@ void glGenTextures(GLsizei count, GLuint* names)
             sxgl_raise(context, GL_OUT_OF_MEMORY, "glGenTextures", 0);
             return;
         }
-        memset(texture, 0, sizeof(*texture));
-        texture->min_filter = GL_LINEAR;
-        texture->mag_filter = GL_LINEAR;
-        texture->wrap_s = GL_REPEAT;
-        texture->wrap_t = GL_REPEAT;
+        sxgl_texture_init(texture);
         context->textures[candidate - 1] = texture;
         names[index] = candidate;
     }
@@ -2250,7 +2323,7 @@ void glDeleteTextures(GLsizei count, const GLuint* names)
             continue;
         }
         sxgl_gpu_texture_free(context->gpu, &texture->gpu);
-        free(texture->texels);
+        sxgl_texture_free_levels(texture);
         free(texture);
         context->textures[names[index] - 1] = 0;
         if (context->bound_texture == names[index]) {
@@ -2283,11 +2356,7 @@ void glBindTexture(GLenum target, GLuint name)
             sxgl_raise(context, GL_OUT_OF_MEMORY, "glBindTexture", 0);
             return;
         }
-        memset(texture, 0, sizeof(*texture));
-        texture->min_filter = GL_LINEAR;
-        texture->mag_filter = GL_LINEAR;
-        texture->wrap_s = GL_REPEAT;
-        texture->wrap_t = GL_REPEAT;
+        sxgl_texture_init(texture);
         context->textures[name - 1] = texture;
     }
     context->bound_texture = name;
@@ -2339,7 +2408,25 @@ static int sxgl_valid_internal_format(GLint format)
         format == GL_LUMINANCE || format == GL_BGRA;
 }
 
-static void sxgl_copy_texels(struct sxgl_texture* texture, int x, int y, int width, int height, GLenum format,
+/* Internal formats 1..4 are the base formats by another name; levels of one
+ * texture must agree on it. */
+static GLenum sxgl_base_format(GLint format)
+{
+    switch (format) {
+    case 1:
+        return GL_LUMINANCE;
+    case 2:
+        return GL_LUMINANCE + 1; /* GL_LUMINANCE_ALPHA */
+    case 3:
+        return GL_RGB;
+    case 4:
+        return GL_RGBA;
+    default:
+        return (GLenum)format;
+    }
+}
+
+static void sxgl_copy_texels(struct sxgl_texture_level* level, int x, int y, int width, int height, GLenum format,
     const unsigned char* pixels)
 {
     int bytes = sxgl_format_bytes(format);
@@ -2347,7 +2434,7 @@ static void sxgl_copy_texels(struct sxgl_texture* texture, int x, int y, int wid
     int column;
 
     for (row = 0; row < height; ++row) {
-        uint32_t* out = texture->texels + (size_t)(y + row) * (size_t)texture->width + (size_t)x;
+        uint32_t* out = level->texels + (size_t)(y + row) * (size_t)level->width + (size_t)x;
         const unsigned char* in = pixels + (size_t)row * (size_t)width * (size_t)bytes;
         for (column = 0; column < width; ++column) {
             out[column] = sxgl_fetch_texel(format, in + (size_t)column * (size_t)bytes);
@@ -2360,6 +2447,7 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format, GLsizei wid
 {
     struct sxgl_context* context = sxgl_enter("glTexImage2D");
     struct sxgl_texture* texture;
+    struct sxgl_texture_level* image;
     uint32_t* texels;
 
     if (context == 0) {
@@ -2370,8 +2458,8 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format, GLsizei wid
         sxgl_raise(context, GL_INVALID_ENUM, "glTexImage2D", "target, format or type not in the subset");
         return;
     }
-    if (level != 0) {
-        sxgl_raise(context, GL_INVALID_VALUE, "glTexImage2D", "no mipmaps: only level 0");
+    if (level < 0 || level >= SXGL_MAX_TEXTURE_LEVELS) {
+        sxgl_raise(context, GL_INVALID_VALUE, "glTexImage2D", "level outside [0, log2(GL_MAX_TEXTURE_SIZE)]");
         return;
     }
     if (border != 0) {
@@ -2395,12 +2483,14 @@ void glTexImage2D(GLenum target, GLint level, GLint internal_format, GLsizei wid
         sxgl_raise(context, GL_OUT_OF_MEMORY, "glTexImage2D", 0);
         return;
     }
-    free(texture->texels);
-    texture->texels = texels;
-    texture->width = width;
-    texture->height = height;
+    image = &texture->levels[level];
+    free(image->texels);
+    image->texels = texels;
+    image->width = width;
+    image->height = height;
+    image->base_format = sxgl_base_format(internal_format);
     if (pixels != 0) {
-        sxgl_copy_texels(texture, 0, 0, width, height, format, (const unsigned char*)pixels);
+        sxgl_copy_texels(image, 0, 0, width, height, format, (const unsigned char*)pixels);
     } else {
         memset(texels, 0, (size_t)width * (size_t)height * sizeof(uint32_t));
     }
@@ -2413,6 +2503,7 @@ void glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei width
 {
     struct sxgl_context* context = sxgl_enter("glTexSubImage2D");
     struct sxgl_texture* texture;
+    struct sxgl_texture_level* image;
 
     if (context == 0) {
         return;
@@ -2421,18 +2512,22 @@ void glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei width
         sxgl_raise(context, GL_INVALID_ENUM, "glTexSubImage2D", "target, format or type not in the subset");
         return;
     }
-    texture = sxgl_texture_object(context, context->bound_texture);
-    if (texture == 0 || texture->texels == 0) {
-        sxgl_raise(context, GL_INVALID_OPERATION, "glTexSubImage2D", "no image defined");
+    if (level < 0 || level >= SXGL_MAX_TEXTURE_LEVELS) {
+        sxgl_raise(context, GL_INVALID_VALUE, "glTexSubImage2D", "level outside [0, log2(GL_MAX_TEXTURE_SIZE)]");
         return;
     }
-    if (level != 0 || x < 0 || y < 0 || width < 0 || height < 0 || x + width > texture->width ||
-        y + height > texture->height) {
+    texture = sxgl_texture_object(context, context->bound_texture);
+    image = texture != 0 ? &texture->levels[level] : 0;
+    if (image == 0 || image->texels == 0) {
+        sxgl_raise(context, GL_INVALID_OPERATION, "glTexSubImage2D", "no image defined at that level");
+        return;
+    }
+    if (x < 0 || y < 0 || width < 0 || height < 0 || x + width > image->width || y + height > image->height) {
         sxgl_raise(context, GL_INVALID_VALUE, "glTexSubImage2D", "outside the image");
         return;
     }
     if (pixels != 0) {
-        sxgl_copy_texels(texture, x, y, width, height, format, (const unsigned char*)pixels);
+        sxgl_copy_texels(image, x, y, width, height, format, (const unsigned char*)pixels);
         texture->generation += 1u;
     }
 }
@@ -2457,8 +2552,10 @@ void glTexParameteri(GLenum target, GLenum name, GLint value)
     switch (name) {
     case GL_TEXTURE_MIN_FILTER:
     case GL_TEXTURE_MAG_FILTER:
-        if (value != GL_NEAREST && value != GL_LINEAR) {
-            sxgl_raise(context, GL_INVALID_ENUM, "glTexParameteri", "no mipmaps: GL_NEAREST or GL_LINEAR");
+        if (value != GL_NEAREST && value != GL_LINEAR &&
+            (name == GL_TEXTURE_MAG_FILTER || !sxgl_is_mipmap_filter((GLenum)value))) {
+            sxgl_raise(context, GL_INVALID_ENUM, "glTexParameteri",
+                name == GL_TEXTURE_MAG_FILTER ? "magnification: GL_NEAREST or GL_LINEAR" : "minification filter");
             return;
         }
         if (name == GL_TEXTURE_MIN_FILTER) {
@@ -2558,12 +2655,13 @@ static inline int sxgl_wrap(int64_t coordinate, int size, GLenum wrap)
     return (int)coordinate;
 }
 
-/* u, v in texels, 16.16. */
-static inline uint32_t sxgl_sample_nearest(const struct sxgl_texture* texture, int64_t u, int64_t v)
+/* u, v in texels of `level`, 16.16; the wrap modes are the texture's. */
+static inline uint32_t sxgl_sample_nearest(
+    const struct sxgl_texture* texture, const struct sxgl_texture_level* level, int64_t u, int64_t v)
 {
-    int x = sxgl_wrap(u >> 16, texture->width, texture->wrap_s);
-    int y = sxgl_wrap(v >> 16, texture->height, texture->wrap_t);
-    return texture->texels[(size_t)y * (size_t)texture->width + (size_t)x];
+    int x = sxgl_wrap(u >> 16, level->width, texture->wrap_s);
+    int y = sxgl_wrap(v >> 16, level->height, texture->wrap_t);
+    return level->texels[(size_t)y * (size_t)level->width + (size_t)x];
 }
 
 static inline uint32_t sxgl_lerp_texel(uint32_t left, uint32_t right, uint32_t weight)
@@ -2575,21 +2673,86 @@ static inline uint32_t sxgl_lerp_texel(uint32_t left, uint32_t right, uint32_t w
     return rb | ag;
 }
 
-static inline uint32_t sxgl_sample_linear(const struct sxgl_texture* texture, int64_t u, int64_t v)
+static inline uint32_t sxgl_sample_linear(
+    const struct sxgl_texture* texture, const struct sxgl_texture_level* level, int64_t u, int64_t v)
 {
     int64_t uu = u - 0x8000;
     int64_t vv = v - 0x8000;
-    int x0 = sxgl_wrap(uu >> 16, texture->width, texture->wrap_s);
-    int x1 = sxgl_wrap((uu >> 16) + 1, texture->width, texture->wrap_s);
-    int y0 = sxgl_wrap(vv >> 16, texture->height, texture->wrap_t);
-    int y1 = sxgl_wrap((vv >> 16) + 1, texture->height, texture->wrap_t);
+    int x0 = sxgl_wrap(uu >> 16, level->width, texture->wrap_s);
+    int x1 = sxgl_wrap((uu >> 16) + 1, level->width, texture->wrap_s);
+    int y0 = sxgl_wrap(vv >> 16, level->height, texture->wrap_t);
+    int y1 = sxgl_wrap((vv >> 16) + 1, level->height, texture->wrap_t);
     uint32_t fx = (uint32_t)((uu >> 8) & 0xff);
     uint32_t fy = (uint32_t)((vv >> 8) & 0xff);
-    const uint32_t* row0 = texture->texels + (size_t)y0 * (size_t)texture->width;
-    const uint32_t* row1 = texture->texels + (size_t)y1 * (size_t)texture->width;
+    const uint32_t* row0 = level->texels + (size_t)y0 * (size_t)level->width;
+    const uint32_t* row1 = level->texels + (size_t)y1 * (size_t)level->width;
     uint32_t top = sxgl_lerp_texel(row0[x0], row0[x1], fx);
     uint32_t bottom = sxgl_lerp_texel(row1[x0], row1[x1], fx);
     return sxgl_lerp_texel(top, bottom, fy);
+}
+
+/* Where a pixel samples a mipmapped texture: the filter and the level or
+ * two levels, chosen from its level of detail. */
+struct sxgl_mip_choice {
+    int linear; /* the filter within a level */
+    int first; /* level */
+    int second; /* level blended in, or -1 */
+    uint32_t weight; /* of `second`, 0..256 */
+};
+
+/* OpenGL 1.1, section 3.8.5: lambda = log2(rho) decides between the
+ * magnification filter on level 0 (lambda <= c) and the minification one,
+ * which picks the nearest level or blends the two around lambda. */
+static inline struct sxgl_mip_choice sxgl_choose_mip(const struct sxgl_texture* texture, int levels, float lambda)
+{
+    struct sxgl_mip_choice choice = {0, 0, -1, 0};
+    GLenum min = texture->min_filter;
+    float c = texture->mag_filter == GL_LINEAR &&
+            (min == GL_NEAREST_MIPMAP_NEAREST || min == GL_NEAREST_MIPMAP_LINEAR)
+        ? 0.5f
+        : 0.0f;
+    int last = levels - 1;
+
+    if (lambda <= c) {
+        choice.linear = texture->mag_filter == GL_LINEAR;
+        return choice;
+    }
+    choice.linear = min == GL_LINEAR_MIPMAP_NEAREST || min == GL_LINEAR_MIPMAP_LINEAR;
+    if (min == GL_NEAREST_MIPMAP_NEAREST || min == GL_LINEAR_MIPMAP_NEAREST) {
+        int level = lambda <= 0.5f ? 0 : (int)ceilf(lambda + 0.5f) - 1;
+        choice.first = level > last ? last : level;
+        return choice;
+    }
+    if (lambda >= (float)last) {
+        choice.first = last;
+        return choice;
+    }
+    choice.first = (int)lambda;
+    choice.second = choice.first + 1;
+    choice.weight = (uint32_t)((lambda - (float)choice.first) * 256.0f);
+    return choice;
+}
+
+/* lambda = log2(rho) where the span's q, s/w and t/w are q, sq and tq, for a
+ * texture of width by height texels at level 0. rho is the one the
+ * specification prefers to its approximations: the larger of the lengths of
+ * the texel coordinates' derivatives along x and along y, both from the plane
+ * equations. A GPU approximates it per 2x2 pixels, each its own way within
+ * the bounds the specification sets, so the two backends choose slightly
+ * different levels where lambda changes fast. */
+static inline float sxgl_lambda(const struct sxgl_span* span, float q, float sq, float tq, float width, float height)
+{
+    float inverse_squared = 1.0f / (q * q);
+    float dudx = (span->dsq * q - sq * span->dq) * inverse_squared * width;
+    float dvdx = (span->dtq * q - tq * span->dq) * inverse_squared * height;
+    float dudy = (span->dsq_dy * q - sq * span->dq_dy) * inverse_squared * width;
+    float dvdy = (span->dtq_dy * q - tq * span->dq_dy) * inverse_squared * height;
+    float along_x = dudx * dudx + dvdx * dvdx;
+    float along_y = dudy * dudy + dvdy * dvdy;
+    float rho_squared = along_x > along_y ? along_x : along_y;
+
+    /* log2(sqrt(x)) = log2(x) / 2 */
+    return rho_squared > 0.0f ? 0.5f * log2f(rho_squared) : -1.0f;
 }
 
 /* A blend factor for one channel: source (s) and destination (d) colour, both
@@ -2637,8 +2800,13 @@ static inline __attribute__((always_inline)) uint64_t sxgl_span_core(
     int32_t fog = span->fog;
     float q = span->q, sq = span->sq, tq = span->tq;
     int64_t u = 0, v = 0, du = 0, dv = 0;
-    float texture_width = texture != 0 ? (float)texture->width * 65536.0f : 0.0f;
-    float texture_height = texture != 0 ? (float)texture->height * 65536.0f : 0.0f;
+    const struct sxgl_texture_level* level0 = texture != 0 ? &texture->levels[0] : 0;
+    float texture_width = texture != 0 ? (float)level0->width * 65536.0f : 0.0f;
+    float texture_height = texture != 0 ? (float)level0->height * 65536.0f : 0.0f;
+    /* lambda, when the filter mipmaps: exact at both ends of a segment and
+     * interpolated linearly between them, as the texture coordinates are. */
+    float lambda = 0.0f;
+    float dlambda = 0.0f;
     uint64_t written = 0;
     int x = 0;
     int count = span->count;
@@ -2661,6 +2829,12 @@ static inline __attribute__((always_inline)) uint64_t sxgl_span_core(
             v = (int64_t)v0;
             du = (int64_t)((u1 - u0) / (float)segment);
             dv = (int64_t)((v1 - v0) / (float)segment);
+            if (features & SXGL_F_TEX_MIPMAP) {
+                float width = (float)level0->width;
+                float height = (float)level0->height;
+                lambda = sxgl_lambda(span, q, sq, tq, width, height);
+                dlambda = (sxgl_lambda(span, next_q, next_sq, next_tq, width, height) - lambda) / (float)segment;
+            }
             q = next_q;
             sq = next_sq;
             tq = next_tq;
@@ -2696,8 +2870,28 @@ static inline __attribute__((always_inline)) uint64_t sxgl_span_core(
             }
 
             if (features & SXGL_F_TEX) {
-                uint32_t texel = (features & SXGL_F_TEX_LINEAR) ? sxgl_sample_linear(texture, u, v)
-                                                                : sxgl_sample_nearest(texture, u, v);
+                uint32_t texel;
+                if (features & SXGL_F_TEX_MIPMAP) {
+                    struct sxgl_mip_choice mip = sxgl_choose_mip(texture, pipeline->texture_levels, lambda);
+                    const struct sxgl_texture_level* image = &texture->levels[mip.first];
+                    int64_t mu = u >> pipeline->level_shift[mip.first][0];
+                    int64_t mv = v >> pipeline->level_shift[mip.first][1];
+                    texel = mip.linear ? sxgl_sample_linear(texture, image, mu, mv)
+                                       : sxgl_sample_nearest(texture, image, mu, mv);
+                    if (mip.second >= 0) {
+                        uint32_t other;
+                        image = &texture->levels[mip.second];
+                        mu = u >> pipeline->level_shift[mip.second][0];
+                        mv = v >> pipeline->level_shift[mip.second][1];
+                        other = mip.linear ? sxgl_sample_linear(texture, image, mu, mv)
+                                           : sxgl_sample_nearest(texture, image, mu, mv);
+                        texel = sxgl_lerp_texel(texel, other, mip.weight);
+                    }
+                } else if (features & SXGL_F_TEX_LINEAR) {
+                    texel = sxgl_sample_linear(texture, level0, u, v);
+                } else {
+                    texel = sxgl_sample_nearest(texture, level0, u, v);
+                }
                 int tr = (int)((texel >> 16) & 0xffu);
                 int tg = (int)((texel >> 8) & 0xffu);
                 int tb = (int)(texel & 0xffu);
@@ -2800,6 +2994,9 @@ static inline __attribute__((always_inline)) uint64_t sxgl_span_core(
             if (features & SXGL_F_TEX) {
                 u += du;
                 v += dv;
+            }
+            if (features & SXGL_F_TEX_MIPMAP) {
+                lambda += dlambda;
             }
         }
     }
@@ -2907,9 +3104,27 @@ static void sxgl_validate(struct sxgl_context* context)
             generic = 1;
         }
     }
-    if (context->texture_2d && texture != 0 && texture->texels != 0) {
+    if (context->texture_2d && texture != 0 && sxgl_texture_levels(texture) > 0) {
         features |= SXGL_F_TEX;
         pipeline->texture = texture;
+        pipeline->texture_levels = sxgl_texture_levels(texture);
+        if (sxgl_is_mipmap_filter(texture->min_filter)) {
+            int level;
+            features |= SXGL_F_TEX_MIPMAP;
+            generic = 1;
+            for (level = 0; level < pipeline->texture_levels; ++level) {
+                int shift_s = 0;
+                int shift_t = 0;
+                while ((texture->levels[level].width << shift_s) < texture->levels[0].width) {
+                    shift_s += 1;
+                }
+                while ((texture->levels[level].height << shift_t) < texture->levels[0].height) {
+                    shift_t += 1;
+                }
+                pipeline->level_shift[level][0] = shift_s;
+                pipeline->level_shift[level][1] = shift_t;
+            }
+        }
         pipeline->texture_env = context->texture_env;
         if (context->texture_env == GL_REPLACE) {
             features |= SXGL_F_TEX_REPLACE;
@@ -3071,9 +3286,10 @@ static int sxgl_colours_differ(const struct sxgl_window_vertex* a, const struct 
     return 0;
 }
 
-/* Minification or magnification, decided per triangle by comparing the
- * texel area it covers with its pixel area: the subset has no mipmaps and no
- * per-pixel level of detail, so a triangle is minified or magnified as a whole. */
+/* Minification or magnification for a filter that does not mipmap, decided
+ * per triangle by comparing the texel area it covers with its pixel area: the
+ * specialized routines keep one filter for a whole triangle. A mipmapping
+ * filter decides per pixel instead (sxgl_choose_mip). */
 static int sxgl_use_linear(const struct sxgl_texture* texture, const struct sxgl_window_vertex* v[3], float pixel_area)
 {
     float s[3];
@@ -3088,8 +3304,8 @@ static int sxgl_use_linear(const struct sxgl_texture* texture, const struct sxgl
         return texture->mag_filter == GL_LINEAR;
     }
     for (index = 0; index < 3; ++index) {
-        s[index] = v[index]->sq / v[index]->q * (float)texture->width;
-        t[index] = v[index]->tq / v[index]->q * (float)texture->height;
+        s[index] = v[index]->sq / v[index]->q * (float)texture->levels[0].width;
+        t[index] = v[index]->tq / v[index]->q * (float)texture->levels[0].height;
     }
     texel_area = fabsf((s[1] - s[0]) * (t[2] - t[0]) - (s[2] - s[0]) * (t[1] - t[0]));
     if (texel_area > pixel_area) {
@@ -3191,7 +3407,7 @@ static void sxgl_raster_triangle(struct sxgl_context* context, const struct sxgl
 #undef SXGL_PLANE
 
     vary = sxgl_colours_differ(v[0], v[1], v[2]);
-    linear = (pipeline->features & SXGL_F_TEX) != 0 &&
+    linear = (pipeline->features & SXGL_F_TEX) != 0 && (pipeline->features & SXGL_F_TEX_MIPMAP) == 0 &&
         sxgl_use_linear(pipeline->texture, v, determinant > 0.0f ? determinant * 0.5f : -determinant * 0.5f);
     routine = pipeline->routine[vary][linear];
     routine_features = pipeline->features | (vary ? SXGL_F_VARY : 0u) | (linear ? SXGL_F_TEX_LINEAR : 0u);
@@ -3231,6 +3447,9 @@ static void sxgl_raster_triangle(struct sxgl_context* context, const struct sxgl
         span.dsq = sq.dx;
         span.tq = sxgl_at(&tq, px, py);
         span.dtq = tq.dx;
+        span.dq_dy = q.dy;
+        span.dsq_dy = sq.dy;
+        span.dtq_dy = tq.dy;
         if (vary) {
             span.r = sxgl_fixed(sxgl_at(&r, px, py));
             span.g = sxgl_fixed(sxgl_at(&g, px, py));
@@ -3397,11 +3616,15 @@ static int sxgl_gpu_draw(struct sxgl_context* context, const struct sxgl_vertex*
     }
     if (context->texture_2d) {
         struct sxgl_texture* texture = sxgl_texture_object(context, context->bound_texture);
-        if (texture != 0 && texture->texels != 0) {
+        int levels = sxgl_texture_levels(texture);
+        if (levels > 0) {
             state.texture = &texture->gpu;
-            state.texels = texture->texels;
-            state.texture_width = texture->width;
-            state.texture_height = texture->height;
+            for (index = 0; index < levels; ++index) {
+                state.texels[index] = texture->levels[index].texels;
+            }
+            state.texture_levels = levels;
+            state.texture_width = texture->levels[0].width;
+            state.texture_height = texture->levels[0].height;
             state.texture_generation = texture->generation;
             state.texture_env = context->texture_env;
             state.min_filter = texture->min_filter;

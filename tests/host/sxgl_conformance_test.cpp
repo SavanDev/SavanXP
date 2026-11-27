@@ -573,6 +573,345 @@ SXGL_CASE("lighting", colour_material_tracks_the_current_colour)
         "glColorMaterial(GL_FRONT, GL_EMISSION) tracks the front emission alone");
 }
 
+
+// --- Texturing: mipmaps ----------------------------------------------------
+
+// The solid colour of level i of the test chain, as 0xRRGGBB.
+const uint32_t kLevelColours[7] = {0xff0000u, 0x00ff00u, 0x0000ffu, 0xffff00u, 0x00ffffu, 0xff00ffu, 0xffffffu};
+
+// Level `level` of a 64x64 chain: `size` by `size`, all one colour.
+void solid_level(int level, int size, uint32_t colour, GLint internal_format = GL_RGBA)
+{
+    std::vector<unsigned char> texels((size_t)size * (size_t)size * 4u);
+    for (size_t index = 0; index < (size_t)size * (size_t)size; ++index) {
+        texels[index * 4 + 0] = (unsigned char)(colour >> 16);
+        texels[index * 4 + 1] = (unsigned char)(colour >> 8);
+        texels[index * 4 + 2] = (unsigned char)colour;
+        texels[index * 4 + 3] = 255;
+    }
+    glTexImage2D(GL_TEXTURE_2D, level, internal_format, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, texels.data());
+}
+
+// A bound 64x64 texture with all seven levels, level i in kLevelColours[i].
+GLuint mip_chain(GLenum min_filter)
+{
+    GLuint name = 0;
+    glGenTextures(1, &name);
+    glBindTexture(GL_TEXTURE_2D, name);
+    for (int level = 0; level < 7; ++level) {
+        solid_level(level, 64 >> level, kLevelColours[level]);
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (GLint)min_filter);
+    return name;
+}
+
+// A square over the 16x16 viewport textured with s and t from 0 to
+// `repeat`: rho is 64 * repeat / 16 texels per pixel, the same everywhere.
+void textured_square(float repeat)
+{
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_TEXTURE_2D);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex2f(-1.0f, -1.0f);
+    glTexCoord2f(repeat, 0.0f);
+    glVertex2f(1.0f, -1.0f);
+    glTexCoord2f(repeat, repeat);
+    glVertex2f(1.0f, 1.0f);
+    glTexCoord2f(0.0f, repeat);
+    glVertex2f(-1.0f, 1.0f);
+    glEnd();
+    glFinish();
+}
+
+// The repeat that makes lambda = log2(rho) the given value.
+float repeat_for_lambda(double lambda)
+{
+    return (float)(std::pow(2.0, lambda) * 16.0 / 64.0);
+}
+
+SXGL_CASE("texturing: mipmaps", the_level_follows_lambda)
+{
+    Context context(16, 16);
+    mip_chain(GL_NEAREST_MIPMAP_NEAREST);
+    struct Expect {
+        double lambda;
+        int level;
+        const char* why;
+    };
+    for (const Expect& expect : {Expect{-1.0, 0, "magnified: level 0"}, Expect{1.0, 1, "lambda 1: level 1"},
+             Expect{1.4, 1, "lambda 1.4 rounds to level 1"}, Expect{1.6, 2, "lambda 1.6 rounds to level 2"},
+             Expect{3.0, 3, "lambda 3: level 3"}, Expect{8.0, 6, "past the last level: the 1x1 one"}}) {
+        textured_square(repeat_for_lambda(expect.lambda));
+        const uint32_t got = pixel(context, 8, 8);
+        check(got == kLevelColours[expect.level], std::string("GL_NEAREST_MIPMAP_NEAREST, ") + expect.why + ": " +
+                rgb(got));
+    }
+}
+
+SXGL_CASE("texturing: mipmaps", linear_mipmaps_blend_the_two_levels_around_lambda)
+{
+    Context context(16, 16);
+    mip_chain(GL_LINEAR_MIPMAP_LINEAR);
+    textured_square(repeat_for_lambda(1.5));
+    uint32_t got = pixel(context, 8, 8);
+    check(channel(got, 16) == 0 && near(channel(got, 8), 0.5, 3) && near(channel(got, 0), 0.5, 3),
+        "lambda 1.5: half level 1, half level 2, " + rgb(got));
+    textured_square(repeat_for_lambda(2.75));
+    got = pixel(context, 8, 8);
+    // Level 2 is blue, level 3 yellow: a quarter of blue, three of yellow.
+    check(near(channel(got, 16), 0.75, 3) && near(channel(got, 8), 0.75, 3) && near(channel(got, 0), 0.25, 3),
+        "lambda 2.75: a quarter of level 2, three quarters of level 3, " + rgb(got));
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+    textured_square(repeat_for_lambda(1.5));
+    got = pixel(context, 8, 8);
+    check(channel(got, 16) == 0 && near(channel(got, 8), 0.5, 3) && near(channel(got, 0), 0.5, 3),
+        "GL_NEAREST_MIPMAP_LINEAR blends the levels too, " + rgb(got));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
+    textured_square(repeat_for_lambda(1.6));
+    got = pixel(context, 8, 8);
+    check(got == kLevelColours[2], "GL_LINEAR_MIPMAP_NEAREST takes the nearest level alone, " + rgb(got));
+}
+
+SXGL_CASE("texturing: mipmaps", an_incomplete_texture_disables_texturing)
+{
+    Context context(16, 16);
+    glColor3f(0.5f, 0.5f, 0.5f);
+    GLuint name = 0;
+    glGenTextures(1, &name);
+    glBindTexture(GL_TEXTURE_2D, name);
+    solid_level(0, 64, kLevelColours[0]);
+    textured_square(1.0f);
+    check(near(channel(pixel(context, 8, 8), 16), 0.5) && near(channel(pixel(context, 8, 8), 8), 0.5),
+        "the initial minification filter mipmaps: level 0 alone is incomplete, " + rgb(pixel(context, 8, 8)));
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    textured_square(1.0f);
+    check(pixel(context, 8, 8) == 0x800000u || pixel(context, 8, 8) == 0x7f0000u,
+        "with GL_LINEAR, level 0 alone is complete, " + rgb(pixel(context, 8, 8)));
+
+    // Complete, lambda 2 takes level 2, blue, modulated by the grey: 0x00007f.
+    // Incomplete, the square is the grey itself.
+    mip_chain(GL_NEAREST_MIPMAP_NEAREST);
+    solid_level(3, 4, kLevelColours[3]); // level 3 of a 64x64 chain is 8x8
+    textured_square(1.0f);
+    check(pixel(context, 8, 8) == 0x808080u, "a level of the wrong size makes it incomplete, " +
+            rgb(pixel(context, 8, 8)));
+    solid_level(3, 8, kLevelColours[3], GL_RGB);
+    textured_square(1.0f);
+    check(pixel(context, 8, 8) == 0x808080u, "so does a level of another internal format, " +
+            rgb(pixel(context, 8, 8)));
+    solid_level(3, 8, kLevelColours[3]);
+    textured_square(1.0f);
+    check(pixel(context, 8, 8) == 0x00007fu || pixel(context, 8, 8) == 0x000080u,
+        "and redefining it right completes it again, " + rgb(pixel(context, 8, 8)));
+}
+
+SXGL_CASE("texturing: mipmaps", a_level_is_sampled_at_its_own_scale)
+{
+    // Level 1 (32x32) is red on its left half and green on its right. At
+    // lambda 1 the square spans s from 0 to 0.5: the left half of every
+    // level, so red, never green.
+    Context context(16, 16);
+    mip_chain(GL_NEAREST_MIPMAP_NEAREST);
+    std::vector<unsigned char> halves(32 * 32 * 4, 0);
+    for (int y = 0; y < 32; ++y) {
+        for (int x = 0; x < 32; ++x) {
+            unsigned char* texel = &halves[((size_t)y * 32 + (size_t)x) * 4];
+            texel[x < 16 ? 0 : 1] = 255;
+            texel[3] = 255;
+        }
+    }
+    glTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA, 32, 32, 0, GL_RGBA, GL_UNSIGNED_BYTE, halves.data());
+    textured_square(repeat_for_lambda(1.0));
+    bool all_red = true;
+    for (int x = 0; x < 16; ++x) {
+        all_red = all_red && pixel(context, x, 8) == 0xff0000u;
+    }
+    check(all_red, "s from 0 to 0.5 stays in the left half of level 1, " + rgb(pixel(context, 12, 8)));
+}
+
+SXGL_CASE("texturing: mipmaps", rho_is_the_larger_of_the_two_directions)
+{
+    // Squeezed along one axis only: rho takes the larger scale factor.
+    Context context(16, 16);
+    mip_chain(GL_NEAREST_MIPMAP_NEAREST);
+    auto stretched = [&](float s_repeat, float t_repeat) {
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glClear(GL_COLOR_BUFFER_BIT);
+        glEnable(GL_TEXTURE_2D);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0.0f, 0.0f);
+        glVertex2f(-1.0f, -1.0f);
+        glTexCoord2f(s_repeat, 0.0f);
+        glVertex2f(1.0f, -1.0f);
+        glTexCoord2f(s_repeat, t_repeat);
+        glVertex2f(1.0f, 1.0f);
+        glTexCoord2f(0.0f, t_repeat);
+        glVertex2f(-1.0f, 1.0f);
+        glEnd();
+        glFinish();
+    };
+    stretched(repeat_for_lambda(2.0), repeat_for_lambda(-1.0));
+    check(pixel(context, 8, 8) == kLevelColours[2], "minified along x alone: level 2, " + rgb(pixel(context, 8, 8)));
+    stretched(repeat_for_lambda(-1.0), repeat_for_lambda(2.0));
+    check(pixel(context, 8, 8) == kLevelColours[2], "minified along y alone: level 2, " + rgb(pixel(context, 8, 8)));
+}
+
+SXGL_CASE("texturing: mipmaps", the_switch_to_minification_is_at_c)
+{
+    // Level 0 is a texel checkerboard of black and white. At lambda 0.25 the
+    // texture is minified, but with a GL_LINEAR magnification filter and a
+    // GL_NEAREST_MIPMAP_* minification one, c is 0.5 and the magnification
+    // filter applies: bilinear, so greys. With GL_NEAREST for both, c is 0
+    // and the nearest texel of level 0 is taken: black or white only.
+    Context context(16, 16);
+    mip_chain(GL_NEAREST_MIPMAP_NEAREST);
+    std::vector<unsigned char> checker(64 * 64 * 4, 0);
+    for (int y = 0; y < 64; ++y) {
+        for (int x = 0; x < 64; ++x) {
+            unsigned char* texel = &checker[((size_t)y * 64 + (size_t)x) * 4];
+            const unsigned char value = ((x ^ y) & 1) != 0 ? 255 : 0;
+            texel[0] = texel[1] = texel[2] = value;
+            texel[3] = 255;
+        }
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, checker.data());
+    auto greys = [&]() {
+        int count = 0;
+        for (int y = 0; y < 16; ++y) {
+            for (int x = 0; x < 16; ++x) {
+                const int value = channel(pixel(context, x, y), 0);
+                count += value != 0 && value != 255 ? 1 : 0;
+            }
+        }
+        return count;
+    };
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    textured_square(repeat_for_lambda(0.25));
+    const int linear_greys = greys();
+    check(linear_greys > 0, "GL_LINEAR magnification below c = 0.5 filters bilinearly (" +
+            std::to_string(linear_greys) + " grey pixels)");
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    textured_square(repeat_for_lambda(0.25));
+    check(greys() == 0, "GL_NEAREST for both: c = 0, the nearest texel (" + std::to_string(greys()) + " grey pixels)");
+}
+
+SXGL_CASE("texturing: mipmaps", under_perspective_the_level_grows_with_distance)
+{
+    // A floor from just below the eye to far away, under the solid chain:
+    // going up the screen towards the horizon, each row samples the same
+    // level as the row below it or a later one, from level 0 to the last.
+    Context context(32, 32);
+    mip_chain(GL_NEAREST_MIPMAP_NEAREST);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glFrustum(-1.0, 1.0, -1.0, 1.0, 1.0, 400.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_TEXTURE_2D);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex3f(-1.0f, -1.0f, -1.0f);
+    glTexCoord2f(0.25f, 0.0f);
+    glVertex3f(1.0f, -1.0f, -1.0f);
+    glTexCoord2f(0.25f, 50.0f);
+    glVertex3f(1.0f, -1.0f, -390.0f);
+    glTexCoord2f(0.0f, 50.0f);
+    glVertex3f(-1.0f, -1.0f, -390.0f);
+    glEnd();
+    glFinish();
+    auto level_of = [](uint32_t colour) {
+        for (int level = 0; level < 7; ++level) {
+            if (kLevelColours[level] == colour) {
+                return level;
+            }
+        }
+        return -1;
+    };
+    int previous = 0;
+    int highest = 0;
+    bool monotonic = true;
+    bool known = true;
+    std::string levels;
+    for (int y = 31; y >= 17; --y) {
+        const int level = level_of(pixel(context, 16, y));
+        known = known && level >= 0;
+        monotonic = monotonic && level >= previous;
+        previous = level > previous ? level : previous;
+        highest = level > highest ? level : highest;
+        levels += std::to_string(level);
+    }
+    check(known, "every row samples one level of the chain: " + levels);
+    check(monotonic, "the level never falls towards the horizon: " + levels);
+    check(level_of(pixel(context, 16, 31)) == 0 && highest == 6, "from level 0 near the eye to the last: " + levels);
+}
+
+SXGL_CASE("texturing: mipmaps", a_rectangular_chain_ends_at_one_by_one)
+{
+    // 8x2, 4x1, 2x1, 1x1: once one dimension reaches 1 it stays there.
+    Context context(16, 16);
+    GLuint name = 0;
+    glGenTextures(1, &name);
+    glBindTexture(GL_TEXTURE_2D, name);
+    const int sizes[4][2] = {{8, 2}, {4, 1}, {2, 1}, {1, 1}};
+    for (int level = 0; level < 4; ++level) {
+        std::vector<unsigned char> texels((size_t)sizes[level][0] * (size_t)sizes[level][1] * 4u, 0);
+        for (size_t index = 0; index < texels.size() / 4; ++index) {
+            texels[index * 4 + 1] = 255;
+            texels[index * 4 + 3] = 255;
+        }
+        glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA, sizes[level][0], sizes[level][1], 0, GL_RGBA, GL_UNSIGNED_BYTE,
+            texels.data());
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    textured_square(8.0f);
+    check(pixel(context, 8, 8) == 0x00ff00u, "8x2 to 1x1 is complete and samples, " + rgb(pixel(context, 8, 8)));
+}
+
+SXGL_CASE("texturing: mipmaps", levels_are_specified_and_updated_one_at_a_time)
+{
+    Context context(16, 16);
+    mip_chain(GL_NEAREST_MIPMAP_NEAREST);
+    const unsigned char white[4 * 4 * 4] = {};
+    std::vector<unsigned char> grey(32 * 32 * 4, 128);
+    glTexSubImage2D(GL_TEXTURE_2D, 1, 0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, grey.data());
+    textured_square(repeat_for_lambda(1.0));
+    check(pixel(context, 8, 8) == 0x808080u, "glTexSubImage2D at level 1 changes level 1, " +
+            rgb(pixel(context, 8, 8)));
+    textured_square(repeat_for_lambda(2.0));
+    check(pixel(context, 8, 8) == kLevelColours[2], "and nothing else, " + rgb(pixel(context, 8, 8)));
+    check(glGetError() == GL_NO_ERROR, "no error so far");
+
+    glTexImage2D(GL_TEXTURE_2D, -1, GL_RGBA, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+    check(glGetError() == GL_INVALID_VALUE, "a negative level is GL_INVALID_VALUE");
+    glTexImage2D(GL_TEXTURE_2D, 11, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
+    check(glGetError() == GL_INVALID_VALUE, "a level past log2(GL_MAX_TEXTURE_SIZE) is GL_INVALID_VALUE");
+    GLuint fresh = 0;
+    glGenTextures(1, &fresh);
+    glBindTexture(GL_TEXTURE_2D, fresh);
+    solid_level(0, 4, kLevelColours[0]);
+    glTexSubImage2D(GL_TEXTURE_2D, 1, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, white);
+    check(glGetError() == GL_INVALID_OPERATION, "glTexSubImage2D at a level never specified is GL_INVALID_OPERATION");
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    check(glGetError() == GL_INVALID_ENUM, "a mipmapping magnification filter is GL_INVALID_ENUM");
+    for (GLenum filter : {GL_NEAREST_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_NEAREST, GL_NEAREST_MIPMAP_LINEAR,
+             GL_LINEAR_MIPMAP_LINEAR}) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (GLint)filter);
+    }
+    check(glGetError() == GL_NO_ERROR, "the four mipmapping minification filters are accepted");
+}
+
 } // namespace
 
 int main()

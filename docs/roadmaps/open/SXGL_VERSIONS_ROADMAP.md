@@ -1,6 +1,6 @@
 # SxGL versions — from a subset to OpenGL, one version at a time
 
-> **Status: step 0 done (2026-11-26); step 1 in progress: lighting done.** It replaces the rule
+> **Status: step 0 done (2026-11-26); step 1 in progress: lighting and mipmaps done.** It replaces the rule
 > SxGL grew under — "the subset grows only when a consumer asks" — with a
 > target: the versions of OpenGL itself, 1.1 first. `<GL/gl.h>`,
 > `libsxgl.so.0.4` and `sxgl_get_proc_address` exist;
@@ -157,7 +157,7 @@ header and `SXGL.md`:
 | Vertex specification | The rest of the `glVertex`/`glColor`/`glNormal`/`glTexCoord` families (`d`, `i`, `s`, `b`, `ub`, `us`, 1–4 components); `glRect`; `glArrayElement`, `glInterleavedArrays`, `glEdgeFlagPointer`; every array type and size GL 1.1 allows |
 | Transform | The texture matrix; the `d` variants of the matrix calls; user clip planes (`glClipPlane`, at least 6); `glTexGen` (object linear, eye linear, sphere map) |
 | Lighting | **Done:** specular and `GL_SHININESS`, 8 lights, two-sided lighting, the local viewer, `GL_NORMALIZE` honoured, every `glLight`/`glLightModel`/`glMaterial` variant and their `glGet` |
-| Textures | **Mipmaps**: levels in `glTexImage2D` and the four mipmap minification filters; 1D textures; borders; proxy textures; `glCopyTexImage`/`glCopyTexSubImage`; `glGetTexImage`; `GL_BLEND` environment and its colour; priorities and residency; the remaining internal formats and pixel types; `glTexParameterf/fv` |
+| Textures | **Done:** mipmaps, levels in `glTexImage2D` and the four mipmap minification filters. **Missing:** 1D textures; borders; proxy textures; `glCopyTexImage`/`glCopyTexSubImage`; `glGetTexImage`; `GL_BLEND` environment and its colour; priorities and residency; the remaining internal formats and pixel types; `glTexParameterf/fv` |
 | Pixels | `glRasterPos`, `glBitmap`, `glDrawPixels`, `glReadPixels`, `glCopyPixels`, `glPixelStore`, `glPixelTransfer`, `glPixelMap`, `glPixelZoom` |
 | Fragment and framebuffer | Stencil test and operations; `glColorMask`; `glLogicOp`; dithering (accepted); `glDrawBuffer`/`glReadBuffer` |
 | Display lists | `glNewList`, `glEndList`, `glCallList(s)`, `glGenLists`, `glDeleteLists`, `glIsList`, `glListBase` |

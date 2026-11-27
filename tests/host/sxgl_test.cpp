@@ -548,6 +548,9 @@ void benchmark()
             glGenTextures(1, &name);
             glBindTexture(GL_TEXTURE_2D, name);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
+            // One level: GL's default minification filter would mipmap and
+            // leave the texture incomplete.
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glEnable(GL_TEXTURE_2D);
             glEnable(GL_FOG);
             glFogi(GL_FOG_MODE, GL_LINEAR);

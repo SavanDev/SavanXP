@@ -145,6 +145,8 @@
 #define PIPE_TEX_WRAP_CLAMP_TO_EDGE 2u
 #define PIPE_TEX_FILTER_NEAREST 0u
 #define PIPE_TEX_FILTER_LINEAR 1u
+#define PIPE_TEX_MIPFILTER_NEAREST 0u
+#define PIPE_TEX_MIPFILTER_LINEAR 1u
 #define PIPE_TEX_MIPFILTER_NONE 2u
 
 /* CREATE_OBJECT(SURFACE): handle, resource, format, level, first | last << 16 */
