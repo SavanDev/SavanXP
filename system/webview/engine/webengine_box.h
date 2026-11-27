@@ -63,6 +63,9 @@ struct webengine_box_style {
     uint8_t visibility;
     uint8_t box_sizing;
     uint8_t overflow;
+    /* float (CSS_FLOAT_*) and clear (CSS_CLEAR_*). */
+    uint8_t float_side;
+    uint8_t clear;
     struct webengine_len vertical_align_length;
     struct webengine_len line_height;
     struct webengine_len text_indent;
@@ -82,7 +85,9 @@ struct webengine_box_style {
 
 enum webengine_box_type {
     /* Block-level: an element's block, list item or table part (tables
-     * stack until E6), or an anonymous block around inline content. */
+     * stack until E6), or an anonymous block around inline content. A
+     * float is a block too, out of the flow: it stays where it appears,
+     * among inline content when that is where it is (CSS 2.1 9.5). */
     WEBENGINE_BOX_BLOCK,
     /* An inline element; a block inside it splits it into pieces. */
     WEBENGINE_BOX_INLINE,
@@ -135,7 +140,16 @@ struct webengine_box {
      * on. INLINE: the used edges are in margin, border and padding too. */
     size_t first_line;
     size_t line_count;
+    /* BLOCK, while layout works out a shrink-to-fit width (CSS 2.1
+     * 10.3.5): its content's minimum and preferred widths. */
+    int min_content;
+    int max_content;
 };
+
+static inline bool webengine_box_floats(const struct webengine_box *box) {
+    return box->type == WEBENGINE_BOX_BLOCK && box->parent != NULL &&
+        (box->style->float_side == CSS_FLOAT_LEFT || box->style->float_side == CSS_FLOAT_RIGHT);
+}
 
 /* A line box (CSS 2.1 9.4.2) and the fragments laid out on it. */
 struct webengine_line {
@@ -174,6 +188,21 @@ struct webengine_fragment {
     size_t length;
 };
 
+/* What to paint, in order (CSS 2.1 Appendix E): a block's background and
+ * borders, a block's line boxes, or an outside marker. */
+enum webengine_paint_kind {
+    WEBENGINE_PAINT_BLOCK,
+    WEBENGINE_PAINT_LINES,
+    WEBENGINE_PAINT_MARKER,
+};
+
+struct webengine_paint {
+    uint8_t kind;
+    /* The block; for MARKER, the marker box, laid out in its x, y, width
+     * and height. */
+    const struct webengine_box *box;
+};
+
 struct webengine_tree {
     struct webengine_box *root;
     /* Set by webengine_layout: the width it laid out for, and the height of
@@ -190,6 +219,10 @@ struct webengine_tree {
      * (CSS 2.1 14.2); the box it came from does not paint it again. */
     css_color canvas;
     const struct webengine_box *canvas_source;
+    /* Set by webengine_layout: the painting order. */
+    struct webengine_paint *paint;
+    size_t paint_count;
+    size_t paint_capacity;
     char **links;
     size_t link_count;
     /* Owned by the tree. */
@@ -217,16 +250,18 @@ struct webengine_tree *webengine_tree_text(const char *text, size_t length, int 
 void webengine_tree_free(struct webengine_tree *tree);
 
 /* Lays the tree out in a viewport `width` CSS pixels wide (CSS 2.1 chapter
- * 10's normal flow): every block's position and size, and the line boxes
- * and fragments of inline content. 0, or -1 when out of memory. Laying out
- * again at another width replaces the last layout. */
+ * 10's normal flow, and 9.5's floats): every block's position and size, the
+ * line boxes and fragments of inline content, and the painting order. 0,
+ * or -1 when out of memory. Laying out again at another width replaces the
+ * last layout. */
 int webengine_layout(struct webengine_tree *tree, const struct webengine_fonts *fonts, int width);
 
 /* The tree as text, a line per box, indented two spaces a level, for the
  * tests: "block p", "anonymous", "inline b", "text \"...\"", "break",
- * "marker 1". Once laid out, a block's line ends with its border box,
- * "x y width height", and a block with inline content lists its line boxes
- * and their fragments in place of its children. `line` gets each one
- * without its newline. */
+ * "marker 1", with "float left" or "float right" after a float's name.
+ * Once laid out, a block's line ends with its border box, "x y width
+ * height", and a block with inline content lists its line boxes and their
+ * fragments in place of its children, then the floats among them, a level
+ * further in. `line` gets each one without its newline. */
 typedef void (*webengine_dump_line)(void *user, const char *line);
 void webengine_tree_dump(const struct webengine_tree *tree, webengine_dump_line line, void *user);

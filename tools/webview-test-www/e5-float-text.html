@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>E5: text around floats</title>
+<style>
+body { margin: 0 }
+p, div { margin: 0 }
+.left { float: left; width: 50px; height: 30px }
+.right { float: right; width: 70px; height: 20px; margin-left: 5px }
+.narrow { width: 100px }
+.block { float: left; width: 80px; height: 20px }
+.fit { float: left; border: 1px solid black }
+.after { clear: left }
+</style>
+</head>
+<body><p><span class="left"></span>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo pppp</p><p class="after">aaaa bbbb cccc dddd eeee ffff gggg <span class="right"></span>hhhh</p><div class="narrow"><span class="block"></span>abcd</div><div class="fit">hello world</div><div class="fit">aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj</div></body>
+</html>

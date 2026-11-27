@@ -1890,42 +1890,22 @@ static int webview_visible(const struct webengine_box_style *style)
     return style->visibility != CSS_VISIBILITY_HIDDEN && style->visibility != CSS_VISIBILITY_COLLAPSE;
 }
 
-/* Blocks in tree order: their backgrounds, then their borders. */
-static void webview_paint_blocks(struct sx_painter *painter, int top, int bottom)
+/* A block's background, then its borders. */
+static void webview_paint_block(struct sx_painter *painter, const struct webengine_box *box, int top, int bottom)
 {
-    const struct webengine_box *box = g_tree->root;
+    int y = g_page_y + box->y;
 
-    while (box != NULL)
+    if (!webview_visible(box->style) || y >= bottom || y + box->height <= top)
     {
-        int y = g_page_y + box->y;
-
-        if (box->type == WEBENGINE_BOX_BLOCK && webview_visible(box->style) &&
-            y < bottom && y + box->height > top)
-        {
-            uint32_t backdrop = webview_backdrop(box->parent);
-
-            if ((box->style->background >> 24) != 0 && box != g_tree->canvas_source)
-            {
-                sx_painter_fill_rect(painter, sx_rect_make(g_page_x + box->x, y, box->width, box->height),
-                    webview_color_over(box->style->background, backdrop));
-            }
-            webview_paint_borders(painter, box->style, g_page_x + box->x, y, box->width, box->height, 1, 1,
-                webview_backdrop(box));
-        }
-        if (box->type == WEBENGINE_BOX_BLOCK && !box->inline_content && box->first != NULL)
-        {
-            box = box->first;
-            continue;
-        }
-        while (box != NULL && box->next == NULL)
-        {
-            box = box->parent;
-        }
-        if (box != NULL)
-        {
-            box = box->next;
-        }
+        return;
     }
+    if ((box->style->background >> 24) != 0 && box != g_tree->canvas_source)
+    {
+        sx_painter_fill_rect(painter, sx_rect_make(g_page_x + box->x, y, box->width, box->height),
+            webview_color_over(box->style->background, webview_backdrop(box->parent)));
+    }
+    webview_paint_borders(painter, box->style, g_page_x + box->x, y, box->width, box->height, 1, 1,
+        webview_backdrop(box));
 }
 
 /* A piece of text, drawn as the painter wants it: NUL-terminated. */
@@ -2095,15 +2075,45 @@ static void on_paint(struct sxngui_app *app)
     }
     top = interior.y;
     bottom = interior.y + interior.height;
-    webview_paint_blocks(painter, top, bottom);
-    for (size_t i = 0; i < g_tree->fragment_count; ++i)
+    /* In the engine's order: backgrounds, floats, then text (CSS 2.1
+     * Appendix E). */
+    for (size_t i = 0; i < g_tree->paint_count; ++i)
     {
-        const struct webengine_fragment *fragment = &g_tree->fragments[i];
-        int y = g_page_y + fragment->y;
+        const struct webengine_paint *item = &g_tree->paint[i];
+        const struct webengine_box *box = item->box;
 
-        if (y < bottom && y + fragment->height > top)
+        if (item->kind == WEBENGINE_PAINT_BLOCK)
         {
-            webview_paint_fragment(painter, fragment);
+            webview_paint_block(painter, box, top, bottom);
+        }
+        else if (item->kind == WEBENGINE_PAINT_MARKER)
+        {
+            const struct webengine_fragment marker = {
+                .type = WEBENGINE_FRAGMENT_MARKER, .box = box, .x = box->x, .y = box->y,
+                .width = box->width, .height = box->height, .baseline = box->y + box->height,
+                .length = box->length,
+            };
+
+            if (g_page_y + box->y < bottom && g_page_y + box->y + box->height > top)
+            {
+                webview_paint_fragment(painter, &marker);
+            }
+        }
+        else
+        {
+            for (size_t l = box->first_line; l < box->first_line + box->line_count; ++l)
+            {
+                const struct webengine_line *line = &g_tree->lines[l];
+
+                if (g_page_y + line->y >= bottom || g_page_y + line->y + line->height <= top)
+                {
+                    continue;
+                }
+                for (size_t f = line->first_fragment; f < line->first_fragment + line->fragment_count; ++f)
+                {
+                    webview_paint_fragment(painter, &g_tree->fragments[f]);
+                }
+            }
         }
     }
     (void)sx_painter_set_font(painter, SX_FONT_UI);

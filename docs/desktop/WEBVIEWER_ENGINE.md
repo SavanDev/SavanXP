@@ -6,7 +6,8 @@ later, scripting go on top. This is stage E1 of
 [WEBVIEWER_ROADMAP.md](../roadmaps/open/WEBVIEWER_ROADMAP.md#e1--the-libraries-build).
 Since E2, Web Viewer walks the document libhubbub and libdom produce, and
 E3 computes its styles with libcss. Since E4 the engine makes the document's
-CSS boxes and lays them out, and Web Viewer paints them.
+CSS boxes and lays them out, and Web Viewer paints them; E5 adds
+[floats](#floats).
 
 ## What is vendored
 
@@ -169,8 +170,10 @@ with `webengine_style_element` and makes:
 
 - **Block boxes** for `block`, `list-item`, the table displays (tables
   stack until E6), `flex`, `grid` and `run-in`. libcss' `css_computed_display`
-  already turns floated and absolutely positioned elements into blocks;
-  until E5 they stay in the normal flow. The root is a block whatever its
+  already turns floated and absolutely positioned elements into blocks. A
+  float stays where it is: among inline content it is a block child of the
+  inline content's container, splitting nothing, and white space collapses
+  across it as if it were not there. The root is a block whatever its
   display.
 - **Inline boxes** for `inline` and, until they get layouts of their own,
   `inline-block`, `inline-table`, `inline-flex` and `inline-grid`.
@@ -245,9 +248,9 @@ The walk keeps an explicit stack, as the style walk does.
   with its last child's when its height is also `auto`. An empty box lets
   its margins collapse through it, and its top edge is where it would be with
   a bottom border. Line boxes, borders and padding separate margins. The
-  root, and a box whose `overflow` is not `visible`, start a new formatting
-  context, so their margins do not collapse with their children's. Floats
-  and positioned boxes join them in E5.
+  root, a float, and a box whose `overflow` is not `visible`, start a new
+  formatting context, so their margins do not collapse with their
+  children's.
 
 `e4-blocks` checks these rules at 800 pixels. It has no text, so the
 expected geometry does not depend on fonts; it was checked against
@@ -303,6 +306,65 @@ consecutive breaks, `nowrap`, `pre`, `pre-wrap`, `sup` and `sub`, a bigger
 font in a line, `line-height` as a length and as a number, `text-indent`, a
 cut word and the three kinds of marker.
 
+## Floats
+
+E5 ([roadmap](../roadmaps/open/WEBVIEWER_ROADMAP.md#e5--floats-and-positioning))
+adds CSS 2.1 9.5's floats and clearance to the two flows.
+
+- **Laid out at the origin, then placed.** A float's size depends only on
+  its containing block, so it is laid out with its margin box at (0, 0), and
+  `webengine_translate` then moves it, its line boxes and everything inside
+  it to its place. A block's child floats are placed as soon as they end,
+  where the next block would start. The floats in inline content are laid
+  out first, before the block's line boxes, and the line breaking places each
+  one when it gets to it.
+- **Widths** (10.3.5). `auto` margins are zero. An `auto` width shrinks to fit:
+  the content's preferred width, unless that is wider than the room, but never
+  narrower than its widest piece that cannot break. Those two widths come from a
+  walk of the float's content, innermost first. In that walk a block takes
+  the widest of its children, inline content its longest line and its
+  longest unbreakable word, and a fixed width replaces both. Percentages
+  count as nothing there.
+- **Placement** (9.5.1). Each block formatting context keeps its floats'
+  margin boxes. A float goes as high as it may: not above the line or block
+  it comes in, an earlier float's top, or what it clears. It goes as far
+  left or right as the floats already in those rows let it. When it does not
+  fit beside them, it moves down to the next bottom among them.
+- **Lines beside floats.** Each line box takes the room the floats leave it
+  over the rows of the block's own line height. When not even the first word
+  fits, the line moves down to where the room next grows. A float met on a
+  line goes on that line's top when it fits beside the content the line
+  already has, and the line shortens; otherwise it goes under the line.
+- **Clearance** (9.5.2). A block whose border box would start above the
+  bottom of the floats it clears starts there instead. Its top margin then no
+  longer collapses with the margins above it, which end where they would
+  without it.
+- **Formatting contexts.** A context's `auto` height takes in its floats
+  (10.6.7), and they end with it. A context root in the flow, such as
+  `overflow: hidden`, does not overlap the floats beside it. With an `auto`
+  width it narrows to fit between them, its margins counting from the
+  containing block's edges. With a fixed width it moves down to where it
+  fits. Only the rows of its top, or of its specified height, are checked.
+
+**Painting order** (`webengine_paint.c`). Layout ends with
+`webengine_tree.paint`, the order of CSS 2.1 Appendix E for what the engine
+lays out. The root and every float is a layer. A layer paints its blocks'
+backgrounds and borders in tree order, then the layers inside it, whole and
+in tree order, then its line boxes and outside markers. A float therefore
+covers the backgrounds around it, and the text around it covers the float.
+Web Viewer paints the list as it comes.
+
+Not done: a float met on a line before the point where the line breaks
+still goes on that line, not on the next one, and the room beside floats
+is measured over the block's line height, not the line's own.
+
+`e5-floats` checks block geometry at 800 pixels, box for box against
+Chromium: a two-column page, left floats filling a row and going under the
+earlier ones, clearance, a context's height, a shrink-to-fit float, contexts
+beside a float, and a float inside an inline. `e5-float-text` is worked out
+by hand at 300 pixels: lines shortened by a float, a float under its line,
+a line moved below a float, and shrink-to-fit floats around text.
+
 ## Known costs
 
 - **libcss' style sharing and sibling combinators.** With `+` or `~`, its
@@ -316,6 +378,10 @@ cut word and the three kinds of marker.
   100 s to style in the guest. It now walks a list of free blocks only
   ([NATIVE_HEAP.md](../userland/NATIVE_HEAP.md#what-there-is)). The same
   page takes under a second.
+- **Floats inside floats.** Each float with an `auto` width walks its content
+  for its widths, and each one placed moves its content. Floats nested `n`
+  deep therefore cost `n²`: 3000 of them nested take about a second on the
+  host under AddressSanitizer.
 
 ## Tests
 

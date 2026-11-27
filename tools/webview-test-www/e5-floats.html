@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>E5: floats</title>
+<style>
+body { margin: 8px }
+#page { width: 500px; border: 2px solid black; padding: 4px }
+#nav { float: left; width: 150px; height: 200px; margin: 0 10px 10px 0; background: #ddd }
+#main { overflow: hidden; margin-left: 4px; background: #eef }
+#note { float: right; width: 120px; height: 40px; margin-left: 8px; background: #fd8 }
+#lead { height: 60px; margin: 6px 0 }
+#foot { clear: both; height: 30px; margin-top: 12px; background: #9c9 }
+#row { width: 300px; margin-top: 20px }
+#row div { float: left; width: 120px; border: 1px solid black }
+#r1 { height: 40px }
+#r2 { height: 20px }
+#r3 { height: 30px }
+#r4 { height: 10px }
+#after { clear: left; margin-top: 50px; height: 10px; background: #ccc }
+#context { overflow: hidden; border: 1px solid black; margin-top: 10px }
+#tall { float: right; width: 50px; height: 70px; background: #f99 }
+#holder { margin: 15px 0 }
+#shrink { float: left; padding: 5px; border: 3px solid black }
+#inner { width: 90px; height: 20px; margin: 0 4px; background: #9cf }
+#beside { overflow: hidden; width: 200px; height: 10px; background: #fc9 }
+#wide { overflow: hidden; width: 400px; height: 10px; background: #cf9 }
+#spans { clear: both }
+#inline { float: right; width: 40px; height: 15px; background: #c9f }
+#last { height: 5px }
+</style>
+</head>
+<body>
+<div id="page"><div id="nav"></div><div id="main"><div id="note"></div><div id="lead"></div></div><div id="foot"></div></div>
+<div id="row"><div id="r1"></div><div id="r2"></div><div id="r3"></div><div id="r4"></div></div>
+<div id="after"></div>
+<div id="context"><div id="tall"></div></div>
+<div id="holder"><div id="shrink"><div id="inner"></div></div></div>
+<div id="beside"></div>
+<div id="wide"></div>
+<div id="spans"><span><div id="inline"></div></span></div>
+<div id="last"></div>
+</body>
+</html>

@@ -322,7 +322,7 @@ mentions of the Ladybird plan are history; the stages above are current.
 
 **E4 is complete.** The details are in
 [WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md#the-box-tree) and
-[WEBVIEWER.md](../../desktop/WEBVIEWER.md#layout-and-paint-e4).
+[WEBVIEWER.md](../../desktop/WEBVIEWER.md#layout-and-paint-e4-e5).
 
 - **The box tree** (`webengine_box.c`): blocks, inlines, anonymous blocks,
   a block splitting an inline, white space across the inline formatting

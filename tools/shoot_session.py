@@ -3760,6 +3760,7 @@ def scenario_webview_http(s):
         expect_text(followed, (0, 0, *followed.size), "Second page", TEXT, FIELD,
                     "the last link navigated", which="title", solid_only=True)
         webview_e3_styles(s, hostport)
+        webview_e5_floats(s, hostport)
         check_downloads_on_disk()
     finally:
         if tls is not None:
@@ -3814,6 +3815,19 @@ def webview_e3_styles(s, hostport):
     expect_text(stopped, area, "Stopped.", TEXT, FACE, "Stop cancels the CSS fetch", solid_only=True)
     expect_text(stopped, area, "Second page", TEXT, FIELD,
                 "the previous page stays after a cancelled stylesheet fetch", which="title", solid_only=True)
+
+
+def webview_e5_floats(s, hostport):
+    """Text around floats (docs/desktop/WEBVIEWER_ENGINE.md#floats): the text
+    inside a float and the text that wraps beside one are both painted."""
+    s.qmp.tap("tab", pause=1.0)
+    s.qmp.chord("ctrl", "a")
+    type_http_url(s, hostport, "/e5-float-text.html")
+    s.qmp.tap("ret", pause=6.0)
+    page = s.shot("webview-e5-floats")
+    area = (0, 0, *page.size)
+    expect_text(page, area, "hello world", TEXT, FIELD, "the text inside a float", solid_only=True)
+    expect_text(page, area, "aaaa bbbb", TEXT, FIELD, "the text beside a float", solid_only=True)
 
 
 def wait_for_text(s, name, text, label, timeout, colour=None, background=None):

@@ -1,0 +1,35 @@
+# Text around floats (E5, docs/desktop/WEBVIEWER_ENGINE.md#floats), worked out
+# by hand with the test's fixed fonts (7px a character, 18px lines): the
+# first two lines shorten beside a left float; a right float that does not
+# fit on its line goes under it; a line with no room beside a float moves
+# down to the float's bottom; a shrink-to-fit float as wide as its text, and
+# one as wide as the room, moved below the first.
+viewport 300
+block html 0 0 300 168
+  block body 0 0 300 110
+    block p 0 0 300 54
+      line 50 0 250 18
+        text "aaaa bbbb cccc dddd eeee ffff gggg" 50 1 238 16
+      line 50 18 250 18
+        text "hhhh iiii jjjj kkkk llll mmmm nnnn" 50 19 238 16
+      line 0 36 300 18
+        text "oooo pppp" 0 37 63 16
+      block span float left 0 0 50 30
+    block p 0 54 300 18
+      line 0 54 300 18
+        text "aaaa bbbb cccc dddd eeee ffff gggg " 0 55 245 16
+        text "hhhh" 245 55 28 16
+      block span float right 230 72 70 20
+    block div 0 72 100 38
+      line 0 92 100 18
+        text "abcd" 0 93 28 16
+      block span float left 0 72 80 20
+    anonymous 0 110 300 0
+      block div float left 0 110 79 20
+        line 1 111 77 18
+          text "hello world" 1 112 77 16
+      block div float left 0 130 300 38
+        line 1 131 298 18
+          text "aaaa bbbb cccc dddd eeee ffff gggg hhhh" 1 132 273 16
+        line 1 149 298 18
+          text "iiii jjjj" 1 150 63 16

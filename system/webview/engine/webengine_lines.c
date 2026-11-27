@@ -1,12 +1,13 @@
 /* Web Viewer's inline flow (webengine_layout.h): CSS 2.1's inline formatting
  * context (9.4.2), line heights and vertical alignment (10.8), white space at
  * the ends of lines (16.6.1), text-align and text-indent (16.1, 16.2) and list
- * markers (12.5). Written from the specification; NetSurf's layout is not its
- * model (the clean-room rule).
+ * markers (12.5), with the line boxes beside floats (9.5). Written from the
+ * specification; NetSurf's layout is not its model (the clean-room rule).
  *
  * A block's inline content becomes a row of atoms: words, runs of spaces,
- * the opening and closing edges of inline boxes, breaks and inside markers.
- * Lines take atoms greedily and break at the last space that allows it. */
+ * the opening and closing edges of inline boxes, breaks, inside markers and
+ * floats. Lines take atoms greedily and break at the last space that allows
+ * it, in the room the floats leave them. */
 
 #include "webengine_layout.h"
 
@@ -14,7 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum atom_kind { ATOM_WORD, ATOM_SPACE, ATOM_OPEN, ATOM_CLOSE, ATOM_BREAK, ATOM_MARKER };
+enum atom_kind { ATOM_WORD, ATOM_SPACE, ATOM_OPEN, ATOM_CLOSE, ATOM_BREAK, ATOM_MARKER, ATOM_FLOAT };
 
 struct webengine_atom {
     uint8_t kind;
@@ -27,6 +28,8 @@ struct webengine_atom {
     bool hangs;
     /* Left out of the line it ended up on. */
     bool dropped;
+    /* FLOAT: placed already. */
+    bool placed;
     struct webengine_box *box;
     size_t start;
     size_t length;
@@ -210,6 +213,10 @@ static size_t collect_atoms(struct webengine_flow *flow, struct webengine_box *b
             (void)add_atom(flow, &count, (struct webengine_atom){
                 .kind = ATOM_MARKER, .box = box,
                 .width = marker_width(flow, box) + marker_gap(flow, box) });
+            break;
+        case WEBENGINE_BOX_BLOCK:
+            /* A float, laid out already: its content is its own. */
+            (void)add_atom(flow, &count, (struct webengine_atom){ .kind = ATOM_FLOAT, .box = box });
             break;
         case WEBENGINE_BOX_INLINE:
             inline_edges(box, width);
@@ -421,9 +428,6 @@ static void hang_marker(struct webengine_flow *flow, int baseline) {
         marker->y = baseline - placed.ascent / 3 - width / 2 - 1;
     }
     marker->width = width;
-    (void)add_fragment(flow, (struct webengine_fragment){
-        .type = WEBENGINE_FRAGMENT_MARKER, .box = marker, .x = marker->x, .y = marker->y,
-        .width = width, .height = marker->height, .baseline = baseline, .length = marker->length });
     flow->marker_item = NULL;
 }
 
@@ -593,11 +597,32 @@ static int build_line(struct webengine_flow *flow, struct webengine_box *block, 
     return height;
 }
 
+/* The width a float takes on a line: its margin box. */
+static int float_outer_width(const struct webengine_box *box) {
+    int width = box->margin[WEBENGINE_LEFT] + box->width + box->margin[WEBENGINE_RIGHT];
+    return width > 0 ? width : 0;
+}
+
+static bool defer_float(struct webengine_flow *flow, struct webengine_box *box) {
+    if (!grow((void **)&flow->deferred, &flow->deferred_capacity, flow->deferred_count,
+              sizeof(*flow->deferred))) {
+        flow->failed = true;
+        return false;
+    }
+    flow->deferred[flow->deferred_count++] = box;
+    return true;
+}
+
 int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *block, int x, int y, int width) {
     size_t count = collect_atoms(flow, block, width);
     size_t open_count = 0;
     int top = y;
     int indent = webengine_length_px(&block->style->text_indent, width, 0);
+    /* The rows a line takes, to find the room floats leave it: the
+     * block's own line height (its strut, 10.8.1). */
+    struct webengine_placed strut;
+    metrics(flow, block->style, &strut);
+    int strut_height = strut.above + strut.below > 0 ? strut.above + strut.below : 1;
     block->first_line = flow->tree->line_count;
     block->line_count = 0;
     size_t i = 0;
@@ -605,11 +630,35 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
         size_t start = i;
         size_t end = count;
         size_t brk = SIZE_MAX;
-        int used = indent;
+        int left = x;
+        int right = x + width;
+        webengine_float_space(flow, y, strut_height, &left, &right);
+        int room = right - left;
+        int line_indent = block->line_count == 0 ? indent : 0;
+        int used = line_indent;
         bool content = false;
+        bool lower = false;
+        flow->deferred_count = 0;
         for (size_t j = start; j < count; j++) {
             struct webengine_atom *atom = &flow->atoms[j];
             atom->dropped = false;
+            if (atom->kind == ATOM_FLOAT) {
+                if (!atom->placed) {
+                    atom->placed = true;
+                    if (!content || used + float_outer_width(atom->box) <= room) {
+                        /* It fits beside what the line has so far: it goes
+                         * at the line's top, and the line shortens. */
+                        webengine_place_float(flow, atom->box, x, x + width, y);
+                        left = x;
+                        right = x + width;
+                        webengine_float_space(flow, y, strut_height, &left, &right);
+                        room = right - left;
+                    } else if (!defer_float(flow, atom->box)) {
+                        break;
+                    }
+                }
+                continue;
+            }
             if (atom->kind == ATOM_BREAK) {
                 end = j + 1;
                 content = true;
@@ -628,12 +677,18 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
                 content = content || !atom->collapsible;
                 continue;
             }
-            if (used + atom->width > width && content && brk != SIZE_MAX) {
+            if (used + atom->width > room && content && brk != SIZE_MAX) {
                 end = brk + 1;
                 break;
             }
-            if (used + atom->width > width && !content && atom->kind == ATOM_WORD && atom->wrap &&
-                split_word(flow, &count, j, width - used)) {
+            if (used + atom->width > room && !content && room < width) {
+                /* Nothing fits beside the floats: the line goes down to
+                 * where the room next grows. */
+                lower = true;
+                break;
+            }
+            if (used + atom->width > room && !content && atom->kind == ATOM_WORD && atom->wrap &&
+                split_word(flow, &count, j, room - used)) {
                 atom = &flow->atoms[j];
                 end = j + 1;
                 content = true;
@@ -644,11 +699,19 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
                 content = true;
             }
         }
+        if (flow->failed) {
+            break;
+        }
+        if (lower) {
+            y = webengine_float_below(flow, y, strut_height);
+            continue;
+        }
         /* White space at the end of the line: collapsible spaces go, and
          * preserved ones hang past the edge (16.6.1), unless pre keeps them. */
         for (size_t j = end; j > start; j--) {
             struct webengine_atom *atom = &flow->atoms[j - 1];
-            if (atom->kind == ATOM_CLOSE || atom->kind == ATOM_OPEN || atom->kind == ATOM_BREAK || atom->dropped) {
+            if (atom->kind == ATOM_CLOSE || atom->kind == ATOM_OPEN || atom->kind == ATOM_BREAK ||
+                atom->kind == ATOM_FLOAT || atom->dropped) {
                 continue;
             }
             if (atom->kind != ATOM_SPACE || !(atom->collapsible || atom->hangs)) {
@@ -657,8 +720,7 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
             atom->dropped = true;
         }
         if (content) {
-            int height = build_line(flow, block, start, end, x, y, width, block->line_count == 0 ? indent : 0,
-                                    &open_count);
+            int height = build_line(flow, block, start, end, left, y, room, line_indent, &open_count);
             y += height;
             block->line_count++;
         } else {
@@ -672,14 +734,69 @@ int webengine_layout_lines(struct webengine_flow *flow, struct webengine_box *bl
                 }
             }
         }
+        /* The floats that did not fit go under the line. */
+        for (size_t d = 0; d < flow->deferred_count; d++) {
+            webengine_place_float(flow, flow->deferred[d], x, x + width, y);
+        }
+        flow->deferred_count = 0;
         i = end;
     }
     return y - top;
+}
+
+void webengine_inline_widths(struct webengine_flow *flow, struct webengine_box *block, int *min, int *max) {
+    size_t count = collect_atoms(flow, block, 0);
+    /* The widest piece nothing breaks, and the widest line nothing but a
+     * forced break ends. */
+    int word = 0;
+    int line = webengine_length_px(&block->style->text_indent, 0, 0);
+    int widest_word = 0;
+    int widest_line = 0;
+    bool line_start = true;
+    for (size_t i = 0; i < count; i++) {
+        const struct webengine_atom *atom = &flow->atoms[i];
+        switch (atom->kind) {
+        case ATOM_SPACE:
+            if (atom->wrap) {
+                widest_word = word > widest_word ? word : widest_word;
+                word = 0;
+            }
+            if (!(line_start && atom->collapsible)) {
+                line += atom->width;
+            }
+            break;
+        case ATOM_BREAK:
+            widest_word = word > widest_word ? word : widest_word;
+            widest_line = line > widest_line ? line : widest_line;
+            word = 0;
+            line = 0;
+            line_start = true;
+            break;
+        case ATOM_FLOAT: {
+            int edges = webengine_intrinsic_edges(atom->box);
+            int narrow = atom->box->min_content + edges;
+            widest_word = narrow > widest_word ? narrow : widest_word;
+            line += atom->box->max_content + edges;
+            break;
+        }
+        default:
+            word += atom->width;
+            line += atom->width;
+            line_start = line_start && (atom->kind == ATOM_OPEN || atom->kind == ATOM_CLOSE);
+            break;
+        }
+    }
+    widest_word = word > widest_word ? word : widest_word;
+    widest_line = line > widest_line ? line : widest_line;
+    *min = widest_word;
+    *max = widest_line;
 }
 
 void webengine_flow_free(struct webengine_flow *flow) {
     free(flow->atoms);
     free(flow->placed);
     free(flow->open);
+    free(flow->floats);
+    free(flow->deferred);
     memset(flow, 0, sizeof(*flow));
 }

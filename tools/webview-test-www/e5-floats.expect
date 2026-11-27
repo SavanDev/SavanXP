@@ -1,0 +1,34 @@
+# Floats (E5, docs/desktop/WEBVIEWER_ENGINE.md#floats), block geometry only:
+# a two-column page (a left float beside an overflow: hidden column holding a
+# right float, a footer clearing both), left floats filling a row and moving
+# down below the earlier ones, clearance after a collapsed-through block, a
+# context's height taking in its float, a shrink-to-fit float, contexts that
+# go beside a float, and a float inside an inline. Laid out at 800 pixels;
+# every box matches Chromium's getBoundingClientRect at the same width.
+viewport 800
+block html 0 0 800 504
+  block body 8 8 784 486
+    block div 8 8 512 252
+      anonymous 14 14 500 0
+        block div float left 14 14 150 200
+      block div 174 14 340 72
+        anonymous 174 14 340 0
+          block div float right 394 14 120 40
+        block div 174 20 340 60
+      block div 14 224 500 30
+    block div 8 280 300 0
+      block div float left 8 280 122 42
+      block div float left 130 280 122 22
+      block div float left 130 302 122 32
+      block div float left 8 334 122 12
+    block div 8 346 784 10
+    block div 8 366 784 72
+      block div float right 741 367 50 70
+    block div 8 453 784 0
+      block div float left 8 453 114 36
+        block div 20 461 90 20
+    block div 122 453 200 10
+    block div 122 463 400 10
+    block div 8 489 784 0
+      block div float right 752 489 40 15
+    block div 8 489 784 5

@@ -58,6 +58,11 @@ struct frame {
     /* An inline whose box a block cut; the next inline content goes into a
      * new piece (CSS 2.1 9.2.1.1). */
     bool split;
+    /* A float: the white space state of the content around it, which the
+     * float does not take part in, to restore when it ends. */
+    bool out_of_flow;
+    bool outer_space;
+    unsigned outer_column;
 };
 
 struct builder {
@@ -160,6 +165,7 @@ void webengine_tree_free(struct webengine_tree *tree) {
     free(tree->styles);
     free(tree->lines);
     free(tree->fragments);
+    free(tree->paint);
     free(tree);
 }
 
@@ -306,6 +312,8 @@ static const struct webengine_box_style *element_style(struct builder *b, const 
     box->visibility = css_computed_visibility(style);
     box->box_sizing = css_computed_box_sizing(style);
     box->overflow = css_computed_overflow_y(style);
+    box->float_side = css_computed_float(style);
+    box->clear = css_computed_clear(style);
     box->vertical_align = css_computed_vertical_align(style, &value, &unit);
     box->vertical_align_length = box->vertical_align == CSS_VERTICAL_ALIGN_SET
         ? length(style, units, value, unit) : (struct webengine_len){ WEBENGINE_LEN_PX, 0 };
@@ -353,6 +361,8 @@ static const struct webengine_box_style *anonymous_style(struct builder *b,
     box->text_indent = parent->text_indent;
     box->box_sizing = CSS_BOX_SIZING_CONTENT_BOX;
     box->overflow = CSS_OVERFLOW_VISIBLE;
+    box->float_side = CSS_FLOAT_NONE;
+    box->clear = CSS_CLEAR_NONE;
     box->vertical_align = CSS_VERTICAL_ALIGN_BASELINE;
     box->width = box->height = box->min_width = box->min_height =
         (struct webengine_len){ WEBENGINE_LEN_AUTO, 0 };
@@ -758,14 +768,34 @@ static bool enter_element(struct builder *b, struct frame *frame) {
         }
         return box != NULL;
     }
-    b->depth--;
-    struct webengine_box *container = block_target(b);
-    b->depth++;
     struct webengine_box *box = new_box(b, WEBENGINE_BOX_BLOCK, frame->box_style, name);
     if (box == NULL) {
         return false;
     }
-    append(container, box);
+    if (frame->box_style->float_side == CSS_FLOAT_LEFT || frame->box_style->float_side == CSS_FLOAT_RIGHT) {
+        /* A float is out of the flow: it splits no inline and stays where
+         * it is in the inline content, and white space collapses across
+         * it as if it were not there (CSS 2.1 9.5, 16.6.1). */
+        b->depth--;
+        struct webengine_box *container = inline_target(b);
+        b->depth++;
+        if (container == NULL) {
+            free(box);
+            b->failed = true;
+            return false;
+        }
+        append(container, box);
+        frame->out_of_flow = true;
+        frame->outer_space = b->space;
+        frame->outer_column = b->column;
+        b->space = true;
+        b->column = 0;
+    } else {
+        b->depth--;
+        struct webengine_box *container = block_target(b);
+        b->depth++;
+        append(container, box);
+    }
     frame->box = box;
     if (display == CSS_DISPLAY_LIST_ITEM) {
         int ordinal = parent->counter + 1;
@@ -777,7 +807,10 @@ static bool enter_element(struct builder *b, struct frame *frame) {
 }
 
 static void leave_element(struct builder *b, struct frame *frame) {
-    if (frame->box != NULL && frame->box->type == WEBENGINE_BOX_BLOCK) {
+    if (frame->out_of_flow) {
+        b->space = frame->outer_space;
+        b->column = frame->outer_column;
+    } else if (frame->box != NULL && frame->box->type == WEBENGINE_BOX_BLOCK) {
         b->space = true;
         b->column = 0;
     }
@@ -945,6 +978,8 @@ struct webengine_tree *webengine_tree_text(const char *text, size_t length, int 
         style->vertical_align = CSS_VERTICAL_ALIGN_BASELINE;
         style->box_sizing = CSS_BOX_SIZING_CONTENT_BOX;
         style->overflow = CSS_OVERFLOW_VISIBLE;
+        style->float_side = CSS_FLOAT_NONE;
+        style->clear = CSS_CLEAR_NONE;
         style->width = style->height = style->min_width = style->min_height =
             (struct webengine_len){ WEBENGINE_LEN_AUTO, 0 };
         style->max_width = style->max_height = (struct webengine_len){ WEBENGINE_LEN_NONE, 0 };
@@ -998,9 +1033,11 @@ static void dump_box(const struct webengine_box *box, unsigned depth, bool laid_
     memset(out, ' ', indent);
     switch (box->type) {
     case WEBENGINE_BOX_BLOCK: {
+        const char *side = !webengine_box_floats(box) ? ""
+            : box->style->float_side == CSS_FLOAT_LEFT ? " float left" : " float right";
         int used = box->tag[0] == '\0'
             ? snprintf(out + indent, sizeof(out) - indent, "anonymous")
-            : snprintf(out + indent, sizeof(out) - indent, "block %s", box->tag);
+            : snprintf(out + indent, sizeof(out) - indent, "block %s%s", box->tag, side);
         if (laid_out && used > 0) {
             snprintf(out + indent + used, sizeof(out) - indent - (size_t)used, " %d %d %d %d",
                      box->x, box->y, box->width, box->height);
@@ -1077,27 +1114,32 @@ static void dump_lines(const struct webengine_tree *tree, const struct webengine
 }
 
 void webengine_tree_dump(const struct webengine_tree *tree, webengine_dump_line line, void *user) {
+    bool laid_out = tree->layout_width > 0;
     const struct webengine_box *box = tree->root;
+    /* Before layout every box is a level; after it only blocks are, the
+     * floats in inline content one level inside the block they are in. */
     unsigned depth = 0;
     while (box != NULL) {
-        dump_box(box, depth, tree->layout_width > 0, line, user);
-        if (box->marker != NULL) {
-            dump_box(box->marker, depth + 1, tree->layout_width > 0, line, user);
+        bool shown = !laid_out || box->type == WEBENGINE_BOX_BLOCK;
+        if (shown) {
+            dump_box(box, depth, laid_out, line, user);
+            if (box->marker != NULL) {
+                dump_box(box->marker, depth + 1, laid_out, line, user);
+            }
+            if (laid_out && box->inline_content) {
+                dump_lines(tree, box, depth + 1, line, user);
+            }
         }
-        if (tree->layout_width > 0 && box->type == WEBENGINE_BOX_BLOCK && box->inline_content) {
-            dump_lines(tree, box, depth + 1, line, user);
-        } else if (box->first != NULL) {
+        if (box->first != NULL) {
+            depth += shown;
             box = box->first;
-            depth++;
             continue;
         }
         while (box != NULL && box->next == NULL) {
             box = box->parent;
-            if (depth == 0) {
-                box = NULL;
-                break;
+            if (box != NULL) {
+                depth -= !laid_out || box->type == WEBENGINE_BOX_BLOCK;
             }
-            depth--;
         }
         if (box != NULL) {
             box = box->next;
