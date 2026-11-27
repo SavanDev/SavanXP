@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 #define SXW_MAX_MODULES 32u
-#define SXW_MAX_REGIONS 64u
+#define SXW_MAX_REGIONS 256u
 #define SXW_MODULE_NAME 64u
 #define SXW_MODULE_PATH 512u
 #define SXW_DIAGNOSTIC 256u

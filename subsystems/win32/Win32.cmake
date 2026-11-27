@@ -240,7 +240,8 @@ sxw_image(NAME user32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7e410000
             "${SXW_DLLS}/user32/edit.c" "${SXW_DLLS}/user32/listbox.c" "${SXW_DLLS}/user32/combo.c"
             "${SXW_DLLS}/user32/clipboard.c"
             "${SXW_DLLS}/common/region.c" "${SXW_DLLS}/common/memory.c"
-            "${SXW_DLLS}/common/codepage.c" "${SXW_DLLS}/common/resource.c" ${SXW_user32_DECLARED}
+            "${SXW_DLLS}/common/codepage.c" "${SXW_DLLS}/common/resource.c" "${SXW_DLLS}/common/wformat.c"
+            ${SXW_user32_DECLARED}
     DEF "${SXW_user32_DEF}" LIBS gdi32 kernel32 ntdll)
 sxw_image(NAME shell32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x7c9c0000
     SOURCES "${SXW_DLLS}/shell32/shell32.c" "${SXW_DLLS}/shell32/drop.c" ${SXW_shell32_DECLARED}
@@ -252,7 +253,7 @@ sxw_image(NAME comctl32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x5d090000
 sxw_image(NAME ole32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x774e0000
     SOURCES "${SXW_DLLS}/ole32/ole32.c" ${SXW_ole32_DECLARED} DEF "${SXW_ole32_DEF}" LIBS ntdll)
 sxw_image(NAME comdlg32.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x763b0000
-    SOURCES ${SXW_comdlg32_DECLARED} DEF "${SXW_comdlg32_DEF}" LIBS ntdll)
+    SOURCES "${SXW_DLLS}/comdlg32/comdlg32.c" ${SXW_comdlg32_DECLARED} DEF "${SXW_comdlg32_DEF}" LIBS ntdll)
 sxw_image(NAME shlwapi.dll KIND dll DIR "${SXW_SYSTEM32}" BASE 0x77f60000
     SOURCES "${SXW_DLLS}/shlwapi/shlwapi.c" ${SXW_shlwapi_DECLARED} DEF "${SXW_shlwapi_DEF}" LIBS ntdll)
 # WP7: the RichEdit control WordPad's document is (WIN32_WORDPAD_ROADMAP.md,
@@ -306,7 +307,7 @@ sxw_image(NAME resource.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENT
     SOURCES "${SXW_FX}/resource/resource.c" LIBS user32 gdi32 kernel32
     RC "${SXW_FX}/resource/resource.rc" RC_INCLUDE "${SXW_RESOURCE_IMAGES}" RC_DEPENDS ${SXW_RESOURCE_IMAGE_FILES})
 sxw_image(NAME wstartup.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
-    SOURCES "${SXW_FX}/wstartup/wstartup.c" LIBS msvcrt kernel32 user32 gdi32 advapi32 shlwapi ole32
+    SOURCES "${SXW_FX}/wstartup/wstartup.c" LIBS msvcrt kernel32 user32 gdi32 advapi32 shlwapi ole32 comdlg32
     RC "${SXW_FX}/wstartup/wstartup.rc" RC_INCLUDE "${SXW_FX}/wstartup")
 sxw_image(NAME dialog.exe KIND exe DIR "${SXW_FIXTURES}" SUBSYSTEM console ENTRY start
     SOURCES "${SXW_FX}/dialog/dialog.c" LIBS user32 gdi32 kernel32 shell32 comctl32

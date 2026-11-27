@@ -486,12 +486,12 @@ Size XL, in parts, each its own commits.
   number, so pasting it keeps its last paragraph mark as XP's RTF does. See
   [WIN32.md](../../userland/WIN32.md#richedit), "RichEdit".
 
-  Inside WordPad's process the DLL does not load yet: WordPad and MFC have
-  used the loader's 64 regions by then (`SXW_MAX_REGIONS`); with the
-  control WordPad holds 104. The kernel no longer bounds them: since
-  `SXN_SYS_PROTECT_VIEW` a region costs `winhost` a view and no handle, and
-  a process has 256 views. Raised, the table lets WordPad go on to WP8's
-  `comdlg32!PrintDlgW`, which it delay-loads and exits on before any window
+  WordPad loads it since the loader's table holds 256 regions
+  (`SXW_MAX_REGIONS`, was 64; WordPad holds 104 with the control), each a
+  view and no handle in `winhost` (`SXN_SYS_PROTECT_VIEW`). With it WordPad
+  reaches `wsprintfW`, `LoadBitmapW` and WP8's `comdlg32!PrintDlgW`, written
+  ahead for it: `PrintDlgW` finds no printer (D3). WordPad then shows MFC's
+  "Imposible crear el documento vacío" box
   ([WIN32.md](../../userland/WIN32.md#wordpad)).
 - **7b, formats.** `CHARFORMAT2` (face, size, bold, italic, underline,
   colour, charset) and `PARAFORMAT2` (alignment, indents, tab stops,
@@ -527,7 +527,10 @@ Size L.
   `FINDMSGSTRING`; `GetOpenFileNameW` and `GetSaveFileNameW`, drawn here
   (D2), with their list of types, `DEFAULTFORMATDIALOG` appended to Save
   As, `CDM_*` and `CDN_*`; `GetFileTitleW`; `CommDlgExtendedError`;
-  `PageSetupDlgW` and `PrintDlgExW`, which find no printer (D3).
+  `PageSetupDlgW`, `PrintDlgExW` and `PrintDlgW`, which find no printer
+  (D3); `PrintDlgW` for the default printer, and `CommDlgExtendedError`,
+  came early with 7a, since WordPad asks it at start-up. Shown, the dialog
+  still has to say there is no printer.
 
 **Done when:** a fixture drives each control and dialog by pointer and by
 keyboard and matches Windows XP outside text, as `dialog.exe` did for W5.

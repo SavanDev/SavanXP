@@ -60,6 +60,8 @@ lengths and %p: 34 [-5000000000|123456789|7|0|00011170]
 _vsnwprintf over 5: result, no terminator: -1 yes
 _vsnwprintf exactly 5: 5 yes
 swprintf: 6 [9-nine]
+wsprintfW: 30 [-3|ab  |nar|000ff|z|4000000000]
+wsprintfW of 1100 units: result, then the units at 1022 to 1025: 1024 105 106 0 35
 GetModuleFileNameW(NULL): length matches, file name: yes [wstartup.exe]
 GetModuleFileNameW(kernel32): file name: [kernel32.dll]
 GetModuleFileNameW into 4 units: result, terminated: 4 error 0 no untouched after yes
@@ -79,6 +81,9 @@ CreateFontIndirectW then GetObjectW: 92 -13 700 1 [Arial] size query 92
 RegCreateKeyExW, RegOpenKeyExW, a missing key: 0 0 2
 OleInitialize twice, then uninitialize twice: 0x00000000 0x00000001
 CoTaskMemAlloc: yes
+CommDlgExtendedError before any dialog: 0x00000000
+PrintDlgW with a wrong size: result, error: 0 0x00000001
+PrintDlgW for the default printer: result, error: 0 0x00001008
 __dllonexit: entries, then run by hand: 2 2
 wstartup: exit 5
 exit: the second registered runs first

@@ -16,10 +16,13 @@
  * The order of the messages each call sends is Windows XP's, as
  * fixtures/window recorded it there.
  */
+#include <stdarg.h>
+
 #include "user32_private.h"
 
 #include "codepage.h"
 #include "resource.h"
+#include "wformat.h"
 
 #define MAX_CLASSES 64
 #define MAX_TIMERS 32
@@ -2772,6 +2775,30 @@ static HBITMAP load_bitmap(HINSTANCE instance, LPCWSTR name) {
 HBITMAP WINAPI LoadBitmapA(HINSTANCE hInstance, LPCSTR lpBitmapName) {
     WCHAR name[256];
     return load_bitmap(hInstance, wide_name(lpBitmapName, name, 256));
+}
+
+HBITMAP WINAPI LoadBitmapW(HINSTANCE hInstance, LPCWSTR lpBitmapName) {
+    return load_bitmap(hInstance, lpBitmapName);
+}
+
+/* The shared engine carries msvcrt's floating point conversions, which
+ * wsprintfW turns off; their code still asks for the symbol MSVC's runtime
+ * defines when floating point is used. */
+int _fltused = 0x9875;
+
+/* msvcrt's conversions without floating point. At most 1024 units and then
+ * the terminator, as wsprintfW of Windows XP writes them: the length
+ * stored. */
+int __cdecl wsprintfW(LPWSTR buffer, LPCWSTR format, ...) {
+    va_list args;
+    va_start(args, format);
+    u32 length = sxw_wformat(buffer, 1024u, format, args, 0u);
+    va_end(args);
+    if (length > 1024u) {
+        length = 1024u;
+    }
+    buffer[length] = 0;
+    return (int)length;
 }
 
 /* The string, its length in UTF-16 units; with no buffer room, a pointer to

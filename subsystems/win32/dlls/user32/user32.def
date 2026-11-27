@@ -129,6 +129,7 @@ EXPORTS
     KillTimer
     LoadAcceleratorsW
     LoadBitmapA
+    LoadBitmapW
     LoadCursorW
     LoadIconW
     LoadImageW
@@ -210,3 +211,4 @@ EXPORTS
     WinHelpW
     WindowFromDC
     WindowFromPoint
+    wsprintfW

@@ -16,6 +16,9 @@ bitmap 12 core 4-bit: 9x5 32 bpp, 36 bytes a row crc 7f2c9367
 bitmap 13 info 24-bit: 7x6 32 bpp, 28 bytes a row crc 26df285c
 bitmap "cards": 13x9 1 bpp, 2 bytes a row crc 322849d5
 missing bitmap: NULL
+LoadBitmapW 13: 7x6
+LoadBitmapW "cards": 13x9
+LoadBitmapW 99: NULL
 stretch 7x6 to 14x12 crc f29d226b
    000000*2 240000*2 480000*2 6c0000*2 900000*2 b40000*2 d80000*2
    000000*2 240000*2 480000*2 6c0000*2 900000*2 b40000*2 d80000*2

@@ -329,6 +329,9 @@ changes not released yet; each released version has its own file in
 
 ### Changed
 
+- **WordPad loads its RichEdit control and shows its first MFC window: the Win32 loader holds 256 regions
+  (`SXW_MAX_REGIONS`, was 64)**, and SSW writes `wsprintfW`, `LoadBitmapW`, and `comdlg32`'s `PrintDlgW` and
+  `CommDlgExtendedError`, which find no printer. [WordPad](docs/userland/WIN32.md#wordpad).
 - **A process can hold 256 section views (`kMaxSectionViews`, was 128)**, and `winhost` no longer keeps a handle per
   loaded region, so a Win32 program's images no longer use its 64 descriptors. WordPad with MFC holds 104 views.
 - **The desktop is a SUN program**, `/system/desktop.sxe` from `system/desktop`; `/bin/desktop` is retired. Background,

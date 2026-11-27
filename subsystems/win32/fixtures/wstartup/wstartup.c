@@ -5,7 +5,8 @@
  * and MFC's start-up need, failure paths included: moveable memory, the C
  * heap, thread-local storage, critical sections, the version, strings and
  * code pages, the wide printf family, number conversions, resources, module
- * paths, minimal OLE, rectangles and registered clipboard formats.
+ * paths, minimal OLE, rectangles, registered clipboard formats and the
+ * missing printer.
  *
  * Everything it writes is the same on Windows XP: no address, handle, path,
  * TLS index, locale or screen size. Run it as:
@@ -108,7 +109,7 @@ IMPORT LPVOID WINAPI LockResource(HGLOBAL data);
 IMPORT DWORD WINAPI SizeofResource(HMODULE module, HRSRC resource);
 IMPORT UINT WINAPI SetErrorMode(UINT mode);
 
-/* advapi32.dll, user32.dll, gdi32.dll, shlwapi.dll, ole32.dll */
+/* advapi32.dll, user32.dll, gdi32.dll, shlwapi.dll, ole32.dll, comdlg32.dll */
 IMPORT LONG WINAPI RegOpenKeyExW(HKEY key, LPCWSTR subkey, DWORD options, REGSAM sam, PHKEY out);
 IMPORT LONG WINAPI RegDeleteKeyW(HKEY key, LPCWSTR subkey);
 IMPORT UINT WINAPI RegisterClipboardFormatW(LPCWSTR name);
@@ -122,11 +123,14 @@ IMPORT HWND WINAPI FindWindowW(LPCWSTR cls, LPCWSTR title);
 IMPORT int WINAPI GetSystemMetrics(int index);
 IMPORT HFONT WINAPI CreateFontIndirectW(const LOGFONTW *lf);
 IMPORT int WINAPI GetObjectW(HANDLE h, int c, LPVOID out);
+IMPORT int __cdecl wsprintfW(LPWSTR b, LPCWSTR f, ...);
 IMPORT LPWSTR WINAPI PathFindFileNameW(LPCWSTR path);
 IMPORT HRESULT WINAPI OleInitialize(LPVOID reserved);
 IMPORT void WINAPI OleUninitialize(void);
 IMPORT LPVOID WINAPI CoTaskMemAlloc(SIZE_T size);
 IMPORT void WINAPI CoTaskMemFree(LPVOID p);
+IMPORT BOOL WINAPI PrintDlgW(void *pd);
+IMPORT DWORD WINAPI CommDlgExtendedError(void);
 
 /* ---- Output ------------------------------------------------------------------------ */
 
@@ -658,6 +662,24 @@ static void check_printf(void) {
     say_int(n);
     say(" ");
     say_w(b);
+    n = wsprintfW(b, L"%d|%-4s|%S|%05x|%c|%lu", -3, L"ab", "nar", 255, L'z', 4000000000u);
+    line("wsprintfW");
+    say_int(n);
+    say(" ");
+    say_w(b);
+    static WCHAR long_text[1200];
+    static WCHAR long_out[1200];
+    for (int i = 0; i < 1100; ++i) {
+        long_text[i] = 'a' + i % 26;
+        long_out[i] = '#';
+    }
+    n = wsprintfW(long_out, L"%s", long_text);
+    line("wsprintfW of 1100 units: result, then the units at 1022 to 1025");
+    say_int(n);
+    for (int i = 1022; i < 1026; ++i) {
+        say(" ");
+        say_int(long_out[i]);
+    }
 }
 
 static void check_modules(void) {
@@ -845,6 +867,25 @@ static void check_windows_side(void) {
     CoTaskMemFree(task);
 }
 
+/* No printer is installed: PD_RETURNDEFAULT finds no default one. The last
+ * line is Windows XP RTM's, with no printer; the SP3 machine the rest of the
+ * output comes from has one, and there it succeeds. */
+static void check_printer(void) {
+    unsigned char pd[66] = {0};
+    line("CommDlgExtendedError before any dialog");
+    say_hex(CommDlgExtendedError());
+    line("PrintDlgW with a wrong size: result, error");
+    say_int(PrintDlgW(pd));
+    say(" ");
+    say_hex(CommDlgExtendedError());
+    pd[0] = 66;
+    pd[21] = 0x04; /* Flags: PD_RETURNDEFAULT (0x400) */
+    line("PrintDlgW for the default printer: result, error");
+    say_int(PrintDlgW(pd));
+    say(" ");
+    say_hex(CommDlgExtendedError());
+}
+
 static void check_dll_onexit(void) {
     _PVFV *begin = (_PVFV *)malloc(sizeof(_PVFV));
     _PVFV *end = begin;
@@ -876,6 +917,7 @@ void __cdecl start(void) {
     check_modules();
     check_resources();
     check_windows_side();
+    check_printer();
     check_dll_onexit();
     say("\r\nwstartup: exit 5");
     exit(5);

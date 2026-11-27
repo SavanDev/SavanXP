@@ -264,12 +264,12 @@ in Western European languages.
 | `msvcrt.dll` | Solitaire's eighteen; the Unicode start-up (`__wgetmainargs`, `_wcmdln`, `__p___argc`, `__p___wargv`), `_onexit`, `__dllonexit`, `setlocale`, `abort`, `_purecall`, `std::terminate`, `type_info`'s destructor; the heap (`malloc`, `calloc`, `realloc`, `free`, `_msize`, `_expand`) and the `mem` functions; wide strings, `wcstol`, `wcstoul`, `wcstod`, `_wtoi`, `_wtol`, `_itow`, `_ltow`, `_ultow`, `iswdigit`, `iswspace`, `strcmp`, `strcpy`; `abs`, `labs`, `fabs`, `floor`, `ceil`, `modf`, `_ftol`; `_vsnwprintf`, `_snwprintf`, `swprintf`, `vswprintf`; the full list is `dlls/msvcrt/msvcrt.def` |
 | `advapi32.dll` | Solitaire's six (`RegCreateKeyExW`, `RegOpenKeyExA`, `RegQueryValueExW`, `RegQueryValueExA`, `RegSetValueExW`, `RegCloseKey`) and `RegOpenKeyExW` |
 | `gdi32.dll` | The matrix's twenty-seven: `GetStockObject`, `SelectObject`, `DeleteObject`, `CreateSolidBrush`, `SetBrushOrgEx`, `PatBlt`, `SetROP2`, `MoveToEx`, `LineTo`, `LineDDA`, `SetPixel`, `GetPixel`, `PtVisible`, `GetDeviceCaps`, `CreateFontW`, `TextOutW`, `SetTextColor`, `SetBkColor`, `GetTextExtentPoint32W`, `GetTextMetricsW`, `CreateCompatibleDC`, `DeleteDC`, `CreateCompatibleBitmap`, `BitBlt`, `StretchBlt`, `GetObjectA`, `GetDCOrgEx`; for WordPad, `GetObjectW` and `CreateFontIndirectW`; private: `SxwCreateSurfaceDC`, `SxwSurfaceOfDC`, `SxwCreateBitmapFromDIB`, `SxwSetBkMode` |
-| `user32.dll` | The matrix's sixty-two: windows and messages (classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor`), resources (`LoadBitmapA`, `LoadStringW`, `LoadStringA`, `LoadIconW`, `LoadCursorW`, `LoadImageW`, `LoadAcceleratorsW`, `TranslateAcceleratorW`), menus (`GetMenu`, `EnableMenuItem`), dialogs (`DialogBoxParamW`, `EndDialog`, `GetDlgItem`, `CheckDlgButton`, `IsDlgButtonChecked`, `CheckRadioButton`, `MessageBoxW`) and `WinHelpW`; for WordPad, `GetSystemMetrics`, `GetSysColorBrush`, `RegisterClipboardFormatW`, `FindWindowW`, `GetActiveWindow`, `GetCursorPos` and the rest of the rectangle helpers; the full list is `dlls/user32/user32.def`. Private: `SxwDialogBoxIndirectParamW` |
+| `user32.dll` | The matrix's sixty-two: windows and messages (classes, creation and destruction, showing, moving, enabling, focus, the message calls, painting, capture, keys, timers, the rectangle helpers, `DrawTextW`, `FrameRect`, `InvertRect`, `GetSysColor`, `SetCursorPos`, `ShowCursor`), resources (`LoadBitmapA` and `W`, `LoadStringW`, `LoadStringA`, `LoadIconW`, `LoadCursorW`, `LoadImageW`, `LoadAcceleratorsW`, `TranslateAcceleratorW`), menus (`GetMenu`, `EnableMenuItem`), dialogs (`DialogBoxParamW`, `EndDialog`, `GetDlgItem`, `CheckDlgButton`, `IsDlgButtonChecked`, `CheckRadioButton`, `MessageBoxW`) and `WinHelpW`; for WordPad, `GetSystemMetrics`, `GetSysColorBrush`, `RegisterClipboardFormatW`, `FindWindowW`, `GetActiveWindow`, `GetCursorPos`, `wsprintfW` and the rest of the rectangle helpers; the full list is `dlls/user32/user32.def`. Private: `SxwDialogBoxIndirectParamW` |
 | `shell32.dll` | `ShellAboutW` |
 | `comctl32.dll` | `InitCommonControlsEx`, which registers nothing: Solitaire uses no common control |
 | `ole32.dll` | `OleInitialize`, `OleUninitialize`, `CoRegisterMessageFilter`, `CoTaskMemAlloc`, `CoTaskMemFree`: the minimum WordPad and MFC need ([WIN32_WORDPAD_ROADMAP.md](../roadmaps/open/WIN32_WORDPAD_ROADMAP.md#ole-is-the-minimum-wordpad-and-mfc-need)) |
 | `shlwapi.dll` | `PathFindFileNameW` |
-| `comdlg32.dll` | Declared entry points only (below) |
+| `comdlg32.dll` | `PrintDlgW`, which finds no printer, and `CommDlgExtendedError` ([WordPad](#wordpad)) |
 | `msftedit.dll` | The `RICHEDIT50W` class, registered when it attaches, and `RichEditWndProc` ([RichEdit](#richedit)); the `IID_IRichEditOle`, `IID_IRichEditOleCallback`, `IID_ITextServices`, `IID_ITextHost` and `IID_ITextHost2` GUIDs |
 
 The table lists what is written. Each DLL also exports the entry points of
@@ -1105,12 +1105,12 @@ Each fixture is built here and runs unchanged on Windows XP.
 | `startup.exe` | It starts the way `sol.exe` does: the same runtime imports, an SEH frame at `fs:[0]` with `_except_handler3`, C and C++ initializers through `_initterm`, `__getmainargs`, the tail of `_acmdln`, a `WinMain`. Then every non-GUI function of the matrix, failure paths included: `rand` after two seeds, `MulDiv`'s rounding and overflow, a missing module and procedure, `beta.dll` loaded at run time and found by name and ordinal, 115 `LPTR` blocks, and the registry (a counter, `ERROR_MORE_DATA`, a size query, an ANSI read, the value name `Atrás`, a missing value and key) | Run twice as `startup.exe alpha "two words" 3`: `expected/startup-1.out` then `startup-2.out`, where the counter reads back the first run's 1 as 2; status 5 |
 | `window.exe` | A top-level window with a child, painted with the matrix's drawing calls (`PatBlt` with `PATCOPY`, `BLACKNESS` and `DSTINVERT`, `FrameRect`, `InvertRect`, lines in every octant under `R2_COPYPEN` and `R2_NOT`, `SetPixel`, `TextOutW`, a bold `CreateFontW`, `DrawTextW`), two chained timers (one with a timer procedure), and its input script: clicks, a double click, a right click, a click on the child, a captured drag, keys with Shift, an invalidated rectangle, and the frame's close. It writes the messages it gets (the list it keeps is in `logged()`) and, on the key P, its client area outside the text box as runs of colour read back with `GetPixel` | `expected/window.out`, status 3 |
 | `cards.exe` | Loads the user's own `cards.dll` from its folder with `LoadLibraryA` and draws, with `cdtInit`, `cdtDrawExt` and `cdtTerm`, the 52 faces and 12 backs at 71x96 on Solitaire's green, the other modes (inverted, the empty pile's marks, X, O) on a few cards, and the 12 backs at 33x62 as the Deck dialog does. It writes a CRC-32 of each drawing's pixels read back with `GetPixel`, or, with the argument `pixels`, the pixels themselves | `expected/cards.out`, status 0. The pixel listing describes Microsoft's art and is kept with the user's files, never here |
-| `wstartup.exe` | It starts as `wordpad.exe` does, a Unicode program over `msvcrt.dll` (`__wgetmainargs`, `_wcmdln`, `_onexit`), then checks what WordPad's and MFC's start-up need, failure paths included: moveable and fixed global memory, local memory, the C heap, TLS, critical sections, the interlocked functions, the version, `lstr` functions, code pages (1252 and UTF-8, a default character), the wide C strings, number conversions both ways, `floor`, `ceil` and `modf`, the wide printf family (integers, strings, floating point with its edges, lengths, truncation), module paths cut short, resources by id, `"#100"` and name, rectangles, registered clipboard formats, a font's `LOGFONTW`, the registry, `OleInitialize` twice and `__dllonexit`. It prints no path, handle, TLS index, locale or screen size | Run as `wstartup.exe alpha "two words" 3`: `expected/wstartup.out`, status 5 |
+| `wstartup.exe` | It starts as `wordpad.exe` does, a Unicode program over `msvcrt.dll` (`__wgetmainargs`, `_wcmdln`, `_onexit`), then checks what WordPad's and MFC's start-up need, failure paths included: moveable and fixed global memory, local memory, the C heap, TLS, critical sections, the interlocked functions, the version, `lstr` functions, code pages (1252 and UTF-8, a default character), the wide C strings, number conversions both ways, `floor`, `ceil` and `modf`, the wide printf family (integers, strings, floating point with its edges, lengths, truncation), module paths cut short, resources by id, `"#100"` and name, rectangles, registered clipboard formats, a font's `LOGFONTW`, the registry, `OleInitialize` twice, `wsprintfW` and its limit, `PrintDlgW` with no printer and `__dllonexit`. It prints no path, handle, TLS index, locale or screen size | Run as `wstartup.exe alpha "two words" 3`: `expected/wstartup.out`, status 5 |
 | `files.exe` | WP4: in its own folder, `CreateFileW` with every disposition, reads, writes, `SetFilePointer` past the end and before the start, `SetEndOfFile`, `GetFileTime` against the clock, share modes, another spelling of a name, folders, `FindFirstFileW` with masks, deletes and moves, full paths, the current directory, the volume, and the file-time conversions at their limits. It prints no handle, time, drive letter or serial | Run from a folder on C:: `expected/files.out`, status 0 |
 | `memory.exe` | WP4: the process heap, private heaps (growing, zeroing, in place, a fixed maximum), moveable memory shared for DDE, and local and global atoms (integer atoms, case, references, the name length limits) | `expected/memory.out`, status 0 |
 | `locale.exe` | WP4: every value `GetLocaleInfoW` has for English (United States), dates and times from the locale's pictures and others with every flag, their enumerations, `CompareStringW` on pairs with each flag, and win.ini's defaults | `expected/locale.out`, status 0 |
 | `threads.exe` | WP3, with `tlog.dll` and `tquiet.dll`: a thread started suspended, suspend counts, TLS slots and static TLS with its callbacks, thread notifications in order and `DisableThreadLibraryCalls`, events, mutexes, semaphores and waits, a contended critical section, `_beginthreadex` with a priority, a message-only window on the second thread taking sent, posted and thread messages, and a thread left waiting as the process ends | `expected/threads.out`, status 5 |
-| `resource.exe` | Its own resources (`resource.rc`): strings, bitmaps in both header formats at 1, 4 and 24 bits, an icon, a cursor and an accelerator table. It loads them as `sol.exe` does, then copies, converts and stretches the bitmaps (grown by 2, grown to odd sizes, shrunk), and drives the accelerators with posted keys | `expected/resource.out`, status 0 |
+| `resource.exe` | Its own resources (`resource.rc`): strings, bitmaps in both header formats at 1, 4 and 24 bits, an icon, a cursor and an accelerator table. It loads them as `sol.exe` does, and bitmaps with `LoadBitmapW` too, then copies, converts and stretches the bitmaps (grown by 2, grown to odd sizes, shrunk), and drives the accelerators with posted keys | `expected/resource.out`, status 0 |
 | `dialog.exe` | A menu of two popups with separators and an accelerator shown after a tab, an accelerator table, and two dialogs built from the same resource types and styles as `sol.exe`'s (`dialog.rc`): one of owner-drawn buttons with a default and a cancel button, like Deck, and one of group boxes, radio buttons the program checks itself, automatic check boxes and static text left and right, like Options; then `MessageBoxW`, `ShellAboutW` and `InitCommonControlsEx`. Its input script uses the menus by pointer and by keyboard alone, a grayed item, both dialogs by pointer and by keyboard (Tab, arrows, Space, mnemonics, Enter, Escape), an accelerator for a menu command and one for a command no menu has. It writes the messages its procedures get (the list is in `logged()`), where each control is, the buttons' states, and pixels of the controls outside their text | `expected/dialog.out`, status 5 |
 | `hooks.exe` | WP5, what MFC does to every window: the CBT, window procedure, message and filter hooks with their codes and order, `CallNextHookEx` and unhooking; subclassing with `SetWindowLongW` and `CallWindowProcW`, window longs, the system classes and properties; the window tree; positions, deferred positions, `SetParent`, non-client edges and scroll bars, show and focus; carets; `ScrollWindowEx`; menus built and changed at run time; a modeless and a modal dialog built in memory, driven through `IsDialogMessageW`. It needs no input, writes the messages its procedures and hooks get (the list is in `logged()`) and prints no handle or screen position | `expected/hooks.out`, status 0 |
 | `controls.exe` | WP5: Edit, ListBox, ComboBox (simple, drop-down, drop-down list, owner-drawn) and ScrollBar controls asked every message the profile uses, then driven by its input script (typing, selections, clicks, double clicks, keys, the lists dropped and chosen from, the scroll bars' arrows, track and thumb, a context menu); it writes their notifications, owner-drawn measures and drawings, styles, sizes and final state, and on F2 the controls' pixels outside their text. It dumps the window with a drop-down list open and with the context menu open | `expected/controls.out`, status 0 |
@@ -1160,9 +1160,9 @@ these files built with Clang and lld 23.1.4:
 | `startup.exe` | `e1d9283206f99e0748495794d9df3a1cc7b1c529a7fb1b4079cc21fe5d7ad9ba` |
 | `window.exe` | `1ec8351db7662ff5471b7bd587ef1734da6fca73416def7e4d39b91875e30dba` |
 | `cards.exe` | `940f7be09e9f614497ef2b889bebab73233dccdbf8c37b9d68e190c1e60cbcca` |
-| `resource.exe` | `bf9ca037356201d43996cf64670e301c4e63699ec8902f5b753d146ab0404c43` |
+| `resource.exe` | `2734d6053b6276d50ba277448a49cb2153cd59fe5dc07eb33135b74c46b251fc` (2026-11-27) |
 | `dialog.exe` | `2378b6b12d0b486e7cf59fffca46ce2ef137f909905824dec91d5e9fe57836e8` |
-| `wstartup.exe` | `af71162775ebce60f5e4d270ef63586e51f75e027c9ada29c63061a78771b5b9` (2026-11-21) |
+| `wstartup.exe` | `d8ca7ac3c0e6b8c9a92032585a053d627f44d0553175f920d52c889a0b6bbe2a` (2026-11-27; its `PrintDlgW` line on the English Windows XP, which has no printer) |
 | `files.exe` | `893a956e8b18a9f809136feba5d97ede2121317a420004c0ebc65fd2b1dd2554` (2026-11-25) |
 | `memory.exe` | `8be7fbf78b8ede6d847b70234e9c9645a831fad0918fc892f5d576e18aca06d1` (2026-11-25) |
 | `locale.exe` | `ca1fc79771bd4d8f5476107f7dc377170d7c8cbfee89dbad978e70c21722c493` (2026-11-26, on the English Windows XP) |
@@ -1529,24 +1529,24 @@ reaches MFC's delay-load lookup for `ole32!CoFreeUnusedLibraries` (WP9). The
 missing export raises a software exception, and the guest exits with
 `0xc06d007f`.
 
-Since WP7a the DLL is there, and loads in any program, but not yet in
-WordPad's process: the loader keeps at most 64 mapped regions
-(`SXW_MAX_REGIONS`), one per protection run of each image plus stacks and
-heaps, and WordPad and MFC have used them all by then, so `LoadLibraryW`
-fails with `ERROR_NOT_ENOUGH_MEMORY` and WordPad shows the same box. It
-holds 104 regions once the control is in. With more regions the control
-loads and WordPad goes on to `wsprintfW` and `LoadBitmapW`, both only
-declared, and then exits with `0xc06d007f` on its delay-loaded
-`comdlg32!PrintDlgW` (WP8) before any window. Nothing on SavanXP stands in
-the way of more regions any longer: `winhost` keeps no handle per region
-(`SXN_SYS_PROTECT_VIEW`) and a process has 256 views. The loader's table
-stays at 64 until WordPad reaches a window again with it raised, since
-`win32-wordpad-test` checks that it does.
+Since WP7a the DLL is there, and WordPad loads it. The loader keeps up to
+256 mapped regions (`SXW_MAX_REGIONS`), one per protection run of each image
+plus stacks and heaps; WordPad holds 104 once the control is in, which the
+64 the table had before could not hold. Each region costs `winhost` a view
+and no handle (`SXN_SYS_PROTECT_VIEW`), and a process has 256 views. With
+the control loaded WordPad formats with `wsprintfW`, loads its bitmaps with
+`LoadBitmapW`, and asks its delay-loaded `comdlg32!PrintDlgW` for the
+default printer, which SavanXP does not have (D3: `PDERR_NODEFAULTPRN`, as
+Windows XP answers with none installed). It then shows MFC's own "Imposible
+crear el documento vacío" box, its first window: making the empty document
+fails further on, in what WP7d and WP9 bring (MFC's `CRichEditView` and
+`COleServerDoc`), and has not been traced yet.
 
-What the run reaches and is only declared is on the debug output; since WP5
-the start-up up to that first window reaches none (MFC's message-filter
-hook is installed). WordPad's look for its Word converters next to it
-(`GetFileAttributesW`) finds none, and it goes on without them.
+What the run reaches and is only declared is on the debug output. Up to
+that box it is `ole32!StringFromCLSID`, `user32!SetCursor`,
+`kernel32!GetShortPathNameW`, `kernel32!FormatMessageW` and
+`user32!AdjustWindowRectEx`. WordPad's look for its Word converters next to
+it (`GetFileAttributesW`) finds none, and it goes on without them.
 
 ## Solitaire
 

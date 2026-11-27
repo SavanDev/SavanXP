@@ -4,6 +4,5 @@
 # out of this table when it is written.
 
 ChooseFontW               4  0
-CommDlgExtendedError      0  0
 GetOpenFileNameW          4  0
 GetSaveFileNameW          4  0

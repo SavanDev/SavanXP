@@ -1,2 +1,4 @@
 LIBRARY comdlg32.dll
 EXPORTS
+    CommDlgExtendedError
+    PrintDlgW

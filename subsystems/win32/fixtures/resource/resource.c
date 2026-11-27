@@ -209,6 +209,23 @@ static void bitmaps(HINSTANCE instance) {
     }
     say("missing bitmap: ");
     say(LoadBitmapA(instance, MAKEINTRESOURCEA(99)) == NULL ? "NULL\n" : "loaded\n");
+    static const WCHAR k_cards[] = {'c', 'a', 'r', 'd', 's', 0};
+    const LPCWSTR wide_names[] = {MAKEINTRESOURCEW(13), k_cards, MAKEINTRESOURCEW(99)};
+    for (int i = 0; i < 3; ++i) {
+        HBITMAP wide = LoadBitmapW(instance, wide_names[i]);
+        BITMAP info = {0};
+        say("LoadBitmapW ");
+        say(i == 0 ? "13: " : i == 1 ? "\"cards\": " : "99: ");
+        if (wide == NULL || GetObjectA(wide, sizeof(info), &info) != (int)sizeof(info)) {
+            say("NULL\n");
+            continue;
+        }
+        say_int(info.bmWidth);
+        say("x");
+        say_int(info.bmHeight);
+        say("\n");
+        DeleteObject(wide);
+    }
 
     /* Stretched: grown by 2, grown to an odd size, shrunk. */
     static const struct {

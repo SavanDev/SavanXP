@@ -18,7 +18,6 @@ GetMonitorInfoW                 8  0
 GetTabbedTextExtentA           20  0
 GetTabbedTextExtentW           20  0
 GrayStringW                    36  0
-LoadBitmapW                     8  0
 MessageBoxA                    16  0
 MonitorFromWindow               8  0
 OemToCharBuffA                 12  0
@@ -29,5 +28,4 @@ SetWindowContextHelpId          8  0
 TabbedTextOutW                 32  0
 TranslateMDISysAccel            8  0
 UnpackDDElParam                16  0
-wsprintfW                   cdecl  0
 wvsprintfW                     12  0
