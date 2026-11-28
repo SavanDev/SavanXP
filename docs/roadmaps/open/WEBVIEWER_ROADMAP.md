@@ -1,14 +1,14 @@
 # Web Viewer: the native browser
 
-> **Status as of 2026-11-27: N1–N5, D1 and E1–E5 are implemented.** Web Viewer runs as
+> **Status as of 2026-11-27: N1–N5, D1 and E1–E6 are implemented.** Web Viewer runs as
 > `/system/webview.sxe`, resolves through SUN's `sxndns`, loads on a
 > per-window network worker through SUN's `sxnhttp`, opens validated
 > `https://`, and saves what it does not show in a download window of its
 > own. It reads HTML through libhubbub and libdom
 > ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md)) and builds its
 > boxes from the DOM using computed CSS and lays them out in the normal
-> flow, with floats, positioning, overflow and tables. E6 is under way:
-> tables are in, images are next.
+> flow, with floats, positioning, overflow, tables and images. The next
+> engine stage is E7.
 
 ## Direction
 
@@ -260,10 +260,9 @@ they add formats, replacing the `[image]` marker and taking part in layout.
 **Done when:** a table-based page with images matches its expectation, and
 images arrive over HTTP and HTTPS without blocking the window.
 
-**Tables landed 2026-11-27**: the grid, automatic column widths, rows with
-spanning cells and vertical alignment, captions, anonymous table parts and
-HTML's table attributes ([WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md#tables)).
-Images are next.
+**Implemented 2026-11-27.** Tables with automatic layout, and images in the
+layout, loaded after the page on the network worker. The checkpoint below
+has the details.
 
 ### E7 — scripting
 
@@ -327,6 +326,47 @@ corpus run; security fixes in the parsers are taken when published.
 
 The stages as they landed, newest first. Their "next step" lists and
 mentions of the Ladybird plan are history; the stages above are current.
+
+## E6 implementation checkpoint — 2026-11-27
+
+**E6 is complete.** The details are in
+[WEBVIEWER_ENGINE.md](../../desktop/WEBVIEWER_ENGINE.md#tables),
+[its Images section](../../desktop/WEBVIEWER_ENGINE.md#images) and
+[WEBVIEWER.md](../../desktop/WEBVIEWER.md#images).
+
+- **Tables** (`webengine_table.c`, `webengine_layout.c`): table parts and
+  anonymous ones (17.2.1), the grid with header and footer groups and
+  spanning cells, column widths from the cells' minimum and preferred
+  widths shared out by automatic layout (17.5.2.2), rows with baseline
+  alignment, spanning cells and a table height growing them, cells aligned
+  top, middle or bottom, captions above and below, and HTML's table
+  attributes as presentational hints, with `<center>` and `align=""`
+  aligning blocks. The separated borders model only.
+- **Images** (`webengine_layout.c`, `webengine_lines.c`): `<img>` is a
+  replaced element, an atom of its line or a block of its own size, with
+  its size from its attributes, its ratio or its natural size, and its alt
+  text until it is ready. The caller fetches and decodes; the tree keeps
+  each image's state and natural size.
+- **Loading** (`webview.c`, `picture_gif.c`): local pictures at once, remote
+  ones on three picture threads beside the network worker, so one that
+  stalls holds back neither the others nor the next page; each is decoded
+  there and handed back as it arrives, the page laid out again in place;
+  Stop and Esc fail what is left. PNG, BMP and JPEG through libsximg, GIF through libnsgif, newly
+  vendored, its first frame.
+- **Evidence:** `webengine-layout-test` checks `e6-tables` and `e6-images`
+  (a table-based page with pictures) box for box against Chromium, and
+  `e6-table-text` and `e6-image-text`, worked out by hand. The `webview`
+  scenario asserts text in table cells over their own and their row's
+  backgrounds, a page shown while its first picture never arrives, with
+  the PNG and the GIF's first frame after it that did, and a page of pictures loaded
+  while that one is still pending. Pictures over HTTPS take the same
+  `sxnhttp` path as pages over HTTPS, which `https-smoke` checks; the
+  scenario loads them over HTTP only, as the system trusts no test root.
+
+Left for later stages: `border-collapse: collapse`, `table-layout: fixed`,
+`visibility: collapse`, column backgrounds, `inline-table` and
+`inline-block` as atoms of their lines, animated GIFs, and caching
+pictures across pages.
 
 ## E5 implementation checkpoint — 2026-11-27
 
