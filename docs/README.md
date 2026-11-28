@@ -363,7 +363,8 @@ all its phases have landed; the links to it move with it.
 
 - [`SYSTEM_LIMITS_ROADMAP.md`](roadmaps/open/SYSTEM_LIMITS_ROADMAP.md) — how many windows,
   descriptors and kernel objects fit today, the chain of limits from the owned windows
-  per process down to the kernel tables, what each raise costs, and the order to do them.
+  per process down to the kernel tables, a process's memory and the heap, which limits
+  become tables that grow and which stay fixed contracts, and the order to do them.
 - [`SMP_ROADMAP.md`](roadmaps/open/SMP_ROADMAP.md) — more than one core: startup, the big
   kernel lock, TLB shootdown and the lock's counters, all done; and phase 5,
   taking the lock apart, planned with the measurement that says when,

@@ -7,6 +7,12 @@
 > cascade level in the Start menu ([START_MENU.md](../../desktop/START_MENU.md)),
 > which needs a fifth owned window. The limits matter more as the system
 > stops being only an experiment.
+>
+> Direction, decided 2026-11-28: a limit that only protects a table becomes a
+> table that grows. A fixed number stays only where it is a contract (an ABI,
+> a format on disk), and what keeps one process from taking everything is a
+> limit on its memory, not a count per object type
+> ([Fixed, growing or chosen](#fixed-growing-or-chosen)).
 
 ## The chain
 
@@ -133,17 +139,87 @@ What stays open:
   arenas that is nothing; it is worth a better index before a heap takes
   hundreds.
 
+## Fixed, growing or chosen
+
+Most of the kernel's limits are static arrays searched for a free entry. None
+of them has to be: the kernel heap (`kernel/heap.cpp`) grows from physical
+memory, and a handle holds a pointer to its object (`HandleEntry::object`),
+not an index into a table, so an object can live anywhere. Each limit falls in
+one of four groups by what lifting it takes.
+
+**1. System-wide object tables: they can grow, and are the cheapest.**
+
+| Table | Today | Where |
+|---|---|---|
+| Section objects | 512 | `include/kernel/object.hpp` |
+| Event, timer objects | 128, 128 | same |
+| Semaphore objects | 64 | same |
+| Port objects | **16** | same |
+| I/O objects | 256 | same |
+| Thread objects | 256 | same |
+| Pipes | 64, with 8 KiB of storage each, static | `kernel/process.cpp` |
+| Byte-range locks | 128 | `include/kernel/file_lock.hpp` |
+| Sockets | 32 | `kernel/net.cpp` |
+
+Each becomes a pool of chunks allocated from the kernel heap as they fill: it
+costs nothing until used and has no ceiling of its own. An object never moves,
+so handles do not change. The searches that walk a table today (the file
+section cache, the live counts) walk the chunks. 16 ports for the whole
+system is the tightest number here, since every service takes its own.
+
+**2. Per-process tables: they can grow, with more work.**
+
+| Table | Today | Where |
+|---|---|---|
+| Descriptors | 64 | `process::kMaxFileHandles` |
+| Section views | 256 | `vmm::kMaxSectionViews` |
+
+Both are arrays inside every `Process`; the views alone cost 512 KiB of kernel
+memory across 64 processes, used or not. They become tables that grow when
+full, as Linux's descriptor table and NT's handle table do. Descriptor numbers
+stay small integers, as POSIX requires.
+
+**3. Processes: they can grow, and it is the most delicate.**
+`g_processes` is a static array of 64 whole `Process` structures, everything
+in group 2 inside. Allocating each process from the heap touches creation,
+exit, wait and lookup by pid, which is the core the SMP work is moving to
+finer locks ([SMP_ROADMAP.md](SMP_ROADMAP.md)). It waits for that work to
+land, so the two do not change the same code at once.
+
+**4. Contracts: they stay fixed numbers, chosen and raised.**
+
+- **ABI:** `process::kMaxWaitHandles` (16 handles in one wait), `FD_SETSIZE`
+  (64, compiled into every POSIX program), the window protocol constants of
+  [The chain](#the-chain). Win32 waits on up to 64 (`MAXIMUM_WAIT_OBJECTS`),
+  so 16 is also a parity gap.
+- **On disk:** SxFS's inodes, extents and volume size, which v3 changes
+  ([SXFS_ROADMAP.md](SXFS_ROADMAP.md)).
+- **`kMaxSectionBytes` (64 MiB)** protects no table. It exists because a
+  section allocates and zeroes every page when it is created; with pages that
+  appear on first touch it can rise far
+  ([Process memory](#process-memory)).
+- **Hardware:** 32 CPUs (`arch::kMaxCpus`), the disk and controller counts.
+  Enough today; raised when a machine needs more.
+
+**What replaces the counts.** With no number stopping a process, a runaway
+one could take all of the kernel's memory. Modern systems bound that with a
+limit on each process's memory (Linux's `rlimit`s and cgroups, Windows' job
+objects and commit limit), not a cap per object type. A commit limit per
+process comes before the last fixed table goes.
+
 ## Order
 
 Each step is its own commit, measured with `windowd --selftest` (descriptor
-count) and the session smokes.
+count) and the session smokes. Steps 2 to 5 are the window chain; steps 1
+and 6 to 9 are the kernel's.
 
 1. **Kernel tables**: `kMaxFileHandles` 128, `kMaxPipeCount` 128,
    `kMaxEventObjects` 256. Measure the kernel's memory before and after.
    Decided on 2026-11-27: `kMaxFileHandles` rises with SxFS v3 (V3-B of
    [SXFS_ROADMAP.md](SXFS_ROADMAP.md)), whose larger trees and files open
    more at once. Win32 regions no longer need it: `winhost` closes each
-   region's handle after the map (`SXN_SYS_PROTECT_VIEW`).
+   region's handle after the map (`SXN_SYS_PROTECT_VIEW`). Pipes and events
+   may skip the raise and go straight to step 6.
 2. **Compositor**: `SAVANXP_COMPOSITOR_MAX_SURFACES` 64 and
    `SAVANXP_COMPOSITOR_MAX_LAYERS` 96.
 3. **Owned windows**: `SAVANXP_WM_MAX_OWNED_WINDOWS` 8. This is enough for
@@ -153,3 +229,10 @@ count) and the session smokes.
    `SAVANXP_WM_MAX_WINDOWS` 24, with shell protocol v6. Raise the selftest's
    expectations with it.
 5. **`FD_SETSIZE`**, when a POSIX port needs it.
+6. **System-wide tables that grow** (group 1), ports and sections first.
+   Little of it touches locking, so it can run beside the SMP work.
+7. **`kMaxWaitHandles` 64**, Win32's `MAXIMUM_WAIT_OBJECTS`, with its
+   `nativetest` assertion.
+8. **A commit limit per process**, before step 9 removes the last counts.
+9. **Per-process tables and processes that grow** (groups 2 and 3), after the
+   SMP work on the process core has landed.
