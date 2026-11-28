@@ -21,7 +21,7 @@ in this order:
    reliably over HTTP and validated HTTPS. That needs downloads (D1), not a
    modern renderer.
 2. **A document browser that keeps improving.** Its engine grows by stages
-   (E1–E7): NetSurf's **MIT libraries** read HTML into a DOM and resolve CSS
+   (E1–E8): NetSurf's **MIT libraries** read HTML into a DOM and resolve CSS
    into computed styles, and Web Viewer writes its own layout, paint and,
    later, scripting on top.
 
@@ -74,8 +74,8 @@ UI process. The libraries are built neutral, as the OpenSSL port is: they ask
 the program only for C functions that both runtimes define, so the same
 objects serve SUN and the host tests.
 
-Scripting (E7) does not run remote code in the UI process without a decision
-about isolation recorded in this document first.
+Scripting (E7) runs in the UI process only for local and explicitly trusted
+pages; scripts from any page wait for the content process of E8.
 
 ## Network delivery (N1–N5, complete)
 
@@ -266,16 +266,48 @@ has the details.
 
 ### E7 — scripting
 
-A JavaScript engine in C under the MIT license -- QuickJS, or the QuickJS-ng
-fork, chosen and pinned in this stage -- with bindings to libdom for the DOM
-subset the corpus needs (document and element access, events, timers), run on
-the UI thread's loop. Before it runs remote scripts, this document records the
-isolation decision: a separate content process, or scripts limited to local
-and explicitly trusted pages until there is one.
+A JavaScript engine with bindings to libdom for the DOM subset the corpus
+needs (document and element access, events, timers), run on the UI thread's
+loop.
+
+**The engine: QuickJS-ng.** Decided 2026-11-27, between it and Bellard's
+QuickJS, both MIT and both with what this stage needs (an interrupt handler,
+memory and stack limits, no threads without `quickjs-libc`). QuickJS-ng ships
+numbered releases with test262 in its CI and builds with CMake, so a pin is
+easy to record and a security fix easy to take; QuickJS's releases are rare
+and far apart. It is pinned to a release in the commit that vendors it, under
+the Adopt rule below. Only the engine core is built: not `quickjs-libc`, and
+no `qjs` shell.
+
+**Isolation: trusted pages only, until E8.** Decided 2026-11-27. Scripts run
+in the UI process only for `file:` pages and for origins the user has marked
+as trusted; every other page renders with its scripts off and its
+`<noscript>` content shown. Each run has a time budget enforced through the
+interrupt handler, and the runtime has memory and stack limits, so neither a
+loop nor a runaway allocation takes the window down. The other option, a
+separate content process, is E8: running scripts from any page waits for it.
+The reason is cost: the DOM, styles and layout live in the UI process, and
+moving them out is a stage larger than this one.
 
 **Done when:** corpus pages that change the DOM from a script, on load and on
 an event, render the result, and a script that loops forever is stopped
-without hanging the window.
+without hanging the window. A page from an untrusted origin renders with its
+scripts off.
+
+### E8 — the content process
+
+Parsing, the DOM, styles, layout and scripts move to a content process of
+their own, one per window, and the UI process keeps the chrome and paints
+what the content process lays out, received over IPC. A crash or a memory
+error in the engine or the scripts then ends that process, not Web Viewer,
+and the window shows an error page with Reload. Only then do scripts run on
+every page; the trusted list stays as a way to turn them off. The IPC
+contract (what crosses, how input and resizes travel back, how a hung
+content process is detected) is written here before the code.
+
+**Done when:** a page that crashes the content process leaves the window
+open with an error page, Reload brings it back, and the E7 corpus passes
+unchanged with scripts allowed on any origin.
 
 ### Later
 
@@ -318,8 +350,8 @@ stage touches a drawing program, the loader or SXGUI, and
 The NetSurf libraries are `Adopt`: pristine pinned sources under
 `vendor/netsurf/<library>/`, each in the
 [provenance registry](../../third-party/THIRD_PARTY_PROVENANCE.md) in the commit
-that vendors it, with its notice in the image. The JavaScript engine, when E7
-chooses it, follows the same rule. Updates are explicit changes with their own
+that vendors it, with its notice in the image. The JavaScript engine,
+QuickJS-ng, follows the same rule. Updates are explicit changes with their own
 corpus run; security fixes in the parsers are taken when published.
 
 ## Implementation checkpoints

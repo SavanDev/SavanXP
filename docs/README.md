@@ -408,7 +408,7 @@ all its phases have landed; the links to it move with it.
 - [`WEBVIEWER_ROADMAP.md`](roadmaps/open/WEBVIEWER_ROADMAP.md) — Web Viewer, the native
   browser: its direction (downloads first, its own layout over NetSurf's MIT
   libraries, the modern web left to SSL and SSW), the completed network stages
-  N1–N5 with their checkpoints, and the stages D1 and E1–E7.
+  N1–N5 with their checkpoints, and the stages D1 and E1–E8.
 - [`FAT_ROADMAP.md`](roadmaps/open/FAT_ROADMAP.md) — the planned FAT driver: FatFs adopted
   under `vendor/`, how it maps onto `fs::Driver`, why the root stays SxFS, the
   ESP at `/boot`, and the phases.
