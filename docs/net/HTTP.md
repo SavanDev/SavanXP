@@ -215,7 +215,9 @@ the system's are.
   each fail with their error; the system store does not trust the test root;
   a date set to 2005 is `TLS_CLOCK`, and the date is restored; and the blob,
   with a length, chunked and as an attachment, byte-exact through the sink,
-  and `TRUNCATED` when cut short.
+  and `TRUNCATED` when cut short. Last, three threads with a client each,
+  as Web Viewer's picture threads, fetch the valid page at once and all get
+  it whole, through that one lock.
 - `https-unseeded` (guest): with no entropy source, `TLS_ENTROPY`.
 
 ## Not here

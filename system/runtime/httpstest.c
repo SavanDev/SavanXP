@@ -14,7 +14,9 @@
  *   anything is sent; the date is restored;
  * - the fixtures' multi-megabyte blob streams through a sink byte-exact,
  *   with a length, chunked and as an attachment, against the SHA-256 the
- *   host computed; cut short, it is TRUNCATED.
+ *   host computed; cut short, it is TRUNCATED;
+ * - three threads, each with its own resolver and client as Web Viewer's
+ *   picture threads have, fetch the valid page at once and all get it.
  *
  * `httpstest unseeded`, on a machine with no entropy source: TLS_ENTROPY.
  *
@@ -218,6 +220,68 @@ static void test_clock(const char* good_url) {
     check(sxn_clock_status(&clock) == 0 && clock.valid == 1, "the restored date is not valid");
 }
 
+/* Several clients over TLS at once, one per thread, as Web Viewer's picture
+ * threads fetch (docs/desktop/WEBVIEWER.md#images). */
+#define PARALLEL_THREADS 3
+#define PARALLEL_STACK (64u * 1024u)
+
+struct parallel_fetch {
+    const char* url;
+    struct sxn_ipv4_endpoint dns;
+    struct sxndns_resolver resolver;
+    struct sxnhttp_client client;
+    struct sxnhttp_response response;
+    unsigned char body[256];
+    long result;
+    unsigned char stack[PARALLEL_STACK] __attribute__((aligned(16)));
+};
+
+static struct parallel_fetch g_parallel[PARALLEL_THREADS];
+
+static void parallel_main(void* argument) {
+    struct parallel_fetch* self = argument;
+    struct sxnhttp_request request;
+
+    sxndns_init(&self->resolver);
+    sxndns_set_server(&self->resolver, &self->dns);
+    sxnhttp_client_init(&self->client, &self->resolver);
+    memset(&request, 0, sizeof(request));
+    request.url = self->url;
+    request.cancel = -1;
+    request.trust_pem = g_root;
+    request.trust_pem_length = g_root_length;
+    self->response.body = self->body;
+    self->response.body_capacity = sizeof(self->body) - 1;
+    self->result = sxnhttp_get(&self->client, &request, &self->response);
+    self->body[self->response.body_length] = 0;
+    sxn_thread_exit(0);
+}
+
+static void test_parallel(const char* good, const struct sxn_ipv4_endpoint* dns) {
+    long threads[PARALLEL_THREADS];
+    char line[200];
+
+    for (int i = 0; i < PARALLEL_THREADS; ++i) {
+        struct parallel_fetch* fetch = &g_parallel[i];
+
+        fetch->url = good;
+        fetch->dns = *dns;
+        fetch->result = -1;
+        threads[i] = sxn_thread_create(parallel_main, fetch, fetch->stack + sizeof(fetch->stack), 0);
+        check(threads[i] >= 0, "a parallel fetch thread");
+    }
+    for (int i = 0; i < PARALLEL_THREADS; ++i) {
+        if (threads[i] < 0) continue;
+        check(sxn_wait_one(threads[i], 60000) >= 0, "a parallel fetch ended");
+        sxn_close(threads[i]);
+        snprintf(line, sizeof(line), "parallel fetch %d: %ld, status %d, \"%s\"", i, g_parallel[i].result,
+            g_parallel[i].response.status, (const char*)g_parallel[i].body);
+        check(g_parallel[i].result == 0 && g_parallel[i].response.status == 200 &&
+                  strcmp((const char*)g_parallel[i].body, "secure good.tls.savanxp TLSv1.3 http/1.1") == 0,
+            line);
+    }
+}
+
 static void run(unsigned control_port) {
     struct sxn_ipv4_endpoint peer = {0x0a000202u, (uint16_t)control_port, 0};
     struct sxn_ipv4_endpoint dns = {0x0a000202u, 0, 0};
@@ -296,6 +360,7 @@ static void run(unsigned control_port) {
     /* After the clock is back, the same page works again. */
     expect(good, 1, 0, "a valid certificate after the clock is restored");
     test_downloads(http_port, tls_port);
+    test_parallel(good, &dns);
 }
 
 int main(int argc, char** argv) {

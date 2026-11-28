@@ -181,7 +181,8 @@ changes not released yet; each released version has its own file in
   ([DISK_MANAGEMENT.md](docs/userland/DISK_MANAGEMENT.md#why-calls-not-devdiskn)).
 - **HTTPS** (N5): `sxnhttp` opens `https://` over TLS 1.2/1.3 through the OpenSSL port, validating chain, name or
   address and dates, with SNI and only `http/1.1`, and distinct `SXNHTTP_ERROR_TLS_*` errors and no bypass; Web Viewer
-  shows a lock in its status bar. Smoke `https-smoke` (fixture `tools/tls_fixture.py`) and `https-unseeded`
+  shows a lock in its status bar. Clients on several threads work at once. Smoke `https-smoke` (fixture
+  `tools/tls_fixture.py`) and `https-unseeded`
   ([HTTP.md](docs/net/HTTP.md#https)).
 - **OpenSSL 3.5.3 port** (N5): `ports/openssl` builds `/lib/libcrypto.so.0.4` and `/lib/libssl.so.0.4` for SUN and
   POSIX programs alike and installs the Mozilla CA store as `/system/ssl/cert.pem`, both pinned in the provenance
