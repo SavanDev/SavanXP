@@ -71,8 +71,13 @@ The Favorites menu, after View, as Internet Explorer 5 had it
   Once a change is saved the file decides, so an emptied list stays empty.
 
 `webview-favorites-test` checks the list and its text on the host; the
-`webview` scenario's Favorites steps check the menu, adding, opening and
-removing on screen.
+`webview` scenario's Favorites steps (`webview_favorites` in
+`tools/shoot_session.py`) check the menu, adding, opening and removing on
+screen. They are off for now and checked by hand: under KVM the click on Add
+to Favorites sometimes leaves the menu open with nothing added (5 of 10 full
+runs on 2026-11-27, none of 10 runs cut after that step). When it works, the
+press reaches the window and the save takes about 165 ms; a failing run has
+not been caught with that logging, so the cause is open.
 
 ## Native frontend and I/O
 

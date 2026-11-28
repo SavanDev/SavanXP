@@ -3383,7 +3383,10 @@ def scenario_webview(s):
     width, height = fwd.size
     expect_text(fwd, (0, 0, width, height), "Going further", TEXT, FIELD,
                 "volver adelante a about.html", which="title")
-    webview_favorites(s)
+    # The Favorites steps are off for now, by the maintainer's decision, and
+    # checked by hand: under KVM the click on Add to Favorites sometimes has
+    # no effect, cause still open (docs/desktop/WEBVIEWER.md#favorites).
+    # webview_favorites(s)
     scenario_webview_http(s)
 
 
