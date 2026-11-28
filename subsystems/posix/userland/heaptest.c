@@ -3,25 +3,25 @@
 #include <stdlib.h>
 
 /*
- * Ejercita el malloc de userland (subsystems/posix/sdk/v1/runtime/posix.c)
- * ahora que la arena de BSS es solo el bootstrap y el resto del heap crece con
- * arenas respaldadas por secciones (section_create + map_view).
+ * Exercises the userland malloc (subsystems/posix/sdk/v1/runtime/posix.c),
+ * whose BSS arena is only the bootstrap: the rest of the heap grows in arenas
+ * backed by sections (section_create + map_view).
  *
- * Todos los tamanos grandes de aca estan MUY por encima de cualquier arena de
- * bootstrap razonable: si un malloc de esos vuelve no-nulo es porque el
- * allocator pidio una seccion al kernel. Y el bucle de reciclado falla si las
- * arenas vacias no se devuelven, porque el allocator topa el limite de arenas
- * (SX_ARENA_CAPACITY) o el pool global de secciones del kernel.
+ * Every large size here is far above any reasonable bootstrap arena, so a
+ * non-null malloc of one means the allocator asked the kernel for a section.
+ * The recycling loop fails if empty arenas are not given back: the arenas
+ * have no count limit of their own, so a leak runs into the kernel's 256
+ * views per process (kMaxSectionViews) or out of memory.
  */
 
-/* Los tamanos se mantienen chicos a proposito: el smoke corre bajo TCG y cada
- * arena nueva le cuesta al kernel poner en cero todas sus paginas. 2 MiB ya son
- * 8x la arena de bootstrap, que es lo unico que hace falta para probar que el
- * bloque salio de una seccion. */
+/* The sizes stay small on purpose: the smoke runs under TCG and every new
+ * arena costs the kernel zeroing all its pages. 2 MiB is already 8x the
+ * bootstrap arena, which is all it takes to prove the block came from a
+ * section. The recycling rounds pass the 256 views a leak would use up. */
 #define BIG_BYTES ((size_t)(2u * 1024u * 1024u))
 #define LIVE_BYTES ((size_t)(1024u * 1024u))
 #define LIVE_BLOCKS 6
-#define RECYCLE_ROUNDS 12
+#define RECYCLE_ROUNDS 300
 #define TOUCH_STRIDE ((size_t)4096u)
 
 /* Toca una pagina de cada una mas el ultimo byte: alcanza para probar que el
@@ -104,7 +104,8 @@ static int test_bootstrap_survives(void) {
     return 1;
 }
 
-/* Si las arenas vacias no se devolvieran, esto muere apenas pasa el limite. */
+/* If empty arenas were not given back, this would die once the leaked views
+ * passed the kernel's 256 per process. */
 static int test_recycle(void) {
     int round = 0;
 
@@ -252,6 +253,45 @@ static int test_fork_private(void) {
     return 1;
 }
 
+/* A heap past the old limit of eight arenas of at most 32 MiB. An arena grows
+ * to what is already mapped, and a 4 MiB block leaves the rest of a small
+ * arena unusable for the next one, so those eight held about 35 such blocks:
+ * Xash3D's campaign ran out of heap that way with room left on the machine.
+ * 40 live blocks (160 MiB) failed at block 36 with that limit, and freeing
+ * them must give every arena back so the next case starts small. */
+#define WIDE_BLOCK_BYTES ((size_t)(4u * 1024u * 1024u))
+#define WIDE_BLOCKS 40
+
+static int test_wide_heap(void) {
+    unsigned char* blocks[WIDE_BLOCKS];
+    int index = 0;
+    int ok = 1;
+
+    for (index = 0; index < WIDE_BLOCKS; ++index) {
+        blocks[index] = 0;
+    }
+    for (index = 0; index < WIDE_BLOCKS; ++index) {
+        blocks[index] = (unsigned char*)malloc(WIDE_BLOCK_BYTES);
+        if (blocks[index] == 0) {
+            eprintf("heaptest: block %d of %u KiB failed with %u MiB live\n", index,
+                (unsigned)(WIDE_BLOCK_BYTES / 1024u),
+                (unsigned)((size_t)index * WIDE_BLOCK_BYTES / (1024u * 1024u)));
+            ok = 0;
+            break;
+        }
+        fill_pattern(blocks[index], WIDE_BLOCK_BYTES, (unsigned char)(0x60u + index));
+    }
+    for (index = 0; ok && index < WIDE_BLOCKS; ++index) {
+        if (!check_pattern(blocks[index], WIDE_BLOCK_BYTES, (unsigned char)(0x60u + index), "wide heap block")) {
+            ok = 0;
+        }
+    }
+    for (index = 0; index < WIDE_BLOCKS; ++index) {
+        free(blocks[index]);
+    }
+    return ok;
+}
+
 struct heaptest_case {
     const char* name;
     int (*run)(void);
@@ -263,6 +303,7 @@ int main(void) {
         { "bootstrap", test_bootstrap_survives },
         { "recycle", test_recycle },
         { "arenas", test_multiple_arenas },
+        { "wide", test_wide_heap },
         { "realloc", test_realloc_across_arenas },
         { "fork", test_fork_private },
     };

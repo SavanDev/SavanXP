@@ -1,6 +1,7 @@
 # System limits roadmap
 
-> **Status: investigated, nothing raised yet.** This records how many windows,
+> **Status: investigated; the heap's arena limit is gone (2026-11-28), the
+> kernel tables are not raised yet.** This records how many windows,
 > descriptors and kernel objects the system allows today, how the limits depend
 > on each other, and the order to raise them in. It began with a second
 > cascade level in the Start menu ([START_MENU.md](../../desktop/START_MENU.md)),
@@ -89,6 +90,48 @@ windows per process.
 
 The kernel's static tables have to fit the kernel image's memory budget. That
 budget was not measured for this document; check it before the first raise.
+
+## Process memory
+
+How much a program can allocate is a chain of its own, below the windows:
+
+| Limit | Value | Where | What it counts |
+|---|---|---|---|
+| Heap arenas | no limit of its own | `subsystems/posix/sdk/v1/runtime/posix.c` | Sections the allocator maps; each is one view and one section object |
+| `SX_ARENA_MAX_BYTES` | 64 MiB | same | The largest arena; arenas double what is mapped up to it |
+| `kMaxSectionBytes` | 64 MiB | `kernel/object.cpp` | The largest section; one `malloc` larger than this fails |
+| `kMaxSectionViews` | 256 per process | `include/kernel/vmm.hpp` | Views: arenas, libraries, mmaps, surfaces |
+| `kMaxSectionObjects` | 512 | `include/kernel/object.hpp` | Sections in the **whole system** |
+
+The heap used to stop at eight arenas of at most 32 MiB (`SX_ARENA_CAPACITY`),
+96 MiB in all. Xash3D at 1920x1080 ran out there on real hardware during the
+campaign: `_Mem_Alloc: out of memory` while saving a game on the sixth level
+change. Reproduced in QEMU with the user's game data and a console script that
+changes level and saves 26 times, the heap refused a 4 MiB block on the tenth
+level with all eight arenas in use, **43 MiB free in 1394 blocks and no free
+block larger than 3 MiB**. It is fragmentation, not a leak: with the limit
+removed the same run reached the 26th level on 9 arenas (192 MiB mapped,
+70 MiB free, the largest free block still about 3 MiB).
+
+What stays open:
+
+- **The kernel tables are still fixed.** With no limit in the heap, one
+  process with a heap of gigabytes takes a large share of the 512 section
+  objects the windows' surfaces also need. The cure is the kernel's, not the
+  heap's: the object tables and the per-process view table growing from the
+  kernel heap, and a commit limit per process instead of a count per object
+  type.
+- **Fragmentation.** The allocator is first fit over one list of free
+  blocks. Mixed lifetimes, such as a level's data and the 4–8 MiB buffers a
+  save takes, leave a third of the heap free in pieces too small to reuse.
+  Size classes, or large blocks served by sections of their own, would keep
+  the heap close to what is live.
+- **Sections are allocated whole.** An arena's pages are allocated and zeroed
+  when it is created, which is also why `kMaxSectionBytes` exists. Pages that
+  appear on first touch would let that limit rise.
+- **`free` walks the arenas** to find the one holding a block. At tens of
+  arenas that is nothing; it is worth a better index before a heap takes
+  hundreds.
 
 ## Order
 

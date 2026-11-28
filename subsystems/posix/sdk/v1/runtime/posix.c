@@ -46,14 +46,17 @@
 #ifndef SX_HEAP_SIZE
 #define SX_HEAP_SIZE (256u * 1024u)
 #endif
-/* Cada arena dinamica consume un section view del address space (el kernel da
- * 32 por proceso, compartidos con las superficies de GPU/WM) y un section
- * object del pool global (64 en todo el sistema), asi que crecen
- * geometricamente para llegar lejos con pocas. */
+/* Each dynamic arena takes one section view of the process and one section
+ * object from the kernel's global pool, so arenas grow geometrically to reach
+ * far with few of them, up to a section's largest size (64 MiB, the kernel's
+ * kMaxSectionBytes). Their number has no limit of its own: the heap grows
+ * until the kernel refuses a section, as malloc over mmap does elsewhere. A
+ * fixed eight stopped Xash3D's campaign after a few levels, with a fragmented
+ * heap and room left on the machine
+ * (docs/roadmaps/open/SYSTEM_LIMITS_ROADMAP.md, "Process memory"). */
 #define SX_ARENA_PAGE_SIZE ((size_t)4096u)
 #define SX_ARENA_FIRST_BYTES ((size_t)(1024u * 1024u))
-#define SX_ARENA_MAX_BYTES ((size_t)(32u * 1024u * 1024u))
-#define SX_ARENA_CAPACITY ((size_t)8u)
+#define SX_ARENA_MAX_BYTES ((size_t)(64u * 1024u * 1024u))
 /* 16 y no sizeof(void*): es el max_align_t de x86-64. Con 8, un movaps
  * sobre un buffer de malloc en una app -Sse podia faultear, porque clang
  * asume que malloc devuelve memoria apta para cualquier tipo. */
@@ -291,7 +294,6 @@ typedef struct sx_free_links {
     struct sx_alloc_header* prev;
 } sx_free_links;
 static sx_alloc_header* g_free_blocks = 0;
-static size_t g_mapped_arena_count = 0;
 static size_t g_mapped_bytes = 0;
 static struct sx_FILE g_file_pool[SX_FILE_POOL_CAPACITY] = {};
 static struct sx_FILE g_stdin_file = {
@@ -526,9 +528,6 @@ static sx_arena* sx_arena_acquire(size_t payload_bytes) {
     void* mapped = 0;
     sx_arena* arena = 0;
 
-    if (g_mapped_arena_count >= SX_ARENA_CAPACITY) {
-        return 0;
-    }
     if (payload_bytes > ((size_t)-1) - sx_arena_overhead() - mask) {
         return 0;
     }
@@ -550,7 +549,6 @@ static sx_arena* sx_arena_acquire(size_t payload_bytes) {
         return 0;
     }
 
-    ++g_mapped_arena_count;
     g_mapped_bytes += wanted;
     return arena;
 }
@@ -597,7 +595,6 @@ static void sx_arena_release(sx_arena* arena) {
 
     *link = arena->next;
     sx_free_list_remove(arena->first_block);
-    --g_mapped_arena_count;
     g_mapped_bytes -= arena->size;
     sx_heap_pages_unmap(arena, arena->size);
 }

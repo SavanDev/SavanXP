@@ -224,7 +224,7 @@ expensive.
 
 | Consumer | Views |
 | --- | --- |
-| Heap arenas | up to `SX_ARENA_CAPACITY` = 8 |
+| Heap arenas | one per arena: about 7 for 100 MiB of heap, then one per 64 MiB |
 | Library images (projected) | ~3 per library (file-backed text/rodata, private data, bss) |
 | Explicit anonymous `mmap`, GPU surfaces | a handful |
 | `winhost`, per PE image | one per protection run, about 5 ([WIN32.md](../userland/WIN32.md#winhost--subsystemswin32host)) |
@@ -239,8 +239,11 @@ cost 32 bytes each across `kMaxProcesses` = 64 processes: 512 KiB of kernel
 BSS, used or not.
 
 `kMaxSectionObjects` (system-wide) has two consumers. The heap: a real
-desktop session runs 8–12 processes, so 12 × 8 + ~10 libraries + surfaces lands
-near 115. And `winhost`, which makes one section per view, so each Win32
+desktop session runs 8–12 processes of a few arenas each, so with ~10
+libraries and the surfaces it lands near 100. The heap's arenas have no
+count limit of their own, so one process with a heap of gigabytes takes a
+large share
+([SYSTEM_LIMITS_ROADMAP.md](../roadmaps/open/SYSTEM_LIMITS_ROADMAP.md#process-memory)). And `winhost`, which makes one section per view, so each Win32
 program brings its whole view count. The limit is 512 (it was 256). Each entry
 is 80 bytes, so the table is 40 KiB. One WordPad brings about 105, so a
 session with it and a few other Win32 programs is where this table fills

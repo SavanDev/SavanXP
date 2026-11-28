@@ -464,6 +464,9 @@ changes not released yet; each released version has its own file in
 
 ### Fixed
 
+- **A program's heap is no longer capped at eight arenas: it grows until the kernel refuses a section.** Xash3D's
+  campaign stopped on `_Mem_Alloc: out of memory` after a few levels at 1920x1080, with memory to spare; each arena is
+  now up to 64 MiB. [Process memory](docs/roadmaps/open/SYSTEM_LIMITS_ROADMAP.md#process-memory).
 - **The `win32-solitaire` scenario runs Solitaire again.** `win32test.sxe`
   matched its options by prefix, so `--solitaire` started the drag source of
   `--source` instead; options now have to match whole.

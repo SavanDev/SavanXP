@@ -29,10 +29,14 @@ One allocator serves every program, in `subsystems/posix/sdk/v1/runtime/posix.c`
   ([WEBVIEWER_ENGINE.md](../desktop/WEBVIEWER_ENGINE.md#known-costs)).
 - A **bootstrap arena** of 256 KiB in the BSS (`SX_HEAP_SIZE`). It needs no
   system call: the kernel maps the BSS at exec.
-- Then up to **8 arenas** (`SX_ARENA_CAPACITY`) from the **page source**,
-  growing geometrically from 1 MiB to 32 MiB each, so a large heap takes few
-  of them. An arena that becomes entirely free goes back to the page source;
-  the bootstrap arena never does.
+- Then **arenas** from the **page source**, growing geometrically from 1 MiB
+  to 64 MiB each (`SX_ARENA_MAX_BYTES`, the kernel's largest section), so a
+  large heap takes few of them. Their number has no limit of its own: the heap
+  grows until the page source refuses. It used to stop at eight, which a
+  fragmented Xash3D campaign used up with memory to spare
+  ([SYSTEM_LIMITS_ROADMAP.md](../roadmaps/open/SYSTEM_LIMITS_ROADMAP.md#process-memory)).
+  An arena that becomes entirely free goes back to the page source; the
+  bootstrap arena never does.
 
 The page source is two functions (`savanxp/libc.h`):
 
@@ -122,12 +126,14 @@ Not chosen:
 
 ## Budget
 
-- **Views:** 128 per process (`kMaxSectionViews`, [SECTIONS.md](../kernel/SECTIONS.md)).
-  The heap takes at most 8. `windowd` maps about 25 with every slot full (client
-  surfaces, input rings, the window list, the display, its own surface, the
-  scene), so 33 with a full heap.
-- **Section objects:** 512 system-wide (`kMaxSectionObjects`), sized for 8 arenas
-  in each of a dozen processes plus surfaces, libraries and Win32 programs.
+- **Views:** 256 per process (`kMaxSectionViews`, [SECTIONS.md](../kernel/SECTIONS.md)).
+  The heap takes one per arena: about 7 for 100 MiB, then one per 64 MiB.
+  `windowd` maps about 25 with every slot full (client surfaces, input rings,
+  the window list, the display, its own surface, the scene).
+- **Section objects:** 512 system-wide (`kMaxSectionObjects`), one per arena.
+  A process whose heap reaches gigabytes takes a large share of them; that the
+  pool stays fixed while the heap does not is the kernel's open limit
+  ([SYSTEM_LIMITS_ROADMAP.md](../roadmaps/open/SYSTEM_LIMITS_ROADMAP.md#process-memory)).
 - **Memory:** a section's pages are allocated and zeroed when it is created, so
   an arena costs its whole size at once (1 MiB for the first). The bootstrap
   arena is resident in every static program, native or not, as it already is.

@@ -91,7 +91,7 @@ not a quiet swap.
 ### How much memory an image may take
 
 Decoded pixels cost 4 bytes each: 4096x4096 is 64 MiB. The native heap
-grows in up to eight arenas, and an arena is a section the kernel zeroes
+grows in arenas of up to 64 MiB, and an arena is a section the kernel zeroes
 when it is created ([NATIVE_HEAP.md](../../userland/NATIVE_HEAP.md)), so a
 picture that size costs its full size at once. The limits are therefore:
 
