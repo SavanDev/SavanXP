@@ -1,10 +1,13 @@
 # Setup and updates — installing SavanXP and keeping it current
 
 > **LiveCD setup and updates are planned.** Linux can already prepare a UEFI
-> disk with [`build.sh prepare-disk`](../build/BUILD_CMAKE.md#preparing-an-installed-disk). Programs are
+> disk with [`build.sh prepare-disk`](../build/BUILD_CMAKE.md#preparing-an-installed-disk) and bring it
+> up to a newer build in place with
+> [`build.sh update-disk`](../build/BUILD_CMAKE.md#updating-an-installed-disk),
+> the host-side form of the upgrade mode described below. Programs are
 > installed from the host (`tools/build-user.sh`, `tools/sxfs_sync.py`), the
-> LiveCD forgets everything on reboot, and there is no way to move from one
-> version to the next other than rebuilding `build/disk.img`. There is also no
+> LiveCD forgets everything on reboot, and nothing on the system itself can
+> move from one version to the next yet. There is also no
 > settings page of any kind for updates: no source, no channel, no "check now".
 > This document records the decision on the shape of both tools, what the
 > system already has for them, and the order to build the rest in.

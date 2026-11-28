@@ -131,7 +131,9 @@ See [Personal volumes in QEMU](BUILD_CMAKE.md#personal-volumes-in-qemu).
 
 `./build.sh prepare-disk` can make a fresh UEFI disk image or prepare a
 dedicated USB drive. See [Preparing an installed disk](BUILD_CMAKE.md#preparing-an-installed-disk)
-for the device and port installation commands.
+for the device and port installation commands. `./build.sh update-disk` brings
+either one up to the current build without erasing it; see
+[Updating an installed disk](BUILD_CMAKE.md#updating-an-installed-disk).
 
 The QEMU machine is assembled with "base" hardware by default: standard VGA,
 PS/2 mouse and keyboard, AC'97 audio, an AHCI (SATA) disk and an rtl8139 NIC —

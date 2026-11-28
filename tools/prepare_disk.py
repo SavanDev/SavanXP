@@ -54,7 +54,12 @@ def stage(capacity: int, work: Path, args: argparse.Namespace) -> str:
     root = work / "root.img"
     subprocess.run([args.python, args.sync, "--image", root, "--source", args.diskfs,
                     "--cli", args.tools / "sxfs-cli", "--sectors", str(args.root_sectors)], check=True)
+    stage_esp(work, args, root_guid)
+    return root_guid
 
+
+def stage_esp(work: Path, args: argparse.Namespace, root_guid: str) -> Path:
+    """Build esp.img in work: Limine, the kernel and a boot entry for root_guid."""
     esp = work / "esp.img"
     fat = args.tools / "fat-image"
     config = work / "limine.conf"
@@ -65,7 +70,7 @@ def stage(capacity: int, work: Path, args: argparse.Namespace) -> str:
                                 (args.boot / "boot/kernel.elf", "/boot/kernel.elf"),
                                 (args.boot / "boot/initramfs.cpio", "/boot/initramfs.cpio")):
         subprocess.run([fat, "put", esp, source, destination], check=True)
-    return root_guid
+    return esp
 
 
 def install(fd: int, capacity: int, work: Path, *, physical: bool) -> None:

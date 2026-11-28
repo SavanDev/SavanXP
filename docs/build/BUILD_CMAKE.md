@@ -186,6 +186,41 @@ ROOT_VOLUME=/dev/disk/by-partuuid/YOUR_ROOT_UUID
 ./build.sh run --disk-device "$ROOT_VOLUME" --disk-write
 ```
 
+### Updating an installed disk
+
+`update-disk` brings a disk made by `prepare-disk` up to the current build
+without erasing it. It never writes the partition table, so the root keeps its
+GPT partition UUID. It works on the image file or on the whole USB drive, with
+the same rules as `prepare-disk`: whole disk, volumes unmounted, QEMU closed,
+`sudo` only when the device asks for it.
+
+```bash
+./build.sh update-disk --image build/savanxp-installed.img
+./build.sh update-disk --device /dev/disk/by-id/usb-YOUR_DEVICE
+```
+
+1. It refuses anything that is not the layout `prepare-disk` writes: a valid
+   GPT for this disk size, the 96 MiB EFI partition at 1 MiB, an SxFS root
+   right after it. Such a disk needs `prepare-disk --erase`.
+2. It stages the new EFI partition (Limine, kernel, initramfs and a
+   `limine.conf` for the root UUID read from the table) before writing
+   anything.
+3. It syncs the SxFS root from the base system tree the way `build` syncs
+   `build/disk.img`: build-owned files are replaced and retired ones removed,
+   ports and the user's files stay. Only the blocks that change are written,
+   each one is read back, and a copy of the previous root is kept under
+   `build/device-recovery/` until the write is complete; a failed write puts it
+   back.
+4. Then it rewrites the EFI partition, putting the previous one back if that
+   write fails.
+
+The root is written before the boot files, so an update stopped between the two
+leaves the previous kernel booting the new system files. `update-disk` says so
+when it happens; run it again before booting that disk. A file the base tree no
+longer has stays on the disk unless the build lists it as retired, as in
+`build/disk.img`. A future change to the partition sizes or to the SxFS format
+makes `update-disk` refuse the disk rather than migrate it.
+
 ### Installing ports to a personal volume
 
 `SAVANXP_DISK_IMAGE` selects the destination for the official ports and

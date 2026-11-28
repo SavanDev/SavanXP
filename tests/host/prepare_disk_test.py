@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the install layout and offline SxFS updates using disposable files."""
+"""Check the install layout, in-place updates and offline SxFS updates using disposable files."""
 
 import argparse
 import os
@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import prepare_disk
 import sxfs_sync
+import update_disk
 
 
 def check_gpt(image: Path) -> str:
@@ -65,11 +66,11 @@ def check_port_writes(cli: Path, root: Path, capacity: int, work: Path) -> None:
         before = root.read_bytes()
         write_volume = sxfs_sync.write_volume
 
-        def write_then_fail(fd: int, image: Path) -> None:
+        def write_then_fail(fd: int, image: Path, base: int = 0) -> None:
             if image.name == "candidate.img":
-                os.pwrite(fd, bytes(512), 0)
+                os.pwrite(fd, bytes(512), base)
                 raise OSError("injected write failure")
-            write_volume(fd, image)
+            write_volume(fd, image, base)
 
         with patch.object(sxfs_sync, "write_volume", side_effect=write_then_fail):
             assert sxfs_sync.sync_block_volume(args, disk, fd, capacity, stage, cli, recovery) == 1
@@ -124,6 +125,93 @@ def check_device_elevation(work: Path) -> None:
             install.assert_not_called()
         else:
             raise AssertionError("a replaced disk must be rejected")
+
+
+def gpt_sectors(image: Path) -> bytes:
+    data = image.read_bytes()
+    return data[:prepare_disk.GPT_PRIMARY] + data[-prepare_disk.GPT_BACKUP:]
+
+
+def check_update(image: Path, guid: str, cli: Path, sectors: int, work: Path,
+                 update: list) -> None:
+    """Update an installation that holds a user file: the table, its root GUID and the file stay."""
+    stage = work / "update-port"
+    save = stage / "games/demo/save.txt"
+    save.parent.mkdir(parents=True)
+    save.write_bytes(b"saved")
+    args = SimpleNamespace(reset=False, no_compact=False)
+    fd = os.open(image, os.O_RDWR)
+    try:
+        assert sxfs_sync.sync_block_volume(args, image, fd, sectors * 512, stage, cli, work / "port-rec",
+                                           base=prepare_disk.ROOT_START) == 0
+    finally:
+        os.close(fd)
+
+    table = gpt_sectors(image)
+    boot, base = work / "boot-tree", work / "base"
+    (boot / "boot/kernel.elf").write_text("kernel, second build")
+    (base / "bin/init").write_text("init, second build")
+    (base / "bin/added").write_text("added")
+    output = subprocess.check_output(update + ["--image", image], text=True)
+    assert guid in output
+    assert gpt_sectors(image) == table
+    assert check_gpt(image) == guid
+    with image.open("rb") as disk:
+        disk.seek(prepare_disk.ESP_START)
+        assert b"kernel, second build" in disk.read(prepare_disk.ESP_MIB * prepare_disk.MIB)
+        disk.seek(prepare_disk.ROOT_START)
+        root = work / "updated-root.img"
+        root.write_bytes(disk.read(sectors * 512))
+    files = work / "updated-files"
+    subprocess.run([cli, "extract", root, files], check=True)
+    assert (files / "bin/init").read_text() == "init, second build"
+    assert (files / "bin/added").read_text() == "added"
+    assert (files / "games/demo/save.txt").read_bytes() == b"saved"
+
+    # A disk without the installed layout is refused before anything is written.
+    plain = work / "plain.img"
+    plain.write_bytes(root.read_bytes())
+    before = plain.read_bytes()
+    refused = subprocess.run(update + ["--image", plain], text=True, capture_output=True)
+    assert refused.returncode != 0 and "prepare-disk --erase" in refused.stderr
+    assert plain.read_bytes() == before
+
+
+def check_update_elevation(work: Path) -> None:
+    device = Path("/dev/test-disk")
+    target = prepare_disk.DiskTarget(123, 2 << 30, 456)
+    identity = "123:456:0:4194304"
+    recovery = work / "update-recovery"
+    args = SimpleNamespace(sudo="/test/path/sudo", device_identity=None)
+    with (patch.object(prepare_disk, "inspect_disk", return_value=target),
+          patch.object(update_disk, "device_identity", return_value=identity),
+          patch.object(Path, "stat"), patch.object(os, "geteuid", return_value=1000),
+          patch.object(update_disk, "claim", side_effect=PermissionError("denied")),
+          patch.object(sys, "argv", ["update_disk.py", "--device", str(device)]),
+          patch.object(update_disk, "update") as update,
+          patch.object(subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run):
+        assert update_disk.update_device(device, args, recovery) == 0
+        run.assert_called_once_with(
+            ["/test/path/sudo", "--", sys.executable, "-E", "-S", "-B", str(ROOT / "tools/update_disk.py"),
+             "--device", str(device), "--device-identity", identity, "--recovery-root", str(recovery)],
+            check=False)
+        update.assert_not_called()
+
+    args.device_identity = identity
+    with (patch.object(prepare_disk, "inspect_disk", return_value=target),
+          patch.object(update_disk, "device_identity", side_effect=(identity, "replacement")),
+          patch.object(Path, "stat"), patch.object(os, "fstat"),
+          patch.object(update_disk, "claim", return_value=nullcontext(11)),
+          patch.object(sxfs_sync, "drop_sudo_privileges") as drop,
+          patch.object(update_disk, "update") as update):
+        try:
+            update_disk.update_device(device, args, recovery)
+        except ValueError as error:
+            assert "changed since the update began" in str(error)
+            drop.assert_not_called()
+            update.assert_not_called()
+        else:
+            raise AssertionError("an elevated update must reject a replaced device")
 
 
 def check_port_elevation(work: Path) -> None:
@@ -187,6 +275,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="savanxp-install-test-") as temporary:
         work = Path(temporary)
         check_device_elevation(work)
+        check_update_elevation(work)
         check_port_elevation(work)
         boot = work / "boot-tree"
         for name in ("EFI/BOOT/BOOTX64.EFI", "boot/kernel.elf", "boot/initramfs.cpio"):
@@ -206,12 +295,18 @@ def main() -> int:
         assert check_gpt(image) in output
         again = subprocess.run(command, text=True, capture_output=True)
         assert again.returncode != 0 and "output already exists" in again.stderr
+        update = [sys.executable, ROOT / "tools/update_disk.py",
+                  "--boot", boot, "--diskfs", base, "--tools", args.tools,
+                  "--config", ROOT / "boot/limine-installed.conf", "--recovery-root", work / "recovery"]
+        installed = work / "update-check.img"
+        installed.write_bytes(image.read_bytes())
+        check_update(installed, check_gpt(image), args.tools / "sxfs-cli", sectors, work, update)
         root = work / "root.img"
         with image.open("rb") as disk:
             disk.seek(prepare_disk.ROOT_START)
             root.write_bytes(disk.read(sectors * 512))
         check_port_writes(args.tools / "sxfs-cli", root, sectors * 512, work)
-    print("prepare-disk and port target: PASS")
+    print("prepare-disk, update-disk and port target: PASS")
     return 0
 
 

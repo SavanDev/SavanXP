@@ -499,9 +499,10 @@ def read_device(fd: int, length: int, offset: int) -> bytes:
     return data
 
 
-def write_volume(fd: int, image: Path) -> None:
+def write_volume(fd: int, image: Path, base: int = 0) -> None:
+    """Write image at byte base of fd, only where it differs, verifying each write."""
     with image.open("rb") as desired:
-        offset = 0
+        offset = base
         while data := desired.read(TRANSFER_SIZE):
             if read_device(fd, len(data), offset) != data:
                 write_at(fd, data, offset)
@@ -512,7 +513,8 @@ def write_volume(fd: int, image: Path) -> None:
 
 
 def sync_block_volume(args: argparse.Namespace, device: Path, fd: int, capacity: int,
-                      source: Path, cli: Path, recovery_root: Path) -> int:
+                      source: Path, cli: Path, recovery_root: Path, base: int = 0) -> int:
+    """Sync the SxFS volume of capacity bytes that starts at byte base of fd."""
     recovery_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix=f"{device.name}-", dir=recovery_root))
     original = work / "before.img"
@@ -521,7 +523,7 @@ def sync_block_volume(args: argparse.Namespace, device: Path, fd: int, capacity:
         length = min(capacity, VOLUME_LIMIT)
         with original.open("xb") as backup:
             for offset in range(0, length, TRANSFER_SIZE):
-                data = read_device(fd, min(length - offset, TRANSFER_SIZE), offset)
+                data = read_device(fd, min(length - offset, TRANSFER_SIZE), base + offset)
                 if data != bytes(len(data)):
                     backup.seek(offset)
                     backup.write(data)
@@ -546,10 +548,10 @@ def sync_block_volume(args: argparse.Namespace, device: Path, fd: int, capacity:
         retain_backup = True
         print(f"sxfs: updating {device}. Recovery image: {original}", flush=True)
         try:
-            write_volume(fd, candidate)
+            write_volume(fd, candidate, base)
         except (OSError, KeyboardInterrupt) as error:
             print(f"sxfs: write failed on {device}: {error}. Restoring the original volume.", file=sys.stderr)
-            write_volume(fd, original)
+            write_volume(fd, original, base)
             retain_backup = False
             return 1
         retain_backup = False
