@@ -66,6 +66,11 @@ enum savanxp_wm_window_flags {
     /* Asked to close, and still running after a while (the WM never ends a
      * process). The shell offers to end it; window_id is its pid. */
     SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING = 1u << 2,
+    /* Maximized; it stays set while the window is minimized, so a restore
+     * from the taskbar brings it back maximized. */
+    SAVANXP_WM_WINDOW_FLAG_MAXIMIZED = 1u << 3,
+    /* A fixed-size window: it cannot be maximized. */
+    SAVANXP_WM_WINDOW_FLAG_FIXED_SIZE = 1u << 4,
 };
 
 struct savanxp_wm_window_entry {
@@ -126,6 +131,14 @@ enum savanxp_wm_shell_action {
      * (Shut Down). No application window stays active. `window_id` is unused;
      * the shell gives the focus back with ACTIVATE. */
     SAVANXP_WM_SHELL_TAKE_FOCUS = 4,
+    /* The taskbar button's menu (Windows' system menu). MAXIMIZE brings the
+     * window to the front maximized; a fixed-size one is only brought to the
+     * front. RESTORE brings a minimized window back as it was, and a
+     * maximized one to its size before. CLOSE asks the window to close, as
+     * its X does. */
+    SAVANXP_WM_SHELL_MAXIMIZE = 5,
+    SAVANXP_WM_SHELL_RESTORE = 6,
+    SAVANXP_WM_SHELL_CLOSE = 7,
 };
 
 struct savanxp_wm_shell_request {

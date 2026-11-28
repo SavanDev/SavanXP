@@ -291,6 +291,54 @@ void shortcut_for_target(const char *target, struct shortcut *out, char *name, s
     snprintf(name, name_capacity, "%s%s", title, SHORTCUT_EXTENSION);
 }
 
+int shortcut_send_to_desktop(const char *target)
+{
+    char folder[SHORTCUT_PATH_CAPACITY];
+    char name[160];
+    char path[SHORTCUT_PATH_CAPACITY];
+    struct shortcut link;
+    struct shell_io_info info;
+    int written;
+
+    if (target == 0 || target[0] == '\0')
+    {
+        return -1;
+    }
+    written = snprintf(folder, sizeof(folder), "%s/Desktop", shell_io_profile_directory());
+    if (written < 0 || (size_t)written >= sizeof(folder))
+    {
+        return -1;
+    }
+    if (shell_io_query(folder, &info) != 0)
+    {
+        if (shell_io_make_directory(folder) < 0)
+        {
+            return -1;
+        }
+    }
+    else if (info.type != SHELL_IO_DIRECTORY)
+    {
+        return -1;
+    }
+    shortcut_for_target(target, &link, name, sizeof(name));
+    written = snprintf(path, sizeof(path), "%s/%s", folder, name);
+    if (written < 0 || (size_t)written >= sizeof(path))
+    {
+        return -1;
+    }
+    for (int attempt = 2; shell_io_query(path, &info) == 0; ++attempt)
+    {
+        size_t stem = strlen(name) - (sizeof(SHORTCUT_EXTENSION) - 1u);
+
+        if (attempt >= 100)
+        {
+            return -1;
+        }
+        snprintf(path, sizeof(path), "%s/%.*s (%d)%s", folder, (int)stem, name, attempt, SHORTCUT_EXTENSION);
+    }
+    return shortcut_save(path, &link);
+}
+
 static int is_directory(const char *path)
 {
     struct shell_io_info info;

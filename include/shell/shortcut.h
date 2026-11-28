@@ -61,6 +61,10 @@ int shortcut_save(const char *path, const struct shortcut *shortcut);
  * "notes.txt.sxlnk" for a document. `name` gets the file name, without the
  * directory. */
 void shortcut_for_target(const char *target, struct shortcut *out, char *name, size_t name_capacity);
+/* A shortcut to `target` in the user's Desktop folder, made if it is
+ * missing, named as shortcut_for_target names it: Send To > Desktop (create
+ * shortcut). A name already taken gets " (2)" and on. 0, or -1. */
+int shortcut_send_to_desktop(const char *target);
 
 /* How shortcut_open_path opened something. */
 enum shortcut_open_kind

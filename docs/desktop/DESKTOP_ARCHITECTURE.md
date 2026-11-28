@@ -155,6 +155,7 @@ Which windows the desktop has, and what each is:
 | 1 | Taskbar | `panel`, bottom edge, 28 px |
 | 2 | Start menu, the background's context menu ([DESKTOP_ICONS.md](./DESKTOP_ICONS.md)), or a dialog of the shell (the icon confirmation, Shut Down) | `popup`; the menus dismissable, the dialogs centred and not; never two open, so one id |
 | 3 | Volume, clock or keyboard-layout popup, or the Start menu's cascade ([START_MENU.md](./START_MENU.md)) | `popup`, dismissable; the three share the tray corner, so one id, and the cascade borrows it while the Start menu is open |
+| 4 | End Program ([Closing a window](#closing-a-window)), or a program's context menu over the cascade | `popup`; the dialog centred and not dismissable; the menu borrows the id while no program is hung, and gives it up to the dialog |
 
 The modules are `system/desktop/desktop_*.c`, one per window kind, behind a
 single loop in `desktop.c`. The desktop is a SUN program,
@@ -491,9 +492,34 @@ read-only for the client) stays: it is the right design. Two changes:
   application's main window, and owned windows and the desktop's windows are
   never tasks. They become real window ids the day one process can own more
   than one task.
-- The request set grows from activate/minimize to what the taskbar needs, such
-  as close for a button's context menu. Cascade and tile go here if a client
-  ever needs them.
+- The request set grows from activate/minimize to what the taskbar needs
+  (below). Cascade and tile go here if a client ever needs them.
+
+### The taskbar button's menu
+
+A right click on a task button opens, above the bar where the pointer is, the
+menu Windows XP shows there: the window's system menu. The button stays
+pressed while it is open. Each item is a request on the shell's pipe, and the
+list says which ones apply:
+
+| Item | Request | Enabled when |
+|---|---|---|
+| Restore | `SAVANXP_WM_SHELL_RESTORE` | minimized or maximized |
+| Minimize | `SAVANXP_WM_SHELL_MINIMIZE` | not minimized |
+| Maximize | `SAVANXP_WM_SHELL_MAXIMIZE` | not fixed-size, and minimized or not maximized |
+| Close | `SAVANXP_WM_SHELL_CLOSE` | always |
+
+- Restore brings a minimized window back as it was, maximized or not, and a
+  maximized one on screen back to its earlier size. Maximize brings the window
+  to the front maximized. Close asks, as the X does ([Closing a
+  window](#closing-a-window)).
+- The entry carries `SAVANXP_WM_WINDOW_FLAG_MAXIMIZED`, kept while the window
+  is minimized, and `SAVANXP_WM_WINDOW_FLAG_FIXED_SIZE`, for a window whose
+  maximize button is greyed.
+- Move and Size are left out: `windowd` has no keyboard move or size mode for
+  them to start. They come with one.
+- It is the desktop's context menu, in the Start menu's window, so opening it
+  closes an open Start menu, as on Windows.
 
 ## Presentation comes from the client
 

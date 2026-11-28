@@ -82,12 +82,16 @@ static const struct savanxp_embedded_bitmap_asset *taskbar_volume_glyph(void)
     return &k_volume_high;
 }
 
+static uint32_t task_menu_window(void);
+
 static const struct savanxp_wm_window_list *g_list;
 /* A stable copy to paint from: the WM writes the section at any moment, so a
  * consistent snapshot is taken and drawn from. */
 static struct savanxp_wm_window_list g_snapshot;
 static int g_pressed_index = -1;
-static int g_context_pressed = 0;
+/* The item a right click pressed (a task button's index, or -1 for the bare
+ * bar), or -2 for none. */
+static int g_context_pressed = -2;
 static int g_active_layout = SAVANXP_KEYBOARD_LAYOUT_ES;
 static long g_keyboard_device = -1;
 
@@ -394,7 +398,9 @@ static void taskbar_paint(struct desktop_surface *gfx)
         const struct savanxp_wm_window_entry *entry = &g_snapshot.windows[index];
         struct sx_rect rect = taskbar_button_rect(&gfx->info, count, index);
         int active = (entry->flags & SAVANXP_WM_WINDOW_FLAG_ACTIVE) != 0;
-        int sunken = active || index == g_pressed_index;
+        /* Pressed too while its menu is open, as in Windows XP. */
+        int sunken = active || index == g_pressed_index ||
+                     (entry->window_id != 0 && entry->window_id == task_menu_window());
         int text_x = rect.x + 6 + (sunken ? 1 : 0);
         struct sx_rect face;
         const struct desktop_embedded_bitmap *icon;
@@ -656,6 +662,95 @@ static void taskbar_menu_command(int id)
     }
 }
 
+/* A task button's menu: the window's system menu, as Windows XP shows it
+ * for a right click on the button. Each item asks windowd; what is enabled
+ * follows the window's state in the list. Move and Size are left out: windowd
+ * has no keyboard move or size mode for them to start. */
+#define TASKBAR_CMD_RESTORE 1
+#define TASKBAR_CMD_MINIMIZE 2
+#define TASKBAR_CMD_MAXIMIZE 3
+#define TASKBAR_CMD_CLOSE 4
+
+static struct sxgui_menu_item g_task_menu_items[] = {
+    {"Restore", TASKBAR_CMD_RESTORE, 0},
+    {"Minimize", TASKBAR_CMD_MINIMIZE, 0},
+    {"Maximize", TASKBAR_CMD_MAXIMIZE, 0},
+    {0, 0, 0},
+    {"Close", TASKBAR_CMD_CLOSE, 0},
+};
+
+static const struct sxgui_menu k_task_menu = {
+    0,
+    g_task_menu_items,
+    (int)(sizeof(g_task_menu_items) / sizeof(g_task_menu_items[0])),
+};
+
+/* The window the open task menu is about; its button stays pressed while the
+ * menu is open. 0 when none. */
+static uint32_t g_task_menu_window = 0;
+
+static void task_menu_command(int id)
+{
+    uint32_t window_id = g_task_menu_window;
+
+    g_task_menu_window = 0;
+    if (window_id == 0)
+    {
+        return;
+    }
+    if (id == TASKBAR_CMD_RESTORE)
+    {
+        taskbar_request(SAVANXP_WM_SHELL_RESTORE, window_id);
+    }
+    else if (id == TASKBAR_CMD_MINIMIZE)
+    {
+        taskbar_request(SAVANXP_WM_SHELL_MINIMIZE, window_id);
+    }
+    else if (id == TASKBAR_CMD_MAXIMIZE)
+    {
+        taskbar_request(SAVANXP_WM_SHELL_MAXIMIZE, window_id);
+    }
+    else if (id == TASKBAR_CMD_CLOSE)
+    {
+        taskbar_request(SAVANXP_WM_SHELL_CLOSE, window_id);
+    }
+}
+
+static void set_task_item(int id, int enabled)
+{
+    for (size_t index = 0; index < sizeof(g_task_menu_items) / sizeof(g_task_menu_items[0]); ++index)
+    {
+        if (g_task_menu_items[index].id == id && g_task_menu_items[index].text != 0)
+        {
+            g_task_menu_items[index].flags = enabled ? 0u : SXGUI_MENU_DISABLED;
+        }
+    }
+}
+
+static void open_task_menu(const struct savanxp_wm_window_entry *entry, int x, int y)
+{
+    int minimized = (entry->flags & SAVANXP_WM_WINDOW_FLAG_MINIMIZED) != 0;
+    int maximized = (entry->flags & SAVANXP_WM_WINDOW_FLAG_MAXIMIZED) != 0;
+    int fixed = (entry->flags & SAVANXP_WM_WINDOW_FLAG_FIXED_SIZE) != 0;
+
+    set_task_item(TASKBAR_CMD_RESTORE, minimized || maximized);
+    set_task_item(TASKBAR_CMD_MINIMIZE, !minimized);
+    set_task_item(TASKBAR_CMD_MAXIMIZE, !fixed && (minimized || !maximized));
+    desktop_context_menu(&k_task_menu, task_menu_command, x, y);
+    /* After opening: opening closes the popups, and with them a menu before. */
+    g_task_menu_window = desktop_popup_is_open(DESKTOP_POPUP_CONTEXT_MENU) ? entry->window_id : 0;
+}
+
+/* The task menu's window, while its menu is still open. */
+static uint32_t task_menu_window(void)
+{
+    if (g_task_menu_window != 0 && !desktop_popup_is_open(DESKTOP_POPUP_CONTEXT_MENU))
+    {
+        g_task_menu_window = 0;
+    }
+    return g_task_menu_window;
+}
+
 uint32_t desktop_taskbar_pointer(const struct desktop_surface *gfx, const struct savanxp_gui_pointer_event *pointer)
 {
     uint32_t down = pointer->buttons & ~g_last_buttons;
@@ -666,19 +761,25 @@ uint32_t desktop_taskbar_pointer(const struct desktop_surface *gfx, const struct
     g_last_buttons = pointer->buttons;
     if ((down & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
     {
-        g_context_pressed = index == -1;
+        g_context_pressed = index >= -1 ? index : -2;
     }
     if ((up & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
     {
-        /* The blank taskbar's menu opens on release, above the reserved
-         * strip. Task buttons and tray items keep their own interactions. */
-        if (g_context_pressed && index == -1)
-        {
-            int top = (int)desktop_main_window()->info.height - (int)gfx->info.height;
+        /* The menus open on release, above the reserved strip: the blank
+         * taskbar's, or a task button's for its window. The Start button and
+         * the tray items keep their own interactions. */
+        int top = (int)desktop_main_window()->info.height - (int)gfx->info.height;
 
+        if (g_context_pressed == -1 && index == -1)
+        {
             desktop_context_menu(&k_taskbar_menu, taskbar_menu_command, pointer->x, top);
         }
-        g_context_pressed = 0;
+        else if (index >= 0 && index == g_context_pressed && index < (int)g_snapshot.count)
+        {
+            open_task_menu(&g_snapshot.windows[index], pointer->x, top);
+        }
+        g_context_pressed = -2;
+        actions |= DESKTOP_ACTION_REPAINT;
     }
     if ((down & SAVANXP_MOUSE_BUTTON_LEFT) != 0)
     {
@@ -687,7 +788,7 @@ uint32_t desktop_taskbar_pointer(const struct desktop_surface *gfx, const struct
     }
     if ((up & SAVANXP_MOUSE_BUTTON_LEFT) == 0)
     {
-        return DESKTOP_ACTION_NONE;
+        return actions;
     }
 
     if (index == TASKBAR_HIT_START && index == g_pressed_index)

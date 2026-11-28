@@ -2791,6 +2791,28 @@ def scenario_taskbar(s):
     expect_button(image, 0, False, "despues de minimizar")
     expect_taskbar_present(image, "despues de minimizar")
 
+    # A right click on a task button opens its window's menu above the bar,
+    # as Windows XP's: Restore, Minimize, Maximize and Close, enabled by the
+    # window's state. Calculator is minimized, so Restore is live and
+    # Minimize greyed; Restore brings it back active.
+    task_menu_restore(s, 0, "Calculator minimized", restore=True, minimize=False)
+    image = s.shot("task-menu-restored")
+    expect_button(image, 0, True, "Restore from the button's menu")
+
+    # Notepad is neither minimized nor maximized: Restore is greyed.
+    # Maximize from the menu maximizes it, which turns Restore live and
+    # greys Maximize; Close then asks it to close, and its button goes.
+    choose_task_menu_item(s, 1, "Maximize", {"Restore": SHADOW, "Maximize": TEXT, "Close": TEXT},
+                          "Notepad on screen")
+    image = s.shot("task-menu-maximized")
+    expect_button(image, 1, True, "Maximize from the button's menu")
+    choose_task_menu_item(s, 1, "Close", {"Restore": TEXT, "Maximize": SHADOW, "Minimize": TEXT},
+                          "Notepad maximized")
+    time.sleep(3.0)
+    image = s.shot("task-menu-closed")
+    x1, y1, w1, h1 = button_rect(image, 1)
+    expect_pixel(image, x1 + 1, y1 + h1 // 2, FACE, "Close from the button's menu: Notepad's button is gone")
+
 
     # With an application open, a right click on blank taskbar space must
     # give the menu the keyboard. Escape dismisses it without launching.
@@ -2813,6 +2835,45 @@ def scenario_taskbar(s):
     image = s.shot("taskbar-task-manager")
     expect_text(image, (0, 0, image.size[0], 730), "Applications", TEXT, FACE,
                 "the taskbar menu launches Task Manager")
+
+
+def open_task_menu(s, index, label):
+    """Right-clicks task button `index` and returns the shot with its menu
+    and the box the menu can be in: above the bar, from the pointer on."""
+    probe = s.shot("task-menu-probe")
+    x, y, w, h = button_rect(probe, index)
+    s.qmp.move_to(x + w // 2, y + h // 2)
+    s.qmp.click("right")
+    time.sleep(1.5)
+    image = s.shot("task-menu-%d" % index)
+    width, height = image.size
+    box = (x + w // 2, max(0, height - TASKBAR_HEIGHT - 200), min(width, x + w // 2 + 240), height - TASKBAR_HEIGHT)
+    if find_text(image, box, "Close", TEXT, FACE)[0] is None:
+        raise Failure("%s: a right click on the button opened no menu with Close" % label)
+    return image, box
+
+
+def choose_task_menu_item(s, index, item, states, label):
+    """Opens task button `index`'s menu, checks each item's colour in
+    `states` (TEXT enabled, SHADOW greyed) and clicks `item`."""
+    image, box = open_task_menu(s, index, label)
+    for name, colour in states.items():
+        expect_text(image, box, name, colour, FACE, "%s: %s is %s" % (
+            label, name, "enabled" if colour == TEXT else "greyed"))
+    origin = find_text(image, box, item, TEXT, FACE)[0]
+    if origin is None:
+        raise Failure("%s: no enabled %s in the button's menu" % (label, item))
+    s.qmp.move_to(origin[0] + 8, origin[1] + 6)
+    time.sleep(0.4)
+    s.qmp.click()
+    time.sleep(2.5)
+
+
+def task_menu_restore(s, index, label, restore, minimize):
+    choose_task_menu_item(s, index, "Restore", {
+        "Restore": TEXT if restore else SHADOW,
+        "Minimize": TEXT if minimize else SHADOW,
+        "Close": TEXT}, label)
 
 
 def wait_menu_open(s, stem="menu-abierto"):
@@ -3026,6 +3087,92 @@ def scenario_startmenu(s):
     s.qmp.key("ctrl", False)
     time.sleep(12.0)
     s.shot("taskmgr-ctrl-shift-esc")
+
+
+def open_programs_cascade(s, stem):
+    """Opens the Start menu and its Programs cascade; the shot and where
+    Calculator is drawn in it."""
+    x, y = start_button_center(s.shot(stem + "-probe"))
+    s.qmp.move_to(x, y)
+    s.qmp.click()
+    image = wait_menu_open(s, stem + "-menu")
+    s.qmp.move_to(*startmenu_entry_point(image, STARTMENU_PROGRAMS))
+    s.qmp.click()
+    time.sleep(STARTMENU_CASCADE_WAIT)
+    programs = s.shot(stem + "-programs")
+    calc = find_in_submenu(programs, "Calculator")
+    if calc is None:
+        raise Failure("%s: the Programs cascade does not list Calculator" % stem)
+    return programs, calc
+
+
+def program_context_menu(s, stem):
+    """Right-clicks Calculator in the Programs cascade: its context menu opens
+    at the pointer, over the cascade, which stays open with the row lit."""
+    programs, calc = open_programs_cascade(s, stem)
+    point = (calc[0] + 20, calc[1] + 6)
+    s.qmp.move_to(*point)
+    time.sleep(0.5)
+    s.qmp.click("right")
+    time.sleep(1.5)
+    image = s.shot(stem + "-context")
+    width, height = image.size
+    box = (max(0, point[0] - 220), 0, min(width, point[0] + 220), height - TASKBAR_HEIGHT)
+    for name in ("Open", "Pin to Start Menu", "Send To Desktop"):
+        expect_text(image, box, name, TEXT, FACE, "%s: the program's menu offers %s" % (stem, name))
+    # The menu covers the row's text from the pointer on; left of its icon
+    # the row is still in sight, in the selection colour.
+    expect_pixel(image, SUBMENU_X + 3, calc[1] + 6, SELECT,
+                 "%s: the cascade stays open with Calculator lit under its menu" % stem)
+    return image, box
+
+
+def scenario_programsmenu(s):
+    """The context menu of a program in the Start menu's Programs cascade
+    (docs/desktop/START_MENU.md, "The cascade's context menu").
+
+    Send To Desktop makes a shortcut the desktop shows; Pin to Start Menu a
+    shortcut the Start menu lists above Programs. Both close the menu.
+    """
+    WHITE = (255, 255, 255)
+    image, box = program_context_menu(s, "send")
+    origin = find_text(image, box, "Send To Desktop", TEXT, FACE)[0]
+    s.qmp.move_to(origin[0] + 8, origin[1] + 6)
+    time.sleep(0.4)
+    s.qmp.click()
+    time.sleep(2.0)
+    desktop = s.shot("send-closed")
+    if find_in_submenu(desktop, "Calculator") is not None:
+        raise Failure("Send To Desktop left the cascade open")
+    # The desktop re-reads its folder now and then, which under TCG can take
+    # a while: wait for the icon instead of sleeping a fixed time.
+    width, height = desktop.size
+    labels = (0, 0, 2 * 76 + 6, height - TASKBAR_HEIGHT)
+    for _ in range(10):
+        if find_text(desktop, labels, "Calculator", WHITE, FACE, solid_only=True)[0] is not None:
+            break
+        time.sleep(2.0)
+        desktop = s.shot("send-desktop")
+    expect_text(desktop, labels, "Calculator", WHITE, FACE,
+                "Send To Desktop put a Calculator shortcut on the desktop", solid_only=True)
+
+    image, box = program_context_menu(s, "pin")
+    origin = find_text(image, box, "Pin to Start Menu", TEXT, FACE)[0]
+    s.qmp.move_to(origin[0] + 8, origin[1] + 6)
+    time.sleep(0.4)
+    s.qmp.click()
+    time.sleep(2.0)
+    x, y = start_button_center(s.shot("pin-closed"))
+    s.qmp.move_to(x, y)
+    s.qmp.click()
+    time.sleep(4.0)
+    menu = s.shot("pin-menu")
+    width, height = menu.size
+    menu_box = (TASKBAR_MARGIN + STARTMENU_STRIP_WIDTH, 0, TASKBAR_MARGIN + STARTMENU_WIDTH, height - TASKBAR_HEIGHT)
+    pinned = find_text(menu, menu_box, "Calculator", TEXT, FACE, solid_only=True)[0]
+    programs = find_text(menu, menu_box, "Programs", TEXT, FACE, solid_only=True)[0]
+    if pinned is None or programs is None or pinned[1] >= programs[1]:
+        raise Failure("Pin to Start Menu did not list Calculator above Programs (%r, %r)" % (pinned, programs))
 
 
 def scenario_bench(s):
@@ -5113,6 +5260,7 @@ SCENARIOS = {
     "resolution": scenario_resolution,
     "taskbar": scenario_taskbar,
     "startmenu": scenario_startmenu,
+    "programsmenu": scenario_programsmenu,
     "wheel": scenario_wheel,
     "webview": scenario_webview,
     "notepadwheel": scenario_notepadwheel,

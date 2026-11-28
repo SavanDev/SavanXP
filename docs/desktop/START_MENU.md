@@ -88,6 +88,29 @@ The build's one default is `Solitaire.sxlnk`, whose target is the user's own
 `sol.exe` ([WIN32.md](../userland/WIN32.md#solitaire)): it shows only once
 that file is in place.
 
+## A program's context menu
+
+A right click on a program in a cascade, Programs or Settings, opens its
+context menu where the pointer is, over the cascade, which stays open with the
+row lit, as Windows XP's All Programs does:
+
+- **Open** starts the program, as a click on the row does.
+- **Pin to Start Menu** pins it as Files' item of that name does (see
+  [Shortcuts](#shortcuts)), and is greyed for what cannot be pinned. A
+  program already pinned, or a full menu, is said in a message.
+- **Send To Desktop** makes a shortcut to it in the Desktop folder, named as
+  Files' Send To Desktop names one (`shortcut_send_to_desktop`); the desktop
+  shows it at its next look at the folder.
+
+Each choice closes the whole menu. While the context menu is open the cascade
+does not follow the pointer and the Start menu opens no other cascade; a press
+on either only closes the context menu, and Esc closes it as well.
+
+The cascade keeps its window, so the context menu takes End Program's (id 4)
+while no program is hung. When one is, the dialog keeps that window and the
+context menu takes the cascade's, which the right click then closes; a
+program that becomes hung while the menu is open takes the window back.
+
 ## One level of cascade
 
 Programs keeps the groups as headers inside one cascade instead of opening
@@ -101,7 +124,7 @@ uses all of them:
 | 1 | Taskbar |
 | 2 | Start menu, context menu, or a shell dialog |
 | 3 | Tray popups, the Start menu's cascade, or a pinned shortcut's context menu |
-| 4 | End Program (not responding) |
+| 4 | End Program (not responding), or a program's context menu over the cascade |
 
 The cascade borrows id 3 because a tray popup is never needed while the Start
 menu is open. If one is opened anyway, it replaces the cascade. A second
@@ -156,6 +179,11 @@ grows. A future visual setting can turn the switch off.
 - Resting on Programs replaces the Settings cascade.
 - The arrow strips are checked when the Programs cascade overflows.
 - Both footer rows open the Shut Down dialog.
+
+`tools/shoot.sh --scenario programsmenu` right-clicks Calculator in
+Programs, checks the context menu's three items and the row still lit behind
+it, sends it to the desktop and looks for its icon there, then pins it and
+looks for it above Programs.
 
 The shortcuts' section has no shot of its own: the build's only default
 needs the user's `sol.exe`. `pe-icon-test` checks the icon and version

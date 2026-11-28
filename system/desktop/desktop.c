@@ -30,7 +30,9 @@ _Static_assert(
  *   id 3  tray popup  volume, clock or keyboard layout, bottom right; or
  *                     the Start menu's cascade, or a pinned shortcut's
  *                     context menu over the Start menu
- *   id 4  End Program a program asked to close is not responding (centred)
+ *   id 4  End Program a program asked to close is not responding (centred);
+ *                     or, while no program is, the context menu of a
+ *                     program in the cascade, over the cascade
  *
  * One loop serves all of them. Popups open and close as windows of this
  * process -- no process per click -- and the taskbar knows what is open
@@ -63,6 +65,9 @@ struct desktop_popup_slot
     struct sxnwm_client wm;
     struct desktop_surface surface;
     int needs_repaint;
+    /* Where it is on the screen, while it is open. */
+    int x;
+    int y;
 };
 
 static const struct desktop_popup_ops *const k_popup_ops[DESKTOP_POPUP_COUNT] = {
@@ -96,9 +101,9 @@ static int g_taskbar_available = 0;
 static int g_taskbar_repaint = 0;
 static unsigned long g_taskbar_retry_ms = 0;
 
-static struct desktop_popup_slot g_start_menu = {DESKTOP_WINDOW_START_MENU, 0, DESKTOP_POPUP_START_MENU, 0, {0}, {{0}, 0}, 0};
-static struct desktop_popup_slot g_tray = {DESKTOP_WINDOW_TRAY_POPUP, 0, DESKTOP_POPUP_VOLUME, 0, {0}, {{0}, 0}, 0};
-static struct desktop_popup_slot g_hung = {DESKTOP_WINDOW_HUNG_DIALOG, 0, DESKTOP_POPUP_HUNG, 0, {0}, {{0}, 0}, 0};
+static struct desktop_popup_slot g_start_menu = {DESKTOP_WINDOW_START_MENU, 0, DESKTOP_POPUP_START_MENU, 0, {0}, {{0}, 0}, 0, 0, 0};
+static struct desktop_popup_slot g_tray = {DESKTOP_WINDOW_TRAY_POPUP, 0, DESKTOP_POPUP_VOLUME, 0, {0}, {{0}, 0}, 0, 0, 0};
+static struct desktop_popup_slot g_hung = {DESKTOP_WINDOW_HUNG_DIALOG, 0, DESKTOP_POPUP_HUNG, 0, {0}, {{0}, 0}, 0, 0, 0};
 /* Every popup slot, for what is done to all of them. */
 static struct desktop_popup_slot *const k_slots[] = {&g_start_menu, &g_tray, &g_hung};
 #define DESKTOP_SLOT_COUNT ((int)(sizeof(k_slots) / sizeof(k_slots[0])))
@@ -289,6 +294,8 @@ static void open_slot_at(struct desktop_popup_slot *slot, enum desktop_popup pop
         return;
     }
     fill_surface(&slot->surface, &slot->wm);
+    slot->x = x;
+    slot->y = y;
     slot->open = 1;
     slot->kind = popup;
     slot->ops = ops;
@@ -357,6 +364,31 @@ void desktop_open_popup_over_start_menu(enum desktop_popup popup, int x, int y)
     /* The cascade's window: the Start menu keeps its own. */
     close_slot(&g_tray);
     open_slot_at(&g_tray, popup, DESKTOP_PLACE_AT_POINT, x, y);
+}
+
+void desktop_open_popup_over_submenu(enum desktop_popup popup, int x, int y)
+{
+    /* End Program's window, which is free while no program is hung; when
+     * one is, the dialog keeps it and the menu takes the cascade's. */
+    if (g_hung.open)
+    {
+        desktop_open_popup_over_start_menu(popup, x, y);
+        return;
+    }
+    open_slot_at(&g_hung, popup, DESKTOP_PLACE_AT_POINT, x, y);
+}
+
+int desktop_popup_origin(enum desktop_popup popup, int *x, int *y)
+{
+    const struct desktop_popup_slot *slot = find_slot(popup);
+
+    if (!slot->open || slot->kind != popup)
+    {
+        return -1;
+    }
+    *x = slot->x;
+    *y = slot->y;
+    return 0;
 }
 
 void desktop_reopen_start_menu(void)
@@ -433,10 +465,18 @@ static void service_hung(void)
     {
         /* Nothing marked: an answer only holds while its mark lasts. */
         g_hung_answered = 0;
-        close_slot(&g_hung);
+        if (g_hung.open && g_hung.kind == DESKTOP_POPUP_HUNG)
+        {
+            close_slot(&g_hung);
+        }
         return;
     }
-    if (g_hung.open && desktop_hung_target() != window_id)
+    /* A context menu borrowing the window gives it up to the question. */
+    if (g_hung.open && g_hung.kind != DESKTOP_POPUP_HUNG && window_id != g_hung_answered)
+    {
+        close_slot(&g_hung);
+    }
+    if (g_hung.open && g_hung.kind == DESKTOP_POPUP_HUNG && desktop_hung_target() != window_id)
     {
         close_slot(&g_hung);
     }

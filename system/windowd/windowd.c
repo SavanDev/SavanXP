@@ -2176,6 +2176,14 @@ static void publish_window_list(struct windowd_session *session)
         {
             entry->flags |= SAVANXP_WM_WINDOW_FLAG_NOT_RESPONDING;
         }
+        if (client->maximized)
+        {
+            entry->flags |= SAVANXP_WM_WINDOW_FLAG_MAXIMIZED;
+        }
+        if (windowd_client_fixed_size(client))
+        {
+            entry->flags |= SAVANXP_WM_WINDOW_FLAG_FIXED_SIZE;
+        }
         /* Icon: the .sxe's own pixels when the binary brought them, and the
          * id from the baked-in set as the last resort. The reader cannot
          * resolve them alone -- the generic fallback for everyone was exactly
@@ -2368,6 +2376,8 @@ static void activate_task(struct windowd_session *session, struct windowd_dirty_
     windowd_dirty_rect_add_fullscreen(dirty, &session->gfx.info);
 }
 
+static int close_overlay_window(struct windowd_session *session, struct windowd_dirty_rect *dirty, int slot);
+
 static void service_shell_requests(struct windowd_session *session, struct windowd_dirty_rect *dirty)
 {
     struct savanxp_wm_shell_request request;
@@ -2411,6 +2421,35 @@ static void service_shell_requests(struct windowd_session *session, struct windo
         else if (request.action == SAVANXP_WM_SHELL_MINIMIZE && !session->overlay_clients[slot].minimized)
         {
             minimize_overlay_client(session, dirty, slot);
+        }
+        else if (request.action == SAVANXP_WM_SHELL_MAXIMIZE)
+        {
+            struct windowd_client *client = &session->overlay_clients[slot];
+
+            activate_task(session, dirty, slot);
+            if (!client->maximized && !windowd_client_fixed_size(client))
+            {
+                toggle_overlay_client_maximized(session, dirty, slot);
+            }
+        }
+        else if (request.action == SAVANXP_WM_SHELL_RESTORE)
+        {
+            struct windowd_client *client = &session->overlay_clients[slot];
+
+            /* A minimized window comes back as it was, maximized or not;
+             * only a window on screen leaves its maximized size. */
+            if (client->minimized)
+            {
+                activate_task(session, dirty, slot);
+            }
+            else if (client->maximized)
+            {
+                toggle_overlay_client_maximized(session, dirty, slot);
+            }
+        }
+        else if (request.action == SAVANXP_WM_SHELL_CLOSE)
+        {
+            (void)close_overlay_window(session, dirty, slot);
         }
         repaint_activation_change(session, dirty, previous_active_slot);
     }

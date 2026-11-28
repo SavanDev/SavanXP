@@ -2,7 +2,11 @@
 
 #include "shell/progman_registry.h"
 #include "shell/shell_io.h"
+#include "shell/shortcut.h"
+#include "shell/start_pins.h"
 #include "shell/desktop_icons.h"
+
+#include <stdio.h>
 
 /*
  * The Start menu's cascade: the popup that opens to the right of Programs or
@@ -25,6 +29,12 @@
  * Launching a program closes the whole menu. Moving the pointer onto the
  * cascade tells the Start menu, so it keeps this one open and its parent row
  * lit while the pointer is here.
+ *
+ * A right click on a program opens its context menu where it was, over the
+ * cascade, which stays open with the row lit, as in Windows XP: Open, Pin to
+ * Start Menu and Send To Desktop, the last two as Files names them. While it
+ * is open the cascade does not follow the pointer; a press on it only closes
+ * the context menu.
  */
 
 #define SUBMENU_MARGIN 2
@@ -78,6 +88,28 @@ static int g_pressed_row = -1;
 static uint32_t g_last_buttons = 0;
 /* A program was launched: closing the cascade closes the Start menu too. */
 static int g_launched = 0;
+/* A right click on a program: the row pressed, and the program its context
+ * menu is about, kept by path since the catalog may be rebuilt under it. */
+static int g_right_pressed_row = -1;
+static char g_menu_path[PROGMAN_PATH_CAPACITY];
+static uint32_t g_menu_launch_flags = 0;
+
+#define SUBMENU_CMD_OPEN 1
+#define SUBMENU_CMD_PIN 2
+#define SUBMENU_CMD_DESKTOP 3
+
+static const struct sxgui_menu_item k_program_items[] = {
+    {"Open", SUBMENU_CMD_OPEN, 0},
+    {0, 0, 0},
+    {"Pin to Start Menu", SUBMENU_CMD_PIN, 0},
+    {"Send To Desktop", SUBMENU_CMD_DESKTOP, 0},
+};
+
+static const struct sxgui_menu k_program_menu = {
+    "Program",
+    k_program_items,
+    (int)(sizeof(k_program_items) / sizeof(k_program_items[0])),
+};
 
 /* The catalog, and the disk signature taken right after building it. */
 static int g_catalog_built = 0;
@@ -288,7 +320,53 @@ static int submenu_open(void)
     g_pressed_row = -1;
     g_last_buttons = 0;
     g_launched = 0;
+    g_right_pressed_row = -1;
     return 0;
+}
+
+/* The program's context menu is open over the cascade. */
+static int program_menu_open(void)
+{
+    return desktop_popup_is_open(DESKTOP_POPUP_CONTEXT_MENU);
+}
+
+/* What the program's context menu chose, once it has closed; 0 when it was
+ * dismissed, which leaves the menus as they were. Each choice closes the
+ * whole menu, as in Windows XP. */
+static void program_command(int id)
+{
+    static const char *const k_pin_results[] = {
+        0,
+        "It is already on the Start menu.",
+        "The Start menu is full: unpin something first.",
+        "Cannot pin it to the Start menu.",
+    };
+
+    if (id == 0)
+    {
+        return;
+    }
+    desktop_close_popups();
+    if (id == SUBMENU_CMD_OPEN)
+    {
+        (void)desktop_launch(g_menu_path, g_menu_launch_flags);
+    }
+    else if (id == SUBMENU_CMD_PIN)
+    {
+        enum start_pin_result result = start_pins_pin(g_menu_path);
+
+        if (result != START_PIN_DONE && (int)result < (int)(sizeof(k_pin_results) / sizeof(k_pin_results[0])))
+        {
+            desktop_confirm("Start Menu", k_pin_results[result], 0, 0);
+        }
+    }
+    else if (id == SUBMENU_CMD_DESKTOP)
+    {
+        if (shortcut_send_to_desktop(g_menu_path) != 0)
+        {
+            desktop_confirm("Desktop", "Cannot create the shortcut.", 0, 0);
+        }
+    }
 }
 
 static void submenu_close(void)
@@ -296,6 +374,9 @@ static void submenu_close(void)
     int launched = g_launched;
 
     g_launched = 0;
+    g_right_pressed_row = -1;
+    /* The program's context menu goes with the cascade it is about. */
+    desktop_close_context_menu();
     desktop_startmenu_submenu_closed();
     if (launched)
     {
@@ -378,6 +459,19 @@ static uint32_t submenu_pointer(struct desktop_surface *gfx, const struct savanx
     g_last_buttons = pointer->buttons;
     /* The pointer is here: the Start menu keeps this cascade open. */
     desktop_startmenu_submenu_entered();
+    /* Under the program's context menu the row it is about stays lit and
+     * nothing else answers; a press only closes the context menu. */
+    if (program_menu_open())
+    {
+        g_hot_arrow = SUBMENU_ARROW_NONE;
+        if (down != 0)
+        {
+            desktop_close_context_menu();
+            g_pressed_row = -1;
+            g_right_pressed_row = -1;
+        }
+        return DESKTOP_ACTION_NONE;
+    }
     if (arrow != g_hot_arrow)
     {
         /* Arriving on a strip scrolls at once; submenu_tick keeps going. */
@@ -415,6 +509,38 @@ static uint32_t submenu_pointer(struct desktop_surface *gfx, const struct savanx
         }
         g_pressed_row = -1;
     }
+    if ((down & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
+    {
+        g_right_pressed_row = row;
+    }
+    else if ((up & SAVANXP_MOUSE_BUTTON_RIGHT) != 0)
+    {
+        /* As on Windows, the menu opens on the release. */
+        int origin_x;
+        int origin_y;
+        const struct progman_item *item =
+            (row >= 0 && row == g_right_pressed_row) ? progman_group_item_at(g_rows[row].group, g_rows[row].item) : 0;
+
+        if (item != 0 && desktop_popup_origin(DESKTOP_POPUP_SUBMENU, &origin_x, &origin_y) == 0)
+        {
+            int can_pin = start_pins_can_pin(item->path);
+            static struct sxgui_menu_item items[sizeof(k_program_items) / sizeof(k_program_items[0])];
+            static struct sxgui_menu menu;
+
+            snprintf(g_menu_path, sizeof(g_menu_path), "%s", item->path);
+            g_menu_launch_flags = item->launch_flags;
+            /* Pin to Start Menu takes what Files' takes. */
+            memcpy(items, k_program_items, sizeof(items));
+            items[2].flags = can_pin ? 0u : SXGUI_MENU_DISABLED;
+            menu = k_program_menu;
+            menu.items = items;
+            g_hot_row = row;
+            g_hot_arrow = SUBMENU_ARROW_NONE;
+            desktop_context_menu_over_submenu(&menu, program_command, origin_x + pointer->x, origin_y + pointer->y);
+            actions |= DESKTOP_ACTION_REPAINT;
+        }
+        g_right_pressed_row = -1;
+    }
     return actions;
 }
 
@@ -448,7 +574,7 @@ static uint32_t submenu_tick(void)
 static uint32_t submenu_pointer_left(void)
 {
     g_hot_arrow = SUBMENU_ARROW_NONE;
-    if (g_hot_row >= 0)
+    if (g_hot_row >= 0 && !program_menu_open())
     {
         g_hot_row = -1;
         return DESKTOP_ACTION_REPAINT;

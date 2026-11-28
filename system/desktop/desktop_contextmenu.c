@@ -33,6 +33,13 @@ void desktop_context_menu_over_start_menu(const struct sxgui_menu *menu, void (*
     desktop_open_popup_over_start_menu(DESKTOP_POPUP_CONTEXT_MENU, x, y);
 }
 
+void desktop_context_menu_over_submenu(const struct sxgui_menu *menu, void (*command)(int id), int x, int y)
+{
+    g_menu = menu;
+    g_command = command;
+    desktop_open_popup_over_submenu(DESKTOP_POPUP_CONTEXT_MENU, x, y);
+}
+
 static void contextmenu_measure(int *width, int *height)
 {
     sxgui_popup_menu_size(g_menu, width, height);

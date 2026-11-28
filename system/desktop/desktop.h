@@ -57,7 +57,9 @@ enum desktop_window_id
     DESKTOP_WINDOW_TASKBAR = 1,
     DESKTOP_WINDOW_START_MENU = 2,
     DESKTOP_WINDOW_TRAY_POPUP = 3,
-    /* "Not responding": centred, a question rather than a menu. */
+    /* "Not responding": centred, a question rather than a menu. While no
+     * program is hung, a program's context menu over the cascade borrows
+     * it, so the Start menu and the cascade both stay open behind it. */
     DESKTOP_WINDOW_HUNG_DIALOG = 4,
 };
 
@@ -68,8 +70,10 @@ enum desktop_popup
     DESKTOP_POPUP_CLOCK = 2,
     DESKTOP_POPUP_KEYBOARD = 3,
     DESKTOP_POPUP_HUNG = 4,
-    /* The background's right-click menu, in the Start menu's window; a
-     * pinned shortcut's, in the tray's window over the open Start menu. */
+    /* The background's and a task button's right-click menu, in the Start
+     * menu's window; a pinned shortcut's, in the tray's window over the open
+     * Start menu; a program's in the cascade, in End Program's window over
+     * both. */
     DESKTOP_POPUP_CONTEXT_MENU = 5,
     /* A question about an icon (delete it?), in the Start menu's window too. */
     DESKTOP_POPUP_CONFIRM = 6,
@@ -137,6 +141,8 @@ extern const struct desktop_popup_ops desktop_submenu_ops;
 void desktop_context_menu(const struct sxgui_menu *menu, void (*command)(int id), int x, int y);
 /* The same, over the open Start menu, which stays open behind it. */
 void desktop_context_menu_over_start_menu(const struct sxgui_menu *menu, void (*command)(int id), int x, int y);
+/* The same, over the Start menu's open cascade, which stays open too. */
+void desktop_context_menu_over_submenu(const struct sxgui_menu *menu, void (*command)(int id), int x, int y);
 /* The open context menu's keys (arrows, Enter, Esc). */
 uint32_t desktop_context_menu_key(const struct savanxp_input_event *event);
 
@@ -201,6 +207,13 @@ void desktop_open_popup_at(enum desktop_popup popup, int x, int y);
 /* Opens this popup at the point as desktop_open_popup_at does, but in the
  * cascade's window, leaving the Start menu open under it. */
 void desktop_open_popup_over_start_menu(enum desktop_popup popup, int x, int y);
+/* Opens this popup at the point, over the Start menu and its cascade, both
+ * left open: in End Program's window, or in the cascade's when a program is
+ * hung and its dialog has that window. */
+void desktop_open_popup_over_submenu(enum desktop_popup popup, int x, int y);
+/* The screen point of the open popup's top-left corner: 0, or -1 when it is
+ * not open. */
+int desktop_popup_origin(enum desktop_popup popup, int *x, int *y);
 /* Closes the context menu, wherever it is open. */
 void desktop_close_context_menu(void);
 /* Closes and opens the Start menu again, measured anew (a shortcut was

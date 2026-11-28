@@ -28,7 +28,7 @@ VIRTIO=0
 SMP=2
 BOOT_WAIT=45
 KEEP_RUNNING=0
-SCENARIOS="linux-xeyes linux-xclient mediaplayer_fullscreen desktop alttab clipboard calc mines paint files console sxbasic sxbide sxbide-debug appwiz system display imgview image-assoc wallpaperpng wallpaperjpeg effects resolution taskbar startmenu sound volume_popup kbdlayout contextmenu desktopicons filesmenu filestoolbar filesclipboard filesdrag filescomputer taskmgrmenu diskmgmt devmgmt logview sxgldiag wheel notepadwheel notepadclose webview bench saturate spin gears nightwood ccleste xash3d-renderer"
+SCENARIOS="linux-xeyes linux-xclient mediaplayer_fullscreen desktop alttab clipboard calc mines paint files console sxbasic sxbide sxbide-debug appwiz system display imgview image-assoc wallpaperpng wallpaperjpeg effects resolution taskbar startmenu programsmenu sound volume_popup kbdlayout contextmenu desktopicons filesmenu filestoolbar filesclipboard filesdrag filescomputer taskmgrmenu diskmgmt devmgmt logview sxgldiag wheel notepadwheel notepadclose webview bench saturate spin gears nightwood ccleste xash3d-renderer"
 
 usage() {
     cat <<'EOF'

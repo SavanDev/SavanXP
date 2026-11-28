@@ -347,6 +347,14 @@ changes not released yet; each released version has its own file in
   A source past 3x4096x4096 coefficients returns `SX_IMAGE_ERROR_LIMIT`; `SX_IMAGE_ERROR_JPEG_PROGRESSIVE` now means
   differential (SOF6) only. I7 of [IMAGE_VIEWER_ROADMAP.md](docs/roadmaps/open/IMAGE_VIEWER_ROADMAP.md); [Progressive JPEG](docs/media/IMAGE_FORMATS.md#progressive-jpeg).
 
+- **A right click on a program in the Start menu's cascades opens its menu: Open, Pin to Start Menu and Send To
+  Desktop,** over the cascade, which stays open, as in Windows XP. Scenario `shoot.sh --scenario programsmenu`;
+  see [START_MENU.md](docs/desktop/START_MENU.md#a-programs-context-menu).
+
+- **A right click on a taskbar button opens its window's menu: Restore, Minimize, Maximize and Close,** enabled by the
+  window's state, as Windows XP's. New shell requests `SAVANXP_WM_SHELL_MAXIMIZE`, `_RESTORE`, `_CLOSE` and list flags
+  `SAVANXP_WM_WINDOW_FLAG_MAXIMIZED`, `_FIXED_SIZE`; [DESKTOP_ARCHITECTURE.md](docs/desktop/DESKTOP_ARCHITECTURE.md#the-taskbar-buttons-menu).
+
 ### Changed
 
 - **The SDK's Native demo and Native widgets examples are listed under Diagnostics**, beside Widgets and the other
