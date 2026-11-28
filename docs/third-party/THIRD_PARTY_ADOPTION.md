@@ -138,8 +138,9 @@ in [`WEBVIEWER_ROADMAP.md`](../roadmaps/open/WEBVIEWER_ROADMAP.md).
 
 `Adopt` (MIT, under `vendor/netsurf/`, for Web Viewer's engine):
 
-- libparserutils, libwapcaplet, libhubbub, libdom and libcss; libnsgif and
-  libnsbmp where they add image formats
+- libparserutils, libwapcaplet, libhubbub, libdom and libcss; libnsgif for
+  GIF, which libsximg does not read (libnsbmp would add only ICO, which pages
+  do not use as pictures)
 
 `Do not adopt` (GPL-2.0-only):
 

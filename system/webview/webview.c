@@ -18,6 +18,7 @@
 #include "sxn/sxnprofile.h"
 #include "download.h"
 #include "favorites.h"
+#include "picture_gif.h"
 #include "engine/webengine.h"
 #include "engine/webengine_box.h"
 #include "savanxp/img.h"
@@ -174,6 +175,7 @@ struct webview_decoded
 struct webview_image_job
 {
     uint32_t page;
+    struct sxn_ipv4_endpoint dns;
     char url[SXNHTTP_URL_CAP];
     int ok;
     struct webview_decoded decoded;
@@ -214,8 +216,9 @@ static void webview_free_pictures(void)
     g_picture_bytes = 0;
 }
 
-/* Decodes a picture to 0xAARRGGBB, transparency kept: PNG and BMP with
- * their alpha, JPEG opaque and reduced when it is big, through libsximg
+/* Decodes a picture to 0xAARRGGBB, transparency kept: GIF's first frame
+ * through libnsgif (picture_gif.h), PNG and BMP with their alpha and JPEG
+ * opaque and reduced when it is big through libsximg
  * (docs/media/IMAGE_FORMATS.md). 0, or -1 when the format is not one of
  * those, the picture is too big or it does not decode. No system calls: the
  * worker runs it too. */
@@ -232,7 +235,21 @@ static int webview_decode_image(const unsigned char *data, size_t size, struct w
 
     *pixels = NULL;
     *alpha = 0;
-    if (format == SX_IMAGE_FORMAT_PNG)
+    if (webview_gif_is(data, size))
+    {
+        int gif_width = 0;
+        int gif_height = 0;
+
+        /* GIF through libnsgif: the first frame, its transparency kept. */
+        if (webview_gif_decode(data, size, WEBVIEW_IMAGE_SIDE, &out, &gif_width, &gif_height) != 0)
+        {
+            return -1;
+        }
+        w = natural_w = (uint32_t)gif_width;
+        h = natural_h = (uint32_t)gif_height;
+        *alpha = 1;
+    }
+    else if (format == SX_IMAGE_FORMAT_PNG)
     {
         struct sx_png_image image = {0};
 
@@ -714,8 +731,8 @@ static const char k_webview_welcome[] =
     "<ul><li>Type a path or an http:// address up there and press Go (or Enter). "
     "File &gt; Open (F3) works too: try /system/samples/welcome.html.</li>"
     "<li>Double-clicking an .html file in Files opens it here.</li></ul>"
-    "<p>Pages load in the background: Stop (Esc) drops a slow one. "
-    "Not in this version: images.</p>";
+    "<p>Pages load in the background, and their pictures after them: "
+    "Stop (Esc) drops a slow one.</p>";
 
 static void webview_show_welcome(void)
 {
@@ -842,9 +859,15 @@ static void webview_render_current(void)
  * Stop and closing the window set the cancel event, which every wait of the
  * worker checks first; the worker hands results back through sxngui_app_wake,
  * and on_wake takes them on the UI thread.
+ *
+ * The page's pictures have threads of their own, WEBVIEW_PICTURE_THREADS of
+ * them, each with its own resolver, client and cancel event, taking jobs from
+ * one queue under the same lock: a picture that stalls holds one thread, not
+ * the pictures after it, nor the next navigation.
  */
 
 #define WEBVIEW_WORKER_STACK (64 * 1024)
+#define WEBVIEW_PICTURE_THREADS 3
 
 enum webview_load_outcome
 {
@@ -861,8 +884,6 @@ struct webview_request
     char url[WEBVIEW_PATH_CAPACITY];
     struct sxn_ipv4_endpoint dns;
     struct webview_sheet *sheets;
-    /* The page's remote pictures, when that is the request. */
-    struct webview_image_job *images;
     uint64_t deadline;
 };
 
@@ -900,8 +921,12 @@ static int g_result_ready;
 static uint32_t g_progress_id;
 static char g_progress[WEBVIEW_STATUS_CAPACITY];
 static int g_progress_percent;
-/* Pictures the worker has fetched, oldest last. */
+/* Pictures waiting for a picture thread, first to go first. */
+static struct webview_image_job *g_images_queue;
+static struct webview_image_job **g_images_tail = &g_images_queue;
+/* Pictures the picture threads have fetched, oldest last. */
 static struct webview_image_job *g_images_done;
+static int g_pictures_quit;
 
 static long g_work_event = -1;   /* auto-reset: a request, or quitting, is waiting */
 static long g_cancel_event = -1; /* manual-reset: drop what is being loaded */
@@ -910,6 +935,22 @@ static unsigned char g_worker_stack[WEBVIEW_WORKER_STACK] __attribute__((aligned
 
 /* The worker's own. */
 static struct sxndns_resolver g_resolver;
+
+/* A picture thread: what it owns, and its cancel event (manual-reset), reset
+ * as it takes a job, so a cancel set after that point is for that job. */
+struct webview_picture_thread
+{
+    long thread;
+    long cancel;
+    struct sxndns_resolver resolver;
+    struct sxnhttp_client http;
+    struct sxnhttp_response response;
+    unsigned char stack[WEBVIEW_WORKER_STACK] __attribute__((aligned(16)));
+};
+
+static struct webview_picture_thread g_picture_threads[WEBVIEW_PICTURE_THREADS];
+static int g_picture_thread_count;
+static long g_picture_event = -1; /* auto-reset: a job, or quitting, is waiting */
 
 /* The UI's own: the DNS server the next request carries (--dns, dns://). The
  * worker hands it to its resolver, which empties its cache when it changes. */
@@ -1294,50 +1335,145 @@ static long webview_image_body(void *user, const unsigned char *data, size_t len
     return webview_append(body, data, length);
 }
 
-/* On the worker: the page's pictures one after the other, each decoded
- * here and handed to the UI as soon as it is, until the list ends or a
- * navigation cancels it. */
-static void webview_fetch_images(struct webview_image_job *jobs)
+/* On a picture thread: one picture, fetched, decoded and handed to the UI,
+ * unless a cancel came for it. */
+static void webview_fetch_picture(struct webview_picture_thread *self, struct webview_image_job *job)
 {
-    static struct sxnhttp_response response;
+    struct webview_bytes body = {0};
+    struct sxnhttp_request load = {
+        .url = job->url,
+        .cancel = self->cancel,
+        .user_agent = "SavanXP-WebViewer/" SAVANXP_VERSION_STRING,
+        .user = &body,
+        .head = webview_image_head,
+        .sink = webview_image_body,
+        .sink_keep_total = 1,
+    };
 
-    while (jobs != NULL)
+    sxndns_set_server(&self->resolver, &job->dns);
+    long status = sxnhttp_get(&self->http, &load, &self->response);
+    job->ok = status == 0 && (self->response.flags & SXNHTTP_RESPONSE_HEAD_ONLY) == 0 && body.data != NULL &&
+        webview_decode_image((const unsigned char *)body.data, body.length, &job->decoded) == 0;
+    free(body.data);
+    if (status == SXNHTTP_ERROR_CANCELLED)
     {
-        struct webview_image_job *job = jobs;
-        struct webview_bytes body = {0};
+        webview_free_jobs(job);
+        return;
+    }
+    webview_lock();
+    job->next = g_images_done;
+    g_images_done = job;
+    webview_unlock();
+    (void)sxngui_app_wake(&g_app);
+}
 
-        jobs = job->next;
-        job->next = NULL;
-        if (sxn_wait_one(g_cancel_event, 0) >= 0)
-        {
-            webview_free_jobs(job);
-            webview_free_jobs(jobs);
-            return;
-        }
-        struct sxnhttp_request load = {
-            .url = job->url,
-            .cancel = g_cancel_event,
-            .user_agent = "SavanXP-WebViewer/" SAVANXP_VERSION_STRING,
-            .user = &body,
-            .head = webview_image_head,
-            .sink = webview_image_body,
-            .sink_keep_total = 1,
-        };
-        long status = sxnhttp_get(&g_http, &load, &response);
-        job->ok = status == 0 && (response.flags & SXNHTTP_RESPONSE_HEAD_ONLY) == 0 && body.data != NULL &&
-            webview_decode_image((const unsigned char *)body.data, body.length, &job->decoded) == 0;
-        free(body.data);
-        if (status == SXNHTTP_ERROR_CANCELLED)
-        {
-            webview_free_jobs(job);
-            webview_free_jobs(jobs);
-            return;
-        }
+/* A picture thread: takes the queue's first job while there is one, and
+ * wakes a sibling when it leaves more behind. */
+static void webview_picture_main(void *argument)
+{
+    struct webview_picture_thread *self = argument;
+
+    sxnhttp_client_init(&self->http, &self->resolver);
+    for (;;)
+    {
+        struct webview_image_job *job = NULL;
+        int more = 0;
+
         webview_lock();
-        job->next = g_images_done;
-        g_images_done = job;
+        if (g_pictures_quit)
+        {
+            webview_unlock();
+            (void)sxn_event_set(g_picture_event);
+            sxn_thread_exit(0);
+        }
+        if (g_images_queue != NULL)
+        {
+            job = g_images_queue;
+            g_images_queue = job->next;
+            if (g_images_queue == NULL)
+            {
+                g_images_tail = &g_images_queue;
+            }
+            job->next = NULL;
+            more = g_images_queue != NULL;
+            (void)sxn_event_reset(self->cancel);
+        }
         webview_unlock();
-        (void)sxngui_app_wake(&g_app);
+        if (job == NULL)
+        {
+            (void)sxn_wait_one(g_picture_event, -1);
+            continue;
+        }
+        if (more)
+        {
+            (void)sxn_event_set(g_picture_event);
+        }
+        webview_fetch_picture(self, job);
+    }
+}
+
+/* Under the lock: the queue is emptied and every picture in flight is
+ * cancelled. */
+static void webview_cancel_pictures_locked(void)
+{
+    webview_free_jobs(g_images_queue);
+    g_images_queue = NULL;
+    g_images_tail = &g_images_queue;
+    for (int i = 0; i < g_picture_thread_count; ++i)
+    {
+        (void)sxn_event_set(g_picture_threads[i].cancel);
+    }
+}
+
+/* Starts the picture threads; the window loads no remote picture without
+ * them. */
+static void webview_start_pictures(void)
+{
+    g_picture_event = sxn_event_create(0);
+    if (g_picture_event < 0)
+    {
+        return;
+    }
+    for (int i = 0; i < WEBVIEW_PICTURE_THREADS; ++i)
+    {
+        struct webview_picture_thread *thread = &g_picture_threads[i];
+
+        sxndns_init(&thread->resolver);
+        thread->cancel = sxn_event_create(SXN_EVENT_MANUAL_RESET);
+        if (thread->cancel < 0)
+        {
+            break;
+        }
+        thread->thread = sxn_thread_create(webview_picture_main, thread, thread->stack + sizeof(thread->stack), 0);
+        if (thread->thread < 0)
+        {
+            break;
+        }
+        g_picture_thread_count = i + 1;
+    }
+}
+
+/* Closing the window: the picture threads drop their loads and end. */
+static void webview_stop_pictures(void)
+{
+    int ended = 1;
+
+    webview_lock();
+    g_pictures_quit = 1;
+    webview_cancel_pictures_locked();
+    webview_unlock();
+    (void)sxn_event_set(g_picture_event);
+    for (int i = 0; i < g_picture_thread_count; ++i)
+    {
+        if (sxn_wait_one(g_picture_threads[i].thread, 2000) < 0)
+        {
+            ended = 0;
+        }
+    }
+    if (ended)
+    {
+        webview_free_jobs(g_images_done);
+        g_images_done = NULL;
     }
 }
 
@@ -1365,7 +1501,6 @@ static void webview_worker_main(void *argument)
         {
             request = g_request;
             g_request.sheets = NULL;
-            g_request.images = NULL;
             g_request_ready = 0;
             (void)sxn_event_reset(g_cancel_event);
             have = 1;
@@ -1376,12 +1511,6 @@ static void webview_worker_main(void *argument)
             continue;
         }
         sxndns_set_server(&g_resolver, &request.dns);
-        if (request.images != NULL)
-        {
-            /* No result: each picture went back as it came. */
-            webview_fetch_images(request.images);
-            continue;
-        }
         memset(&result, 0, sizeof(result));
         result.id = request.id;
         if (request.sheets != NULL)
@@ -1444,8 +1573,6 @@ static int webview_cancel_navigation(void)
     g_request_ready = 0;
     webview_free_sheets(g_request.sheets);
     g_request.sheets = NULL;
-    webview_free_jobs(g_request.images);
-    g_request.images = NULL;
     (void)sxn_event_set(g_cancel_event);
     webview_unlock();
     webview_clear_result(&g_pending_page);
@@ -1495,8 +1622,6 @@ static void webview_start_remote(const char *url, int push, int hist_target)
     }
     webview_begin_navigation(push, hist_target);
     webview_lock();
-    webview_free_jobs(g_request.images);
-    g_request.images = NULL;
     g_request.id = g_nav.id;
     snprintf(g_request.url, sizeof(g_request.url), "%s", url);
     g_request.dns = g_dns_server;
@@ -1655,7 +1780,6 @@ static void webview_prepare_page(struct webview_result *result)
         result->body = (struct webview_bytes){0};
         g_pending_document = document;
         webview_lock();
-        webview_free_jobs(g_request.images);
         g_request = (struct webview_request){
             .id = g_nav.id, .dns = g_dns_server, .sheets = plan.sheets, .deadline = g_nav.deadline,
         };
@@ -1781,16 +1905,12 @@ static void webview_stop_worker(void)
     g_request_ready = 0;
     webview_free_sheets(g_request.sheets);
     g_request.sheets = NULL;
-    webview_free_jobs(g_request.images);
-    g_request.images = NULL;
     (void)sxn_event_set(g_cancel_event);
     webview_unlock();
     (void)sxn_event_set(g_work_event);
     if (sxn_wait_one(g_worker, 2000) >= 0)
     {
         webview_clear_result(&g_result);
-        webview_free_jobs(g_images_done);
-        g_images_done = NULL;
     }
 }
 
@@ -1858,7 +1978,7 @@ static void webview_load_local_picture(struct webview_picture *picture)
 
 /* Gives the tree's images what the page has of them. With `load`, a local
  * picture is loaded at once and the remote ones not asked for yet go to
- * the worker, in the order of the page. */
+ * the picture threads' queue, in the order of the page. */
 static void webview_attach_images(int load)
 {
     struct webview_image_job *jobs = NULL;
@@ -1902,7 +2022,7 @@ static void webview_attach_images(int load)
             {
                 webview_load_local_picture(picture);
             }
-            else if (g_worker < 0)
+            else if (g_picture_thread_count == 0)
             {
                 picture->state = WEBENGINE_IMAGE_FAILED;
             }
@@ -1917,6 +2037,7 @@ static void webview_attach_images(int load)
                 else
                 {
                     job->page = g_page_id;
+                    job->dns = g_dns_server;
                     snprintf(job->url, sizeof(job->url), "%s", picture->url);
                     *tail = job;
                     tail = &job->next;
@@ -1933,22 +2054,15 @@ static void webview_attach_images(int load)
         return;
     }
     webview_lock();
-    if (g_request_ready)
-    {
-        /* A navigation is waiting: it replaces this page anyway. */
-        webview_unlock();
-        webview_free_jobs(jobs);
-        return;
-    }
-    g_request = (struct webview_request){ .dns = g_dns_server, .images = jobs };
-    g_request_ready = 1;
+    *g_images_tail = jobs;
+    g_images_tail = tail;
     webview_unlock();
-    (void)sxn_event_set(g_work_event);
+    (void)sxn_event_set(g_picture_event);
     webview_refresh_commands();
 }
 
-/* A new page: the last one's pictures go, and the worker stops fetching
- * them. */
+/* A new page: the last one's pictures go, and the picture threads stop
+ * fetching them. */
 static void webview_drop_images(void)
 {
     if (++g_page_id == 0)
@@ -1959,13 +2073,7 @@ static void webview_drop_images(void)
     g_tree_pictures = NULL;
     webview_free_pictures();
     webview_lock();
-    if (g_request.images != NULL)
-    {
-        webview_free_jobs(g_request.images);
-        g_request.images = NULL;
-        g_request_ready = 0;
-    }
-    (void)sxn_event_set(g_cancel_event);
+    webview_cancel_pictures_locked();
     webview_unlock();
 }
 
@@ -1982,8 +2090,8 @@ static int webview_pictures_pending(void)
     return 0;
 }
 
-/* The pictures still loading fail, and the worker stops fetching them. 1
- * if there were any. */
+/* The pictures still loading fail, and the picture threads stop fetching
+ * them. 1 if there were any. */
 static int webview_stop_images(void)
 {
     int any = 0;
@@ -2002,13 +2110,7 @@ static int webview_stop_images(void)
         return 0;
     }
     webview_lock();
-    if (g_request.images != NULL)
-    {
-        webview_free_jobs(g_request.images);
-        g_request.images = NULL;
-        g_request_ready = 0;
-    }
-    (void)sxn_event_set(g_cancel_event);
+    webview_cancel_pictures_locked();
     webview_unlock();
     webview_attach_images(0);
     g_layout_width = -1;
@@ -2017,7 +2119,7 @@ static int webview_stop_images(void)
     return 1;
 }
 
-/* On the UI thread: the pictures the worker has finished. The page is laid
+/* On the UI thread: the pictures the picture threads have finished. The page is laid
  * out again, where it was scrolled to, when one of them is its own. */
 static void webview_take_images(void)
 {
@@ -3682,6 +3784,7 @@ int main(int argc, char **argv)
         g_worker = sxn_thread_create(webview_worker_main, 0,
             g_worker_stack + sizeof(g_worker_stack), 0);
     }
+    webview_start_pictures();
     webview_download_init(&g_app);
     if (webengine_init() == 0)
     {
@@ -3741,6 +3844,7 @@ int main(int argc, char **argv)
         int exit_code = sxngui_app_run(&g_app);
 
         webview_stop_worker();
+        webview_stop_pictures();
         webview_download_shutdown();
         webview_clear_result(&g_pending_page);
         dom_node_unref(g_pending_document);

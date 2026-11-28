@@ -3874,8 +3874,8 @@ def count_colour(image, area, colour):
 
 def webview_e6_images(s, hostport):
     """Images (docs/desktop/WEBVIEWER_ENGINE.md#images): a page whose picture
-    stalls is shown at once, with its alt text and the picture that did
-    arrive; then a page of PNG pictures in a table, beside floats and in
+    stalls is shown at once, with its alt text and the pictures that did
+    arrive, a GIF's first frame among them; then a page of PNG pictures in a table, beside floats and in
     blocks, painted at their sizes -- loading it while the stalled picture
     is still pending proves the worker drops it."""
     s.qmp.tap("tab", pause=1.0)
@@ -3887,6 +3887,11 @@ def webview_e6_images(s, hostport):
     expect_text(page, area, "still waiting", TEXT, FIELD, "the alt text of a picture that stalls", solid_only=True)
     if count_colour(page, area, (40, 160, 60)) < 200:
         raise Failure("the picture that arrived beside a stalled one was not painted")
+    # A GIF through libnsgif: its first frame is yellow, its second cyan.
+    if count_colour(page, area, (250, 220, 20)) < 300:
+        raise Failure("the GIF's first frame was not painted")
+    if count_colour(page, area, (20, 220, 250)) > 0:
+        raise Failure("a GIF showed a frame other than its first")
     s.qmp.tap("tab", pause=1.0)
     s.qmp.chord("ctrl", "a")
     type_http_url(s, hostport, "/e6-images.html")

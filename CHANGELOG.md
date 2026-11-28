@@ -153,7 +153,7 @@ changes not released yet; each released version has its own file in
   line boxes with `white-space`, `line-height`, `vertical-align`, `text-align` and `text-indent`, list markers,
   `float` and `clear` with text wrapping beside floats, `position` (relative, absolute, fixed) with `z-index`,
   `overflow` clipping, tables with automatic layout and HTML's table attributes, and images in the layout (PNG, BMP,
-  JPEG) loaded after the page, remote ones on the network worker, replacing the paragraph renderer. Host test
+  JPEG, GIF) loaded after the page, remote ones on picture threads of their own, replacing the paragraph renderer. Host test
   `webengine-layout-test` ([WEBVIEWER.md](docs/desktop/WEBVIEWER.md#layout-and-paint-e4-e5-e6)).
 - **Web Viewer has a Favorites menu:** Add to Favorites and Remove from Favorites for the page on screen, then a row
   per favorite, kept in the profile's `Settings/webview-favorites`. A new profile starts with Motherfucking Website and

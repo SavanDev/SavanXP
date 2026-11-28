@@ -181,19 +181,22 @@ which is why both go into the registry.
 
 - Origin: https://download.netsurf-browser.org/libs/releases/, the release
   tarballs of libparserutils 0.2.5, libwapcaplet 0.4.3, libhubbub 0.3.8,
-  libdom 0.4.2 and libcss 0.9.2
+  libdom 0.4.2, libcss 0.9.2 and libnsgif 1.0.0
 - Pinned version: those releases, each tarball's SHA-256 in
   `vendor/netsurf/NETSURF_RELEASES.txt` (NetSurf publishes no checksums; the
-  hashes are of the archives as downloaded on 2026-11-22)
+  hashes are of the archives as downloaded on 2026-11-22, libnsgif's on
+  2026-11-27)
 - Versioned: yes, `vendor/netsurf/<library>/`, unmodified, without each
   release's `test/` (and libhubbub's `perf/`, the `.github/` directories);
   libdom's XML binding stays in the tree but is not built
 - License reviewed: MIT, each library's `COPYING` (J-M Bell, 2007-8; The
-  NetSurf Browser Project, 2009). NetSurf's GPL-2.0-only core is not
+  NetSurf Browser Project, 2009; libnsgif: Richard Wilson, 2004, Sean Fox,
+  2008, Michael Drake, 2013-2021). NetSurf's GPL-2.0-only core is not
   vendored and not used ([THIRD_PARTY_ADOPTION.md](THIRD_PARTY_ADOPTION.md#netsurf))
 - Decision: `Adopt`
 - Distributed in: static archives built by `cmake/NetSurf.cmake`, linked into
-  `/system/enginetest.sxe` and Web Viewer, including libcss from E3
+  `/system/enginetest.sxe` and Web Viewer, including libcss from E3 and
+  libnsgif, for GIF pictures, from E6
   ([WEBVIEWER_ENGINE.md](../desktop/WEBVIEWER_ENGINE.md)); notices
   `assets/licenses/netsurf-*.notice`
 

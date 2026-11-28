@@ -1,5 +1,5 @@
 # NetSurf's MIT libraries (docs/desktop/WEBVIEWER_ENGINE.md): libparserutils,
-# libwapcaplet, libhubbub, libdom with its hubbub binding, and libcss, pinned
+# libwapcaplet, libhubbub, libdom with its hubbub binding, libcss and libnsgif, pinned
 # in vendor/netsurf/NETSURF_RELEASES.txt and built unmodified, twice from the
 # same sources:
 #
@@ -160,6 +160,10 @@ list(REMOVE_ITEM netsurf_css_all "${css_props}/css_property_parser_gen.c")
 set(netsurf_css_sources ${netsurf_css_all} ${SAVANXP_NETSURF_CSS_GENERATED})
 set(netsurf_css_includes ${ns}/libcss/include ${ns}/libcss/src)
 
+# libnsgif (E6): GIF images for Web Viewer, which libsximg does not read.
+set(netsurf_nsgif_sources ${ns}/libnsgif/src/gif.c ${ns}/libnsgif/src/lzw.c)
+set(netsurf_nsgif_includes ${ns}/libnsgif/include ${ns}/libnsgif/src)
+
 # --- The libraries --------------------------------------------------------------
 
 # netsurf_library(<name> <flavour> <needed...>): one static library from
@@ -202,6 +206,7 @@ foreach(flavour IN ITEMS sun host)
     netsurf_library(hubbub ${flavour} parserutils)
     netsurf_library(dom ${flavour} hubbub wapcaplet parserutils)
     netsurf_library(css ${flavour} wapcaplet parserutils)
+    netsurf_library(nsgif ${flavour})
 endforeach()
 
 # What the SUN libraries may ask the program for: C functions the runtime

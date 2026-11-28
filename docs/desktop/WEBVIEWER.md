@@ -267,18 +267,23 @@ Each `<img src>` resolves against the page: an `http://` or `https://` URL,
 or a local path from a local page. A page loaded over `https://` takes only
 `https://` pictures, as it takes only `https://` stylesheets; `data:` and
 other schemes fail. A local picture is read and decoded at once. Remote ones
-go to the window's network worker as one request, in the order of the
-page: it fetches each through `sxnhttp`, decodes it there and hands it back
-as soon as it is done, and the page is laid out again where it was scrolled
-to. Stop and Esc are enabled while pictures are on their way, as for a
-load: they make the rest fail and keep the page. A navigation or a new
-page cancels them too, and a picture that comes back for a page no longer
-on screen is dropped.
+go, in the order of the page, to a queue that three picture threads of the
+window take from, apart from the network worker that loads pages: each
+thread fetches a picture through `sxnhttp` with its own resolver, decodes it
+there and hands it back as soon as it is done, and the page is laid out
+again where it was scrolled to. A picture that stalls holds one thread, not
+the pictures after it nor the next navigation. Stop and Esc are enabled
+while pictures are on their way, as for a load: they make the rest fail and
+keep the page. A new page cancels them too, and a picture that comes back
+for a page no longer on screen is dropped.
 
 - **Formats.** PNG, BMP and JPEG through libsximg
   ([IMAGE_FORMATS.md](../media/IMAGE_FORMATS.md)), PNG and BMP with their
-  alpha. A JPEG over 2048 pixels a side is reduced while it decodes and
-  keeps its own size on the page; a PNG or BMP that big fails.
+  alpha, and GIF through NetSurf's libnsgif
+  ([WEBVIEWER_ENGINE.md](WEBVIEWER_ENGINE.md#what-is-vendored)) with its
+  transparency; an animated GIF shows its first frame. A JPEG over 2048
+  pixels a side is reduced while it decodes and keeps its own size on the
+  page; a PNG, BMP or GIF that big fails.
 - **Budgets.** A picture may take 8 MiB to arrive, and a page's decoded
   pictures 64 MiB; past that a picture fails.
 - **The same picture** used twice on a page is fetched once. The pictures
@@ -302,7 +307,7 @@ server empties the window's DNS cache.
 
 ## What it is not (yet)
 
-GIF pictures are not read yet. `inline-block` and the other inline-level displays are laid out as inline
+Animated GIFs do not animate. `inline-block` and the other inline-level displays are laid out as inline
 boxes, and `inline-table` as a table at block level. `border-collapse:
 collapse` lays out as `separate`, and `table-layout: fixed` as `auto`. `overflow: auto` and `scroll` clip without scroll bars of their own.
 Fragments reload the page top. A word wider than the page is cut
@@ -354,8 +359,9 @@ and asserts the text inside a float and the text wrapping beside one, then
 `e5-overflow.html`, whose clipped lines must not show. The E6 step opens
 `e6-table-cells.html` and asserts text on a cell's background, on a row's
 background under its cell, and in a cell spanning two columns; then
-`e6-image-stall.html`, whose page and arrived picture must show while its
-other picture never arrives, and `e6-images.html`, loaded while that
+`e6-image-stall.html`, whose page and arrived pictures (a PNG, and the
+first frame of an animated GIF and no other) must show while its first
+picture, ahead of them, never arrives, and `e6-images.html`, loaded while that
 picture is still pending, whose pictures must be painted.
 The SUN socket contract is checked by `smoke native-network` and
 `smoke native-network-offline`, including pending ARP, cancellation,

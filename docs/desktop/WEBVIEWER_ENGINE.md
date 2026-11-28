@@ -18,6 +18,7 @@ CSS boxes and lays them out, and Web Viewer paints them; E5 adds
 | libhubbub | 0.3.8 | the HTML5 tokeniser and tree builder |
 | libdom | 0.4.2 | the DOM, with its hubbub binding (not the XML one) |
 | libcss | 0.9.2 | the CSS parser, the cascade and computed styles |
+| libnsgif | 1.0.0 | GIF pictures for Web Viewer (E6), which libsximg does not read |
 
 Each one sits under `vendor/netsurf/<name>/`, unmodified:
 - **Source:** the release tarball, without its `test/` directory, which is
@@ -25,12 +26,13 @@ Each one sits under `vendor/netsurf/<name>/`, unmodified:
   the `.github/` directories are also left out.
 - **Pin:** `vendor/netsurf/NETSURF_RELEASES.txt` records each tarball's
   SHA-256. NetSurf publishes no checksums, so the hashes are of the archives
-  as downloaded from `download.netsurf-browser.org` on 2026-11-22.
+  as downloaded from `download.netsurf-browser.org` on 2026-11-22 (libnsgif's
+  on 2026-11-27).
 - **Registry:**
   [THIRD_PARTY_PROVENANCE.md](../third-party/THIRD_PARTY_PROVENANCE.md#netsurf-libraries)
   holds the entry.
 
-All five are MIT. NetSurf's core is GPL-2.0-only, and Web Viewer neither
+All six are MIT. NetSurf's core is GPL-2.0-only, and Web Viewer neither
 takes nor reads it ([the clean-room
 rule](../roadmaps/open/WEBVIEWER_ROADMAP.md#the-clean-room-rule)). The glue
 below is written from the libraries' own headers and `docs/`.

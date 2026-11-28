@@ -1,0 +1,8 @@
+name=NetSurf libnsgif
+license=MIT
+copyright=Copyright (C) 2004 Richard Wilson, (C) 2008 Sean Fox, (C) 2013-2021 Michael Drake
+origin=https://www.netsurf-browser.org/projects/libnsgif/
+version=1.0.0
+used-in=Web Viewer's GIF pictures
+provenance=NetSurf libraries
+text=vendor/netsurf/libnsgif/COPYING
